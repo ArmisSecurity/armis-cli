@@ -1,5 +1,7 @@
 # Armis Security Scanner CLI
 
+![CI](https://github.com/silk-security/Moose-CLI/actions/workflows/cli-self-scan.yml/badge.svg)
+
 Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning into your CI/CD pipeline.
 
 ## Features

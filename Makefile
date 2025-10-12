@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint help
+.PHONY: build install clean test lint scan help
 
 BINARY_NAME=armis
 BUILD_DIR=bin
@@ -12,6 +12,7 @@ help:
 	@echo "  clean      - Remove build artifacts"
 	@echo "  test       - Run tests"
 	@echo "  lint       - Run linters"
+	@echo "  scan       - Run security scan on this repository"
 	@echo "  release    - Build for multiple platforms"
 
 build:
@@ -36,6 +37,11 @@ lint:
 	@echo "Running linters..."
 	@which golangci-lint > /dev/null || (echo "golangci-lint not installed" && exit 1)
 	golangci-lint run
+
+scan:
+	@echo "Running security scan..."
+	@test -f $(BUILD_DIR)/$(BINARY_NAME) || (echo "Binary not found. Run 'make build' first." && exit 1)
+	$(BUILD_DIR)/$(BINARY_NAME) scan repo . --fail-on CRITICAL,HIGH
 
 release:
 	@echo "Building for multiple platforms..."
