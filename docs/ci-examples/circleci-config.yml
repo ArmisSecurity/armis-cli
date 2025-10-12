@@ -1,0 +1,28 @@
+version: 2.1
+
+jobs:
+  security-scan:
+    docker:
+      - image: cimg/base:stable
+    
+    steps:
+      - checkout
+      
+      - run:
+          name: Install Armis CLI
+          command: |
+            curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
+      
+      - run:
+          name: Run Security Scan
+          command: |
+            armis scan repo . --format json --fail-on HIGH,CRITICAL
+          environment:
+            ARMIS_API_TOKEN: ${ARMIS_API_TOKEN}
+
+workflows:
+  version: 2
+  security:
+    jobs:
+      - security-scan:
+          context: armis-security

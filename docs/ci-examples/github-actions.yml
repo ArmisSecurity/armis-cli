@@ -1,0 +1,31 @@
+name: Armis Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Armis CLI
+        run: |
+          curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
+      
+      - name: Scan Repository
+        env:
+          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+        run: |
+          armis scan repo . --format sarif --fail-on HIGH,CRITICAL > results.sarif
+      
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: results.sarif

@@ -1,0 +1,181 @@
+package repo
+
+import (
+	"archive/zip"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/silk-security/Moose-CLI/internal/api"
+	"github.com/silk-security/Moose-CLI/internal/model"
+	"github.com/silk-security/Moose-CLI/internal/progress"
+)
+
+const MaxRepoSize = 2 * 1024 * 1024 * 1024
+
+type Scanner struct {
+	client     *api.Client
+	noProgress bool
+}
+
+func NewScanner(client *api.Client, noProgress bool) *Scanner {
+	return &Scanner{
+		client:     client,
+		noProgress: noProgress,
+	}
+}
+
+func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat path: %w", err)
+	}
+
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", absPath)
+	}
+
+	size, err := calculateDirSize(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+	}
+
+	if size > MaxRepoSize {
+		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
+	}
+
+	pr, pw := io.Pipe()
+
+	errChan := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		errChan <- s.zipDirectory(absPath, pw)
+	}()
+
+	progressReader := progress.NewReader(pr, size, "Uploading repository", s.noProgress)
+
+	scanID, err := s.client.UploadRepo(ctx, filepath.Base(absPath)+".zip", progressReader, size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload repository: %w", err)
+	}
+
+	if zipErr := <-errChan; zipErr != nil {
+		return nil, fmt.Errorf("failed to zip directory: %w", zipErr)
+	}
+
+	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
+	fmt.Println("Waiting for scan results...")
+
+	result, err := s.client.WaitForScan(ctx, scanID, 5)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get scan results: %w", err)
+	}
+
+	return result, nil
+}
+
+func (s *Scanner) zipDirectory(sourcePath string, writer io.Writer) error {
+	zipWriter := zip.NewWriter(writer)
+	defer zipWriter.Close()
+
+	return filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if shouldSkip(path, info) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return err
+		}
+		header.Name = relPath
+
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		headerWriter, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			_, err = io.Copy(headerWriter, file)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func calculateDirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if shouldSkip(filePath, info) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
+}
+
+func shouldSkip(path string, info os.FileInfo) bool {
+	name := info.Name()
+
+	skipDirs := []string{
+		".git", ".svn", ".hg",
+		"node_modules", "vendor", "venv", ".venv",
+		"__pycache__", ".pytest_cache",
+		"target", "build", "dist", ".next",
+		".idea", ".vscode",
+	}
+
+	for _, dir := range skipDirs {
+		if info.IsDir() && name == dir {
+			return true
+		}
+		if strings.Contains(path, string(filepath.Separator)+dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
+}
