@@ -27,6 +27,12 @@ func NewScanner(client *api.Client, noProgress bool) *Scanner {
 }
 
 func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanResult, error) {
+        normalised, err := validateImageName(imageName)
+        if err != nil {
+                return nil, err
+        }
+        imageName = normalised
+
         if !isDockerAvailable() {
                 return nil, fmt.Errorf("docker is not available. Please install Docker or Podman")
         }
@@ -39,7 +45,7 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
         defer tmpFile.Close()
 
         fmt.Printf("Exporting image: %s\n", imageName)
-        if err := s.exportImage(imageName, tmpFile.Name()); err != nil {
+        if err := s.exportImage(ctx, imageName, tmpFile.Name()); err != nil {
                 return nil, fmt.Errorf("failed to export image: %w", err)
         }
 
@@ -80,17 +86,17 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
         return result, nil
 }
 
-func (s *Scanner) exportImage(imageName, outputPath string) error {
+func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {
         dockerCmd := getDockerCommand()
 
-        cmd := exec.Command(dockerCmd, "pull", imageName)
+        cmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName)
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
         if err := cmd.Run(); err != nil {
                 return fmt.Errorf("failed to pull image: %w", err)
         }
 
-        cmd = exec.Command(dockerCmd, "save", "-o", outputPath, imageName)
+        cmd = exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName)
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
         if err := cmd.Run(); err != nil {
