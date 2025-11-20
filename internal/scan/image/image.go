@@ -17,12 +17,16 @@ const MaxImageSize = 5 * 1024 * 1024 * 1024
 type Scanner struct {
         client     *api.Client
         noProgress bool
+        tenantID   string
+        pageLimit  int
 }
 
-func NewScanner(client *api.Client, noProgress bool) *Scanner {
+func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int) *Scanner {
         return &Scanner{
                 client:     client,
                 noProgress: noProgress,
+                tenantID:   tenantID,
+                pageLimit:  pageLimit,
         }
 }
 
@@ -70,19 +74,31 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
         progressReader := progress.NewReader(file, info.Size(), "Uploading image", s.noProgress)
 
-        scanID, err := s.client.UploadImage(ctx, filepath.Base(tarballPath), progressReader, info.Size())
+        scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), progressReader, info.Size())
         if err != nil {
                 return nil, fmt.Errorf("failed to upload image: %w", err)
         }
 
         fmt.Printf("\nScan initiated with ID: %s\n", scanID)
-        fmt.Println("Waiting for scan results...")
 
-        result, err := s.client.WaitForScan(ctx, scanID, 5)
+        spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
+        spinner.Start()
+
+        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5)
+        spinner.Stop()
+
         if err != nil {
-                return nil, fmt.Errorf("failed to get scan results: %w", err)
+                return nil, fmt.Errorf("failed to wait for scan: %w", err)
         }
 
+        fmt.Println("Scan completed. Fetching results...")
+
+        findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+        if err != nil {
+                return nil, fmt.Errorf("failed to fetch results: %w", err)
+        }
+
+        result := buildScanResult(scanID, findings)
         return result, nil
 }
 
@@ -127,4 +143,24 @@ func getDockerCommand() string {
         }
 
         return "podman"
+}
+
+func buildScanResult(scanID string, findings []model.Finding) *model.ScanResult {
+        summary := model.Summary{
+                Total:      len(findings),
+                BySeverity: make(map[model.Severity]int),
+                ByType:     make(map[model.FindingType]int),
+        }
+
+        for _, finding := range findings {
+                summary.BySeverity[finding.Severity]++
+                summary.ByType[finding.Type]++
+        }
+
+        return &model.ScanResult{
+                ScanID:   scanID,
+                Status:   "completed",
+                Findings: findings,
+                Summary:  summary,
+        }
 }
