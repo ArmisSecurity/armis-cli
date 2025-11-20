@@ -1,8 +1,10 @@
 package progress
 
 import (
+        "fmt"
         "io"
         "os"
+        "time"
 
         "github.com/schollz/progressbar/v3"
 )
@@ -53,4 +55,56 @@ func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Wr
         )
 
         return io.MultiWriter(w, bar)
+}
+
+type Spinner struct {
+        message  string
+        disabled bool
+        stopChan chan bool
+        doneChan chan bool
+}
+
+func NewSpinner(message string, disabled bool) *Spinner {
+        return &Spinner{
+                message:  message,
+                disabled: disabled,
+                stopChan: make(chan bool),
+                doneChan: make(chan bool),
+        }
+}
+
+func (s *Spinner) Start() {
+        if s.disabled || IsCI() {
+                fmt.Println(s.message)
+                return
+        }
+
+        go func() {
+                spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+                i := 0
+                for {
+                        select {
+                        case <-s.stopChan:
+                                fmt.Print("\r\033[K")
+                                close(s.doneChan)
+                                return
+                        default:
+                                fmt.Printf("\r%s %s", spinner[i%len(spinner)], s.message)
+                                i++
+                                time.Sleep(100 * time.Millisecond)
+                        }
+                }
+        }()
+}
+
+func (s *Spinner) Stop() {
+        if s.disabled || IsCI() {
+                return
+        }
+        close(s.stopChan)
+        <-s.doneChan
+}
+
+func (s *Spinner) UpdateMessage(message string) {
+        s.message = message
 }

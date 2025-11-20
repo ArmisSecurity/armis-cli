@@ -31,8 +31,13 @@ var scanImageCmd = &cobra.Command{
                         return err
                 }
 
+                tid, err := getTenantID()
+                if err != nil {
+                        return err
+                }
+
                 client := api.NewClient(apiBaseURL, token)
-                scanner := image.NewScanner(client, noProgress)
+                scanner := image.NewScanner(client, noProgress, tid, pageLimit)
 
                 ctx := context.Background()
                 var result *model.ScanResult
