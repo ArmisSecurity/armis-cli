@@ -29,8 +29,18 @@ var scanRepoCmd = &cobra.Command{
                         return err
                 }
 
-                client := api.NewClient(apiBaseURL, token)
-                scanner := repo.NewScanner(client, noProgress, tid, pageLimit)
+                limit, err := getPageLimit()
+                if err != nil {
+                        return err
+                }
+
+                baseURL := getAPIBaseURL()
+                if baseURL == "" {
+                        return fmt.Errorf("API base URL not configured: use --dev flag for development environment")
+                }
+
+                client := api.NewClient(baseURL, token, debug)
+                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests)
 
                 ctx := context.Background()
                 result, err := scanner.Scan(ctx, repoPath)

@@ -58,24 +58,28 @@ func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Wr
 }
 
 type Spinner struct {
-        message  string
-        disabled bool
-        stopChan chan bool
-        doneChan chan bool
+        message   string
+        disabled  bool
+        stopChan  chan bool
+        doneChan  chan bool
+        startTime time.Time
+        showTimer bool
 }
 
 func NewSpinner(message string, disabled bool) *Spinner {
         return &Spinner{
-                message:  message,
-                disabled: disabled,
-                stopChan: make(chan bool),
-                doneChan: make(chan bool),
+                message:   message,
+                disabled:  disabled,
+                stopChan:  make(chan bool),
+                doneChan:  make(chan bool),
+                startTime: time.Now(),
+                showTimer: true,
         }
 }
 
 func (s *Spinner) Start() {
         if s.disabled || IsCI() {
-                fmt.Println(s.message)
+                fmt.Printf("%s (started at %s)\n", s.message, s.startTime.Format("15:04:05"))
                 return
         }
 
@@ -89,7 +93,12 @@ func (s *Spinner) Start() {
                                 close(s.doneChan)
                                 return
                         default:
-                                fmt.Printf("\r%s %s", spinner[i%len(spinner)], s.message)
+                                elapsed := time.Since(s.startTime)
+                                if s.showTimer {
+                                        fmt.Printf("\r%s %s [%s]", spinner[i%len(spinner)], s.message, formatDuration(elapsed))
+                                } else {
+                                        fmt.Printf("\r%s %s", spinner[i%len(spinner)], s.message)
+                                }
                                 i++
                                 time.Sleep(100 * time.Millisecond)
                         }
@@ -107,4 +116,15 @@ func (s *Spinner) Stop() {
 
 func (s *Spinner) UpdateMessage(message string) {
         s.message = message
+}
+
+func (s *Spinner) GetElapsed() time.Duration {
+        return time.Since(s.startTime)
+}
+
+func formatDuration(d time.Duration) string {
+        d = d.Round(time.Second)
+        minutes := int(d.Minutes())
+        seconds := int(d.Seconds()) % 60
+        return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }

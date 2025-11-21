@@ -10,7 +10,7 @@ security-scan:
   
   script:
     - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
-    - armis scan repo . --format json --fail-on HIGH,CRITICAL
+    - armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
   
   variables:
     ARMIS_API_TOKEN: $ARMIS_API_TOKEN

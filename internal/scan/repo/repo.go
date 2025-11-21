@@ -4,11 +4,13 @@ import (
         "archive/tar"
         "compress/gzip"
         "context"
+        "encoding/json"
         "fmt"
         "io"
         "os"
         "path/filepath"
         "strings"
+        "time"
 
         "github.com/silk-security/Moose-CLI/internal/api"
         "github.com/silk-security/Moose-CLI/internal/model"
@@ -18,18 +20,20 @@ import (
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
 
 type Scanner struct {
-        client     *api.Client
-        noProgress bool
-        tenantID   string
-        pageLimit  int
+        client       *api.Client
+        noProgress   bool
+        tenantID     string
+        pageLimit    int
+        includeTests bool
 }
 
-func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int) *Scanner {
+func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool) *Scanner {
         return &Scanner{
-                client:     client,
-                noProgress: noProgress,
-                tenantID:   tenantID,
-                pageLimit:  pageLimit,
+                client:       client,
+                noProgress:   noProgress,
+                tenantID:     tenantID,
+                pageLimit:    pageLimit,
+                includeTests: includeTests,
         }
 }
 
@@ -48,7 +52,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
                 return nil, fmt.Errorf("path is not a directory: %s", absPath)
         }
 
-        size, err := calculateDirSize(absPath)
+        size, err := calculateDirSize(absPath, s.includeTests)
         if err != nil {
                 return nil, fmt.Errorf("failed to calculate directory size: %w", err)
         }
@@ -65,9 +69,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
                 errChan <- s.tarGzDirectory(absPath, pw)
         }()
 
-        progressReader := progress.NewReader(pr, size, "Uploading repository", s.noProgress)
+        uploadSpinner := progress.NewSpinner("Uploading repository...", s.noProgress)
+        uploadSpinner.Start()
 
-        scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", progressReader, size)
+        scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
+        uploadSpinner.Stop()
+
         if err != nil {
                 return nil, fmt.Errorf("failed to upload repository: %w", err)
         }
@@ -82,20 +89,21 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
         spinner.Start()
 
         _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5)
+        elapsed := spinner.GetElapsed()
         spinner.Stop()
 
         if err != nil {
                 return nil, fmt.Errorf("failed to wait for scan: %w", err)
         }
 
-        fmt.Println("Scan completed. Fetching results...")
+        fmt.Printf("Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
 
         findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
         if err != nil {
                 return nil, fmt.Errorf("failed to fetch results: %w", err)
         }
 
-        result := buildScanResult(scanID, findings)
+        result := buildScanResult(scanID, findings, s.client.IsDebug())
         return result, nil
 }
 
@@ -111,7 +119,7 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
                         return err
                 }
 
-                if shouldSkip(path, info) {
+                if shouldSkip(path, info, s.includeTests) {
                         if info.IsDir() {
                                 return filepath.SkipDir
                         }
@@ -138,11 +146,15 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
                         if err != nil {
                                 return err
                         }
-                        defer file.Close()
 
-                        _, err = io.Copy(tarWriter, file)
-                        if err != nil {
-                                return err
+                        _, copyErr := io.Copy(tarWriter, file)
+                        closeErr := file.Close()
+
+                        if copyErr != nil {
+                                return copyErr
+                        }
+                        if closeErr != nil {
+                                return closeErr
                         }
                 }
 
@@ -150,13 +162,13 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
         })
 }
 
-func calculateDirSize(path string) (int64, error) {
+func calculateDirSize(path string, includeTests bool) (int64, error) {
         var size int64
         err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
                 if err != nil {
                         return err
                 }
-                if shouldSkip(filePath, info) {
+                if shouldSkip(filePath, info, includeTests) {
                         if info.IsDir() {
                                 return filepath.SkipDir
                         }
@@ -170,7 +182,7 @@ func calculateDirSize(path string) (int64, error) {
         return size, err
 }
 
-func shouldSkip(path string, info os.FileInfo) bool {
+func shouldSkip(path string, info os.FileInfo, includeTests bool) bool {
         name := info.Name()
 
         skipDirs := []string{
@@ -179,6 +191,10 @@ func shouldSkip(path string, info os.FileInfo) bool {
                 "__pycache__", ".pytest_cache",
                 "target", "build", "dist", ".next",
                 ".idea", ".vscode",
+        }
+
+        if !includeTests {
+                skipDirs = append(skipDirs, "tests", "test", "__tests__", "spec", "specs")
         }
 
         for _, dir := range skipDirs {
@@ -190,10 +206,59 @@ func shouldSkip(path string, info os.FileInfo) bool {
                 }
         }
 
+        if !includeTests && !info.IsDir() && isTestFile(name) {
+                return true
+        }
+
         return false
 }
 
-func buildScanResult(scanID string, findings []model.Finding) *model.ScanResult {
+func isTestFile(name string) bool {
+        testPatterns := []string{
+                "_test.go",
+                "_test.py", "test_",
+                ".test.js", ".spec.js", ".test.jsx", ".spec.jsx",
+                ".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
+                "Test.java", "Tests.java",
+                "Test.cs", "Tests.cs",
+                "_spec.rb", "_test.rb",
+                "Test.php", "_test.php",
+                "Tests.swift", "Test.swift",
+                "Test.kt", "Tests.kt",
+                "Test.scala", "Spec.scala",
+                "_test.c", "_test.cpp", "Test.cpp", "_test.cc", "Test.cc",
+                "_test.exs",
+                "_test.clj",
+                "Spec.hs", "Test.hs",
+                "_test.dart",
+                "_test.R",
+                "_test.jl",
+                "_test.lua",
+                "_test.rs",
+                "_test.m", "_test.mm",
+                ".test.vue",
+                "_test.erl",
+        }
+
+        for _, pattern := range testPatterns {
+                if strings.HasSuffix(name, pattern) {
+                        return true
+                }
+                if strings.HasPrefix(name, "test_") && (strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".R")) {
+                        return true
+                }
+        }
+
+        if strings.HasSuffix(name, ".t") && !strings.Contains(name, ".") {
+                return true
+        }
+
+        return false
+}
+
+func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool) *model.ScanResult {
+        findings := convertNormalizedFindings(normalizedFindings, debug)
+
         summary := model.Summary{
                 Total:      len(findings),
                 BySeverity: make(map[model.Severity]int),
@@ -211,4 +276,135 @@ func buildScanResult(scanID string, findings []model.Finding) *model.ScanResult 
                 Findings: findings,
                 Summary:  summary,
         }
+}
+
+func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, debug bool) []model.Finding {
+        var findings []model.Finding
+
+        for i, nf := range normalizedFindings {
+                if isEmptyFinding(nf) {
+                        continue
+                }
+
+                if debug {
+                        rawJSON, _ := json.Marshal(nf)
+                        fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+                }
+
+                finding := model.Finding{
+                        ID:          nf.NormalizedTask.FindingID,
+                        Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+                        Description: nf.NormalizedRemediation.Description,
+                        CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
+                        CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+                }
+
+                if finding.Description == "" {
+                        if nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" {
+                                finding.Description = nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown
+                        } else if nf.NormalizedTask.LongDescription != nil {
+                                finding.Description = *nf.NormalizedTask.LongDescription
+                        }
+                }
+
+                finding.Description = cleanDescription(finding.Description)
+
+                if nf.NormalizedRemediation.FindingCategory != nil {
+                        if category, ok := nf.NormalizedRemediation.FindingCategory.(string); ok {
+                                finding.FindingCategory = category
+                        }
+                }
+
+                loc := nf.NormalizedTask.ExtraData.CodeLocation
+                if loc.FileName != nil {
+                        finding.File = *loc.FileName
+                }
+                if loc.StartLine != nil {
+                        finding.StartLine = *loc.StartLine
+                }
+                if loc.EndLine != nil {
+                        finding.EndLine = *loc.EndLine
+                }
+                if loc.StartCol != nil {
+                        finding.StartColumn = *loc.StartCol
+                }
+                if loc.EndCol != nil {
+                        finding.EndColumn = *loc.EndCol
+                }
+
+                if len(loc.CodeSnippetLines) > 0 {
+                        finding.CodeSnippet = strings.Join(loc.CodeSnippetLines, "\n")
+                } else if loc.Snippet != nil {
+                        finding.CodeSnippet = *loc.Snippet
+                }
+
+                if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {
+                        finding.Type = model.FindingTypeVulnerability
+                }
+
+                if loc.HasSecret {
+                        finding.Type = model.FindingTypeSecret
+                }
+
+                if finding.Type == "" {
+                        finding.Type = model.FindingTypeSCA
+                }
+
+                finding.Title = finding.Description
+
+                findings = append(findings, finding)
+        }
+
+        return findings
+}
+
+func cleanDescription(desc string) string {
+        lines := strings.Split(desc, "\n")
+        var cleaned []string
+        
+        for _, line := range lines {
+                line = strings.TrimSpace(line)
+                if strings.HasPrefix(line, "Code_location -") ||
+                   strings.HasPrefix(line, "Code Blob -") ||
+                   strings.HasPrefix(line, "Confidence -") {
+                        continue
+                }
+                if line != "" {
+                        cleaned = append(cleaned, line)
+                }
+        }
+        
+        return strings.Join(cleaned, " ")
+}
+
+func isEmptyFinding(nf model.NormalizedFinding) bool {
+        return nf.NormalizedRemediation.RemediationID == "" &&
+                nf.NormalizedRemediation.Description == "" &&
+                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) == 0 &&
+                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs) == 0
+}
+
+func mapSeverity(toolSeverity string) model.Severity {
+        switch strings.ToUpper(toolSeverity) {
+        case "CRITICAL":
+                return model.SeverityCritical
+        case "HIGH":
+                return model.SeverityHigh
+        case "MEDIUM":
+                return model.SeverityMedium
+        case "LOW":
+                return model.SeverityLow
+        default:
+                return model.SeverityInfo
+        }
+}
+
+func formatElapsed(d time.Duration) string {
+        d = d.Round(time.Second)
+        minutes := int(d.Minutes())
+        seconds := int(d.Seconds()) % 60
+        if minutes > 0 {
+                return fmt.Sprintf("%dm %ds", minutes, seconds)
+        }
+        return fmt.Sprintf("%ds", seconds)
 }

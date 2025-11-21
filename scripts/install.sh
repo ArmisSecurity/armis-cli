@@ -3,7 +3,7 @@
 set -e
 
 REPO="silk-security/Moose-CLI"
-BINARY_NAME="armis"
+BINARY_NAME="armis-cli"
 INSTALL_DIR="/usr/local/bin"
 
 detect_os() {
@@ -74,7 +74,7 @@ main() {
     echo ""
     echo "✓ Armis CLI installed successfully to $INSTALL_DIR/$BINARY_NAME"
     echo ""
-    echo "Run 'armis --help' to get started"
+    echo "Run 'armis-cli --help' to get started"
 }
 
 main

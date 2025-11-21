@@ -20,9 +20,10 @@ type Client struct {
         httpClient *retryablehttp.Client
         baseURL    string
         token      string
+        debug      bool
 }
 
-func NewClient(baseURL, token string) *Client {
+func NewClient(baseURL, token string, debug bool) *Client {
         retryClient := retryablehttp.NewClient()
         retryClient.RetryMax = 3
         retryClient.RetryWaitMin = 1 * time.Second
@@ -33,7 +34,12 @@ func NewClient(baseURL, token string) *Client {
                 httpClient: retryClient,
                 baseURL:    baseURL,
                 token:      token,
+                debug:      debug,
         }
+}
+
+func (c *Client) IsDebug() bool {
+        return c.debug
 }
 
 func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
@@ -93,64 +99,6 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
         return result.ScanID, nil
 }
 
-func (c *Client) UploadRepo(ctx context.Context, filename string, data io.Reader, size int64) (string, error) {
-        return c.uploadFile(ctx, "/scans/repo", filename, data, size)
-}
-
-func (c *Client) UploadImage(ctx context.Context, filename string, data io.Reader, size int64) (string, error) {
-        return c.uploadFile(ctx, "/scans/image", filename, data, size)
-}
-
-func (c *Client) UploadFile(ctx context.Context, filename string, data io.Reader, size int64) (string, error) {
-        return c.uploadFile(ctx, "/scans/file", filename, data, size)
-}
-
-func (c *Client) uploadFile(ctx context.Context, endpoint, filename string, data io.Reader, size int64) (string, error) {
-        body := &bytes.Buffer{}
-        writer := multipart.NewWriter(body)
-
-        part, err := writer.CreateFormFile("file", filename)
-        if err != nil {
-                return "", fmt.Errorf("failed to create form file: %w", err)
-        }
-
-        if _, err := io.Copy(part, data); err != nil {
-                return "", fmt.Errorf("failed to copy file data: %w", err)
-        }
-
-        if err := writer.Close(); err != nil {
-                return "", fmt.Errorf("failed to close multipart writer: %w", err)
-        }
-
-        req, err := retryablehttp.NewRequestWithContext(ctx, "POST", c.baseURL+endpoint, body)
-        if err != nil {
-                return "", fmt.Errorf("failed to create request: %w", err)
-        }
-
-        req.Header.Set("Authorization", "Basic "+c.token)
-        req.Header.Set("Content-Type", writer.FormDataContentType())
-
-        resp, err := c.httpClient.Do(req)
-        if err != nil {
-                return "", fmt.Errorf("failed to upload file: %w", err)
-        }
-        defer resp.Body.Close()
-
-        if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-                bodyBytes, _ := io.ReadAll(resp.Body)
-                return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-        }
-
-        var result struct {
-                ScanID string `json:"scan_id"`
-        }
-        if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-                return "", fmt.Errorf("failed to decode response: %w", err)
-        }
-
-        return result.ScanID, nil
-}
-
 func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (*model.IngestStatusResponse, error) {
         endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/status/"
         params := url.Values{}
@@ -184,17 +132,23 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 }
 
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration) (*model.IngestStatusData, error) {
+        timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+        defer cancel()
+
         ticker := time.NewTicker(pollInterval * time.Second)
         defer ticker.Stop()
 
         for {
                 select {
-                case <-ctx.Done():
-                        return nil, ctx.Err()
+                case <-timeoutCtx.Done():
+                        if timeoutCtx.Err() == context.DeadlineExceeded {
+                                return nil, fmt.Errorf("scan timed out after 20 minutes (scan ID: %s)", scanID)
+                        }
+                        return nil, timeoutCtx.Err()
                 case <-ticker.C:
-                        statusResp, err := c.GetIngestStatus(ctx, tenantID, scanID)
+                        statusResp, err := c.GetIngestStatus(timeoutCtx, tenantID, scanID)
                         if err != nil {
-                                return nil, err
+                                return nil, fmt.Errorf("failed to check scan status: %w", err)
                         }
 
                         if len(statusResp.Data) == 0 {
@@ -243,16 +197,25 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
                 return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, string(bodyBytes))
         }
 
+        bodyBytes, err := io.ReadAll(resp.Body)
+        if err != nil {
+                return nil, fmt.Errorf("failed to read response body: %w", err)
+        }
+
+        if c.debug {
+                fmt.Printf("\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+        }
+
         var result model.NormalizedResultsResponse
-        if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        if err := json.Unmarshal(bodyBytes, &result); err != nil {
                 return nil, fmt.Errorf("failed to decode response: %w", err)
         }
 
         return &result, nil
 }
 
-func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID string, pageLimit int) ([]model.Finding, error) {
-        var allFindings []model.Finding
+func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID string, pageLimit int) ([]model.NormalizedFinding, error) {
+        var allFindings []model.NormalizedFinding
         cursor := ""
 
         for {
@@ -261,13 +224,15 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
                         return nil, err
                 }
 
-                allFindings = append(allFindings, page.Data...)
+                for _, scanResult := range page.Data.ScanResults {
+                        allFindings = append(allFindings, scanResult.Findings...)
+                }
 
-                if page.NextCursor == nil || *page.NextCursor == "" {
+                if page.Pagination.NextCursor == nil || *page.Pagination.NextCursor == "" {
                         break
                 }
 
-                cursor = *page.NextCursor
+                cursor = *page.Pagination.NextCursor
         }
 
         return allFindings, nil

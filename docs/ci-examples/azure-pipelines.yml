@@ -16,7 +16,7 @@ steps:
   displayName: 'Install Armis CLI'
 
 - script: |
-    armis scan repo . --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
   displayName: 'Run Security Scan'
   env:
     ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
