@@ -159,7 +159,7 @@ const (
         colorYellow    = "\033[93m"
         colorBlue      = "\033[34m"
         colorGray      = "\033[90m"
-        colorBgRed     = "\033[48;2;255;200;200m"
+        colorBgRed     = "\033[101m"
         colorBold      = "\033[1m"
         colorUnderline = "\033[4m"
 )
@@ -216,20 +216,21 @@ func formatCodeSnippet(finding model.Finding) string {
         
         for i, line := range lines {
                 actualLine := snippetStart + i
+                lineNumStr := fmt.Sprintf("%4d  ", actualLine)
                 
                 if finding.StartLine > 0 && finding.EndLine > 0 {
                         if actualLine >= finding.StartLine && actualLine <= finding.EndLine {
                                 if finding.StartColumn > 0 && finding.EndColumn > 0 {
                                         highlighted := highlightColumns(line, finding.StartColumn, finding.EndColumn, actualLine, finding.StartLine, finding.EndLine)
-                                        formatted = append(formatted, highlighted)
+                                        formatted = append(formatted, lineNumStr+highlighted)
                                 } else {
-                                        formatted = append(formatted, colorBgRed+colorBold+line+colorReset)
+                                        formatted = append(formatted, lineNumStr+colorBgRed+colorBold+line+colorReset)
                                 }
                         } else {
-                                formatted = append(formatted, line)
+                                formatted = append(formatted, lineNumStr+line)
                         }
                 } else {
-                        formatted = append(formatted, line)
+                        formatted = append(formatted, lineNumStr+line)
                 }
         }
         
