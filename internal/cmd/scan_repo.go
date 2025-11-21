@@ -6,9 +6,9 @@ import (
         "os"
         "time"
 
-        "github.com/silk-security/Moose-CLI/internal/api"
-        "github.com/silk-security/Moose-CLI/internal/output"
-        "github.com/silk-security/Moose-CLI/internal/scan/repo"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/output"
+        "github.com/silk-security/armis-cli/internal/scan/repo"
         "github.com/spf13/cobra"
 )
 

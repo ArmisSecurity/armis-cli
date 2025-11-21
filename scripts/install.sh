@@ -2,7 +2,7 @@
 
 set -e
 
-REPO="silk-security/Moose-CLI"
+REPO="silk-security/armis-cli"
 BINARY_NAME="armis-cli"
 INSTALL_DIR="/usr/local/bin"
 

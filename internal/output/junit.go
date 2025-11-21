@@ -5,7 +5,8 @@ import (
         "fmt"
         "io"
 
-        "github.com/silk-security/Moose-CLI/internal/model"
+        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/util"
 )
 
 type JUnitFormatter struct{}
@@ -72,7 +73,10 @@ func convertToJUnitCases(findings []model.Finding) []junitTestCase {
                 }
 
                 if finding.Severity == model.SeverityCritical || finding.Severity == model.SeverityHigh {
-                        location := finding.File
+                        location, err := util.SanitizePath(finding.File)
+                        if err != nil {
+                                location = "unknown"
+                        }
                         if finding.StartLine > 0 {
                                 location = fmt.Sprintf("%s:%d", location, finding.StartLine)
                         }

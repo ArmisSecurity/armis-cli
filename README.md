@@ -1,6 +1,6 @@
 # Armis Security Scanner CLI
 
-![CI](https://github.com/silk-security/Moose-CLI/actions/workflows/cli-self-scan.yml/badge.svg)
+![CI](https://github.com/silk-security/armis-cli/actions/workflows/cli-self-scan.yml/badge.svg)
 
 Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning into your CI/CD pipeline.
 
@@ -25,12 +25,12 @@ curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts
 ### Using Go
 
 ```bash
-go install github.com/silk-security/Moose-CLI/cmd/armis-cli@latest
+go install github.com/silk-security/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Manual Download
 
-Download the latest release for your platform from the [releases page](https://github.com/silk-security/Moose-CLI/releases).
+Download the latest release for your platform from the [releases page](https://github.com/silk-security/armis-cli/releases).
 
 ## Quick Start
 
@@ -305,11 +305,21 @@ pipelines:
 - `1` - Scan found blocking findings (configurable with `--fail-on`)
 - `>1` - Error occurred during scan
 
+## Releases
+
+New versions are automatically built and published when version tags are pushed. Each release includes:
+
+- Pre-built binaries for macOS, Linux, and Windows (amd64 and arm64)
+- SHA256 checksums for verification
+- Automated changelog generation
+
+Visit the [releases page](https://github.com/silk-security/armis-cli/releases) to download specific versions.
+
 ## Building from Source
 
 ```bash
-git clone https://github.com/silk-security/Moose-CLI.git
-cd Moose-CLI
+git clone https://github.com/silk-security/armis-cli.git
+cd armis-cli
 make build
 ```
 
@@ -330,7 +340,7 @@ make release
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/Moose-CLI).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/armis-cli).
 
 ## License
 

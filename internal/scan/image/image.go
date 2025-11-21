@@ -10,12 +10,16 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/Moose-CLI/internal/api"
-        "github.com/silk-security/Moose-CLI/internal/model"
-        "github.com/silk-security/Moose-CLI/internal/progress"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/progress"
 )
 
-const MaxImageSize = 5 * 1024 * 1024 * 1024
+const (
+        MaxImageSize   = 5 * 1024 * 1024 * 1024
+        dockerBinary   = "docker"
+        podmanBinary   = "podman"
+)
 
 type Scanner struct {
         client       *api.Client
@@ -121,6 +125,9 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
 func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {
         dockerCmd := getDockerCommand()
+        if err := validateDockerCommand(dockerCmd); err != nil {
+                return err
+        }
 
         cmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName)
         cmd.Stdout = os.Stdout
@@ -154,12 +161,19 @@ func isDockerAvailable() bool {
 }
 
 func getDockerCommand() string {
-        cmd := exec.Command("docker", "version")
+        cmd := exec.Command(dockerBinary, "version")
         if err := cmd.Run(); err == nil {
-                return "docker"
+                return dockerBinary
         }
 
-        return "podman"
+        return podmanBinary
+}
+
+func validateDockerCommand(cmd string) error {
+        if cmd != dockerBinary && cmd != podmanBinary {
+                return fmt.Errorf("unsupported container engine: %s", cmd)
+        }
+        return nil
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool) *model.ScanResult {

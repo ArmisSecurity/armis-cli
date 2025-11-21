@@ -6,10 +6,11 @@ import (
         "os"
         "time"
 
-        "github.com/silk-security/Moose-CLI/internal/api"
-        "github.com/silk-security/Moose-CLI/internal/model"
-        "github.com/silk-security/Moose-CLI/internal/output"
-        "github.com/silk-security/Moose-CLI/internal/scan/image"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/output"
+        "github.com/silk-security/armis-cli/internal/scan/image"
+        "github.com/silk-security/armis-cli/internal/util"
         "github.com/spf13/cobra"
 )
 
@@ -55,7 +56,11 @@ var scanImageCmd = &cobra.Command{
                 var result *model.ScanResult
 
                 if tarballPath != "" {
-                        result, err = scanner.ScanTarball(ctx, tarballPath)
+                        sanitizedPath, err := util.SanitizePath(tarballPath)
+                        if err != nil {
+                                return fmt.Errorf("invalid tarball path: %w", err)
+                        }
+                        result, err = scanner.ScanTarball(ctx, sanitizedPath)
                 } else {
                         imageName := args[0]
                         result, err = scanner.ScanImage(ctx, imageName)

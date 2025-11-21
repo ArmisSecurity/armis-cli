@@ -1,13 +1,20 @@
 package main
 
 import (
-	"os"
+        "os"
 
-	"github.com/silk-security/Moose-CLI/internal/cmd"
+        "github.com/silk-security/armis-cli/internal/cmd"
+)
+
+var (
+        version = "dev"
+        commit  = "none"
+        date    = "unknown"
 )
 
 func main() {
-	if err := cmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+        cmd.SetVersion(version, commit, date)
+        if err := cmd.Execute(); err != nil {
+                os.Exit(1)
+        }
 }

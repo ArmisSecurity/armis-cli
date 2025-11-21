@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/silk-security/Moose-CLI/internal/model"
+	"github.com/silk-security/armis-cli/internal/model"
 )
 
 type Formatter interface {

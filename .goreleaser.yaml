@@ -1,0 +1,109 @@
+project_name: armis-cli
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: armis-cli
+    main: ./cmd/armis-cli
+    binary: armis-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: armis-cli-archives
+    builds:
+      - armis-cli
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "armis-cli-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README.md
+      - docs/**/*
+
+checksum:
+  name_template: "armis-cli-checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Security
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: silk-security
+    name: armis-cli
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## Armis CLI {{ .Tag }}
+    
+    Enterprise-grade CLI tool for static application security scanning.
+    
+    ### Installation
+    
+    **Quick Install:**
+    ```bash
+    curl -sSL https://raw.githubusercontent.com/silk-security/armis-cli/main/scripts/install.sh | bash
+    ```
+    
+    **Manual Download:**
+    Download the appropriate binary for your platform below.
+  footer: |
+    ---
+    
+    **Full Changelog**: https://github.com/silk-security/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+    
+    For issues or questions, visit: https://github.com/silk-security/armis-cli/issues
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"

@@ -18,5 +18,7 @@ var scanCmd = &cobra.Command{
 func init() {
         scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan")
         scanCmd.PersistentFlags().IntVar(&timeout, "timeout", 20, "Maximum time to wait for scan to complete (in minutes)")
-        rootCmd.AddCommand(scanCmd)
+        if rootCmd != nil {
+                rootCmd.AddCommand(scanCmd)
+        }
 }

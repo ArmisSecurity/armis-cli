@@ -13,7 +13,7 @@ import (
         "time"
 
         "github.com/hashicorp/go-retryablehttp"
-        "github.com/silk-security/Moose-CLI/internal/model"
+        "github.com/silk-security/armis-cli/internal/model"
 )
 
 type Client struct {

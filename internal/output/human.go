@@ -8,7 +8,7 @@ import (
         "sort"
         "strings"
 
-        "github.com/silk-security/Moose-CLI/internal/model"
+        "github.com/silk-security/armis-cli/internal/model"
 )
 
 type HumanFormatter struct{}
@@ -43,12 +43,6 @@ func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
                 icon := getSeverityIcon(sev)
                 color := getSeverityColor(sev)
                 fmt.Fprintf(w, "  %s %s%-8s%s %d\n", icon, color, sev, colorReset, count)
-        }
-        fmt.Fprintf(w, "\n")
-
-        fmt.Fprintf(w, "By Type:\n")
-        for findingType, count := range result.Summary.ByType {
-                fmt.Fprintf(w, "  • %-15s %d\n", findingType, count)
         }
         fmt.Fprintf(w, "\n")
 

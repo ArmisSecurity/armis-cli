@@ -23,12 +23,24 @@ var (
         tenantID   string
         pageLimit  int
         debug      bool
+        
+        version = "dev"
+        commit  = "none"
+        date    = "unknown"
 )
 
 var rootCmd = &cobra.Command{
         Use:   "armis",
         Short: "Armis Security Scanner CLI",
         Long:  `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
+        Version: version,
+}
+
+func SetVersion(v, c, d string) {
+        version = v
+        commit = c
+        date = d
+        rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
 }
 
 func Execute() error {
