@@ -4,10 +4,11 @@ import (
         "context"
         "fmt"
         "os"
+        "time"
 
-        "github.com/silk-security/Moose-CLI/internal/api"
-        "github.com/silk-security/Moose-CLI/internal/output"
-        "github.com/silk-security/Moose-CLI/internal/scan/repo"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/output"
+        "github.com/silk-security/armis-cli/internal/scan/repo"
         "github.com/spf13/cobra"
 )
 
@@ -29,8 +30,19 @@ var scanRepoCmd = &cobra.Command{
                         return err
                 }
 
-                client := api.NewClient(apiBaseURL, token)
-                scanner := repo.NewScanner(client, noProgress, tid, pageLimit)
+                limit, err := getPageLimit()
+                if err != nil {
+                        return err
+                }
+
+                baseURL := getAPIBaseURL()
+                if baseURL == "" {
+                        return fmt.Errorf("API base URL not configured: use --dev flag for development environment")
+                }
+
+                client := api.NewClient(baseURL, token, debug)
+                timeoutDuration := time.Duration(timeout) * time.Minute
+                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration)
 
                 ctx := context.Background()
                 result, err := scanner.Scan(ctx, repoPath)

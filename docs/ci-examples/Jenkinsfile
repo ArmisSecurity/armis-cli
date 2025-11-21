@@ -17,7 +17,7 @@ pipeline {
         stage('Security Scan') {
             steps {
                 sh '''
-                    armis scan repo . --format junit --fail-on HIGH,CRITICAL > scan-results.xml
+                    armis-cli scan repo . --format junit --fail-on HIGH,CRITICAL > scan-results.xml
                 '''
             }
             post {

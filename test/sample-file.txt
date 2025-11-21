@@ -1,2 +1,0 @@
-This is a sample file for testing Armis CLI file scanning.
-It contains some text to make it a valid file to scan.

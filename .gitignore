@@ -2,3 +2,6 @@ bin/
 .DS_Store
 *.log
 nohup.out
+armis-cli
+moose
+armis

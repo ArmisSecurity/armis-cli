@@ -1,12 +1,12 @@
 # Armis Security Scanner CLI
 
-![CI](https://github.com/silk-security/Moose-CLI/actions/workflows/cli-self-scan.yml/badge.svg)
+![CI](https://github.com/silk-security/armis-cli/actions/workflows/cli-self-scan.yml/badge.svg)
 
 Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning into your CI/CD pipeline.
 
 ## Features
 
-- 🔍 **Multiple Scan Types**: Scan repositories, container images, and individual files
+- 🔍 **Multiple Scan Types**: Scan repositories and container images
 - 🚀 **CI/CD Ready**: Works seamlessly with Jenkins, GitHub Actions, GitLab CI, Azure DevOps, BitBucket, CircleCI, and more
 - 📊 **Multiple Output Formats**: Human-readable, JSON, SARIF, and JUnit XML
 - 🎯 **Configurable Exit Codes**: Fail builds based on severity thresholds
@@ -25,12 +25,12 @@ curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts
 ### Using Go
 
 ```bash
-go install github.com/silk-security/Moose-CLI/cmd/armis@latest
+go install github.com/silk-security/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Manual Download
 
-Download the latest release for your platform from the [releases page](https://github.com/silk-security/Moose-CLI/releases).
+Download the latest release for your platform from the [releases page](https://github.com/silk-security/armis-cli/releases).
 
 ## Quick Start
 
@@ -43,19 +43,13 @@ export ARMIS_API_TOKEN="your-api-token-here"
 ### Scan a repository
 
 ```bash
-armis scan repo ./my-project
+armis-cli scan repo ./my-project
 ```
 
 ### Scan a container image
 
 ```bash
-armis scan image nginx:latest
-```
-
-### Scan a file
-
-```bash
-armis scan file ./app.jar
+armis-cli scan image nginx:latest
 ```
 
 ## Usage
@@ -73,17 +67,17 @@ armis scan file ./app.jar
 
 ### Scan Repository
 
-Scans a local directory, zips it, and uploads to Armis Cloud for analysis.
+Scans a local directory, creates a tarball, and uploads to Armis Cloud for analysis.
 
 ```bash
-armis scan repo [path]
+armis-cli scan repo [path] --tenant-id [tenant-id]
 ```
 
 **Size Limit**: 2GB
 
 **Example**:
 ```bash
-armis scan repo ./my-app --format json --fail-on HIGH,CRITICAL
+armis-cli scan repo ./my-app --tenant-id my-tenant --format json --fail-on HIGH,CRITICAL
 ```
 
 ### Scan Container Image
@@ -91,8 +85,8 @@ armis scan repo ./my-app --format json --fail-on HIGH,CRITICAL
 Scans a container image (local or remote) or a tarball.
 
 ```bash
-armis scan image [image-name]
-armis scan image --tarball [path-to-tarball]
+armis-cli scan image [image-name] --tenant-id [tenant-id]
+armis-cli scan image --tarball [path-to-tarball] --tenant-id [tenant-id]
 ```
 
 **Size Limit**: 5GB
@@ -100,28 +94,13 @@ armis scan image --tarball [path-to-tarball]
 **Examples**:
 ```bash
 # Scan remote image
-armis scan image nginx:latest
+armis-cli scan image nginx:latest --tenant-id my-tenant
 
 # Scan local image
-armis scan image my-app:v1.0.0
+armis-cli scan image my-app:v1.0.0 --tenant-id my-tenant
 
 # Scan tarball
-armis scan image --tarball ./image.tar
-```
-
-### Scan File
-
-Scans a single file for vulnerabilities.
-
-```bash
-armis scan file [path]
-```
-
-**Size Limit**: 50MB
-
-**Example**:
-```bash
-armis scan file ./app.jar --format sarif
+armis-cli scan image --tarball ./image.tar --tenant-id my-tenant
 ```
 
 ## Output Formats
@@ -131,7 +110,7 @@ armis scan file ./app.jar --format sarif
 Colorful, formatted output with tables and summaries.
 
 ```bash
-armis scan repo ./my-app
+armis-cli scan repo ./my-app
 ```
 
 ### JSON
@@ -139,7 +118,7 @@ armis scan repo ./my-app
 Machine-readable JSON output.
 
 ```bash
-armis scan repo ./my-app --format json
+armis-cli scan repo ./my-app --format json
 ```
 
 ### SARIF
@@ -147,7 +126,7 @@ armis scan repo ./my-app --format json
 Static Analysis Results Interchange Format for tool integration.
 
 ```bash
-armis scan repo ./my-app --format sarif > results.sarif
+armis-cli scan repo ./my-app --format sarif > results.sarif
 ```
 
 ### JUnit XML
@@ -155,7 +134,7 @@ armis scan repo ./my-app --format sarif > results.sarif
 Test report format for CI/CD integration.
 
 ```bash
-armis scan repo ./my-app --format junit > results.xml
+armis-cli scan repo ./my-app --format junit > results.xml
 ```
 
 ## CI/CD Integration
@@ -180,7 +159,7 @@ jobs:
         env:
           ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
         run: |
-          armis scan repo . --format sarif --fail-on HIGH,CRITICAL
+          armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
 ```
 
 ### GitLab CI
@@ -193,7 +172,7 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
   script:
-    - armis scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --format json --fail-on CRITICAL
   variables:
     ARMIS_API_TOKEN: $ARMIS_API_TOKEN
 ```
@@ -213,7 +192,7 @@ pipeline {
             steps {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
-                    armis scan repo . --format junit > scan-results.xml
+                    armis-cli scan repo . --format junit > scan-results.xml
                 '''
                 junit 'scan-results.xml'
             }
@@ -237,7 +216,7 @@ steps:
   displayName: 'Install Armis CLI'
 
 - script: |
-    armis scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
   env:
     ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
   displayName: 'Run Security Scan'
@@ -266,7 +245,7 @@ jobs:
       - run:
           name: Run Security Scan
           command: |
-            armis scan repo . --format json --fail-on HIGH,CRITICAL
+            armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
 
 workflows:
   version: 2
@@ -286,7 +265,7 @@ pipelines:
         script:
           - apk add --no-cache curl bash
           - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
-          - armis scan repo . --format json --fail-on CRITICAL
+          - armis-cli scan repo . --format json --fail-on CRITICAL
 ```
 
 ## Environment Variables
@@ -300,7 +279,6 @@ pipelines:
 - **Size Limits**: Enforced to prevent resource exhaustion
   - Repositories: 2GB
   - Container Images: 5GB
-  - Files: 50MB
 - **Authentication**: API tokens are never logged or exposed
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
@@ -327,15 +305,25 @@ pipelines:
 - `1` - Scan found blocking findings (configurable with `--fail-on`)
 - `>1` - Error occurred during scan
 
+## Releases
+
+New versions are automatically built and published when version tags are pushed. Each release includes:
+
+- Pre-built binaries for macOS, Linux, and Windows (amd64 and arm64)
+- SHA256 checksums for verification
+- Automated changelog generation
+
+Visit the [releases page](https://github.com/silk-security/armis-cli/releases) to download specific versions.
+
 ## Building from Source
 
 ```bash
-git clone https://github.com/silk-security/Moose-CLI.git
-cd Moose-CLI
+git clone https://github.com/silk-security/armis-cli.git
+cd armis-cli
 make build
 ```
 
-The binary will be in `bin/armis`.
+The binary will be in `bin/armis-cli`.
 
 ## Development
 
@@ -352,7 +340,7 @@ make release
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/Moose-CLI).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/armis-cli).
 
 ## License
 

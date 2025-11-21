@@ -7,7 +7,7 @@ pipelines:
         script:
           - apk add --no-cache curl bash docker
           - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
-          - armis scan repo . --format json --fail-on HIGH,CRITICAL
+          - armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
         services:
           - docker
   
@@ -18,7 +18,7 @@ pipelines:
           script:
             - apk add --no-cache curl bash docker
             - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
-            - armis scan repo . --format json --fail-on CRITICAL
+            - armis-cli scan repo . --format json --fail-on CRITICAL
           services:
             - docker
 

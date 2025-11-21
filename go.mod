@@ -1,6 +1,6 @@
-module github.com/silk-security/Moose-CLI
+module github.com/silk-security/armis-cli
 
-go 1.25.2
+go 1.23
 
 require (
 	github.com/distribution/reference v0.6.0

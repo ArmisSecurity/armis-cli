@@ -2,31 +2,42 @@ package image
 
 import (
         "context"
+        "encoding/json"
         "fmt"
         "os"
         "os/exec"
         "path/filepath"
+        "strings"
+        "time"
 
-        "github.com/silk-security/Moose-CLI/internal/api"
-        "github.com/silk-security/Moose-CLI/internal/model"
-        "github.com/silk-security/Moose-CLI/internal/progress"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/progress"
 )
 
-const MaxImageSize = 5 * 1024 * 1024 * 1024
+const (
+        MaxImageSize   = 5 * 1024 * 1024 * 1024
+        dockerBinary   = "docker"
+        podmanBinary   = "podman"
+)
 
 type Scanner struct {
-        client     *api.Client
-        noProgress bool
-        tenantID   string
-        pageLimit  int
+        client       *api.Client
+        noProgress   bool
+        tenantID     string
+        pageLimit    int
+        includeTests bool
+        timeout      time.Duration
 }
 
-func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int) *Scanner {
+func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration) *Scanner {
         return &Scanner{
-                client:     client,
-                noProgress: noProgress,
-                tenantID:   tenantID,
-                pageLimit:  pageLimit,
+                client:       client,
+                noProgress:   noProgress,
+                tenantID:     tenantID,
+                pageLimit:    pageLimit,
+                includeTests: includeTests,
+                timeout:      timeout,
         }
 }
 
@@ -45,15 +56,21 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
         if err != nil {
                 return nil, fmt.Errorf("failed to create temp file: %w", err)
         }
-        defer os.Remove(tmpFile.Name())
-        defer tmpFile.Close()
+        tmpFileName := tmpFile.Name()
 
         fmt.Printf("Exporting image: %s\n", imageName)
-        if err := s.exportImage(ctx, imageName, tmpFile.Name()); err != nil {
+        if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
+                tmpFile.Close()
+                os.Remove(tmpFileName)
                 return nil, fmt.Errorf("failed to export image: %w", err)
         }
 
-        return s.ScanTarball(ctx, tmpFile.Name())
+        result, scanErr := s.ScanTarball(ctx, tmpFileName)
+
+        tmpFile.Close()
+        os.Remove(tmpFileName)
+
+        return result, scanErr
 }
 
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
@@ -72,9 +89,12 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
         }
         defer file.Close()
 
-        progressReader := progress.NewReader(file, info.Size(), "Uploading image", s.noProgress)
+        uploadSpinner := progress.NewSpinner("Uploading image...", s.noProgress)
+        uploadSpinner.Start()
 
-        scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), progressReader, info.Size())
+        scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), file, info.Size())
+        uploadSpinner.Stop()
+
         if err != nil {
                 return nil, fmt.Errorf("failed to upload image: %w", err)
         }
@@ -84,26 +104,30 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
         spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
         spinner.Start()
 
-        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5)
+        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
+        elapsed := spinner.GetElapsed()
         spinner.Stop()
 
         if err != nil {
                 return nil, fmt.Errorf("failed to wait for scan: %w", err)
         }
 
-        fmt.Println("Scan completed. Fetching results...")
+        fmt.Printf("Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
 
         findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
         if err != nil {
                 return nil, fmt.Errorf("failed to fetch results: %w", err)
         }
 
-        result := buildScanResult(scanID, findings)
+        result := buildScanResult(scanID, findings, s.client.IsDebug())
         return result, nil
 }
 
 func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {
         dockerCmd := getDockerCommand()
+        if err := validateDockerCommand(dockerCmd); err != nil {
+                return err
+        }
 
         cmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName)
         cmd.Stdout = os.Stdout
@@ -137,15 +161,24 @@ func isDockerAvailable() bool {
 }
 
 func getDockerCommand() string {
-        cmd := exec.Command("docker", "version")
+        cmd := exec.Command(dockerBinary, "version")
         if err := cmd.Run(); err == nil {
-                return "docker"
+                return dockerBinary
         }
 
-        return "podman"
+        return podmanBinary
 }
 
-func buildScanResult(scanID string, findings []model.Finding) *model.ScanResult {
+func validateDockerCommand(cmd string) error {
+        if cmd != dockerBinary && cmd != podmanBinary {
+                return fmt.Errorf("unsupported container engine: %s", cmd)
+        }
+        return nil
+}
+
+func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool) *model.ScanResult {
+        findings := convertNormalizedFindings(normalizedFindings, debug)
+
         summary := model.Summary{
                 Total:      len(findings),
                 BySeverity: make(map[model.Severity]int),
@@ -163,4 +196,139 @@ func buildScanResult(scanID string, findings []model.Finding) *model.ScanResult 
                 Findings: findings,
                 Summary:  summary,
         }
+}
+
+func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, debug bool) []model.Finding {
+        var findings []model.Finding
+
+        for i, nf := range normalizedFindings {
+                if isEmptyFinding(nf) {
+                        continue
+                }
+
+                if debug {
+                        rawJSON, _ := json.Marshal(nf)
+                        fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+                }
+
+                finding := model.Finding{
+                        ID:          nf.NormalizedTask.FindingID,
+                        Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+                        Description: nf.NormalizedRemediation.Description,
+                        CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
+                        CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+                }
+
+                if finding.Description == "" {
+                        if nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" {
+                                finding.Description = nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown
+                        } else if nf.NormalizedTask.LongDescription != nil {
+                                finding.Description = *nf.NormalizedTask.LongDescription
+                        }
+                }
+
+                finding.Description = cleanDescription(finding.Description)
+
+                if nf.NormalizedRemediation.FindingCategory != nil {
+                        if category, ok := nf.NormalizedRemediation.FindingCategory.(string); ok {
+                                finding.FindingCategory = category
+                        }
+                }
+
+                loc := nf.NormalizedTask.ExtraData.CodeLocation
+                if loc.FileName != nil {
+                        finding.File = *loc.FileName
+                }
+                if loc.StartLine != nil {
+                        finding.StartLine = *loc.StartLine
+                }
+                if loc.EndLine != nil {
+                        finding.EndLine = *loc.EndLine
+                }
+                if loc.StartCol != nil {
+                        finding.StartColumn = *loc.StartCol
+                }
+                if loc.EndCol != nil {
+                        finding.EndColumn = *loc.EndCol
+                }
+
+                if len(loc.CodeSnippetLines) > 0 {
+                        finding.CodeSnippet = strings.Join(loc.CodeSnippetLines, "\n")
+                } else if loc.Snippet != nil {
+                        finding.CodeSnippet = *loc.Snippet
+                }
+
+                if loc.SnippetStartLine != nil {
+                        finding.SnippetStartLine = *loc.SnippetStartLine
+                }
+
+                if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {
+                        finding.Type = model.FindingTypeVulnerability
+                }
+
+                if loc.HasSecret {
+                        finding.Type = model.FindingTypeSecret
+                }
+
+                if finding.Type == "" {
+                        finding.Type = model.FindingTypeSCA
+                }
+
+                finding.Title = finding.Description
+
+                findings = append(findings, finding)
+        }
+
+        return findings
+}
+
+func cleanDescription(desc string) string {
+        lines := strings.Split(desc, "\n")
+        var cleaned []string
+        
+        for _, line := range lines {
+                line = strings.TrimSpace(line)
+                if strings.HasPrefix(line, "Code_location -") ||
+                   strings.HasPrefix(line, "Code Blob -") ||
+                   strings.HasPrefix(line, "Confidence -") {
+                        continue
+                }
+                if line != "" {
+                        cleaned = append(cleaned, line)
+                }
+        }
+        
+        return strings.Join(cleaned, " ")
+}
+
+func isEmptyFinding(nf model.NormalizedFinding) bool {
+        return nf.NormalizedRemediation.RemediationID == "" &&
+                nf.NormalizedRemediation.Description == "" &&
+                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) == 0 &&
+                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs) == 0
+}
+
+func mapSeverity(toolSeverity string) model.Severity {
+        switch strings.ToUpper(toolSeverity) {
+        case "CRITICAL":
+                return model.SeverityCritical
+        case "HIGH":
+                return model.SeverityHigh
+        case "MEDIUM":
+                return model.SeverityMedium
+        case "LOW":
+                return model.SeverityLow
+        default:
+                return model.SeverityInfo
+        }
+}
+
+func formatElapsed(d time.Duration) string {
+        d = d.Round(time.Second)
+        minutes := int(d.Minutes())
+        seconds := int(d.Seconds()) % 60
+        if minutes > 0 {
+                return fmt.Sprintf("%dm %ds", minutes, seconds)
+        }
+        return fmt.Sprintf("%ds", seconds)
 }
