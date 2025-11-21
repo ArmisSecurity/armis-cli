@@ -4,6 +4,7 @@ import (
         "context"
         "fmt"
         "os"
+        "time"
 
         "github.com/silk-security/Moose-CLI/internal/api"
         "github.com/silk-security/Moose-CLI/internal/output"
@@ -40,7 +41,8 @@ var scanRepoCmd = &cobra.Command{
                 }
 
                 client := api.NewClient(baseURL, token, debug)
-                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests)
+                timeoutDuration := time.Duration(timeout) * time.Minute
+                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration)
 
                 ctx := context.Background()
                 result, err := scanner.Scan(ctx, repoPath)

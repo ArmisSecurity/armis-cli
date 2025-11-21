@@ -4,6 +4,7 @@ import (
         "context"
         "fmt"
         "os"
+        "time"
 
         "github.com/silk-security/Moose-CLI/internal/api"
         "github.com/silk-security/Moose-CLI/internal/model"
@@ -47,7 +48,8 @@ var scanImageCmd = &cobra.Command{
                 }
 
                 client := api.NewClient(baseURL, token, debug)
-                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests)
+                timeoutDuration := time.Duration(timeout) * time.Minute
+                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration)
 
                 ctx := context.Background()
                 var result *model.ScanResult

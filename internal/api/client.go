@@ -131,18 +131,22 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
         return &result, nil
 }
 
-func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration) (*model.IngestStatusData, error) {
-        timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
+        if timeout <= 0 {
+                timeout = 20 * time.Minute
+        }
+
+        timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
         defer cancel()
 
-        ticker := time.NewTicker(pollInterval * time.Second)
+        ticker := time.NewTicker(pollInterval)
         defer ticker.Stop()
 
         for {
                 select {
                 case <-timeoutCtx.Done():
                         if timeoutCtx.Err() == context.DeadlineExceeded {
-                                return nil, fmt.Errorf("scan timed out after 20 minutes (scan ID: %s)", scanID)
+                                return nil, fmt.Errorf("scan timed out after %v (scan ID: %s)", timeout, scanID)
                         }
                         return nil, timeoutCtx.Err()
                 case <-ticker.C:

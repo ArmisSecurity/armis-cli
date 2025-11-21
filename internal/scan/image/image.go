@@ -23,15 +23,17 @@ type Scanner struct {
         tenantID     string
         pageLimit    int
         includeTests bool
+        timeout      time.Duration
 }
 
-func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool) *Scanner {
+func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration) *Scanner {
         return &Scanner{
                 client:       client,
                 noProgress:   noProgress,
                 tenantID:     tenantID,
                 pageLimit:    pageLimit,
                 includeTests: includeTests,
+                timeout:      timeout,
         }
 }
 
@@ -98,7 +100,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
         spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
         spinner.Start()
 
-        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5)
+        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
         elapsed := spinner.GetElapsed()
         spinner.Stop()
 
@@ -240,6 +242,10 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
                         finding.CodeSnippet = strings.Join(loc.CodeSnippetLines, "\n")
                 } else if loc.Snippet != nil {
                         finding.CodeSnippet = *loc.Snippet
+                }
+
+                if loc.SnippetStartLine != nil {
+                        finding.SnippetStartLine = *loc.SnippetStartLine
                 }
 
                 if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {

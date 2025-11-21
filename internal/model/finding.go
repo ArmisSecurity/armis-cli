@@ -31,6 +31,7 @@ type Finding struct {
         StartColumn      int         `json:"start_column,omitempty"`
         EndColumn        int         `json:"end_column,omitempty"`
         CodeSnippet      string      `json:"code_snippet,omitempty"`
+        SnippetStartLine int         `json:"snippet_start_line,omitempty"`
         CVEs             []string    `json:"cves,omitempty"`
         CWEs             []string    `json:"cwes,omitempty"`
         FindingCategory  string      `json:"finding_category,omitempty"`
