@@ -30,7 +30,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-        Use:   "armis",
+        Use:   "armis-cli",
         Short: "Armis Security Scanner CLI",
         Long:  `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
         Version: version,

@@ -3,7 +3,7 @@ version: 2.1
 jobs:
   security-scan:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/base@sha256:15eda1bafc1ec89dd277633d7fbe63b71a4572881685697b9f478d2f7a9a0c4d
     
     steps:
       - checkout

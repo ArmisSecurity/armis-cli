@@ -50,9 +50,10 @@ type ScanResult struct {
 }
 
 type Summary struct {
-        Total      int                 `json:"total"`
-        BySeverity map[Severity]int    `json:"by_severity"`
-        ByType     map[FindingType]int `json:"by_type"`
+        Total                  int                 `json:"total"`
+        BySeverity             map[Severity]int    `json:"by_severity"`
+        ByType                 map[FindingType]int `json:"by_type"`
+        FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
 }
 
 type IngestUploadResponse struct {

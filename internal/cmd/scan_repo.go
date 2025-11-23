@@ -42,7 +42,7 @@ var scanRepoCmd = &cobra.Command{
 
                 client := api.NewClient(baseURL, token, debug)
                 timeoutDuration := time.Duration(timeout) * time.Minute
-                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration)
+                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration, includeNonExploitable)
 
                 ctx := context.Background()
                 result, err := scanner.Scan(ctx, repoPath)

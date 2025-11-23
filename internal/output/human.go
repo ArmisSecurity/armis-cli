@@ -28,6 +28,9 @@ func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
         fmt.Fprintf(w, "───────────────────────────────────────────────────────────────\n")
         fmt.Fprintf(w, "\n")
         fmt.Fprintf(w, "Total Findings: %d\n", result.Summary.Total)
+        if result.Summary.FilteredNonExploitable > 0 {
+                fmt.Fprintf(w, "Filtered (Non-Exploitable): %d\n", result.Summary.FilteredNonExploitable)
+        }
         fmt.Fprintf(w, "\n")
 
         fmt.Fprintf(w, "By Severity:\n")

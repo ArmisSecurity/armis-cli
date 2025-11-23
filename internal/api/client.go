@@ -12,26 +12,27 @@ import (
         "strings"
         "time"
 
-        "github.com/hashicorp/go-retryablehttp"
+        "github.com/silk-security/armis-cli/internal/httpclient"
         "github.com/silk-security/armis-cli/internal/model"
 )
 
 type Client struct {
-        httpClient *retryablehttp.Client
+        httpClient *httpclient.Client
         baseURL    string
         token      string
         debug      bool
 }
 
 func NewClient(baseURL, token string, debug bool) *Client {
-        retryClient := retryablehttp.NewClient()
-        retryClient.RetryMax = 3
-        retryClient.RetryWaitMin = 1 * time.Second
-        retryClient.RetryWaitMax = 10 * time.Second
-        retryClient.Logger = nil
+        httpClient := httpclient.NewClient(httpclient.Config{
+                RetryMax:     3,
+                RetryWaitMin: 1 * time.Second,
+                RetryWaitMax: 10 * time.Second,
+                Timeout:      60 * time.Second,
+        })
 
         return &Client{
-                httpClient: retryClient,
+                httpClient: httpClient,
                 baseURL:    baseURL,
                 token:      token,
                 debug:      debug,
@@ -72,7 +73,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
         }
 
         endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
-        req, err := retryablehttp.NewRequestWithContext(ctx, "POST", endpoint, body)
+        req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
         if err != nil {
                 return "", fmt.Errorf("failed to create request: %w", err)
         }
@@ -105,7 +106,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
         params.Add("tenant_id", tenantID)
         params.Add("scan_id", scanID)
 
-        req, err := retryablehttp.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
+        req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
         if err != nil {
                 return nil, fmt.Errorf("failed to create request: %w", err)
         }
@@ -183,7 +184,7 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
                 params.Add("cursor", cursor)
         }
 
-        req, err := retryablehttp.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
+        req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
         if err != nil {
                 return nil, fmt.Errorf("failed to create request: %w", err)
         }
@@ -243,7 +244,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 }
 
 func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanResult, error) {
-        req, err := retryablehttp.NewRequestWithContext(ctx, "GET", c.baseURL+"/scans/"+scanID, nil)
+        req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/scans/"+scanID, nil)
         if err != nil {
                 return nil, fmt.Errorf("failed to create request: %w", err)
         }
