@@ -8,6 +8,7 @@ var (
         includeTests          bool
         timeout               int
         includeNonExploitable bool
+        groupBy               string
 )
 
 var scanCmd = &cobra.Command{
@@ -17,9 +18,10 @@ var scanCmd = &cobra.Command{
 }
 
 func init() {
-        scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan")
-        scanCmd.PersistentFlags().IntVar(&timeout, "timeout", 20, "Maximum time to wait for scan to complete (in minutes)")
-        scanCmd.PersistentFlags().BoolVar(&includeNonExploitable, "include-non-exploitable", false, "Include findings that are marked non-exploitable by scanner 38295677")
+        scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan (default: false, test files are excluded)")
+        scanCmd.PersistentFlags().IntVar(&timeout, "timeout", 20, "Maximum time in minutes to wait for scan completion (default: 20)")
+        scanCmd.PersistentFlags().BoolVar(&includeNonExploitable, "include-non-exploitable", false, "Include findings marked as non-exploitable (default: false, only exploitable findings shown)")
+        scanCmd.PersistentFlags().StringVar(&groupBy, "group-by", "none", "Group findings by: none, cwe, severity, file (default: none)")
         if rootCmd != nil {
                 rootCmd.AddCommand(scanCmd)
         }

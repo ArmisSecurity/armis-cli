@@ -1,0 +1,50 @@
+# .armisignore - Exclude files and directories from Armis security scans
+# 
+# This file uses gitignore syntax and supports:
+# - Glob patterns (*.log, *.tmp)
+# - Directory exclusions (node_modules/, dist/)
+# - Negation patterns (!important.log)
+# - Comments (lines starting with #)
+#
+# Nested .armisignore files are supported in subdirectories
+
+# Build outputs
+dist/
+build/
+target/
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Dependencies (usually already excluded by default)
+node_modules/
+vendor/
+venv/
+.venv/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+
+# Test coverage and reports
+coverage/
+*.coverage
+htmlcov/
+
+# Documentation builds
+docs/_build/
+site/
+
+# Example: Include a specific file that would otherwise be ignored
+# !important.log

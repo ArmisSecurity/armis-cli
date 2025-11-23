@@ -103,3 +103,7 @@ func countFailures(findings []model.Finding) int {
         }
         return count
 }
+
+func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+        return f.Format(result, w)
+}

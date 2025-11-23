@@ -4,16 +4,35 @@ import (
         "fmt"
         "io"
         "os"
+        "os/exec"
         "path/filepath"
         "sort"
         "strings"
+        "time"
 
         "github.com/silk-security/armis-cli/internal/model"
 )
 
 type HumanFormatter struct{}
 
+type GitBlameInfo struct {
+        Author    string
+        Email     string
+        Date      string
+        CommitSHA string
+}
+
+type FindingGroup struct {
+        Key      string
+        Label    string
+        Findings []model.Finding
+}
+
 func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
+        return f.FormatWithOptions(result, w, FormatOptions{GroupBy: "none"})
+}
+
+func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
         fmt.Fprintf(w, "\n")
         fmt.Fprintf(w, "═══════════════════════════════════════════════════════════════\n")
         fmt.Fprintf(w, "  ARMIS SECURITY SCAN RESULTS\n")
@@ -23,90 +42,22 @@ func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
         fmt.Fprintf(w, "Status:      %s\n", result.Status)
         fmt.Fprintf(w, "\n")
 
-        fmt.Fprintf(w, "───────────────────────────────────────────────────────────────\n")
-        fmt.Fprintf(w, "  SUMMARY\n")
-        fmt.Fprintf(w, "───────────────────────────────────────────────────────────────\n")
-        fmt.Fprintf(w, "\n")
-        fmt.Fprintf(w, "Total Findings: %d\n", result.Summary.Total)
-        if result.Summary.FilteredNonExploitable > 0 {
-                fmt.Fprintf(w, "Filtered (Non-Exploitable): %d\n", result.Summary.FilteredNonExploitable)
-        }
-        fmt.Fprintf(w, "\n")
-
-        fmt.Fprintf(w, "By Severity:\n")
-        severities := []model.Severity{
-                model.SeverityCritical,
-                model.SeverityHigh,
-                model.SeverityMedium,
-                model.SeverityLow,
-                model.SeverityInfo,
-        }
-        for _, sev := range severities {
-                count := result.Summary.BySeverity[sev]
-                icon := getSeverityIcon(sev)
-                color := getSeverityColor(sev)
-                fmt.Fprintf(w, "  %s %s%-8s%s %d\n", icon, color, sev, colorReset, count)
-        }
+        renderSummaryDashboard(w, result)
         fmt.Fprintf(w, "\n")
 
         if len(result.Findings) > 0 {
-                sortedFindings := sortFindingsBySeverity(result.Findings)
-                
                 fmt.Fprintf(w, "───────────────────────────────────────────────────────────────\n")
                 fmt.Fprintf(w, "  FINDINGS\n")
                 fmt.Fprintf(w, "───────────────────────────────────────────────────────────────\n")
                 fmt.Fprintf(w, "\n")
 
-                for i, finding := range sortedFindings {
-                        if i > 0 {
-                                fmt.Fprintf(w, "\n")
-                        }
-
-                        color := getSeverityColor(finding.Severity)
-                        icon := getSeverityIcon(finding.Severity)
-                        
-                        fmt.Fprintf(w, "%s %s%s%s\n", icon, color, finding.Severity, colorReset)
-                        fmt.Fprintf(w, "\n")
-                        fmt.Fprintf(w, "%s\n", finding.Title)
-                        fmt.Fprintf(w, "\n")
-
-                        if finding.FindingCategory != "" {
-                                fmt.Fprintf(w, "Category:    %s\n", finding.FindingCategory)
-                        }
-
-                        if len(finding.CVEs) > 0 {
-                                fmt.Fprintf(w, "CVE:         %s\n", strings.Join(finding.CVEs, ", "))
-                        }
-
-                        if len(finding.CWEs) > 0 {
-                                fmt.Fprintf(w, "CWE:         %s\n", strings.Join(finding.CWEs, ", "))
-                        }
-
-                        if finding.File != "" {
-                                location := finding.File
-                                if finding.StartLine > 0 {
-                                        if finding.EndLine > 0 && finding.EndLine != finding.StartLine {
-                                                location = fmt.Sprintf("%s:%d-%d", location, finding.StartLine, finding.EndLine)
-                                        } else {
-                                                location = fmt.Sprintf("%s:%d", location, finding.StartLine)
-                                        }
-                                        if finding.StartColumn > 0 {
-                                                location = fmt.Sprintf("%s:%d", location, finding.StartColumn)
-                                        }
-                                }
-                                fmt.Fprintf(w, "Location:    %s\n", location)
-                        }
-
-                        if finding.CodeSnippet != "" {
-                                fmt.Fprintf(w, "\nCode:\n")
-                                fmt.Fprintf(w, "%s\n", formatCodeSnippet(finding))
-                        }
-
-                        if i < len(sortedFindings)-1 {
-                                fmt.Fprintf(w, "\n───────────────────────────────────────────────────────────────\n")
-                        }
+                if opts.GroupBy != "" && opts.GroupBy != "none" {
+                        groups := groupFindings(result.Findings, opts.GroupBy)
+                        renderGroupedFindings(w, groups, opts)
+                } else {
+                        sortedFindings := sortFindingsBySeverity(result.Findings)
+                        renderFindings(w, sortedFindings, opts)
                 }
-                fmt.Fprintf(w, "\n")
         }
 
         fmt.Fprintf(w, "═══════════════════════════════════════════════════════════════\n")
@@ -569,4 +520,297 @@ func detectLanguage(filename string) string {
         }
         
         return ""
+}
+
+func renderSummaryDashboard(w io.Writer, result *model.ScanResult) {
+        width := 63
+        
+        fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", width-2))
+        fmt.Fprintf(w, "│  📊 SCAN SUMMARY%s│\n", strings.Repeat(" ", width-19))
+        fmt.Fprintf(w, "├%s┤\n", strings.Repeat("─", width-2))
+        
+        fmt.Fprintf(w, "│  Total Findings: %-42d│\n", result.Summary.Total)
+        
+        if result.Summary.FilteredNonExploitable > 0 {
+                fmt.Fprintf(w, "│  Filtered (Non-Exploitable): %-31d│\n", result.Summary.FilteredNonExploitable)
+        }
+        
+        fmt.Fprintf(w, "│%s│\n", strings.Repeat(" ", width-2))
+        
+        severities := []model.Severity{
+                model.SeverityCritical,
+                model.SeverityHigh,
+                model.SeverityMedium,
+                model.SeverityLow,
+                model.SeverityInfo,
+        }
+        
+        for _, sev := range severities {
+                count := result.Summary.BySeverity[sev]
+                if count > 0 {
+                        icon := getSeverityIcon(sev)
+                        label := fmt.Sprintf("%s %s:", icon, sev)
+                        padding := width - len(label) - len(fmt.Sprintf("%d", count)) - 4
+                        fmt.Fprintf(w, "│  %-*s %d%s│\n", len(label)+padding, label, count, strings.Repeat(" ", 1))
+                }
+        }
+        
+        fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", width-2))
+}
+
+func renderFindings(w io.Writer, findings []model.Finding, opts FormatOptions) {
+        for i, finding := range findings {
+                if i > 0 {
+                        fmt.Fprintf(w, "\n")
+                }
+
+                renderFinding(w, finding, opts)
+
+                if i < len(findings)-1 {
+                        fmt.Fprintf(w, "\n───────────────────────────────────────────────────────────────\n")
+                }
+        }
+        fmt.Fprintf(w, "\n")
+}
+
+func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
+        color := getSeverityColor(finding.Severity)
+        icon := getSeverityIcon(finding.Severity)
+        
+        fmt.Fprintf(w, "%s %s%s%s\n", icon, color, finding.Severity, colorReset)
+        fmt.Fprintf(w, "\n")
+        fmt.Fprintf(w, "%s\n", finding.Title)
+        fmt.Fprintf(w, "\n")
+
+        if finding.FindingCategory != "" {
+                fmt.Fprintf(w, "Category:    %s\n", finding.FindingCategory)
+        }
+
+        if len(finding.CVEs) > 0 {
+                fmt.Fprintf(w, "CVE:         %s\n", strings.Join(finding.CVEs, ", "))
+        }
+
+        if len(finding.CWEs) > 0 {
+                fmt.Fprintf(w, "CWE:         %s\n", strings.Join(finding.CWEs, ", "))
+        }
+
+        if finding.File != "" {
+                location := finding.File
+                if finding.StartLine > 0 {
+                        if finding.EndLine > 0 && finding.EndLine != finding.StartLine {
+                                location = fmt.Sprintf("%s:%d-%d", location, finding.StartLine, finding.EndLine)
+                        } else {
+                                location = fmt.Sprintf("%s:%d", location, finding.StartLine)
+                        }
+                        if finding.StartColumn > 0 {
+                                location = fmt.Sprintf("%s:%d", location, finding.StartColumn)
+                        }
+                }
+                fmt.Fprintf(w, "Location:    %s\n", location)
+
+                if opts.RepoPath != "" && finding.StartLine > 0 {
+                        if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine); blameInfo != nil {
+                                maskedEmail := maskEmail(blameInfo.Email)
+                                fmt.Fprintf(w, "Git Blame:   %s <%s> (%s, %s)\n", 
+                                        blameInfo.Author, maskedEmail, blameInfo.Date, blameInfo.CommitSHA[:7])
+                        }
+                }
+        }
+
+        if finding.CodeSnippet != "" {
+                fmt.Fprintf(w, "\nCode:\n")
+                fmt.Fprintf(w, "%s\n", formatCodeSnippet(finding))
+        }
+}
+
+func renderGroupedFindings(w io.Writer, groups []FindingGroup, opts FormatOptions) {
+        for i, group := range groups {
+                if i > 0 {
+                        fmt.Fprintf(w, "\n")
+                }
+
+                fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", 61))
+                fmt.Fprintf(w, "│ %s%s│\n", group.Label, strings.Repeat(" ", 61-len(group.Label)-2))
+                fmt.Fprintf(w, "│ Count: %-53d│\n", len(group.Findings))
+                fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", 61))
+                fmt.Fprintf(w, "\n")
+
+                for j, finding := range group.Findings {
+                        if j > 0 {
+                                fmt.Fprintf(w, "\n")
+                        }
+                        renderFinding(w, finding, opts)
+                        if j < len(group.Findings)-1 {
+                                fmt.Fprintf(w, "\n───────────────────────────────────────────────────────────────\n")
+                        }
+                }
+
+                if i < len(groups)-1 {
+                        fmt.Fprintf(w, "\n\n")
+                }
+        }
+        fmt.Fprintf(w, "\n")
+}
+
+func groupFindings(findings []model.Finding, groupBy string) []FindingGroup {
+        groupMap := make(map[string][]model.Finding)
+
+        for _, finding := range findings {
+                var key string
+                switch groupBy {
+                case "cwe":
+                        if len(finding.CWEs) > 0 {
+                                key = finding.CWEs[0]
+                        } else {
+                                key = "No CWE"
+                        }
+                case "severity":
+                        key = string(finding.Severity)
+                case "file":
+                        if finding.File != "" {
+                                key = finding.File
+                        } else {
+                                key = "Unknown File"
+                        }
+                default:
+                        key = "All"
+                }
+                groupMap[key] = append(groupMap[key], finding)
+        }
+
+        var groups []FindingGroup
+        for key, findings := range groupMap {
+                label := key
+                if groupBy == "cwe" && key != "No CWE" {
+                        label = fmt.Sprintf("CWE: %s", key)
+                } else if groupBy == "severity" {
+                        icon := getSeverityIcon(model.Severity(key))
+                        label = fmt.Sprintf("%s %s", icon, key)
+                } else if groupBy == "file" {
+                        label = fmt.Sprintf("File: %s", key)
+                }
+
+                groups = append(groups, FindingGroup{
+                        Key:      key,
+                        Label:    label,
+                        Findings: sortFindingsBySeverity(findings),
+                })
+        }
+
+        sort.Slice(groups, func(i, j int) bool {
+                if groupBy == "severity" {
+                        return severityRank(model.Severity(groups[i].Key)) < severityRank(model.Severity(groups[j].Key))
+                }
+                return groups[i].Key < groups[j].Key
+        })
+
+        return groups
+}
+
+func severityRank(sev model.Severity) int {
+        ranks := map[model.Severity]int{
+                model.SeverityCritical: 0,
+                model.SeverityHigh:     1,
+                model.SeverityMedium:   2,
+                model.SeverityLow:      3,
+                model.SeverityInfo:     4,
+        }
+        if rank, ok := ranks[sev]; ok {
+                return rank
+        }
+        return 999
+}
+
+func isGitRepo(repoPath string) bool {
+        cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+        cmd.Dir = repoPath
+        err := cmd.Run()
+        return err == nil
+}
+
+func getGitBlame(repoPath, file string, line int) *GitBlameInfo {
+        if !isGitRepo(repoPath) {
+                return nil
+        }
+
+        filePath := filepath.Join(repoPath, file)
+        if _, err := os.Stat(filePath); os.IsNotExist(err) {
+                return nil
+        }
+
+        cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", file)
+        cmd.Dir = repoPath
+        output, err := cmd.Output()
+        if err != nil {
+                return nil
+        }
+
+        return parseGitBlame(string(output))
+}
+
+func parseGitBlame(output string) *GitBlameInfo {
+        lines := strings.Split(output, "\n")
+        if len(lines) == 0 {
+                return nil
+        }
+
+        info := &GitBlameInfo{}
+        
+        parts := strings.Fields(lines[0])
+        if len(parts) > 0 {
+                info.CommitSHA = parts[0]
+        }
+
+        for _, line := range lines {
+                if strings.HasPrefix(line, "author ") {
+                        info.Author = strings.TrimPrefix(line, "author ")
+                } else if strings.HasPrefix(line, "author-mail ") {
+                        email := strings.TrimPrefix(line, "author-mail ")
+                        info.Email = strings.Trim(email, "<>")
+                } else if strings.HasPrefix(line, "author-time ") {
+                        timestamp := strings.TrimPrefix(line, "author-time ")
+                        if ts, err := time.Parse("1136239445", timestamp); err == nil {
+                                info.Date = ts.Format("2006-01-02")
+                        } else {
+                                info.Date = timestamp
+                        }
+                }
+        }
+
+        if info.Author == "" || info.CommitSHA == "" {
+                return nil
+        }
+
+        return info
+}
+
+func maskEmail(email string) string {
+        if email == "" {
+                return ""
+        }
+
+        parts := strings.Split(email, "@")
+        if len(parts) != 2 {
+                return email
+        }
+
+        localPart := parts[0]
+        domain := parts[1]
+
+        if len(localPart) <= 2 {
+                return localPart[0:1] + "***@" + domain[0:1] + "***." + getTopLevelDomain(domain)
+        }
+
+        maskedLocal := localPart[0:1] + "***"
+        maskedDomain := domain[0:1] + "***." + getTopLevelDomain(domain)
+
+        return maskedLocal + "@" + maskedDomain
+}
+
+func getTopLevelDomain(domain string) string {
+        parts := strings.Split(domain, ".")
+        if len(parts) > 0 {
+                return parts[len(parts)-1]
+        }
+        return domain
 }

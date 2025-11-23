@@ -56,7 +56,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
                 return nil, fmt.Errorf("path is not a directory: %s", absPath)
         }
 
-        size, err := calculateDirSize(absPath, s.includeTests)
+        ignoreMatcher, err := LoadIgnorePatterns(absPath)
+        if err != nil {
+                return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+        }
+
+        size, err := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
         if err != nil {
                 return nil, fmt.Errorf("failed to calculate directory size: %w", err)
         }
@@ -67,17 +72,20 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
         pr, pw := io.Pipe()
 
+        spinner := progress.NewSpinner("Creating a compressed archive...", s.noProgress)
+        spinner.Start()
+
         errChan := make(chan error, 1)
         go func() {
                 defer pw.Close()
-                errChan <- s.tarGzDirectory(absPath, pw)
+                errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
         }()
 
-        uploadSpinner := progress.NewSpinner("Uploading repository...", s.noProgress)
-        uploadSpinner.Start()
+        time.Sleep(500 * time.Millisecond)
+        spinner.Update("Uploading archive to Armis Cloud...")
 
         scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
-        uploadSpinner.Stop()
+        spinner.Stop()
 
         if err != nil {
                 return nil, fmt.Errorf("failed to upload repository: %w", err)
@@ -89,20 +97,25 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
         fmt.Printf("\nScan initiated with ID: %s\n", scanID)
 
-        spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
-        spinner.Start()
+        analysisSpinner := progress.NewSpinner("Analyzing code for vulnerabilities...", s.noProgress)
+        analysisSpinner.Start()
 
         _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
-        elapsed := spinner.GetElapsed()
-        spinner.Stop()
+        elapsed := analysisSpinner.GetElapsed()
+        analysisSpinner.Stop()
 
         if err != nil {
                 return nil, fmt.Errorf("failed to wait for scan: %w", err)
         }
 
-        fmt.Printf("Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
+        fmt.Printf("Analysis completed in %s\n\n", formatElapsed(elapsed))
+
+        fetchSpinner := progress.NewSpinner("Fetching scan results...", s.noProgress)
+        fetchSpinner.Start()
 
         findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+        fetchSpinner.Stop()
+
         if err != nil {
                 return nil, fmt.Errorf("failed to fetch results: %w", err)
         }
@@ -111,7 +124,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
         return result, nil
 }
 
-func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
+func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatcher *IgnoreMatcher) error {
         gzWriter := gzip.NewWriter(writer)
         defer gzWriter.Close()
 
@@ -121,6 +134,18 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
         return filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
                 if err != nil {
                         return err
+                }
+
+                relPath, err := filepath.Rel(sourcePath, path)
+                if err != nil {
+                        return err
+                }
+
+                if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
+                        if info.IsDir() {
+                                return filepath.SkipDir
+                        }
+                        return nil
                 }
 
                 if shouldSkip(path, info, s.includeTests) {
@@ -135,10 +160,6 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
                         return err
                 }
 
-                relPath, err := filepath.Rel(sourcePath, path)
-                if err != nil {
-                        return err
-                }
                 header.Name = relPath
 
                 if err := tarWriter.WriteHeader(header); err != nil {
@@ -166,12 +187,25 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer) error {
         })
 }
 
-func calculateDirSize(path string, includeTests bool) (int64, error) {
+func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatcher) (int64, error) {
         var size int64
         err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
                 if err != nil {
                         return err
                 }
+
+                relPath, err := filepath.Rel(path, filePath)
+                if err != nil {
+                        return err
+                }
+
+                if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
+                        if info.IsDir() {
+                                return filepath.SkipDir
+                        }
+                        return nil
+                }
+
                 if shouldSkip(filePath, info, includeTests) {
                         if info.IsDir() {
                                 return filepath.SkipDir

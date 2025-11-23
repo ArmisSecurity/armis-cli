@@ -118,6 +118,10 @@ func (s *Spinner) UpdateMessage(message string) {
         s.message = message
 }
 
+func (s *Spinner) Update(message string) {
+        s.message = message
+}
+
 func (s *Spinner) GetElapsed() time.Duration {
         return time.Since(s.startTime)
 }

@@ -75,7 +75,12 @@ var scanImageCmd = &cobra.Command{
                         return err
                 }
 
-                if err := formatter.Format(result, os.Stdout); err != nil {
+                opts := output.FormatOptions{
+                        GroupBy:  groupBy,
+                        RepoPath: "",
+                }
+
+                if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {
                         return fmt.Errorf("failed to format output: %w", err)
                 }
 

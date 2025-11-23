@@ -131,3 +131,7 @@ func severityToSarifLevel(severity model.Severity) string {
                 return "none"
         }
 }
+
+func (f *SARIFFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+        return f.Format(result, w)
+}
