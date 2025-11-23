@@ -50,7 +50,7 @@ var scanImageCmd = &cobra.Command{
 
                 client := api.NewClient(baseURL, token, debug)
                 timeoutDuration := time.Duration(timeout) * time.Minute
-                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration)
+                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration, includeNonExploitable)
 
                 ctx := context.Background()
                 var result *model.ScanResult

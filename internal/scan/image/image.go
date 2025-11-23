@@ -22,22 +22,24 @@ const (
 )
 
 type Scanner struct {
-        client       *api.Client
-        noProgress   bool
-        tenantID     string
-        pageLimit    int
-        includeTests bool
-        timeout      time.Duration
+        client                *api.Client
+        noProgress            bool
+        tenantID              string
+        pageLimit             int
+        includeTests          bool
+        timeout               time.Duration
+        includeNonExploitable bool
 }
 
-func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration) *Scanner {
+func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration, includeNonExploitable bool) *Scanner {
         return &Scanner{
-                client:       client,
-                noProgress:   noProgress,
-                tenantID:     tenantID,
-                pageLimit:    pageLimit,
-                includeTests: includeTests,
-                timeout:      timeout,
+                client:                client,
+                noProgress:            noProgress,
+                tenantID:              tenantID,
+                pageLimit:             pageLimit,
+                includeTests:          includeTests,
+                timeout:               timeout,
+                includeNonExploitable: includeNonExploitable,
         }
 }
 
@@ -119,7 +121,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
                 return nil, fmt.Errorf("failed to fetch results: %w", err)
         }
 
-        result := buildScanResult(scanID, findings, s.client.IsDebug())
+        result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
         return result, nil
 }
 
@@ -129,17 +131,27 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
                 return err
         }
 
-        cmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName)
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
-        if err := cmd.Run(); err != nil {
+        var pullCmd, saveCmd *exec.Cmd
+        switch dockerCmd {
+        case dockerBinary:
+                pullCmd = exec.CommandContext(ctx, "docker", "pull", imageName)
+                saveCmd = exec.CommandContext(ctx, "docker", "save", "-o", outputPath, imageName)
+        case podmanBinary:
+                pullCmd = exec.CommandContext(ctx, "podman", "pull", imageName)
+                saveCmd = exec.CommandContext(ctx, "podman", "save", "-o", outputPath, imageName)
+        default:
+                return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
+        }
+
+        pullCmd.Stdout = os.Stdout
+        pullCmd.Stderr = os.Stderr
+        if err := pullCmd.Run(); err != nil {
                 return fmt.Errorf("failed to pull image: %w", err)
         }
 
-        cmd = exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName)
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
-        if err := cmd.Run(); err != nil {
+        saveCmd.Stdout = os.Stdout
+        saveCmd.Stderr = os.Stderr
+        if err := saveCmd.Run(); err != nil {
                 return fmt.Errorf("failed to save image: %w", err)
         }
 
@@ -176,13 +188,14 @@ func validateDockerCommand(cmd string) error {
         return nil
 }
 
-func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool) *model.ScanResult {
-        findings := convertNormalizedFindings(normalizedFindings, debug)
+func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
+        findings, filteredCount := convertNormalizedFindings(normalizedFindings, debug, includeNonExploitable)
 
         summary := model.Summary{
-                Total:      len(findings),
-                BySeverity: make(map[model.Severity]int),
-                ByType:     make(map[model.FindingType]int),
+                Total:                  len(findings),
+                BySeverity:             make(map[model.Severity]int),
+                ByType:                 make(map[model.FindingType]int),
+                FilteredNonExploitable: filteredCount,
         }
 
         for _, finding := range findings {
@@ -198,11 +211,17 @@ func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding
         }
 }
 
-func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, debug bool) []model.Finding {
+func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) ([]model.Finding, int) {
         var findings []model.Finding
+        filteredCount := 0
 
         for i, nf := range normalizedFindings {
                 if isEmptyFinding(nf) {
+                        continue
+                }
+
+                if !includeNonExploitable && shouldFilterByExploitability(nf.NormalizedTask.Labels) {
+                        filteredCount++
                         continue
                 }
 
@@ -279,7 +298,26 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
                 findings = append(findings, finding)
         }
 
-        return findings
+        return findings, filteredCount
+}
+
+func shouldFilterByExploitability(labels []model.Label) bool {
+        var scannerCodeMatch bool
+        var exploitableFalse bool
+
+        for _, label := range labels {
+                desc := strings.ToLower(strings.TrimSpace(label.Description))
+                value := strings.ToLower(strings.TrimSpace(label.Value))
+
+                if desc == "scanner code" && value == "38295677" {
+                        scannerCodeMatch = true
+                }
+                if desc == "exploitable" && (value == "false" || value == "0") {
+                        exploitableFalse = true
+                }
+        }
+
+        return scannerCodeMatch && exploitableFalse
 }
 
 func cleanDescription(desc string) string {
