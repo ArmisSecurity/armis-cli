@@ -1,6 +1,6 @@
 # Armis Security Scanner CLI
 
-![CI](https://github.com/armis/armis-cli/actions/workflows/cli-self-scan.yml/badge.svg)
+![CI](https://github.com/silk-security/armis-cli/actions/workflows/cli-self-scan.yml/badge.svg)
 
 Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning into your CI/CD pipeline.
 
@@ -37,19 +37,19 @@ irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 |
 ### Using Go
 
 ```bash
-go install github.com/armis/armis-cli/cmd/armis-cli@latest
+go install github.com/silk-security/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Scoop (Windows)
 
 ```powershell
-scoop bucket add armis https://github.com/armis/scoop-bucket
+scoop bucket add armis https://github.com/silk-security/scoop-bucket
 scoop install armis-cli
 ```
 
 ### Manual Download
 
-Download the latest release for your platform from the [releases page](https://github.com/armis/armis-cli/releases).
+Download the latest release for your platform from the [releases page](https://github.com/silk-security/armis-cli/releases).
 
 ### Verification
 
@@ -57,13 +57,13 @@ All releases are signed with [cosign](https://docs.sigstore.dev/cosign/installat
 
 ```bash
 # Download the binary, checksums, and signature
-curl -LO https://github.com/armis/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
-curl -LO https://github.com/armis/armis-cli/releases/latest/download/armis-cli-checksums.txt
-curl -LO https://github.com/armis/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig
+curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
+curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-checksums.txt
+curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig
 
 # Verify the signature
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github.com/armis/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github.com/silk-security/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --signature armis-cli-checksums.txt.sig \
   armis-cli-checksums.txt
@@ -353,12 +353,12 @@ New versions are automatically built and published when version tags are pushed.
 - SHA256 checksums for verification
 - Automated changelog generation
 
-Visit the [releases page](https://github.com/armis/armis-cli/releases) to download specific versions.
+Visit the [releases page](https://github.com/silk-security/armis-cli/releases) to download specific versions.
 
 ## Building from Source
 
 ```bash
-git clone https://github.com/armis/armis-cli.git
+git clone https://github.com/silk-security/armis-cli.git
 cd armis-cli
 make build
 ```
@@ -380,7 +380,7 @@ make release
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/armis/armis-cli).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/armis-cli).
 
 ## License
 

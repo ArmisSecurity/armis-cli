@@ -4,7 +4,7 @@ import (
         "encoding/json"
         "io"
 
-        "github.com/armis/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/model"
 )
 
 type SARIFFormatter struct{}

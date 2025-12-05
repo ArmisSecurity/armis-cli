@@ -6,11 +6,11 @@ import (
         "os"
         "time"
 
-        "github.com/armis/armis-cli/internal/api"
-        "github.com/armis/armis-cli/internal/model"
-        "github.com/armis/armis-cli/internal/output"
-        "github.com/armis/armis-cli/internal/scan/image"
-        "github.com/armis/armis-cli/internal/util"
+        "github.com/silk-security/armis-cli/internal/api"
+        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/output"
+        "github.com/silk-security/armis-cli/internal/scan/image"
+        "github.com/silk-security/armis-cli/internal/util"
         "github.com/spf13/cobra"
 )
 

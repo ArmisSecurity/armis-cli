@@ -12,16 +12,17 @@ import (
         "strings"
         "time"
 
-        "github.com/armis/armis-cli/internal/httpclient"
-        "github.com/armis/armis-cli/internal/model"
+        "github.com/silk-security/armis-cli/internal/httpclient"
+        "github.com/silk-security/armis-cli/internal/model"
 )
 
 type Client struct {
-        httpClient    *httpclient.Client
-        baseURL       string
-        token         string
-        debug         bool
-        uploadTimeout time.Duration
+        httpClient       *httpclient.Client
+        uploadHTTPClient *httpclient.Client
+        baseURL          string
+        token            string
+        debug            bool
+        uploadTimeout    time.Duration
 }
 
 func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *Client {
@@ -36,12 +37,20 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *
                 Timeout:      60 * time.Second,
         })
 
+        uploadHTTPClient := httpclient.NewClient(httpclient.Config{
+                RetryMax:       3,
+                RetryWaitMin:   1 * time.Second,
+                RetryWaitMax:   10 * time.Second,
+                DisableTimeout: true,
+        })
+
         return &Client{
-                httpClient:    httpClient,
-                baseURL:       baseURL,
-                token:         token,
-                debug:         debug,
-                uploadTimeout: uploadTimeout,
+                httpClient:       httpClient,
+                uploadHTTPClient: uploadHTTPClient,
+                baseURL:          baseURL,
+                token:            token,
+                debug:            debug,
+                uploadTimeout:    uploadTimeout,
         }
 }
 
@@ -52,6 +61,8 @@ func (c *Client) IsDebug() bool {
 func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
         uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
         defer cancel()
+
+        start := time.Now()
 
         body := &bytes.Buffer{}
         writer := multipart.NewWriter(body)
@@ -90,15 +101,18 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
         req.Header.Set("Authorization", "Basic "+c.token)
         req.Header.Set("Content-Type", writer.FormDataContentType())
 
-        resp, err := c.httpClient.Do(req)
+        resp, err := c.uploadHTTPClient.Do(req)
         if err != nil {
-                return "", fmt.Errorf("failed to upload file: %w", err)
+                elapsed := time.Since(start).Round(time.Millisecond)
+                return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(size), err)
         }
         defer resp.Body.Close()
 
         if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-                bodyBytes, _ := io.ReadAll(resp.Body)
-                return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+                elapsed := time.Since(start).Round(time.Millisecond)
+                bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+                return "", fmt.Errorf("upload failed after %s (tar size=%s, status=%s): %s", 
+                        elapsed, formatBytes(size), resp.Status, strings.TrimSpace(string(bodyBytes)))
         }
 
         var result model.IngestUploadResponse
@@ -298,4 +312,17 @@ func (c *Client) WaitForScan(ctx context.Context, scanID string, pollInterval ti
                         }
                 }
         }
+}
+
+func formatBytes(n int64) string {
+        const unit = 1024
+        if n < unit {
+                return fmt.Sprintf("%dB", n)
+        }
+        div, exp := int64(unit), 0
+        for n/div >= unit {
+                div *= unit
+                exp++
+        }
+        return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

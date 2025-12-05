@@ -57,7 +57,7 @@ function Verify-Checksums {
         Write-Host "🔐 Verifying signature with cosign..."
         try {
             & cosign verify-blob `
-                --certificate-identity-regexp 'https://github.com/armis/armis-cli/.github/workflows/release.yml@refs/tags/.*' `
+                --certificate-identity-regexp 'https://github.com/silk-security/armis-cli/.github/workflows/release.yml@refs/tags/.*' `
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com `
                 --signature $ChecksumsSig `
                 $ChecksumsFile 2>&1 | Out-Null

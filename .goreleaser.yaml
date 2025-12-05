@@ -69,7 +69,7 @@ changelog:
 
 release:
   github:
-    owner: armis
+    owner: silk-security
     name: armis-cli
   draft: false
   prerelease: auto
@@ -83,22 +83,22 @@ release:
     
     **Homebrew (macOS/Linux):**
     ```bash
-    brew install armis/tap/armis-cli
+    brew install silk-security/tap/armis-cli
     ```
     
     **Quick Install Script:**
     ```bash
-    curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+    curl -sSL https://raw.githubusercontent.com/silk-security/armis-cli/main/scripts/install.sh | bash
     ```
     
     **Windows (PowerShell):**
     ```powershell
-    irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/silk-security/armis-cli/main/scripts/install.ps1 | iex
     ```
     
     **Go Install:**
     ```bash
-    go install github.com/armis/armis-cli/cmd/armis-cli@latest
+    go install github.com/silk-security/armis-cli/cmd/armis-cli@latest
     ```
     
     **Manual Download:**
@@ -108,7 +108,7 @@ release:
     All binaries are signed with cosign. To verify:
     ```bash
     cosign verify-blob \
-      --certificate-identity-regexp 'https://github.com/armis/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
+      --certificate-identity-regexp 'https://github.com/silk-security/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       --signature armis-cli-checksums.txt.sig \
       armis-cli-checksums.txt
@@ -116,9 +116,9 @@ release:
   footer: |
     ---
     
-    **Full Changelog**: https://github.com/armis/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/silk-security/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
     
-    For issues or questions, visit: https://github.com/armis/armis-cli/issues
+    For issues or questions, visit: https://github.com/silk-security/armis-cli/issues
 
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
@@ -136,11 +136,11 @@ signs:
 brews:
   - name: armis-cli
     repository:
-      owner: armis
+      owner: silk-security
       name: homebrew-tap
       token: "{{ .Env.GITHUB_TOKEN }}"
     folder: Formula
-    homepage: https://github.com/armis/armis-cli
+    homepage: https://github.com/silk-security/armis-cli
     description: "Enterprise-grade CLI tool for static application security scanning"
     license: Apache-2.0
     test: |
@@ -150,9 +150,9 @@ brews:
 
 scoops:
   - repository:
-      owner: armis
+      owner: silk-security
       name: scoop-bucket
       token: "{{ .Env.GITHUB_TOKEN }}"
-    homepage: https://github.com/armis/armis-cli
+    homepage: https://github.com/silk-security/armis-cli
     description: "Enterprise-grade CLI tool for static application security scanning"
     license: Apache-2.0

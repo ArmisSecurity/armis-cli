@@ -3,7 +3,7 @@ package main
 import (
         "os"
 
-        "github.com/armis/armis-cli/internal/cmd"
+        "github.com/silk-security/armis-cli/internal/cmd"
 )
 
 var (
