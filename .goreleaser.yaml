@@ -81,11 +81,6 @@ release:
     
     ### Installation
     
-    **Homebrew (macOS/Linux):**
-    ```bash
-    brew install silk-security/tap/armis-cli
-    ```
-    
     **Quick Install Script:**
     ```bash
     curl -sSL https://raw.githubusercontent.com/silk-security/armis-cli/main/scripts/install.sh | bash
@@ -133,26 +128,31 @@ signs:
       - "${artifact}"
       - "--yes"
 
-brews:
-  - name: armis-cli
-    repository:
-      owner: silk-security
-      name: homebrew-tap
-      token: "{{ .Env.GITHUB_TOKEN }}"
-    folder: Formula
-    homepage: https://github.com/silk-security/armis-cli
-    description: "Enterprise-grade CLI tool for static application security scanning"
-    license: Apache-2.0
-    test: |
-      system "#{bin}/armis-cli", "version"
-    install: |
-      bin.install "armis-cli"
-
-scoops:
-  - repository:
-      owner: silk-security
-      name: scoop-bucket
-      token: "{{ .Env.GITHUB_TOKEN }}"
-    homepage: https://github.com/silk-security/armis-cli
-    description: "Enterprise-grade CLI tool for static application security scanning"
-    license: Apache-2.0
+# Homebrew and Scoop distribution disabled for now
+# Uncomment when repositories are created:
+# - silk-security/homebrew-tap
+# - silk-security/scoop-bucket
+#
+# brews:
+#   - name: armis-cli
+#     repository:
+#       owner: silk-security
+#       name: homebrew-tap
+#       token: "{{ .Env.GITHUB_TOKEN }}"
+#     folder: Formula
+#     homepage: https://github.com/silk-security/armis-cli
+#     description: "Enterprise-grade CLI tool for static application security scanning"
+#     license: Apache-2.0
+#     test: |
+#       system "#{bin}/armis-cli", "version"
+#     install: |
+#       bin.install "armis-cli"
+#
+# scoops:
+#   - repository:
+#       owner: silk-security
+#       name: scoop-bucket
+#       token: "{{ .Env.GITHUB_TOKEN }}"
+#     homepage: https://github.com/silk-security/armis-cli
+#     description: "Enterprise-grade CLI tool for static application security scanning"
+#     license: Apache-2.0
