@@ -12,9 +12,9 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/model"
-        "github.com/silk-security/armis-cli/internal/progress"
+        "github.com/armis/armis-cli/internal/api"
+        "github.com/armis/armis-cli/internal/model"
+        "github.com/armis/armis-cli/internal/progress"
 )
 
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
@@ -301,12 +301,16 @@ func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding
                 Total:                  len(findings),
                 BySeverity:             make(map[model.Severity]int),
                 ByType:                 make(map[model.FindingType]int),
+                ByCategory:             make(map[string]int),
                 FilteredNonExploitable: filteredCount,
         }
 
         for _, finding := range findings {
                 summary.BySeverity[finding.Severity]++
                 summary.ByType[finding.Type]++
+                if finding.FindingCategory != "" {
+                        summary.ByCategory[finding.FindingCategory]++
+                }
         }
 
         return &model.ScanResult{

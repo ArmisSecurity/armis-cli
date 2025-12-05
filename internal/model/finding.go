@@ -53,6 +53,7 @@ type Summary struct {
         Total                  int                 `json:"total"`
         BySeverity             map[Severity]int    `json:"by_severity"`
         ByType                 map[FindingType]int `json:"by_type"`
+        ByCategory             map[string]int      `json:"by_category"`
         FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
 }
 

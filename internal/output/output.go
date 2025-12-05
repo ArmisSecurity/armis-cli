@@ -5,7 +5,7 @@ import (
         "io"
         "os"
 
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/armis/armis-cli/internal/model"
 )
 
 type FormatOptions struct {

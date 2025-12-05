@@ -4,11 +4,13 @@ BINARY_NAME=armis-cli
 BUILD_DIR=bin
 GO=go
 GOFLAGS=-ldflags="-s -w"
+PREFIX ?= /usr/local
+INSTALL_DIR=$(PREFIX)/bin
 
 help:
 	@echo "Available targets:"
 	@echo "  build      - Build the binary"
-	@echo "  install    - Install the binary to GOPATH/bin"
+	@echo "  install    - Install the binary to $(INSTALL_DIR)"
 	@echo "  clean      - Remove build artifacts"
 	@echo "  test       - Run tests"
 	@echo "  lint       - Run linters"
@@ -20,9 +22,11 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/armis-cli
 
-install:
-	@echo "Installing $(BINARY_NAME)..."
-	$(GO) install $(GOFLAGS) ./cmd/armis-cli
+install: build
+	@echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)..."
+	@install -d $(INSTALL_DIR)
+	@install -m 0755 $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
+	@echo "✓ $(BINARY_NAME) installed successfully to $(INSTALL_DIR)/$(BINARY_NAME)"
 
 clean:
 	@echo "Cleaning..."

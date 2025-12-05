@@ -6,9 +6,9 @@ import (
         "os"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/output"
-        "github.com/silk-security/armis-cli/internal/scan/repo"
+        "github.com/armis/armis-cli/internal/api"
+        "github.com/armis/armis-cli/internal/output"
+        "github.com/armis/armis-cli/internal/scan/repo"
         "github.com/spf13/cobra"
 )
 
@@ -40,9 +40,9 @@ var scanRepoCmd = &cobra.Command{
                         return fmt.Errorf("API base URL not configured: use --dev flag for development environment")
                 }
 
-                client := api.NewClient(baseURL, token, debug)
-                timeoutDuration := time.Duration(timeout) * time.Minute
-                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration, includeNonExploitable)
+                client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+                scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
+                scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
                 ctx := context.Background()
                 result, err := scanner.Scan(ctx, repoPath)

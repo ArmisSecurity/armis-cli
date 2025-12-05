@@ -6,11 +6,11 @@ import (
         "os"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/model"
-        "github.com/silk-security/armis-cli/internal/output"
-        "github.com/silk-security/armis-cli/internal/scan/image"
-        "github.com/silk-security/armis-cli/internal/util"
+        "github.com/armis/armis-cli/internal/api"
+        "github.com/armis/armis-cli/internal/model"
+        "github.com/armis/armis-cli/internal/output"
+        "github.com/armis/armis-cli/internal/scan/image"
+        "github.com/armis/armis-cli/internal/util"
         "github.com/spf13/cobra"
 )
 
@@ -48,9 +48,9 @@ var scanImageCmd = &cobra.Command{
                         return fmt.Errorf("API base URL not configured: use --dev flag for development environment")
                 }
 
-                client := api.NewClient(baseURL, token, debug)
-                timeoutDuration := time.Duration(timeout) * time.Minute
-                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, timeoutDuration, includeNonExploitable)
+                client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+                scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
+                scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
                 ctx := context.Background()
                 var result *model.ScanResult

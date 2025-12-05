@@ -1,4 +1,4 @@
-module github.com/silk-security/armis-cli
+module github.com/armis/armis-cli
 
 go 1.23.0
 
@@ -6,11 +6,13 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/distribution/reference v0.6.0
 	github.com/go-git/go-git/v5 v5.16.3
+	github.com/mattn/go-runewidth v0.0.19
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/spf13/cobra v1.10.1
 )
 
 require (
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

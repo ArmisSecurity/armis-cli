@@ -1,9 +1,12 @@
 package output
 
 import (
+        "os"
+        "path/filepath"
+        "strings"
         "testing"
 
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/armis/armis-cli/internal/model"
 )
 
 func TestGroupFindingsByCWE(t *testing.T) {
@@ -220,4 +223,125 @@ func TestGetTopLevelDomain(t *testing.T) {
                         t.Errorf("getTopLevelDomain(%q) = %q, want %q", tt.input, result, tt.expected)
                 }
         }
+}
+
+func TestLoadSnippetFromFile(t *testing.T) {
+        tmpDir := t.TempDir()
+        testFile := filepath.Join(tmpDir, "test.go")
+
+        content := `package main
+
+import "fmt"
+
+func main() {
+        fmt.Println("line 6")
+        fmt.Println("line 7")
+        fmt.Println("line 8")
+        fmt.Println("line 9")
+        fmt.Println("line 10")
+        fmt.Println("line 11")
+        fmt.Println("line 12")
+        fmt.Println("line 13")
+        fmt.Println("line 14")
+        fmt.Println("line 15")
+}
+`
+        if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+                t.Fatalf("Failed to create test file: %v", err)
+        }
+
+        t.Run("loads snippet with context", func(t *testing.T) {
+                finding := model.Finding{
+                        File:      "test.go",
+                        StartLine: 10,
+                        EndLine:   10,
+                }
+
+                snippet, snippetStart, err := loadSnippetFromFile(tmpDir, finding)
+                if err != nil {
+                        t.Fatalf("Expected no error, got %v", err)
+                }
+
+                if snippetStart != 6 {
+                        t.Errorf("Expected snippet to start at line 6, got %d", snippetStart)
+                }
+
+                lines := strings.Split(snippet, "\n")
+                if len(lines) != 9 {
+                        t.Errorf("Expected 9 lines (4 before + 1 target + 4 after), got %d", len(lines))
+                }
+
+                if !strings.Contains(snippet, "line 10") {
+                        t.Errorf("Expected snippet to contain target line 10")
+                }
+        })
+
+        t.Run("handles start of file", func(t *testing.T) {
+                finding := model.Finding{
+                        File:      "test.go",
+                        StartLine: 2,
+                        EndLine:   2,
+                }
+
+                _, snippetStart, err := loadSnippetFromFile(tmpDir, finding)
+                if err != nil {
+                        t.Fatalf("Expected no error, got %v", err)
+                }
+
+                if snippetStart != 1 {
+                        t.Errorf("Expected snippet to start at line 1 (can't go below), got %d", snippetStart)
+                }
+        })
+
+        t.Run("handles missing end line", func(t *testing.T) {
+                finding := model.Finding{
+                        File:      "test.go",
+                        StartLine: 10,
+                        EndLine:   0,
+                }
+
+                snippet, snippetStart, err := loadSnippetFromFile(tmpDir, finding)
+                if err != nil {
+                        t.Fatalf("Expected no error, got %v", err)
+                }
+
+                if snippetStart != 6 {
+                        t.Errorf("Expected snippet to start at line 6, got %d", snippetStart)
+                }
+
+                lines := strings.Split(snippet, "\n")
+                if len(lines) < 4 {
+                        t.Errorf("Expected at least 4 lines (default window), got %d", len(lines))
+                }
+        })
+
+        t.Run("handles absolute path", func(t *testing.T) {
+                finding := model.Finding{
+                        File:      testFile,
+                        StartLine: 10,
+                        EndLine:   10,
+                }
+
+                snippet, _, err := loadSnippetFromFile("", finding)
+                if err != nil {
+                        t.Fatalf("Expected no error with absolute path, got %v", err)
+                }
+
+                if !strings.Contains(snippet, "line 10") {
+                        t.Errorf("Expected snippet to contain target line 10")
+                }
+        })
+
+        t.Run("returns error for missing file", func(t *testing.T) {
+                finding := model.Finding{
+                        File:      "nonexistent.go",
+                        StartLine: 10,
+                        EndLine:   10,
+                }
+
+                _, _, err := loadSnippetFromFile(tmpDir, finding)
+                if err == nil {
+                        t.Error("Expected error for missing file, got nil")
+                }
+        })
 }

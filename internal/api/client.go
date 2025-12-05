@@ -12,18 +12,23 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/httpclient"
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/armis/armis-cli/internal/httpclient"
+        "github.com/armis/armis-cli/internal/model"
 )
 
 type Client struct {
-        httpClient *httpclient.Client
-        baseURL    string
-        token      string
-        debug      bool
+        httpClient    *httpclient.Client
+        baseURL       string
+        token         string
+        debug         bool
+        uploadTimeout time.Duration
 }
 
-func NewClient(baseURL, token string, debug bool) *Client {
+func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *Client {
+        if uploadTimeout == 0 {
+                uploadTimeout = 10 * time.Minute
+        }
+
         httpClient := httpclient.NewClient(httpclient.Config{
                 RetryMax:     3,
                 RetryWaitMin: 1 * time.Second,
@@ -32,10 +37,11 @@ func NewClient(baseURL, token string, debug bool) *Client {
         })
 
         return &Client{
-                httpClient: httpClient,
-                baseURL:    baseURL,
-                token:      token,
-                debug:      debug,
+                httpClient:    httpClient,
+                baseURL:       baseURL,
+                token:         token,
+                debug:         debug,
+                uploadTimeout: uploadTimeout,
         }
 }
 
@@ -44,6 +50,9 @@ func (c *Client) IsDebug() bool {
 }
 
 func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
+        uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
+        defer cancel()
+
         body := &bytes.Buffer{}
         writer := multipart.NewWriter(body)
 
@@ -73,7 +82,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
         }
 
         endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
-        req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
+        req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, body)
         if err != nil {
                 return "", fmt.Errorf("failed to create request: %w", err)
         }

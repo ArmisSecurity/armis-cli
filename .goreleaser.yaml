@@ -69,7 +69,7 @@ changelog:
 
 release:
   github:
-    owner: silk-security
+    owner: armis
     name: armis-cli
   draft: false
   prerelease: auto
@@ -81,19 +81,44 @@ release:
     
     ### Installation
     
-    **Quick Install:**
+    **Homebrew (macOS/Linux):**
     ```bash
-    curl -sSL https://raw.githubusercontent.com/silk-security/armis-cli/main/scripts/install.sh | bash
+    brew install armis/tap/armis-cli
+    ```
+    
+    **Quick Install Script:**
+    ```bash
+    curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+    ```
+    
+    **Windows (PowerShell):**
+    ```powershell
+    irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 | iex
+    ```
+    
+    **Go Install:**
+    ```bash
+    go install github.com/armis/armis-cli/cmd/armis-cli@latest
     ```
     
     **Manual Download:**
     Download the appropriate binary for your platform below.
+    
+    ### Verification
+    All binaries are signed with cosign. To verify:
+    ```bash
+    cosign verify-blob \
+      --certificate-identity-regexp 'https://github.com/armis/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --signature armis-cli-checksums.txt.sig \
+      armis-cli-checksums.txt
+    ```
   footer: |
     ---
     
-    **Full Changelog**: https://github.com/silk-security/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/armis/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
     
-    For issues or questions, visit: https://github.com/silk-security/armis-cli/issues
+    For issues or questions, visit: https://github.com/armis/armis-cli/issues
 
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
@@ -107,3 +132,27 @@ signs:
       - "--output-signature=${signature}"
       - "${artifact}"
       - "--yes"
+
+brews:
+  - name: armis-cli
+    repository:
+      owner: armis
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    folder: Formula
+    homepage: https://github.com/armis/armis-cli
+    description: "Enterprise-grade CLI tool for static application security scanning"
+    license: Apache-2.0
+    test: |
+      system "#{bin}/armis-cli", "version"
+    install: |
+      bin.install "armis-cli"
+
+scoops:
+  - repository:
+      owner: armis
+      name: scoop-bucket
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    homepage: https://github.com/armis/armis-cli
+    description: "Enterprise-grade CLI tool for static application security scanning"
+    license: Apache-2.0

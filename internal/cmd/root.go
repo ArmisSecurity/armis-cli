@@ -50,12 +50,12 @@ func Execute() error {
 func init() {
         rootCmd.PersistentFlags().StringVar(&token, "token", os.Getenv("ARMIS_API_TOKEN"), "API token for authentication (env: ARMIS_API_TOKEN)")
         rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
-        rootCmd.PersistentFlags().StringVar(&format, "format", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human (default), json, sarif, junit")
+        rootCmd.PersistentFlags().StringVar(&format, "format", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
         rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Disable progress indicators and spinners")
         rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Fail build on severity levels (comma-separated): INFO, LOW, MEDIUM, HIGH, CRITICAL")
-        rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code to return when build fails (default: 1)")
+        rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code to return when build fails")
         rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
-        rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination, range 1-1000 (default: 500)")
+        rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination, range 1-1000")
         rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
 }
 

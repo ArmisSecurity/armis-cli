@@ -1,6 +1,7 @@
 package output
 
 import (
+        "bufio"
         "fmt"
         "io"
         "os"
@@ -10,7 +11,8 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/mattn/go-runewidth"
+        "github.com/armis/armis-cli/internal/model"
 )
 
 type HumanFormatter struct{}
@@ -26,6 +28,42 @@ type FindingGroup struct {
         Key      string
         Label    string
         Findings []model.Finding
+}
+
+type indentWriter struct {
+        w      io.Writer
+        prefix string
+        atBOL  bool
+}
+
+func (iw *indentWriter) Write(p []byte) (int, error) {
+        written := 0
+        for len(p) > 0 {
+                if iw.atBOL {
+                        n, err := iw.w.Write([]byte(iw.prefix))
+                        if err != nil {
+                                return written, err
+                        }
+                        _ = n
+                        iw.atBOL = false
+                }
+
+                idx := strings.IndexByte(string(p), '\n')
+                if idx == -1 {
+                        n, err := iw.w.Write(p)
+                        written += n
+                        return written, err
+                }
+
+                n, err := iw.w.Write(p[:idx+1])
+                written += n
+                if err != nil {
+                        return written, err
+                }
+                iw.atBOL = true
+                p = p[idx+1:]
+        }
+        return written, nil
 }
 
 func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
@@ -148,6 +186,69 @@ func sortFindingsBySeverity(findings []model.Finding) []model.Finding {
         })
         
         return sorted
+}
+
+func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string, snippetStart int, err error) {
+        if finding.File == "" {
+                return "", 0, fmt.Errorf("no file path in finding")
+        }
+
+        var fullPath string
+        if filepath.IsAbs(finding.File) {
+                fullPath = finding.File
+        } else if repoPath != "" {
+                fullPath = filepath.Join(repoPath, finding.File)
+        } else {
+                fullPath = finding.File
+        }
+
+        f, err := os.Open(fullPath)
+        if err != nil {
+                return "", 0, fmt.Errorf("open file: %w", err)
+        }
+        defer f.Close()
+
+        start := finding.SnippetStartLine
+        if start <= 0 {
+                start = finding.StartLine
+        }
+        if start <= 0 {
+                start = 1
+        }
+
+        end := finding.EndLine
+        if end < start {
+                end = start + 3
+        }
+
+        contextStart := start - 4
+        if contextStart < 1 {
+                contextStart = 1
+        }
+
+        contextEnd := end + 4
+
+        scanner := bufio.NewScanner(f)
+        var buf []string
+        lineNum := 0
+        for scanner.Scan() {
+                lineNum++
+                if lineNum < contextStart {
+                        continue
+                }
+                if lineNum > contextEnd {
+                        break
+                }
+                buf = append(buf, scanner.Text())
+        }
+        if err := scanner.Err(); err != nil {
+                return "", 0, fmt.Errorf("scan file: %w", err)
+        }
+        if len(buf) == 0 {
+                return "", 0, fmt.Errorf("no lines read")
+        }
+
+        return strings.Join(buf, "\n"), contextStart, nil
 }
 
 func formatCodeSnippet(finding model.Finding) string {
@@ -522,20 +623,64 @@ func detectLanguage(filename string) string {
         return ""
 }
 
+func scanDuration(result *model.ScanResult) string {
+        if result.StartedAt == "" || result.EndedAt == "" {
+                return ""
+        }
+
+        start, err := time.Parse(time.RFC3339, result.StartedAt)
+        if err != nil {
+                return ""
+        }
+        end, err := time.Parse(time.RFC3339, result.EndedAt)
+        if err != nil {
+                return ""
+        }
+
+        if end.Before(start) {
+                return ""
+        }
+
+        dur := end.Sub(start)
+        
+        h := int(dur.Hours())
+        m := int(dur.Minutes()) % 60
+        s := int(dur.Seconds()) % 60
+        
+        if h > 0 {
+                return fmt.Sprintf("%dh%dm%ds", h, m, s)
+        } else if m > 0 {
+                return fmt.Sprintf("%dm%ds", m, s)
+        }
+        return fmt.Sprintf("%ds", s)
+}
+
 func renderSummaryDashboard(w io.Writer, result *model.ScanResult) {
-        width := 63
+        width := 45
         
         fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", width-2))
-        fmt.Fprintf(w, "│  📊 SCAN SUMMARY%s│\n", strings.Repeat(" ", width-19))
+        
+        headerLine := "│ 📊 SCAN SUMMARY"
+        headerPadding := width - runewidth.StringWidth(headerLine) - 1
+        fmt.Fprintf(w, "%s%s│\n", headerLine, strings.Repeat(" ", headerPadding))
+        
         fmt.Fprintf(w, "├%s┤\n", strings.Repeat("─", width-2))
         
-        fmt.Fprintf(w, "│  Total Findings: %-42d│\n", result.Summary.Total)
+        totalLine := fmt.Sprintf("│ Total: %d", result.Summary.Total)
+        totalPadding := width - runewidth.StringWidth(totalLine) - 1
+        fmt.Fprintf(w, "%s%s│\n", totalLine, strings.Repeat(" ", totalPadding))
         
-        if result.Summary.FilteredNonExploitable > 0 {
-                fmt.Fprintf(w, "│  Filtered (Non-Exploitable): %-31d│\n", result.Summary.FilteredNonExploitable)
+        if duration := scanDuration(result); duration != "" {
+                durationLine := fmt.Sprintf("│ Duration: %s", duration)
+                durationPadding := width - runewidth.StringWidth(durationLine) - 1
+                fmt.Fprintf(w, "%s%s│\n", durationLine, strings.Repeat(" ", durationPadding))
         }
         
-        fmt.Fprintf(w, "│%s│\n", strings.Repeat(" ", width-2))
+        if result.Summary.FilteredNonExploitable > 0 {
+                filteredLine := fmt.Sprintf("│ Filtered (Non-Exploitable): %d", result.Summary.FilteredNonExploitable)
+                filteredPadding := width - runewidth.StringWidth(filteredLine) - 1
+                fmt.Fprintf(w, "%s%s│\n", filteredLine, strings.Repeat(" ", filteredPadding))
+        }
         
         severities := []model.Severity{
                 model.SeverityCritical,
@@ -545,13 +690,52 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) {
                 model.SeverityInfo,
         }
         
+        hasFindings := false
+        for _, sev := range severities {
+                if result.Summary.BySeverity[sev] > 0 {
+                        hasFindings = true
+                        break
+                }
+        }
+        
+        if hasFindings {
+                fmt.Fprintf(w, "│%s│\n", strings.Repeat(" ", width-2))
+        }
+        
         for _, sev := range severities {
                 count := result.Summary.BySeverity[sev]
                 if count > 0 {
                         icon := getSeverityIcon(sev)
-                        label := fmt.Sprintf("%s %s:", icon, sev)
-                        padding := width - len(label) - len(fmt.Sprintf("%d", count)) - 4
-                        fmt.Fprintf(w, "│  %-*s %d%s│\n", len(label)+padding, label, count, strings.Repeat(" ", 1))
+                        line := fmt.Sprintf("│ %s %s: %d", icon, sev, count)
+                        padding := width - runewidth.StringWidth(line) - 1
+                        fmt.Fprintf(w, "%s%s│\n", line, strings.Repeat(" ", padding))
+                }
+        }
+        
+        if len(result.Summary.ByCategory) > 0 {
+                fmt.Fprintf(w, "│%s│\n", strings.Repeat(" ", width-2))
+                
+                type categoryCount struct {
+                        category string
+                        count    int
+                }
+                
+                categories := make([]categoryCount, 0, len(result.Summary.ByCategory))
+                for cat, count := range result.Summary.ByCategory {
+                        categories = append(categories, categoryCount{category: cat, count: count})
+                }
+                
+                sort.Slice(categories, func(i, j int) bool {
+                        if categories[i].count != categories[j].count {
+                                return categories[i].count > categories[j].count
+                        }
+                        return categories[i].category < categories[j].category
+                })
+                
+                for _, cc := range categories {
+                        line := fmt.Sprintf("│ %s: %d", cc.category, cc.count)
+                        padding := width - runewidth.StringWidth(line) - 1
+                        fmt.Fprintf(w, "%s%s│\n", line, strings.Repeat(" ", padding))
                 }
         }
         
@@ -617,6 +801,13 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
                 }
         }
 
+        if finding.CodeSnippet == "" && opts.RepoPath != "" && finding.StartLine > 0 {
+                if snippet, snippetStart, err := loadSnippetFromFile(opts.RepoPath, finding); err == nil {
+                        finding.CodeSnippet = snippet
+                        finding.SnippetStartLine = snippetStart
+                }
+        }
+
         if finding.CodeSnippet != "" {
                 fmt.Fprintf(w, "\nCode:\n")
                 fmt.Fprintf(w, "%s\n", formatCodeSnippet(finding))
@@ -629,24 +820,16 @@ func renderGroupedFindings(w io.Writer, groups []FindingGroup, opts FormatOption
                         fmt.Fprintf(w, "\n")
                 }
 
-                fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", 61))
-                fmt.Fprintf(w, "│ %s%s│\n", group.Label, strings.Repeat(" ", 61-len(group.Label)-2))
-                fmt.Fprintf(w, "│ Count: %-53d│\n", len(group.Findings))
-                fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", 61))
-                fmt.Fprintf(w, "\n")
+                header := fmt.Sprintf("📁 %s (%d findings)", group.Label, len(group.Findings))
+                fmt.Fprintf(w, "%s\n", header)
+                fmt.Fprintf(w, "%s\n\n", strings.Repeat("─", len(header)))
 
                 for j, finding := range group.Findings {
                         if j > 0 {
                                 fmt.Fprintf(w, "\n")
                         }
-                        renderFinding(w, finding, opts)
-                        if j < len(group.Findings)-1 {
-                                fmt.Fprintf(w, "\n───────────────────────────────────────────────────────────────\n")
-                        }
-                }
-
-                if i < len(groups)-1 {
-                        fmt.Fprintf(w, "\n\n")
+                        iw := &indentWriter{w: w, prefix: "  ", atBOL: true}
+                        renderFinding(iw, finding, opts)
                 }
         }
         fmt.Fprintf(w, "\n")
