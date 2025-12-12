@@ -1,8 +1,7 @@
-# Armis Security Scanner CLI
+![Armis Logo](https://github.com/silk-security/armis-cli/blob/main/logo-dark.svg)
+# Armis CLI
 
-![Armis Logo](https://www.armis.com/wp-content/themes/armis/resources/images/svg/logo-dark.svg)
-
-Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning into your CI/CD pipeline.
+Enterprise-grade CLI tool for static application security scanning integrated with Armis Cloud. Easily integrate security scanning with developer workflows and CI/CD pipelines.
 
 ## Features
 
