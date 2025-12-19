@@ -344,10 +344,16 @@ func cleanDescription(desc string) string {
 }
 
 func isEmptyFinding(nf model.NormalizedFinding) bool {
-        return nf.NormalizedRemediation.RemediationID == "" &&
-                nf.NormalizedRemediation.Description == "" &&
-                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) == 0 &&
-                len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs) == 0
+	hasDescription := nf.NormalizedRemediation.Description != "" ||
+		nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" ||
+		(nf.NormalizedTask.LongDescription != nil && *nf.NormalizedTask.LongDescription != "")
+	
+	hasCVEsOrCWEs := len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 ||
+		len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs) > 0
+	
+	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
+	
+	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
 }
 
 func mapSeverity(toolSeverity string) model.Severity {
