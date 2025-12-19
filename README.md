@@ -352,12 +352,12 @@ New versions are automatically built and published when version tags are pushed.
 - SHA256 checksums for verification
 - Automated changelog generation
 
-Visit the [releases page](https://github.com/silk-security/armis-cli/releases) to download specific versions.
+Visit the [releases page](https://github.com/ArmisSecurity/armis-cli/releases) to download specific versions.
 
 ## Building from Source
 
 ```bash
-git clone https://github.com/silk-security/armis-cli.git
+git clone https://github.com/ArmisSecurity/armis-cli.git
 cd armis-cli
 make build
 ```
@@ -379,8 +379,14 @@ make release
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/silk-security/armis-cli).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/ArmisSecurity/armis-cli).
 
 ## License
 
-Copyright © 2024 Silk Security. All rights reserved.
+This CLI is open source software licensed under the Apache License 2.0.
+
+It is intended to be used as a client for interacting with the Armis cloud platform APIs. The CLI itself does not contain any proprietary detection logic or security analysis engines.
+
+Use of the CLI is subject to the terms of service of the corresponding
+cloud APIs.
+
