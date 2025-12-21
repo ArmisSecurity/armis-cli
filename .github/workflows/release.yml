@@ -34,6 +34,8 @@ jobs:
   goreleaser:
     needs: wait-for-ci
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +50,9 @@ jobs:
         with:
           go-version: "1.23"
           cache: true
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.17.7
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -65,6 +70,12 @@ jobs:
           COSIGN_YES: "true"
           COSIGN_EXPERIMENTAL: "1"
 
+      - name: Generate artifact hashes for SLSA
+        id: hash
+        run: |
+          cd dist
+          echo "hashes=$(sha256sum *.tar.gz *.zip *.txt *.sbom.cdx.json | base64 -w0)" >> "$GITHUB_OUTPUT"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -74,4 +85,16 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*checksums.txt
+            dist/*.sbom.cdx.json
           retention-days: 7
+
+  provenance:
+    needs: [wait-for-ci, goreleaser]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.goreleaser.outputs.hashes }}"
+      upload-assets: true

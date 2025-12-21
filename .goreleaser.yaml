@@ -45,6 +45,17 @@ checksum:
   name_template: "armis-cli-checksums.txt"
   algorithm: sha256
 
+sboms:
+  - id: archive-sboms
+    cmd: syft
+    args:
+      - "packages"
+      - "archive:${artifact}"
+      - "--output=cyclonedx-json=${document}"
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.cdx.json"
+
 changelog:
   sort: asc
   use: github

@@ -4,6 +4,7 @@
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
 [![Go Version](https://img.shields.io/badge/go-1.23+-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![Coverage](https://img.shields.io/badge/coverage-check%20CI-blue)](https://github.com/ArmisSecurity/armis-cli/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://img.shields.io/badge/OpenSSF-Scorecard-blue)](https://securityscorecards.dev/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ArmisSecurity/armis-cli)](https://goreportcard.com/report/github.com/ArmisSecurity/armis-cli)
@@ -77,7 +78,10 @@ go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ---
 
 ## Verification
-All releases are signed with [cosign](https://docs.sigstore.dev/cosign/installation/). To verify a download:
+
+All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security.
+
+### Verify Checksums (Cosign)
 ```bash
 # Download the binary, checksums, and signature
 curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
@@ -94,6 +98,39 @@ cosign verify-blob \
 # Verify the checksum
 sha256sum --ignore-missing -c armis-cli-checksums.txt
 ```
+
+### Verify SLSA Provenance (Supply Chain Security)
+```bash
+# Install slsa-verifier
+go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+
+# Download provenance
+curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz.intoto.jsonl
+
+# Verify SLSA Level 3 provenance
+slsa-verifier verify-artifact \
+  --provenance-path armis-cli-linux-amd64.tar.gz.intoto.jsonl \
+  --source-uri github.com/ArmisSecurity/armis-cli \
+  armis-cli-linux-amd64.tar.gz
+```
+
+### Inspect SBOM (Software Bill of Materials)
+```bash
+# Download SBOM (CycloneDX JSON format)
+curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz.sbom.cdx.json
+
+# View dependencies
+cat armis-cli-linux-amd64.tar.gz.sbom.cdx.json | jq '.components[] | {name: .name, version: .version}'
+
+# Or use CycloneDX CLI tools
+npm install -g @cyclonedx/cyclonedx-cli
+cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
+```
+
+**Learn more:**
+- [SLSA Framework](https://slsa.dev/)
+- [Sigstore Cosign](https://docs.sigstore.dev/cosign/overview/)
+- [CycloneDX SBOM](https://cyclonedx.org/)
 
 ---
 
