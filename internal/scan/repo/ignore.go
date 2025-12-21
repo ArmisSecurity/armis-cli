@@ -85,7 +85,8 @@ func (m *IgnoreMatcher) Match(path string, isDir bool) bool {
 		return false
 	}
 
-	pathParts := strings.Split(path, string(filepath.Separator))
+	normalizedPath := filepath.FromSlash(path)
+	pathParts := strings.Split(normalizedPath, string(filepath.Separator))
 
 	matcher := gitignore.NewMatcher(m.patterns)
 	return matcher.Match(pathParts, isDir)

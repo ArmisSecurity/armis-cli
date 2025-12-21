@@ -1,6 +1,7 @@
 package util
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,8 +120,9 @@ func TestSanitizePathCleaning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SanitizePath(%q) unexpected error: %v", tt.input, err)
 			}
-			if result != tt.expected {
-				t.Errorf("SanitizePath(%q) = %q, want %q", tt.input, result, tt.expected)
+			normalizedResult := filepath.ToSlash(result)
+			if normalizedResult != tt.expected {
+				t.Errorf("SanitizePath(%q) = %q, want %q", tt.input, normalizedResult, tt.expected)
 			}
 		})
 	}
