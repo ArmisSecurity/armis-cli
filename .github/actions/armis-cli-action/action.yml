@@ -1,0 +1,29 @@
+name: 'Armis CLI Action'
+description: 'Run the Armis CLI in your workflow'
+author: 'ArmisSecurity'
+inputs:
+  api_token:
+    description: 'Armis API token (required)'
+    required: true
+  args:
+    description: 'Arguments to pass to the CLI (optional)'
+    required: false
+runs:
+  using: 'composite'
+  steps:
+    - name: Download latest Armis CLI
+      shell: bash
+      run: |
+        OS=$(uname | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        if [ "$ARCH" = "x86_64" ]; then ARCH=amd64; fi
+        if [ "$ARCH" = "aarch64" ]; then ARCH=arm64; fi
+        CLI_URL="https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-${OS}-${ARCH}.tar.gz"
+        echo "Downloading $CLI_URL"
+        curl -sSL "$CLI_URL" -o armis-cli.tar.gz
+        tar -xzf armis-cli.tar.gz
+        chmod +x armis-cli
+    - name: Run Armis CLI
+      shell: bash
+      run: |
+        ./armis-cli ${{ inputs.args }} --token "${{ inputs.api_token }}"
