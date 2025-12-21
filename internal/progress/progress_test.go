@@ -9,6 +9,18 @@ import (
 )
 
 func TestIsCI(t *testing.T) {
+	ciEnvVars := []string{
+		"CI",
+		"CONTINUOUS_INTEGRATION",
+		"GITHUB_ACTIONS",
+		"GITLAB_CI",
+		"CIRCLECI",
+		"JENKINS_URL",
+		"TRAVIS",
+		"BITBUCKET_BUILD_NUMBER",
+		"AZURE_PIPELINES",
+	}
+
 	tests := []struct {
 		name     string
 		envVars  map[string]string
@@ -58,12 +70,20 @@ func TestIsCI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for key := range tt.envVars {
+			originalEnv := make(map[string]string)
+			for _, key := range ciEnvVars {
+				if val, exists := os.LookupEnv(key); exists {
+					originalEnv[key] = val
+				}
 				os.Unsetenv(key)
 			}
+
 			t.Cleanup(func() {
-				for key := range tt.envVars {
+				for _, key := range ciEnvVars {
 					os.Unsetenv(key)
+				}
+				for key, val := range originalEnv {
+					os.Setenv(key, val)
 				}
 			})
 

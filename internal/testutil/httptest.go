@@ -24,6 +24,6 @@ func JSONResponse(t *testing.T, w http.ResponseWriter, statusCode int, data inte
 }
 
 func ErrorResponse(w http.ResponseWriter, statusCode int, message string) {
-        w.WriteHeader(statusCode)
-        _, _ = w.Write([]byte(message))
+	w.WriteHeader(statusCode)
+	_, _ = w.Write([]byte(message))
 }

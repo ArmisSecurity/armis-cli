@@ -177,10 +177,10 @@ func TestClientDo_ContextCancellation(t *testing.T) {
 }
 
 func TestClientDo_PersistentServerError(t *testing.T) {
-        server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                w.WriteHeader(http.StatusInternalServerError)
-                _, _ = w.Write([]byte("persistent error"))
-        }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("persistent error"))
+	}))
 	defer server.Close()
 
 	client := NewClient(Config{
