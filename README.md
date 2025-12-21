@@ -4,6 +4,9 @@
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
 [![Go Version](https://img.shields.io/badge/go-1.23+-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Coverage](https://img.shields.io/badge/coverage-check%20CI-blue)](https://github.com/ArmisSecurity/armis-cli/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://img.shields.io/badge/OpenSSF-Scorecard-blue)](https://securityscorecards.dev/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ArmisSecurity/armis-cli)](https://goreportcard.com/report/github.com/ArmisSecurity/armis-cli)
 
 Enterprise-grade CLI for static application security scanning with Armis Cloud. Integrate security scanning into developer workflows and CI/CD pipelines.
 
@@ -383,7 +386,10 @@ make release
 ---
 
 ## Contributing
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! Please see:
+- [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards
+- [Issue Templates](.github/ISSUE_TEMPLATE/) for reporting bugs or requesting features
 
 ---
 
