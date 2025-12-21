@@ -3,7 +3,7 @@
 
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
 [![Go Version](https://img.shields.io/badge/go-1.23+-blue)](https://golang.org/dl/)
-[![License](https://img.shields.io/github/license/ArmisSecurity/armis-cli)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Enterprise-grade CLI for static application security scanning with Armis Cloud. Integrate security scanning into developer workflows and CI/CD pipelines.
 
