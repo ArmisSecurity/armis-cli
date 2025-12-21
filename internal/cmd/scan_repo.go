@@ -6,9 +6,9 @@ import (
         "os"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/output"
-        "github.com/silk-security/armis-cli/internal/scan/repo"
+        "github.com/ArmisSecurity/armis-cli/internal/api"
+        "github.com/ArmisSecurity/armis-cli/internal/output"
+        "github.com/ArmisSecurity/armis-cli/internal/scan/repo"
         "github.com/spf13/cobra"
 )
 

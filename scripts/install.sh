@@ -54,7 +54,7 @@ verify_checksums() {
     if command -v cosign > /dev/null 2>&1; then
         echo "🔐 Verifying signature with cosign..."
         if cosign verify-blob \
-            --certificate-identity-regexp 'https://github.com/silk-security/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
+            --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --signature "$checksums_sig" \
             "$checksums_file" > /dev/null 2>&1; then

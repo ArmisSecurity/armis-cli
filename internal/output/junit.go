@@ -5,8 +5,8 @@ import (
         "fmt"
         "io"
 
-        "github.com/silk-security/armis-cli/internal/model"
-        "github.com/silk-security/armis-cli/internal/util"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 type JUnitFormatter struct{}

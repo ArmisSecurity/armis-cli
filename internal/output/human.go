@@ -12,7 +12,7 @@ import (
         "time"
 
         "github.com/mattn/go-runewidth"
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
 type HumanFormatter struct{}

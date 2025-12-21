@@ -15,8 +15,8 @@ This document outlines the steps needed to complete the distribution setup for a
    - Updated all URLs in README and documentation
 
 3. **Enhanced Distribution Channels**
-   - Configured Homebrew tap: `silk-security/homebrew-tap`
-   - Configured Scoop bucket: `silk-security/scoop-bucket`
+   - Configured Homebrew tap: `ArmisSecurity/homebrew-tap`
+   - Configured Scoop bucket: `ArmisSecurity/scoop-bucket`
    - Enhanced install scripts with signature verification
    - Created Windows PowerShell installer
 
@@ -37,7 +37,7 @@ You need to create two new repositories in the `armis` organization:
 
 #### Homebrew Tap Repository
 ```bash
-# Create repository: silk-security/homebrew-tap
+# Create repository: ArmisSecurity/homebrew-tap
 # This will be auto-populated by GoReleaser on each release
 ```
 
@@ -49,7 +49,7 @@ You need to create two new repositories in the `armis` organization:
 
 #### Scoop Bucket Repository
 ```bash
-# Create repository: silk-security/scoop-bucket
+# Create repository: ArmisSecurity/scoop-bucket
 # This will be auto-populated by GoReleaser on each release
 ```
 
@@ -113,7 +113,7 @@ brew install armis/tap/armis-cli
 
 ### Scoop (Windows)
 ```powershell
-scoop bucket add armis https://github.com/silk-security/scoop-bucket
+scoop bucket add armis https://github.com/ArmisSecurity/scoop-bucket
 scoop install armis-cli
 ```
 
@@ -129,11 +129,11 @@ irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 |
 
 ### Go Install
 ```bash
-go install github.com/silk-security/armis-cli/cmd/armis-cli@latest
+go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Manual Download
-Download from: https://github.com/silk-security/armis-cli/releases
+Download from: https://github.com/ArmisSecurity/armis-cli/releases
 
 ## 🔐 Signature Verification
 
@@ -142,13 +142,13 @@ All releases are signed with cosign (keyless signing via GitHub OIDC).
 Users can verify downloads:
 ```bash
 # Download files
-curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
-curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-checksums.txt
-curl -LO https://github.com/silk-security/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig
+curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
+curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt
+curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig
 
 # Verify signature
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github.com/silk-security/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --signature armis-cli-checksums.txt.sig \
   armis-cli-checksums.txt
@@ -177,15 +177,15 @@ If GoReleaser can't push to tap/bucket repositories:
 ### Module Import Issues
 
 If users report import issues:
-1. Ensure `go.mod` has the correct module name: `github.com/silk-security/armis-cli`
+1. Ensure `go.mod` has the correct module name: `github.com/ArmisSecurity/armis-cli`
 2. Tag and push a new release
 3. Wait for Go proxy to update (can take a few minutes)
 
 ## 📝 Next Steps
 
-1. ✅ Create `silk-security/homebrew-tap` repository
-2. ✅ Create `silk-security/scoop-bucket` repository
-3. ✅ Create `armis/armis-cli` repository (if moving from silk-security)
+1. ✅ Create `ArmisSecurity/homebrew-tap` repository
+2. ✅ Create `ArmisSecurity/scoop-bucket` repository
+3. ✅ Create `ArmisSecurity/armis-cli` repository (if moving from silk-security)
 4. ✅ Push code to new repository
 5. ✅ Test snapshot release locally
 6. ✅ Create and push first version tag
@@ -198,8 +198,8 @@ You'll know everything is working when:
 - ✅ GitHub release is created automatically on tag push
 - ✅ Binaries are built for all platforms
 - ✅ Checksums are signed with cosign
-- ✅ Homebrew formula is updated in `silk-security/homebrew-tap`
-- ✅ Scoop manifest is updated in `silk-security/scoop-bucket`
+- ✅ Homebrew formula is updated in `ArmisSecurity/homebrew-tap`
+- ✅ Scoop manifest is updated in `ArmisSecurity/scoop-bucket`
 - ✅ Users can install via `brew install armis/tap/armis-cli`
 - ✅ Users can install via `scoop install armis-cli`
 - ✅ Install scripts work and verify signatures

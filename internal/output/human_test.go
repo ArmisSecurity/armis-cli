@@ -6,7 +6,7 @@ import (
         "strings"
         "testing"
 
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
 func TestGroupFindingsByCWE(t *testing.T) {

@@ -12,8 +12,8 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/httpclient"
-        "github.com/silk-security/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/httpclient"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
 type Client struct {

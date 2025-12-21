@@ -12,9 +12,9 @@ import (
         "strings"
         "time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/model"
-        "github.com/silk-security/armis-cli/internal/progress"
+        "github.com/ArmisSecurity/armis-cli/internal/api"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/progress"
 )
 
 const MaxRepoSize = 2 * 1024 * 1024 * 1024

@@ -9,7 +9,7 @@ security-scan:
     - apk add --no-cache curl bash docker
   
   script:
-    - curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
+    - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
     - armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
   
   variables:
