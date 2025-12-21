@@ -10,7 +10,7 @@ import (
 
 func TestSARIFFormatter_Format(t *testing.T) {
 	formatter := &SARIFFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan-123",
 		Status: "completed",
@@ -105,7 +105,7 @@ func TestSeverityToSarifLevel(t *testing.T) {
 
 func TestSARIFFormatter_NoLocation(t *testing.T) {
 	formatter := &SARIFFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan",
 		Findings: []model.Finding{
@@ -142,7 +142,7 @@ func TestSARIFFormatter_NoLocation(t *testing.T) {
 
 func TestSARIFFormatter_FormatWithOptions(t *testing.T) {
 	formatter := &SARIFFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID:   "test-scan",
 		Findings: []model.Finding{},
@@ -153,7 +153,7 @@ func TestSARIFFormatter_FormatWithOptions(t *testing.T) {
 		GroupBy:  "severity",
 		RepoPath: "/tmp/test",
 	}
-	
+
 	err := formatter.FormatWithOptions(result, &buf, opts)
 	if err != nil {
 		t.Fatalf("FormatWithOptions failed: %v", err)

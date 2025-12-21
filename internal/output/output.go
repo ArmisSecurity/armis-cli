@@ -1,55 +1,55 @@
 package output
 
 import (
-        "fmt"
-        "io"
-        "os"
+	"fmt"
+	"io"
+	"os"
 
-        "github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
 type FormatOptions struct {
-        GroupBy  string
-        RepoPath string
+	GroupBy  string
+	RepoPath string
 }
 
 type Formatter interface {
-        Format(result *model.ScanResult, w io.Writer) error
-        FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error
+	Format(result *model.ScanResult, w io.Writer) error
+	FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error
 }
 
 func GetFormatter(format string) (Formatter, error) {
-        switch format {
-        case "human":
-                return &HumanFormatter{}, nil
-        case "json":
-                return &JSONFormatter{}, nil
-        case "sarif":
-                return &SARIFFormatter{}, nil
-        case "junit":
-                return &JUnitFormatter{}, nil
-        default:
-                return nil, fmt.Errorf("unsupported format: %s", format)
-        }
+	switch format {
+	case "human":
+		return &HumanFormatter{}, nil
+	case "json":
+		return &JSONFormatter{}, nil
+	case "sarif":
+		return &SARIFFormatter{}, nil
+	case "junit":
+		return &JUnitFormatter{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
 }
 
 func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
-        severityMap := make(map[string]bool)
-        for _, sev := range failOnSeverities {
-                severityMap[sev] = true
-        }
+	severityMap := make(map[string]bool)
+	for _, sev := range failOnSeverities {
+		severityMap[sev] = true
+	}
 
-        for _, finding := range result.Findings {
-                if severityMap[string(finding.Severity)] {
-                        return true
-                }
-        }
+	for _, finding := range result.Findings {
+		if severityMap[string(finding.Severity)] {
+			return true
+		}
+	}
 
-        return false
+	return false
 }
 
 func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode int) {
-        if ShouldFail(result, failOnSeverities) {
-                os.Exit(exitCode)
-        }
+	if ShouldFail(result, failOnSeverities) {
+		os.Exit(exitCode)
+	}
 }

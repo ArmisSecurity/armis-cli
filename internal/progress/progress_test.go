@@ -83,7 +83,7 @@ func TestNewReader(t *testing.T) {
 	t.Run("returns reader when disabled", func(t *testing.T) {
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", true)
-		
+
 		if result != input {
 			t.Error("Expected same reader when disabled")
 		}
@@ -95,7 +95,7 @@ func TestNewReader(t *testing.T) {
 
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", false)
-		
+
 		if result != input {
 			t.Error("Expected same reader in CI environment")
 		}
@@ -113,7 +113,7 @@ func TestNewReader(t *testing.T) {
 
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", false)
-		
+
 		if result == input {
 			t.Error("Expected wrapped reader when not disabled and not CI")
 		}
@@ -132,7 +132,7 @@ func TestNewWriter(t *testing.T) {
 	t.Run("returns writer when disabled", func(t *testing.T) {
 		var buf bytes.Buffer
 		result := NewWriter(&buf, 100, "test", true)
-		
+
 		if result != &buf {
 			t.Error("Expected same writer when disabled")
 		}
@@ -144,7 +144,7 @@ func TestNewWriter(t *testing.T) {
 
 		var buf bytes.Buffer
 		result := NewWriter(&buf, 100, "test", false)
-		
+
 		if result != &buf {
 			t.Error("Expected same writer in CI environment")
 		}
@@ -154,7 +154,7 @@ func TestNewWriter(t *testing.T) {
 func TestSpinner(t *testing.T) {
 	t.Run("creates spinner", func(t *testing.T) {
 		spinner := NewSpinner("test message", false)
-		
+
 		if spinner.message != "test message" {
 			t.Errorf("Expected message 'test message', got %q", spinner.message)
 		}
@@ -183,7 +183,7 @@ func TestSpinner(t *testing.T) {
 	t.Run("update message", func(t *testing.T) {
 		spinner := NewSpinner("initial", true)
 		spinner.UpdateMessage("updated")
-		
+
 		if spinner.message != "updated" {
 			t.Errorf("Expected message 'updated', got %q", spinner.message)
 		}
@@ -193,7 +193,7 @@ func TestSpinner(t *testing.T) {
 		spinner := NewSpinner("test", true)
 		time.Sleep(100 * time.Millisecond)
 		elapsed := spinner.GetElapsed()
-		
+
 		if elapsed < 100*time.Millisecond {
 			t.Errorf("Expected elapsed time >= 100ms, got %v", elapsed)
 		}

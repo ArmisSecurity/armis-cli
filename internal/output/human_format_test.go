@@ -10,7 +10,7 @@ import (
 
 func TestHumanFormatter_Format(t *testing.T) {
 	formatter := &HumanFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan-123",
 		Status: "completed",
@@ -56,7 +56,7 @@ func TestHumanFormatter_Format(t *testing.T) {
 
 func TestHumanFormatter_FormatWithOptions(t *testing.T) {
 	formatter := &HumanFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan",
 		Status: "completed",
@@ -127,7 +127,7 @@ func TestHumanFormatter_FormatWithOptions(t *testing.T) {
 
 func TestHumanFormatter_EmptyFindings(t *testing.T) {
 	formatter := &HumanFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID:   "empty-scan",
 		Status:   "completed",
@@ -227,7 +227,7 @@ func TestIndentWriter(t *testing.T) {
 			atBOL:  true,
 		}
 
-		iw.Write([]byte("line1\nline2\n"))
+		_, _ = iw.Write([]byte("line1\nline2\n"))
 		expected := "> line1\n> line2\n"
 		if buf.String() != expected {
 			t.Errorf("Expected %q, got %q", expected, buf.String())
@@ -242,8 +242,8 @@ func TestIndentWriter(t *testing.T) {
 			atBOL:  true,
 		}
 
-		iw.Write([]byte("first\n"))
-		iw.Write([]byte("second"))
+		_, _ = iw.Write([]byte("first\n"))
+		_, _ = iw.Write([]byte("second"))
 		expected := "- first\n- second"
 		if buf.String() != expected {
 			t.Errorf("Expected %q, got %q", expected, buf.String())

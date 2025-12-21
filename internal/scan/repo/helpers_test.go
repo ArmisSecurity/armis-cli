@@ -9,7 +9,7 @@ import (
 
 func TestNewScanner(t *testing.T) {
 	scanner := NewScanner(nil, true, "tenant-456", 50, true, 10*time.Minute, false)
-	
+
 	if scanner.noProgress != true {
 		t.Error("Expected noProgress to be true")
 	}
@@ -122,8 +122,6 @@ func TestIsTestFile(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestMapSeverity(t *testing.T) {
 	tests := []struct {
@@ -266,7 +264,7 @@ func TestShouldFilterByExploitability(t *testing.T) {
 
 func TestIsEmptyFinding(t *testing.T) {
 	longDesc := "Long description"
-	
+
 	tests := []struct {
 		name     string
 		finding  model.NormalizedFinding

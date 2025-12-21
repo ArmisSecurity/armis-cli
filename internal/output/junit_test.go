@@ -11,7 +11,7 @@ import (
 
 func TestJUnitFormatter_Format(t *testing.T) {
 	formatter := &JUnitFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan-123",
 		Status: "completed",
@@ -179,7 +179,7 @@ func TestConvertToJUnitCases(t *testing.T) {
 
 func TestJUnitFormatter_FormatWithOptions(t *testing.T) {
 	formatter := &JUnitFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID:   "test-scan",
 		Findings: []model.Finding{},
@@ -190,7 +190,7 @@ func TestJUnitFormatter_FormatWithOptions(t *testing.T) {
 		GroupBy:  "severity",
 		RepoPath: "/tmp/test",
 	}
-	
+
 	err := formatter.FormatWithOptions(result, &buf, opts)
 	if err != nil {
 		t.Fatalf("FormatWithOptions failed: %v", err)

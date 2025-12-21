@@ -29,12 +29,12 @@ type Finding struct {
 }
 
 type ScanResult struct {
-	ScanID    string              `json:"scan_id"`
-	Status    string              `json:"status"`
-	Findings  []Finding           `json:"findings"`
-	Summary   Summary             `json:"summary"`
-	StartedAt time.Time           `json:"started_at"`
-	EndedAt   time.Time           `json:"ended_at"`
+	ScanID    string    `json:"scan_id"`
+	Status    string    `json:"status"`
+	Findings  []Finding `json:"findings"`
+	Summary   Summary   `json:"summary"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
 }
 
 type Summary struct {
@@ -154,7 +154,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	scans[scanID] = result
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ScanResponse{ScanID: scanID})
+	_ = json.NewEncoder(w).Encode(ScanResponse{ScanID: scanID})
 }
 
 func handleGetScan(w http.ResponseWriter, r *http.Request) {
@@ -176,5 +176,5 @@ func handleGetScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }

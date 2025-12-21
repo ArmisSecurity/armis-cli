@@ -8,10 +8,10 @@ import (
 
 func TestGetFormatter(t *testing.T) {
 	tests := []struct {
-		name      string
-		format    string
-		wantErr   bool
-		wantType  interface{}
+		name     string
+		format   string
+		wantErr  bool
+		wantType interface{}
 	}{
 		{
 			name:     "human formatter",
@@ -131,7 +131,7 @@ func TestShouldFail(t *testing.T) {
 			result := &model.ScanResult{
 				Findings: tt.findings,
 			}
-			
+
 			shouldFail := ShouldFail(result, tt.failOnSeverities)
 			if shouldFail != tt.expected {
 				t.Errorf("ShouldFail() = %v, want %v", shouldFail, tt.expected)

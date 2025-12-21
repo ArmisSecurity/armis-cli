@@ -167,7 +167,7 @@ func TestShouldFilterByExploitability(t *testing.T) {
 
 func TestIsEmptyFinding(t *testing.T) {
 	longDesc := "Long description"
-	
+
 	tests := []struct {
 		name     string
 		finding  model.NormalizedFinding
@@ -313,7 +313,7 @@ func TestFormatElapsed(t *testing.T) {
 
 func TestNewScanner(t *testing.T) {
 	scanner := NewScanner(nil, true, "tenant-123", 100, false, 5*time.Minute, true)
-	
+
 	if scanner.noProgress != true {
 		t.Error("Expected noProgress to be true")
 	}
@@ -336,7 +336,7 @@ func TestNewScanner(t *testing.T) {
 
 func TestIsDockerAvailable(t *testing.T) {
 	result := isDockerAvailable()
-	
+
 	if result {
 		t.Log("Docker is available on this system")
 	} else {
@@ -346,7 +346,7 @@ func TestIsDockerAvailable(t *testing.T) {
 
 func TestGetDockerCommand(t *testing.T) {
 	cmd := getDockerCommand()
-	
+
 	if cmd != dockerBinary && cmd != podmanBinary {
 		t.Errorf("Expected docker or podman, got %s", cmd)
 	}

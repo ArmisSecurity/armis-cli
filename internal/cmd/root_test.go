@@ -7,7 +7,7 @@ import (
 
 func TestSetVersion(t *testing.T) {
 	SetVersion("1.0.0", "abc123", "2024-01-01")
-	
+
 	if version != "1.0.0" {
 		t.Errorf("Expected version '1.0.0', got %s", version)
 	}
@@ -17,7 +17,7 @@ func TestSetVersion(t *testing.T) {
 	if date != "2024-01-01" {
 		t.Errorf("Expected date '2024-01-01', got %s", date)
 	}
-	
+
 	if rootCmd.Version != "1.0.0 (commit: abc123, built: 2024-01-01)" {
 		t.Errorf("Unexpected rootCmd.Version: %s", rootCmd.Version)
 	}

@@ -12,7 +12,7 @@ func TestNewClient(t *testing.T) {
 	t.Run("uses default timeout when not specified", func(t *testing.T) {
 		cfg := Config{}
 		client := NewClient(cfg)
-		
+
 		if client.httpClient.Timeout != 30*time.Second {
 			t.Errorf("Expected default timeout of 30s, got %v", client.httpClient.Timeout)
 		}
@@ -23,7 +23,7 @@ func TestNewClient(t *testing.T) {
 			Timeout: 60 * time.Second,
 		}
 		client := NewClient(cfg)
-		
+
 		if client.httpClient.Timeout != 60*time.Second {
 			t.Errorf("Expected timeout of 60s, got %v", client.httpClient.Timeout)
 		}
@@ -34,7 +34,7 @@ func TestNewClient(t *testing.T) {
 			DisableTimeout: true,
 		}
 		client := NewClient(cfg)
-		
+
 		if client.httpClient.Timeout != 0 {
 			t.Errorf("Expected no timeout, got %v", client.httpClient.Timeout)
 		}
@@ -43,7 +43,7 @@ func TestNewClient(t *testing.T) {
 	t.Run("uses default retry settings", func(t *testing.T) {
 		cfg := Config{}
 		client := NewClient(cfg)
-		
+
 		if client.config.RetryMax != 3 {
 			t.Errorf("Expected RetryMax of 3, got %d", client.config.RetryMax)
 		}
@@ -59,7 +59,7 @@ func TestNewClient(t *testing.T) {
 func TestClientDo_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
+		_, _ = w.Write([]byte("success"))
 	}))
 	defer server.Close()
 
@@ -86,7 +86,7 @@ func TestClientDo_Success(t *testing.T) {
 func TestClientDo_ClientError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("bad request"))
+		_, _ = w.Write([]byte("bad request"))
 	}))
 	defer server.Close()
 
@@ -116,10 +116,10 @@ func TestClientDo_ServerErrorRetry(t *testing.T) {
 		attempts++
 		if attempts < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("server error"))
+			_, _ = w.Write([]byte("server error"))
 		} else {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("success"))
+			_, _ = w.Write([]byte("success"))
 		}
 	}))
 	defer server.Close()

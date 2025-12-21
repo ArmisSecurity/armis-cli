@@ -10,7 +10,7 @@ import (
 
 func TestJSONFormatter_Format(t *testing.T) {
 	formatter := &JSONFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID: "test-scan-123",
 		Status: "completed",
@@ -63,7 +63,7 @@ func TestJSONFormatter_Format(t *testing.T) {
 
 func TestJSONFormatter_FormatWithOptions(t *testing.T) {
 	formatter := &JSONFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID:   "test-scan",
 		Status:   "completed",
@@ -78,7 +78,7 @@ func TestJSONFormatter_FormatWithOptions(t *testing.T) {
 		GroupBy:  "severity",
 		RepoPath: "/tmp/test",
 	}
-	
+
 	err := formatter.FormatWithOptions(result, &buf, opts)
 	if err != nil {
 		t.Fatalf("FormatWithOptions failed: %v", err)
@@ -96,7 +96,7 @@ func TestJSONFormatter_FormatWithOptions(t *testing.T) {
 
 func TestJSONFormatter_EmptyFindings(t *testing.T) {
 	formatter := &JSONFormatter{}
-	
+
 	result := &model.ScanResult{
 		ScanID:   "empty-scan",
 		Status:   "completed",
