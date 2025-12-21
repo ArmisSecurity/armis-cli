@@ -25,7 +25,16 @@ type Client struct {
         uploadTimeout    time.Duration
 }
 
-func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *Client {
+type ClientOption func(*Client)
+
+func WithHTTPClient(client *httpclient.Client) ClientOption {
+        return func(c *Client) {
+                c.httpClient = client
+                c.uploadHTTPClient = client
+        }
+}
+
+func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) *Client {
         if uploadTimeout == 0 {
                 uploadTimeout = 10 * time.Minute
         }
@@ -44,7 +53,7 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *
                 DisableTimeout: true,
         })
 
-        return &Client{
+        client := &Client{
                 httpClient:       httpClient,
                 uploadHTTPClient: uploadHTTPClient,
                 baseURL:          baseURL,
@@ -52,6 +61,12 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration) *
                 debug:            debug,
                 uploadTimeout:    uploadTimeout,
         }
+
+        for _, opt := range opts {
+                opt(client)
+        }
+
+        return client
 }
 
 func (c *Client) IsDebug() bool {
