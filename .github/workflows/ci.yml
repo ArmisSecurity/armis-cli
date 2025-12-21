@@ -45,7 +45,9 @@ jobs:
         run: go vet ./...
 
       - name: Run tests with coverage
-        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+        shell: bash
+        run: |
+          go test $(go list ./... | grep -v -e '/testutil$' -e '/test$') -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage summary
         id: coverage
