@@ -52,30 +52,30 @@ var scanImageCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-                ctx := context.Background()
-                var result *model.ScanResult
+		ctx := context.Background()
+		var result *model.ScanResult
 
-                if tarballPath != "" {
-                        sanitizedPath, pathErr := util.SanitizePath(tarballPath)
-                        if pathErr != nil {
-                                return fmt.Errorf("invalid tarball path: %w", pathErr)
-                        }
-                        result, err = scanner.ScanTarball(ctx, sanitizedPath)
-                        if err != nil {
-                                return fmt.Errorf("scan failed: %w", err)
-                        }
-                } else {
-                        imageName := args[0]
-                        result, err = scanner.ScanImage(ctx, imageName)
-                        if err != nil {
-                                return fmt.Errorf("scan failed: %w", err)
-                        }
-                }
+		if tarballPath != "" {
+			sanitizedPath, pathErr := util.SanitizePath(tarballPath)
+			if pathErr != nil {
+				return fmt.Errorf("invalid tarball path: %w", pathErr)
+			}
+			result, err = scanner.ScanTarball(ctx, sanitizedPath)
+			if err != nil {
+				return fmt.Errorf("scan failed: %w", err)
+			}
+		} else {
+			imageName := args[0]
+			result, err = scanner.ScanImage(ctx, imageName)
+			if err != nil {
+				return fmt.Errorf("scan failed: %w", err)
+			}
+		}
 
-                formatter, err := output.GetFormatter(format)
-                if err != nil {
-                        return err
-                }
+		formatter, err := output.GetFormatter(format)
+		if err != nil {
+			return err
+		}
 
 		opts := output.FormatOptions{
 			GroupBy:  groupBy,
