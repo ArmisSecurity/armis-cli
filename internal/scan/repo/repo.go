@@ -1,488 +1,488 @@
 package repo
 
 import (
-        "archive/tar"
-        "compress/gzip"
-        "context"
-        "encoding/json"
-        "fmt"
-        "io"
-        "os"
-        "path/filepath"
-        "strings"
-        "time"
+	"archive/tar"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
-        "github.com/silk-security/armis-cli/internal/api"
-        "github.com/silk-security/armis-cli/internal/model"
-        "github.com/silk-security/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/progress"
 )
 
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
 
 type Scanner struct {
-        client                *api.Client
-        noProgress            bool
-        tenantID              string
-        pageLimit             int
-        includeTests          bool
-        timeout               time.Duration
-        includeNonExploitable bool
+	client                *api.Client
+	noProgress            bool
+	tenantID              string
+	pageLimit             int
+	includeTests          bool
+	timeout               time.Duration
+	includeNonExploitable bool
 }
 
 func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration, includeNonExploitable bool) *Scanner {
-        return &Scanner{
-                client:                client,
-                noProgress:            noProgress,
-                tenantID:              tenantID,
-                pageLimit:             pageLimit,
-                includeTests:          includeTests,
-                timeout:               timeout,
-                includeNonExploitable: includeNonExploitable,
-        }
+	return &Scanner{
+		client:                client,
+		noProgress:            noProgress,
+		tenantID:              tenantID,
+		pageLimit:             pageLimit,
+		includeTests:          includeTests,
+		timeout:               timeout,
+		includeNonExploitable: includeNonExploitable,
+	}
 }
 
 func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
-        absPath, err := filepath.Abs(path)
-        if err != nil {
-                return nil, fmt.Errorf("failed to resolve path: %w", err)
-        }
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
 
-        info, err := os.Stat(absPath)
-        if err != nil {
-                return nil, fmt.Errorf("failed to stat path: %w", err)
-        }
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat path: %w", err)
+	}
 
-        if !info.IsDir() {
-                return nil, fmt.Errorf("path is not a directory: %s", absPath)
-        }
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", absPath)
+	}
 
-        ignoreMatcher, err := LoadIgnorePatterns(absPath)
-        if err != nil {
-                return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
-        }
+	ignoreMatcher, err := LoadIgnorePatterns(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+	}
 
-        size, err := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-        if err != nil {
-                return nil, fmt.Errorf("failed to calculate directory size: %w", err)
-        }
+	size, err := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+	}
 
-        if size > MaxRepoSize {
-                return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
-        }
+	if size > MaxRepoSize {
+		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
+	}
 
-        pr, pw := io.Pipe()
+	pr, pw := io.Pipe()
 
-        spinner := progress.NewSpinner("Creating a compressed archive...", s.noProgress)
-        spinner.Start()
+	spinner := progress.NewSpinner("Creating a compressed archive...", s.noProgress)
+	spinner.Start()
 
-        errChan := make(chan error, 1)
-        go func() {
-                defer pw.Close()
-                errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
-        }()
+	errChan := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
+	}()
 
-        time.Sleep(500 * time.Millisecond)
-        spinner.Update("Uploading archive to Armis Cloud...")
+	time.Sleep(500 * time.Millisecond)
+	spinner.Update("Uploading archive to Armis Cloud...")
 
-        scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
-        spinner.Stop()
+	scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
+	spinner.Stop()
 
-        if err != nil {
-                return nil, fmt.Errorf("failed to upload repository: %w", err)
-        }
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload repository: %w", err)
+	}
 
-        if tarErr := <-errChan; tarErr != nil {
-                return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
-        }
+	if tarErr := <-errChan; tarErr != nil {
+		return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
+	}
 
-        fmt.Printf("\nScan initiated with ID: %s\n", scanID)
+	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
 
-        analysisSpinner := progress.NewSpinner("Analyzing code for vulnerabilities...", s.noProgress)
-        analysisSpinner.Start()
+	analysisSpinner := progress.NewSpinner("Analyzing code for vulnerabilities...", s.noProgress)
+	analysisSpinner.Start()
 
-        _, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
-        elapsed := analysisSpinner.GetElapsed()
-        analysisSpinner.Stop()
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
+	elapsed := analysisSpinner.GetElapsed()
+	analysisSpinner.Stop()
 
-        if err != nil {
-                return nil, fmt.Errorf("failed to wait for scan: %w", err)
-        }
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait for scan: %w", err)
+	}
 
-        fmt.Printf("Analysis completed in %s\n\n", formatElapsed(elapsed))
+	fmt.Printf("Analysis completed in %s\n\n", formatElapsed(elapsed))
 
-        fetchSpinner := progress.NewSpinner("Fetching scan results...", s.noProgress)
-        fetchSpinner.Start()
+	fetchSpinner := progress.NewSpinner("Fetching scan results...", s.noProgress)
+	fetchSpinner.Start()
 
-        findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
-        fetchSpinner.Stop()
+	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+	fetchSpinner.Stop()
 
-        if err != nil {
-                return nil, fmt.Errorf("failed to fetch results: %w", err)
-        }
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch results: %w", err)
+	}
 
-        result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
-        return result, nil
+	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+	return result, nil
 }
 
 func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatcher *IgnoreMatcher) error {
-        gzWriter := gzip.NewWriter(writer)
-        defer gzWriter.Close()
+	gzWriter := gzip.NewWriter(writer)
+	defer gzWriter.Close()
 
-        tarWriter := tar.NewWriter(gzWriter)
-        defer tarWriter.Close()
+	tarWriter := tar.NewWriter(gzWriter)
+	defer tarWriter.Close()
 
-        return filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
-                if err != nil {
-                        return err
-                }
+	return filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 
-                relPath, err := filepath.Rel(sourcePath, path)
-                if err != nil {
-                        return err
-                }
+		relPath, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return err
+		}
 
-                if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
-                        if info.IsDir() {
-                                return filepath.SkipDir
-                        }
-                        return nil
-                }
+		if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
-                if shouldSkip(path, info, s.includeTests) {
-                        if info.IsDir() {
-                                return filepath.SkipDir
-                        }
-                        return nil
-                }
+		if shouldSkip(path, info, s.includeTests) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
-                header, err := tar.FileInfoHeader(info, "")
-                if err != nil {
-                        return err
-                }
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
 
-                header.Name = relPath
+		header.Name = relPath
 
-                if err := tarWriter.WriteHeader(header); err != nil {
-                        return err
-                }
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
 
-                if !info.IsDir() {
-                        file, err := os.Open(path)
-                        if err != nil {
-                                return err
-                        }
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
 
-                        _, copyErr := io.Copy(tarWriter, file)
-                        closeErr := file.Close()
+			_, copyErr := io.Copy(tarWriter, file)
+			closeErr := file.Close()
 
-                        if copyErr != nil {
-                                return copyErr
-                        }
-                        if closeErr != nil {
-                                return closeErr
-                        }
-                }
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		}
 
-                return nil
-        })
+		return nil
+	})
 }
 
 func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatcher) (int64, error) {
-        var size int64
-        err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-                if err != nil {
-                        return err
-                }
+	var size int64
+	err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 
-                relPath, err := filepath.Rel(path, filePath)
-                if err != nil {
-                        return err
-                }
+		relPath, err := filepath.Rel(path, filePath)
+		if err != nil {
+			return err
+		}
 
-                if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
-                        if info.IsDir() {
-                                return filepath.SkipDir
-                        }
-                        return nil
-                }
+		if ignoreMatcher != nil && ignoreMatcher.Match(relPath, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
-                if shouldSkip(filePath, info, includeTests) {
-                        if info.IsDir() {
-                                return filepath.SkipDir
-                        }
-                        return nil
-                }
-                if !info.IsDir() {
-                        size += info.Size()
-                }
-                return nil
-        })
-        return size, err
+		if shouldSkip(filePath, info, includeTests) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
 }
 
 func shouldSkip(path string, info os.FileInfo, includeTests bool) bool {
-        name := info.Name()
+	name := info.Name()
 
-        skipDirs := []string{
-                ".git", ".svn", ".hg",
-                "node_modules", "vendor", "venv", ".venv",
-                "__pycache__", ".pytest_cache",
-                "target", "build", "dist", ".next",
-                ".idea", ".vscode",
-        }
+	skipDirs := []string{
+		".git", ".svn", ".hg",
+		"node_modules", "vendor", "venv", ".venv",
+		"__pycache__", ".pytest_cache",
+		"target", "build", "dist", ".next",
+		".idea", ".vscode",
+	}
 
-        if !includeTests {
-                skipDirs = append(skipDirs, "tests", "test", "__tests__", "spec", "specs")
-        }
+	if !includeTests {
+		skipDirs = append(skipDirs, "tests", "test", "__tests__", "spec", "specs")
+	}
 
-        for _, dir := range skipDirs {
-                if info.IsDir() && name == dir {
-                        return true
-                }
-                if strings.Contains(path, string(filepath.Separator)+dir+string(filepath.Separator)) {
-                        return true
-                }
-        }
+	for _, dir := range skipDirs {
+		if info.IsDir() && name == dir {
+			return true
+		}
+		if strings.Contains(path, string(filepath.Separator)+dir+string(filepath.Separator)) {
+			return true
+		}
+	}
 
-        if !includeTests && !info.IsDir() && isTestFile(name) {
-                return true
-        }
+	if !includeTests && !info.IsDir() && isTestFile(name) {
+		return true
+	}
 
-        return false
+	return false
 }
 
 func isTestFile(name string) bool {
-        testPatterns := []string{
-                "_test.go",
-                "_test.py", "test_",
-                ".test.js", ".spec.js", ".test.jsx", ".spec.jsx",
-                ".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
-                "Test.java", "Tests.java",
-                "Test.cs", "Tests.cs",
-                "_spec.rb", "_test.rb",
-                "Test.php", "_test.php",
-                "Tests.swift", "Test.swift",
-                "Test.kt", "Tests.kt",
-                "Test.scala", "Spec.scala",
-                "_test.c", "_test.cpp", "Test.cpp", "_test.cc", "Test.cc",
-                "_test.exs",
-                "_test.clj",
-                "Spec.hs", "Test.hs",
-                "_test.dart",
-                "_test.R",
-                "_test.jl",
-                "_test.lua",
-                "_test.rs",
-                "_test.m", "_test.mm",
-                ".test.vue",
-                "_test.erl",
-        }
+	testPatterns := []string{
+		"_test.go",
+		"_test.py", "test_",
+		".test.js", ".spec.js", ".test.jsx", ".spec.jsx",
+		".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
+		"Test.java", "Tests.java",
+		"Test.cs", "Tests.cs",
+		"_spec.rb", "_test.rb",
+		"Test.php", "_test.php",
+		"Tests.swift", "Test.swift",
+		"Test.kt", "Tests.kt",
+		"Test.scala", "Spec.scala",
+		"_test.c", "_test.cpp", "Test.cpp", "_test.cc", "Test.cc",
+		"_test.exs",
+		"_test.clj",
+		"Spec.hs", "Test.hs",
+		"_test.dart",
+		"_test.R",
+		"_test.jl",
+		"_test.lua",
+		"_test.rs",
+		"_test.m", "_test.mm",
+		".test.vue",
+		"_test.erl",
+	}
 
-        for _, pattern := range testPatterns {
-                if strings.HasSuffix(name, pattern) {
-                        return true
-                }
-                if strings.HasPrefix(name, "test_") && (strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".R")) {
-                        return true
-                }
-        }
+	for _, pattern := range testPatterns {
+		if strings.HasSuffix(name, pattern) {
+			return true
+		}
+		if strings.HasPrefix(name, "test_") && (strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".R")) {
+			return true
+		}
+	}
 
-        if strings.HasSuffix(name, ".t") && !strings.Contains(name, ".") {
-                return true
-        }
+	if strings.HasSuffix(name, ".t") && !strings.Contains(name, ".") {
+		return true
+	}
 
-        return false
+	return false
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
-        findings, filteredCount := convertNormalizedFindings(normalizedFindings, debug, includeNonExploitable)
+	findings, filteredCount := convertNormalizedFindings(normalizedFindings, debug, includeNonExploitable)
 
-        summary := model.Summary{
-                Total:                  len(findings),
-                BySeverity:             make(map[model.Severity]int),
-                ByType:                 make(map[model.FindingType]int),
-                ByCategory:             make(map[string]int),
-                FilteredNonExploitable: filteredCount,
-        }
+	summary := model.Summary{
+		Total:                  len(findings),
+		BySeverity:             make(map[model.Severity]int),
+		ByType:                 make(map[model.FindingType]int),
+		ByCategory:             make(map[string]int),
+		FilteredNonExploitable: filteredCount,
+	}
 
-        for _, finding := range findings {
-                summary.BySeverity[finding.Severity]++
-                summary.ByType[finding.Type]++
-                if finding.FindingCategory != "" {
-                        summary.ByCategory[finding.FindingCategory]++
-                }
-        }
+	for _, finding := range findings {
+		summary.BySeverity[finding.Severity]++
+		summary.ByType[finding.Type]++
+		if finding.FindingCategory != "" {
+			summary.ByCategory[finding.FindingCategory]++
+		}
+	}
 
-        return &model.ScanResult{
-                ScanID:   scanID,
-                Status:   "completed",
-                Findings: findings,
-                Summary:  summary,
-        }
+	return &model.ScanResult{
+		ScanID:   scanID,
+		Status:   "completed",
+		Findings: findings,
+		Summary:  summary,
+	}
 }
 
 func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) ([]model.Finding, int) {
-        var findings []model.Finding
-        filteredCount := 0
+	var findings []model.Finding
+	filteredCount := 0
 
-        for i, nf := range normalizedFindings {
-                if isEmptyFinding(nf) {
-                        continue
-                }
+	for i, nf := range normalizedFindings {
+		if isEmptyFinding(nf) {
+			continue
+		}
 
-                if !includeNonExploitable && shouldFilterByExploitability(nf.NormalizedTask.Labels) {
-                        filteredCount++
-                        continue
-                }
+		if !includeNonExploitable && shouldFilterByExploitability(nf.NormalizedTask.Labels) {
+			filteredCount++
+			continue
+		}
 
-                if debug {
-                        rawJSON, _ := json.Marshal(nf)
-                        fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
-                }
+		if debug {
+			rawJSON, _ := json.Marshal(nf)
+			fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+		}
 
-                finding := model.Finding{
-                        ID:          nf.NormalizedTask.FindingID,
-                        Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
-                        Description: nf.NormalizedRemediation.Description,
-                        CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
-                        CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
-                }
+		finding := model.Finding{
+			ID:          nf.NormalizedTask.FindingID,
+			Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Description: nf.NormalizedRemediation.Description,
+			CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
+			CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+		}
 
-                if finding.Description == "" {
-                        if nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" {
-                                finding.Description = nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown
-                        } else if nf.NormalizedTask.LongDescription != nil {
-                                finding.Description = *nf.NormalizedTask.LongDescription
-                        }
-                }
+		if finding.Description == "" {
+			if nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" {
+				finding.Description = nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown
+			} else if nf.NormalizedTask.LongDescription != nil {
+				finding.Description = *nf.NormalizedTask.LongDescription
+			}
+		}
 
-                finding.Description = cleanDescription(finding.Description)
+		finding.Description = cleanDescription(finding.Description)
 
-                if nf.NormalizedRemediation.FindingCategory != nil {
-                        if category, ok := nf.NormalizedRemediation.FindingCategory.(string); ok {
-                                finding.FindingCategory = category
-                        }
-                }
+		if nf.NormalizedRemediation.FindingCategory != nil {
+			if category, ok := nf.NormalizedRemediation.FindingCategory.(string); ok {
+				finding.FindingCategory = category
+			}
+		}
 
-                loc := nf.NormalizedTask.ExtraData.CodeLocation
-                if loc.FileName != nil {
-                        finding.File = *loc.FileName
-                }
-                if loc.StartLine != nil {
-                        finding.StartLine = *loc.StartLine
-                }
-                if loc.EndLine != nil {
-                        finding.EndLine = *loc.EndLine
-                }
-                if loc.StartCol != nil {
-                        finding.StartColumn = *loc.StartCol
-                }
-                if loc.EndCol != nil {
-                        finding.EndColumn = *loc.EndCol
-                }
+		loc := nf.NormalizedTask.ExtraData.CodeLocation
+		if loc.FileName != nil {
+			finding.File = *loc.FileName
+		}
+		if loc.StartLine != nil {
+			finding.StartLine = *loc.StartLine
+		}
+		if loc.EndLine != nil {
+			finding.EndLine = *loc.EndLine
+		}
+		if loc.StartCol != nil {
+			finding.StartColumn = *loc.StartCol
+		}
+		if loc.EndCol != nil {
+			finding.EndColumn = *loc.EndCol
+		}
 
-                if len(loc.CodeSnippetLines) > 0 {
-                        finding.CodeSnippet = strings.Join(loc.CodeSnippetLines, "\n")
-                } else if loc.Snippet != nil {
-                        finding.CodeSnippet = *loc.Snippet
-                }
+		if len(loc.CodeSnippetLines) > 0 {
+			finding.CodeSnippet = strings.Join(loc.CodeSnippetLines, "\n")
+		} else if loc.Snippet != nil {
+			finding.CodeSnippet = *loc.Snippet
+		}
 
-                if loc.SnippetStartLine != nil {
-                        finding.SnippetStartLine = *loc.SnippetStartLine
-                }
+		if loc.SnippetStartLine != nil {
+			finding.SnippetStartLine = *loc.SnippetStartLine
+		}
 
-                if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {
-                        finding.Type = model.FindingTypeVulnerability
-                }
+		if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {
+			finding.Type = model.FindingTypeVulnerability
+		}
 
-                if loc.HasSecret {
-                        finding.Type = model.FindingTypeSecret
-                }
+		if loc.HasSecret {
+			finding.Type = model.FindingTypeSecret
+		}
 
-                if finding.Type == "" {
-                        finding.Type = model.FindingTypeSCA
-                }
+		if finding.Type == "" {
+			finding.Type = model.FindingTypeSCA
+		}
 
-                finding.Title = finding.Description
+		finding.Title = finding.Description
 
-                findings = append(findings, finding)
-        }
+		findings = append(findings, finding)
+	}
 
-        return findings, filteredCount
+	return findings, filteredCount
 }
 
 func shouldFilterByExploitability(labels []model.Label) bool {
-        var scannerCodeMatch bool
-        var exploitableFalse bool
+	var scannerCodeMatch bool
+	var exploitableFalse bool
 
-        for _, label := range labels {
-                desc := strings.ToLower(strings.TrimSpace(label.Description))
-                value := strings.ToLower(strings.TrimSpace(label.Value))
+	for _, label := range labels {
+		desc := strings.ToLower(strings.TrimSpace(label.Description))
+		value := strings.ToLower(strings.TrimSpace(label.Value))
 
-                if desc == "scanner code" && value == "38295677" {
-                        scannerCodeMatch = true
-                }
-                if desc == "exploitable" && (value == "false" || value == "0") {
-                        exploitableFalse = true
-                }
-        }
+		if desc == "scanner code" && value == "38295677" {
+			scannerCodeMatch = true
+		}
+		if desc == "exploitable" && (value == "false" || value == "0") {
+			exploitableFalse = true
+		}
+	}
 
-        return scannerCodeMatch && exploitableFalse
+	return scannerCodeMatch && exploitableFalse
 }
 
 func cleanDescription(desc string) string {
-        lines := strings.Split(desc, "\n")
-        var cleaned []string
-        
-        for _, line := range lines {
-                line = strings.TrimSpace(line)
-                if strings.HasPrefix(line, "Code_location -") ||
-                   strings.HasPrefix(line, "Code Blob -") ||
-                   strings.HasPrefix(line, "Confidence -") {
-                        continue
-                }
-                if line != "" {
-                        cleaned = append(cleaned, line)
-                }
-        }
-        
-        return strings.Join(cleaned, " ")
+	lines := strings.Split(desc, "\n")
+	var cleaned []string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Code_location -") ||
+			strings.HasPrefix(line, "Code Blob -") ||
+			strings.HasPrefix(line, "Confidence -") {
+			continue
+		}
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+
+	return strings.Join(cleaned, " ")
 }
 
 func isEmptyFinding(nf model.NormalizedFinding) bool {
 	hasDescription := nf.NormalizedRemediation.Description != "" ||
 		nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown != "" ||
 		(nf.NormalizedTask.LongDescription != nil && *nf.NormalizedTask.LongDescription != "")
-	
+
 	hasCVEsOrCWEs := len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 ||
 		len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs) > 0
-	
+
 	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
-	
+
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
 }
 
 func mapSeverity(toolSeverity string) model.Severity {
-        switch strings.ToUpper(toolSeverity) {
-        case "CRITICAL":
-                return model.SeverityCritical
-        case "HIGH":
-                return model.SeverityHigh
-        case "MEDIUM":
-                return model.SeverityMedium
-        case "LOW":
-                return model.SeverityLow
-        default:
-                return model.SeverityInfo
-        }
+	switch strings.ToUpper(toolSeverity) {
+	case "CRITICAL":
+		return model.SeverityCritical
+	case "HIGH":
+		return model.SeverityHigh
+	case "MEDIUM":
+		return model.SeverityMedium
+	case "LOW":
+		return model.SeverityLow
+	default:
+		return model.SeverityInfo
+	}
 }
 
 func formatElapsed(d time.Duration) string {
-        d = d.Round(time.Second)
-        minutes := int(d.Minutes())
-        seconds := int(d.Seconds()) % 60
-        if minutes > 0 {
-                return fmt.Sprintf("%dm %ds", minutes, seconds)
-        }
-        return fmt.Sprintf("%ds", seconds)
+	d = d.Round(time.Second)
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
 }

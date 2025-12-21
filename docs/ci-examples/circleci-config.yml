@@ -11,7 +11,7 @@ jobs:
       - run:
           name: Install Armis CLI
           command: |
-            curl -sSL https://raw.githubusercontent.com/silk-security/Moose-CLI/main/scripts/install.sh | bash
+            curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
       
       - run:
           name: Run Security Scan

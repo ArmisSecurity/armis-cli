@@ -145,7 +145,7 @@ on:
 The README includes a status badge showing the current CI status:
 
 ```markdown
-![CI](https://github.com/silk-security/Moose-CLI/actions/workflows/cli-self-scan.yml/badge.svg)
+![CI](https://github.com/ArmisSecurity/armis-cli/actions/workflows/cli-self-scan.yml/badge.svg)
 ```
 
 This badge updates automatically based on the latest workflow run.

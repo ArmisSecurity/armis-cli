@@ -17,30 +17,20 @@ security updates.
 
 We take security issues seriously and appreciate responsible disclosure.
 
-If you believe you have found a security vulnerability in this CLI,
-please report it **privately** using one of the methods below.
+If you believe you have identified a security vulnerability in this CLI,
+please report it **privately by email**.
 
-### Preferred Method — GitHub Security Advisories
+**Email:** security@armis.com
 
-Submit a confidential report via GitHub Security Advisories:
-
-https://github.com/ArmisSecurity/armis-cli/security/advisories/new
-
-This channel supports encrypted communication and coordinated disclosure.
-
-### Alternative Method — Secure Email
-
-If you are unable to use GitHub Security Advisories, you may report issues
-by email:
-
-**security@armis.com**
-
-Please include:
+When reporting, please include:
 - CLI version
 - Operating system and runtime environment
-- Steps to reproduce or proof of concept
-- Expected vs. actual behavior
+- Clear steps to reproduce or a proof of concept
+- Expected versus actual behavior
 - Assessment of potential impact
+
+Please **do not disclose security issues publicly** until a fix or
+mitigation has been released.
 
 ---
 
@@ -66,12 +56,13 @@ appropriate cloud security disclosure channel.
 
 ## What to Report
 
-We consider reports to be in scope when they demonstrate a clear,
-reproducible security impact affecting the CLI itself, such as:
+Reports are considered in scope when they demonstrate a clear,
+reproducible security impact affecting the CLI itself, including but not
+limited to:
 
 - Credential exposure or misuse
 - Unauthorized access or privilege escalation
-- Remote or local code execution
+- Local or remote code execution
 - Tampering with CLI behavior or outputs
 
 Reports consisting solely of automated scanner output without a
@@ -86,30 +77,29 @@ After receiving a report, we will:
 1. Acknowledge receipt within a reasonable timeframe
 2. Investigate and assess the issue
 3. Develop a fix or mitigation as appropriate
-4. Coordinate disclosure when remediation is available
+4. Coordinate disclosure once remediation is available
 
-We request that reporters **do not publicly disclose** vulnerabilities
-until a fix or mitigation has been released.
+We request that reporters coordinate with us and refrain from public
+disclosure until a fix or mitigation has been released.
 
 ---
 
 ## Responsible Research and Safe Harbor
 
-We support good-faith security research that:
+We support good-faith security research conducted in accordance with
+this policy. We will not pursue legal action against researchers who:
 
-- Avoids harm to users or data
-- Avoids service disruption
-- Respects privacy and applicable laws
-
-We will not pursue legal action against researchers who act in good faith
-and in accordance with this policy.
+- Act in good faith
+- Avoid harm to users or data
+- Avoid service disruption
+- Respect privacy and applicable laws
 
 ---
 
-## Alignment With Industry Disclosure Standards
+## Alignment With Industry Disclosure Practices
 
-Our vulnerability disclosure approach is aligned with widely accepted
-responsible disclosure practices, including those outlined in the
+Our vulnerability disclosure approach aligns with widely accepted
+responsible disclosure practices, including those described in the
 Armis Vulnerability Disclosure Policy:
 
 https://www.armis.com/legal-compliance/vulnerability-disclosure-policy/
