@@ -1,0 +1,19 @@
+name: Armis CLI Action Marketplace Sample
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run Armis CLI Action from Marketplace
+        if: false
+        uses: ArmisSecurity/armis-cli-action@v1
+        with:
+          api_token: ${{ secrets.ARMIS_API_TOKEN }}
+          args: scan --help
