@@ -49,8 +49,8 @@ sboms:
   - id: archive-sboms
     cmd: syft
     args:
-      - "packages"
-      - "archive:${artifact}"
+      - "scan"
+      - "file:${artifact}"
       - "--output=cyclonedx-json=${document}"
     artifacts: archive
     documents:
