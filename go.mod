@@ -8,7 +8,7 @@ require (
 	github.com/go-git/go-git/v5 v5.16.3
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 )
 
 require (
