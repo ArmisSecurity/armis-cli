@@ -34,7 +34,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.17.7
 
       - name: Run GoReleaser (Snapshot)
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
