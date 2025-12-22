@@ -11,28 +11,65 @@ permissions:
   id-token: write
 
 jobs:
-  wait-for-ci:
-    name: Wait for CI to pass
+  test:
+    name: Test & Coverage
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for CI workflow
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.sha }}
-          check-name: 'Test & Coverage (ubuntu-latest)'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Wait for Lint
-        uses: lewagon/wait-on-check-action@v1.3.4
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          ref: ${{ github.sha }}
-          check-name: 'Lint'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
+          go-version: stable
+          cache: true
+
+      - name: Go fmt check
+        shell: bash
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [[ -n "$fmt_out" ]]; then
+            echo "Files need gofmt:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Run tests with coverage
+        shell: bash
+        run: |
+          go test $(go list ./... | grep -v -e '/testutil$' -e '/test$') -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Coverage summary
+        shell: bash
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          total=$(go tool cover -func=coverage.out | awk '/total:/ {print $3}')
+          echo "Total coverage: ${total}"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
 
   goreleaser:
-    needs: wait-for-ci
+    needs: [test, lint]
     runs-on: ubuntu-latest
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
@@ -89,7 +126,7 @@ jobs:
           retention-days: 7
 
   provenance:
-    needs: [wait-for-ci, goreleaser]
+    needs: [test, lint, goreleaser]
     permissions:
       actions: read
       id-token: write
