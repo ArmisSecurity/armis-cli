@@ -111,7 +111,25 @@ jobs:
         id: hash
         run: |
           cd dist
-          echo "hashes=$(sha256sum *.tar.gz *.zip *.txt *.sbom.cdx.json | base64 -w0)" >> "$GITHUB_OUTPUT"
+          # List files for debugging
+          echo "Files in dist:"
+          ls -la
+          
+          # Generate hashes only for the binary archives (not checksums or SBOMs)
+          echo "Generating hashes..."
+          sha256sum armis-cli-*.tar.gz armis-cli-*.zip > hashes-raw.txt 2>&1 || true
+          cat hashes-raw.txt
+          
+          # Base64 encode the hashes
+          if [ -s hashes-raw.txt ]; then
+            base64 -w0 < hashes-raw.txt > hashes.txt
+            echo "Base64 encoded hashes:"
+            cat hashes.txt
+            echo "hashes=$(cat hashes.txt)" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: No hashes generated!"
+            exit 1
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
