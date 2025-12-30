@@ -76,7 +76,7 @@ func TestClientDo_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -103,7 +103,7 @@ func TestClientDo_ClientError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error for 4xx, got %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", resp.StatusCode)
@@ -140,7 +140,7 @@ func TestClientDo_ServerErrorRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected success after retries, got error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)

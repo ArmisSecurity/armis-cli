@@ -121,7 +121,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		elapsed := time.Since(start).Round(time.Millisecond)
 		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(size), err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -155,7 +155,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ingest status: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -233,7 +233,7 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch normalized results: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -293,7 +293,7 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scan result: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
