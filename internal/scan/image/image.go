@@ -62,14 +62,14 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 
 	fmt.Printf("Exporting image: %s\n", imageName)
 	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
-		tmpFile.Close()
+		tmpFile.Close() //nolint:errcheck // cleanup before remove
 		os.Remove(tmpFileName)
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
 
 	result, scanErr := s.ScanTarball(ctx, tmpFileName)
 
-	tmpFile.Close()
+	tmpFile.Close() //nolint:errcheck // cleanup before remove
 	os.Remove(tmpFileName)
 
 	return result, scanErr
@@ -89,7 +89,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tarball: %w", err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // file opened for reading
 
 	uploadSpinner := progress.NewSpinner("Uploading image...", s.noProgress)
 	uploadSpinner.Start()

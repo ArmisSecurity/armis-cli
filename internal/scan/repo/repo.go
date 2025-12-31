@@ -77,7 +77,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	errChan := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck // signals EOF to reader
 		errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
 	}()
 
@@ -124,12 +124,20 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	return result, nil
 }
 
-func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatcher *IgnoreMatcher) error {
+func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatcher *IgnoreMatcher) (err error) {
 	gzWriter := gzip.NewWriter(writer)
-	defer gzWriter.Close()
+	defer func() {
+		if closeErr := gzWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	tarWriter := tar.NewWriter(gzWriter)
-	defer tarWriter.Close()
+	defer func() {
+		if closeErr := tarWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	return filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

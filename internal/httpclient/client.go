@@ -60,7 +60,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 		if resp.StatusCode >= 500 {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			resp.Body.Close() //nolint:errcheck // response body read-only
 			return fmt.Errorf("server error: %d - %s", resp.StatusCode, string(body))
 		}
 

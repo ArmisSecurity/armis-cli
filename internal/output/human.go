@@ -207,7 +207,7 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 	if err != nil {
 		return "", 0, fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // file opened for reading
 
 	start := finding.SnippetStartLine
 	if start <= 0 {
