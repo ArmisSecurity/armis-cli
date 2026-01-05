@@ -139,26 +139,26 @@ signs:
       - "${artifact}"
       - "--yes"
 
-# Homebrew and Scoop distribution disabled for now
-# Uncomment when repositories are created:
-# - ArmisSecurity/homebrew-tap
+# Homebrew tap is now active!
+# Scoop distribution disabled for now
+# Uncomment when repository is created:
 # - ArmisSecurity/scoop-bucket
-#
-# brews:
-#   - name: armis-cli
-#     repository:
-#       owner: ArmisSecurity
-#       name: homebrew-tap
-#       token: "{{ .Env.GITHUB_TOKEN }}"
-#     folder: Formula
-#     homepage: https://github.com/ArmisSecurity/armis-cli
-#     description: "Enterprise-grade CLI tool for static application security scanning"
-#     license: Apache-2.0
-#     test: |
-#       system "#{bin}/armis-cli", "version"
-#     install: |
-#       bin.install "armis-cli"
-#
+
+brews:
+  - name: armis-cli
+    repository:
+      owner: ArmisSecurity
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    folder: Formula
+    homepage: https://github.com/ArmisSecurity/armis-cli
+    description: "Enterprise-grade CLI tool for static application security scanning"
+    license: Apache-2.0
+    test: |
+      system "#{bin}/armis-cli", "version"
+    install: |
+      bin.install "armis-cli"
+
 # scoops:
 #   - repository:
 #       owner: ArmisSecurity
