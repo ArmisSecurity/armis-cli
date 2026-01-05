@@ -1,3 +1,4 @@
+// Package util provides utility functions for the CLI.
 package util
 
 import (
@@ -6,6 +7,7 @@ import (
 	"strings"
 )
 
+// SanitizePath cleans and validates a file path to prevent path traversal attacks.
 func SanitizePath(p string) (string, error) {
 	if p == "" {
 		return "", errors.New("empty path")

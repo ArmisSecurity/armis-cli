@@ -1,3 +1,4 @@
+// Package httpclient provides an HTTP client with retry and backoff support.
 package httpclient
 
 import (
@@ -10,6 +11,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 )
 
+// Config contains configuration options for the HTTP client.
 type Config struct {
 	RetryMax       int
 	RetryWaitMin   time.Duration
@@ -18,11 +20,13 @@ type Config struct {
 	DisableTimeout bool
 }
 
+// Client is an HTTP client with retry and backoff support.
 type Client struct {
 	httpClient *http.Client
 	config     Config
 }
 
+// NewClient creates a new HTTP client with the given configuration.
 func NewClient(cfg Config) *Client {
 	if cfg.Timeout == 0 && !cfg.DisableTimeout {
 		cfg.Timeout = 30 * time.Second
@@ -48,6 +52,7 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// Do executes an HTTP request with retry and backoff.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
@@ -60,7 +65,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 		if resp.StatusCode >= 500 {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close() //nolint:errcheck // response body read-only
+			_ = resp.Body.Close() // #nosec G104 - error not critical in error path
 			return fmt.Errorf("server error: %d - %s", resp.StatusCode, string(body))
 		}
 

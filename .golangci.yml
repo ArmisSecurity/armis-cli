@@ -1,26 +1,24 @@
-version: 2
+version: "2"
+
+run:
+  timeout: 5m
 
 linters:
-  enable-all: true
-  disable:
-    - execinquery
-
-linters-settings:
-  gocognit:
-    min-complexity: 50
-
-issues:
-  exclude-rules:
-    # Ignore os.Remove errors - cleanup code
-    - linters: [errcheck]
-      text: "os.Remove"
-    # Ignore os.Setenv/Unsetenv
-    - linters: [errcheck]
-      text: "os.Setenv"
-    - linters: [errcheck]
-      text: "os.Unsetenv"
-    # Ignore fmt.Fprintf errors - output rarely matters
-    - linters: [errcheck]
-      text: "fmt.Fprintf"
-    - linters: [errcheck]
-      text: "fmt.Fprintln"
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - goconst
+    - gocognit
+    - misspell
+    - revive
+  settings:
+    gocognit:
+      min-complexity: 50
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true

@@ -1,3 +1,4 @@
+// Package cmd implements the CLI commands for the Armis security scanner.
 package cmd
 
 import (
@@ -35,6 +36,7 @@ var rootCmd = &cobra.Command{
 	Version: version,
 }
 
+// SetVersion sets the version information for the CLI.
 func SetVersion(v, c, d string) {
 	version = v
 	commit = c
@@ -42,6 +44,7 @@ func SetVersion(v, c, d string) {
 	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
 }
 
+// Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
 }

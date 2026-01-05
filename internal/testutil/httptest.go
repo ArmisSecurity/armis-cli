@@ -1,3 +1,4 @@
+// Package testutil provides utilities for testing.
 package testutil
 
 import (
@@ -7,6 +8,7 @@ import (
 	"testing"
 )
 
+// NewTestServer creates a new test HTTP server with automatic cleanup.
 func NewTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -14,6 +16,7 @@ func NewTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	return server
 }
 
+// JSONResponse writes a JSON response with the given status code.
 func JSONResponse(t *testing.T, w http.ResponseWriter, statusCode int, data interface{}) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
@@ -23,6 +26,7 @@ func JSONResponse(t *testing.T, w http.ResponseWriter, statusCode int, data inte
 	}
 }
 
+// ErrorResponse writes an error response with the given status code.
 func ErrorResponse(w http.ResponseWriter, statusCode int, message string) {
 	w.WriteHeader(statusCode)
 	_, _ = w.Write([]byte(message))

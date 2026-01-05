@@ -1,3 +1,4 @@
+// Package progress provides progress indicators for CLI operations.
 package progress
 
 import (
@@ -9,6 +10,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+// IsCI returns true if running in a CI environment.
 func IsCI() bool {
 	ciEnvVars := []string{
 		"CI",
@@ -30,6 +32,7 @@ func IsCI() bool {
 	return false
 }
 
+// NewReader wraps a reader with a progress bar.
 func NewReader(r io.Reader, size int64, description string, disabled bool) io.Reader {
 	if disabled || IsCI() {
 		return r
@@ -44,6 +47,7 @@ func NewReader(r io.Reader, size int64, description string, disabled bool) io.Re
 	return &reader
 }
 
+// NewWriter wraps a writer with a progress bar.
 func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Writer {
 	if disabled || IsCI() {
 		return w
@@ -57,6 +61,7 @@ func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Wr
 	return io.MultiWriter(w, bar)
 }
 
+// Spinner displays an animated spinner with a message.
 type Spinner struct {
 	message   string
 	disabled  bool
@@ -66,6 +71,7 @@ type Spinner struct {
 	showTimer bool
 }
 
+// NewSpinner creates a new spinner with the given message.
 func NewSpinner(message string, disabled bool) *Spinner {
 	return &Spinner{
 		message:   message,
@@ -77,6 +83,7 @@ func NewSpinner(message string, disabled bool) *Spinner {
 	}
 }
 
+// Start begins the spinner animation.
 func (s *Spinner) Start() {
 	if s.disabled || IsCI() {
 		fmt.Printf("%s (started at %s)\n", s.message, s.startTime.Format("15:04:05"))
@@ -106,6 +113,7 @@ func (s *Spinner) Start() {
 	}()
 }
 
+// Stop stops the spinner animation.
 func (s *Spinner) Stop() {
 	if s.disabled || IsCI() {
 		return
@@ -114,14 +122,17 @@ func (s *Spinner) Stop() {
 	<-s.doneChan
 }
 
+// UpdateMessage updates the spinner message.
 func (s *Spinner) UpdateMessage(message string) {
 	s.message = message
 }
 
+// Update updates the spinner message.
 func (s *Spinner) Update(message string) {
 	s.message = message
 }
 
+// GetElapsed returns the elapsed time since the spinner started.
 func (s *Spinner) GetElapsed() time.Duration {
 	return time.Since(s.startTime)
 }

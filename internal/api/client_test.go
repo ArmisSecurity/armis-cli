@@ -96,7 +96,7 @@ func TestClient_StartIngest(t *testing.T) {
 	})
 
 	t.Run("upload error", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusBadRequest, "Invalid request")
 		})
 
@@ -112,7 +112,7 @@ func TestClient_StartIngest(t *testing.T) {
 	})
 
 	t.Run("context timeout", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
 			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123"})
 		})
@@ -174,7 +174,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 	})
 
 	t.Run("status check error", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusNotFound, "Scan not found")
 		})
 
@@ -276,7 +276,7 @@ func TestClient_FetchNormalizedResults(t *testing.T) {
 func TestClient_FetchAllNormalizedResults(t *testing.T) {
 	t.Run("fetches all pages", func(t *testing.T) {
 		callCount := 0
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			callCount++
 
 			var response model.NormalizedResultsResponse
@@ -389,7 +389,7 @@ func TestClient_GetScanResult(t *testing.T) {
 
 func TestClient_DebugMode(t *testing.T) {
 	t.Run("debug mode prints response", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			response := model.NormalizedResultsResponse{
 				Data: model.NormalizedResultsData{
 					TenantID:    "tenant-123",

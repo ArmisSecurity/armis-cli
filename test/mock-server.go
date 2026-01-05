@@ -1,3 +1,4 @@
+// Package main provides a mock server for testing.
 package main
 
 import (
