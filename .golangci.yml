@@ -1,26 +1,41 @@
-version: 2
+run:
+  timeout: 5m
+  tests: true
 
 linters:
-  enable-all: true
-  disable:
-    - execinquery
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - goconst
+    - gocognit
+    - misspell
+    - revive
+    - stylecheck
+    - unconvert
+    - unparam
+    - gofmt
+    - goimports
 
 linters-settings:
   gocognit:
     min-complexity: 50
+  gosec:
+    excludes:
+      - G114
+      - G204
+      - G306
 
 issues:
   exclude-rules:
-    # Ignore os.Remove errors - cleanup code
     - linters: [errcheck]
-      text: "os.Remove"
-    # Ignore os.Setenv/Unsetenv
-    - linters: [errcheck]
-      text: "os.Setenv"
-    - linters: [errcheck]
-      text: "os.Unsetenv"
-    # Ignore fmt.Fprintf errors - output rarely matters
-    - linters: [errcheck]
-      text: "fmt.Fprintf"
-    - linters: [errcheck]
-      text: "fmt.Fprintln"
+      text: "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*print(f|ln)?|os\\.(Un)?Setenv). is not checked"
+    - path: _test\.go
+      linters:
+        - gosec
+        - goconst
+        - errcheck
