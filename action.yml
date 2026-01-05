@@ -1,0 +1,115 @@
+name: 'Armis Security Scanner'
+description: 'Enterprise-grade security scanning for repositories and container images with Armis Cloud'
+author: 'Armis Security'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  scan-type:
+    description: 'Type of scan to perform: repo or image'
+    required: true
+  scan-target:
+    description: 'Target to scan (path for repo, image name for image scan)'
+    required: false
+    default: '.'
+  api-token:
+    description: 'Armis API token for authentication'
+    required: true
+  tenant-id:
+    description: 'Tenant identifier for Armis Cloud'
+    required: true
+  format:
+    description: 'Output format: human, json, sarif, junit'
+    required: false
+    default: 'sarif'
+  fail-on:
+    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+    required: false
+    default: 'CRITICAL'
+  exit-code:
+    description: 'Exit code to return when build fails'
+    required: false
+    default: '1'
+  no-progress:
+    description: 'Disable progress indicators'
+    required: false
+    default: 'true'
+  image-tarball:
+    description: 'Path to image tarball (only for image scans)'
+    required: false
+  output-file:
+    description: 'File path to write scan results (optional)'
+    required: false
+
+outputs:
+  results:
+    description: 'Scan results in the specified format'
+    value: ${{ steps.scan.outputs.results }}
+  exit-code:
+    description: 'Exit code from the scan'
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Armis CLI
+      shell: bash
+      run: |
+        echo "Installing Armis CLI..."
+        curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Verify Installation
+      shell: bash
+      run: |
+        armis-cli version
+
+    - name: Run Security Scan
+      id: scan
+      shell: bash
+      env:
+        ARMIS_API_TOKEN: ${{ inputs.api-token }}
+        ARMIS_TENANT_ID: ${{ inputs.tenant-id }}
+      run: |
+        set +e
+        
+        SCAN_CMD="armis-cli scan ${{ inputs.scan-type }} ${{ inputs.scan-target }}"
+        SCAN_CMD="$SCAN_CMD --tenant-id ${{ inputs.tenant-id }}"
+        SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
+        SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
+        SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
+        
+        if [ "${{ inputs.no-progress }}" = "true" ]; then
+          SCAN_CMD="$SCAN_CMD --no-progress"
+        fi
+        
+        if [ "${{ inputs.scan-type }}" = "image" ] && [ -n "${{ inputs.image-tarball }}" ]; then
+          SCAN_CMD="$SCAN_CMD --tarball ${{ inputs.image-tarball }}"
+        fi
+        
+        if [ -n "${{ inputs.output-file }}" ]; then
+          eval $SCAN_CMD > "${{ inputs.output-file }}"
+          SCAN_EXIT_CODE=$?
+          SCAN_RESULTS=$(cat "${{ inputs.output-file }}")
+        else
+          SCAN_RESULTS=$(eval $SCAN_CMD)
+          SCAN_EXIT_CODE=$?
+        fi
+        
+        echo "exit-code=$SCAN_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # For multiline output, use heredoc
+        echo "results<<EOF" >> $GITHUB_OUTPUT
+        echo "$SCAN_RESULTS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        exit $SCAN_EXIT_CODE
+
+    - name: Upload SARIF Results
+      if: inputs.format == 'sarif' && inputs.output-file != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.output-file }}
+      continue-on-error: true

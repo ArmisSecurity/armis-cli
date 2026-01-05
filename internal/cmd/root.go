@@ -9,7 +9,7 @@ import (
 
 const (
 	devBaseURL        = "https://moose-dev.armis.com"
-	productionBaseURL = ""
+	productionBaseURL = "https://moose.armis.com"
 )
 
 var (
