@@ -16,6 +16,11 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+const (
+	groupBySeverity = "severity"
+	noCWELabel      = "No CWE"
+)
+
 type HumanFormatter struct{}
 
 type GitBlameInfo struct {
@@ -846,9 +851,9 @@ func groupFindings(findings []model.Finding, groupBy string) []FindingGroup {
 			if len(finding.CWEs) > 0 {
 				key = finding.CWEs[0]
 			} else {
-				key = "No CWE"
+				key = noCWELabel
 			}
-		case "severity":
+		case groupBySeverity:
 			key = string(finding.Severity)
 		case "file":
 			if finding.File != "" {
@@ -922,6 +927,7 @@ func getGitBlame(repoPath, file string, line int) *GitBlameInfo {
 		return nil
 	}
 
+	// #nosec G204 -- file path is validated above, git blame is intentional for showing code ownership
 	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", file)
 	cmd.Dir = repoPath
 	output, err := cmd.Output()

@@ -52,7 +52,13 @@ func main() {
 	http.HandleFunc("/scans/", handleGetScan)
 
 	fmt.Println("Mock Armis API Server running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	server := &http.Server{
+		Addr:         ":8080",
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {

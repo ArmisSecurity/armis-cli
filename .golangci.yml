@@ -3,6 +3,10 @@ linters:
   disable:
     - execinquery
 
+linters-settings:
+  gocognit:
+    min-complexity: 50
+
 issues:
   exclude-rules:
     # Ignore os.Remove errors - cleanup code

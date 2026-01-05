@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+const (
+	testToken    = "test-token"
+	testTenantID = "test-tenant"
+)
+
 func TestScanCmd(t *testing.T) {
 	t.Run("scan command exists", func(t *testing.T) {
 		if scanCmd == nil {
@@ -109,7 +114,7 @@ func TestScanRepoCmd(t *testing.T) {
 	})
 
 	t.Run("repo command fails without tenant ID", func(t *testing.T) {
-		token = "test-token"
+		token = testToken
 		tenantID = ""
 		useDev = true
 		defer func() {
@@ -125,8 +130,8 @@ func TestScanRepoCmd(t *testing.T) {
 	})
 
 	t.Run("repo command fails without base URL", func(t *testing.T) {
-		token = "test-token"
-		tenantID = "test-tenant"
+		token = testToken
+		tenantID = testTenantID
 		useDev = false
 		defer func() {
 			token = ""
@@ -177,8 +182,8 @@ func TestScanImageCmd(t *testing.T) {
 
 	t.Run("image command fails without image or tarball", func(t *testing.T) {
 		tarballPath = ""
-		token = "test-token"
-		tenantID = "test-tenant"
+		token = testToken
+		tenantID = testTenantID
 		useDev = true
 		defer func() {
 			tarballPath = ""
@@ -195,7 +200,7 @@ func TestScanImageCmd(t *testing.T) {
 
 	t.Run("image command fails without token", func(t *testing.T) {
 		token = ""
-		tenantID = "test-tenant"
+		tenantID = testTenantID
 		useDev = true
 		defer func() {
 			token = ""
@@ -210,7 +215,7 @@ func TestScanImageCmd(t *testing.T) {
 	})
 
 	t.Run("image command fails without tenant ID", func(t *testing.T) {
-		token = "test-token"
+		token = testToken
 		tenantID = ""
 		useDev = true
 		defer func() {
@@ -226,8 +231,8 @@ func TestScanImageCmd(t *testing.T) {
 	})
 
 	t.Run("image command fails without base URL", func(t *testing.T) {
-		token = "test-token"
-		tenantID = "test-tenant"
+		token = testToken
+		tenantID = testTenantID
 		useDev = false
 		defer func() {
 			token = ""
@@ -242,8 +247,8 @@ func TestScanImageCmd(t *testing.T) {
 	})
 
 	t.Run("image command fails with invalid page limit", func(t *testing.T) {
-		token = "test-token"
-		tenantID = "test-tenant"
+		token = testToken
+		tenantID = testTenantID
 		useDev = true
 		pageLimit = 5000
 		defer func() {
