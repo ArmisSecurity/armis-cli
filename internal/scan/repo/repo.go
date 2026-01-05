@@ -1,3 +1,4 @@
+// Package repo provides repository scanning functionality.
 package repo
 
 import (
@@ -17,8 +18,10 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 )
 
+// MaxRepoSize is the maximum allowed size for repositories.
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
 
+// Scanner scans repositories for security vulnerabilities.
 type Scanner struct {
 	client                *api.Client
 	noProgress            bool
@@ -29,6 +32,7 @@ type Scanner struct {
 	includeNonExploitable bool
 }
 
+// NewScanner creates a new repository scanner with the given configuration.
 func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration, includeNonExploitable bool) *Scanner {
 	return &Scanner{
 		client:                client,
@@ -41,6 +45,7 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 	}
 }
 
+// Scan scans a repository at the given path.
 func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -175,7 +180,7 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 		}
 
 		if !info.IsDir() {
-			file, err := os.Open(path)
+			file, err := os.Open(path) // #nosec G304 - path is from filepath.Walk within repo
 			if err != nil {
 				return err
 			}

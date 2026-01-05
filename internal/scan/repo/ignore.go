@@ -8,11 +8,13 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
+// IgnoreMatcher matches files against ignore patterns.
 type IgnoreMatcher struct {
 	patterns []gitignore.Pattern
 	domain   []string
 }
 
+// LoadIgnorePatterns loads ignore patterns from .armisignore files in the repository.
 func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 	var allPatterns []gitignore.Pattern
 
@@ -48,7 +50,7 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 }
 
 func loadIgnoreFile(ignoreFilePath, repoRoot string) ([]gitignore.Pattern, error) {
-	data, err := os.ReadFile(ignoreFilePath)
+	data, err := os.ReadFile(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +82,7 @@ func loadIgnoreFile(ignoreFilePath, repoRoot string) ([]gitignore.Pattern, error
 	return patterns, nil
 }
 
+// Match returns true if the path matches any ignore pattern.
 func (m *IgnoreMatcher) Match(path string, isDir bool) bool {
 	if m == nil || len(m.patterns) == 0 {
 		return false

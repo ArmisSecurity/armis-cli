@@ -23,7 +23,7 @@ var scanImageCmd = &cobra.Command{
 	Short: "Scan a container image",
 	Long:  `Scan a local or remote container image for security vulnerabilities.`,
 	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		if tarballPath == "" && len(args) == 0 {
 			return fmt.Errorf("either provide an image name or use --tarball flag")
 		}

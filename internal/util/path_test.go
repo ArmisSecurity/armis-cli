@@ -1,9 +1,11 @@
-package util
+package util_test
 
 import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 func TestSanitizePath(t *testing.T) {
@@ -72,19 +74,19 @@ func TestSanitizePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := SanitizePath(tt.input)
+			result, err := util.SanitizePath(tt.input)
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("SanitizePath(%q) expected error containing %q, got nil", tt.input, tt.errSubstr)
+					t.Errorf("util.SanitizePath(%q) expected error containing %q, got nil", tt.input, tt.errSubstr)
 				} else if !strings.Contains(err.Error(), tt.errSubstr) {
-					t.Errorf("SanitizePath(%q) expected error containing %q, got %q", tt.input, tt.errSubstr, err.Error())
+					t.Errorf("util.SanitizePath(%q) expected error containing %q, got %q", tt.input, tt.errSubstr, err.Error())
 				}
 			} else {
 				if err != nil {
-					t.Errorf("SanitizePath(%q) unexpected error: %v", tt.input, err)
+					t.Errorf("util.SanitizePath(%q) unexpected error: %v", tt.input, err)
 				}
 				if result == "" {
-					t.Errorf("SanitizePath(%q) returned empty result", tt.input)
+					t.Errorf("util.SanitizePath(%q) returned empty result", tt.input)
 				}
 			}
 		})
@@ -116,13 +118,13 @@ func TestSanitizePathCleaning(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := SanitizePath(tt.input)
+			result, err := util.SanitizePath(tt.input)
 			if err != nil {
-				t.Fatalf("SanitizePath(%q) unexpected error: %v", tt.input, err)
+				t.Fatalf("util.SanitizePath(%q) unexpected error: %v", tt.input, err)
 			}
 			normalizedResult := filepath.ToSlash(result)
 			if normalizedResult != tt.expected {
-				t.Errorf("SanitizePath(%q) = %q, want %q", tt.input, normalizedResult, tt.expected)
+				t.Errorf("util.SanitizePath(%q) = %q, want %q", tt.input, normalizedResult, tt.expected)
 			}
 		})
 	}

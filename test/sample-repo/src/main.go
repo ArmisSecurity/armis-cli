@@ -1,3 +1,4 @@
+// Package main provides a sample application for testing purposes.
 package main
 
 import "fmt"

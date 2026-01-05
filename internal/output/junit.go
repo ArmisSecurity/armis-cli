@@ -9,6 +9,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
+// JUnitFormatter formats scan results as JUnit XML.
 type JUnitFormatter struct{}
 
 type junitTestSuites struct {
@@ -38,6 +39,7 @@ type junitFailure struct {
 	Content string `xml:",chardata"`
 }
 
+// Format formats the scan result as JUnit XML.
 func (f *JUnitFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	suites := junitTestSuites{
 		Suites: []junitTestSuite{
@@ -104,6 +106,7 @@ func countFailures(findings []model.Finding) int {
 	return count
 }
 
-func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+// FormatWithOptions formats the scan result as JUnit XML with custom options.
+func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, _ FormatOptions) error {
 	return f.Format(result, w)
 }

@@ -75,20 +75,20 @@ func TestIsCI(t *testing.T) {
 				if val, exists := os.LookupEnv(key); exists {
 					originalEnv[key] = val
 				}
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 
 			t.Cleanup(func() {
 				for _, key := range ciEnvVars {
-					os.Unsetenv(key)
+					_ = os.Unsetenv(key)
 				}
 				for key, val := range originalEnv {
-					os.Setenv(key, val)
+					_ = os.Setenv(key, val)
 				}
 			})
 
 			for key, value := range tt.envVars {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			}
 
 			result := IsCI()
@@ -110,8 +110,8 @@ func TestNewReader(t *testing.T) {
 	})
 
 	t.Run("returns reader in CI environment", func(t *testing.T) {
-		os.Setenv("CI", "true")
-		t.Cleanup(func() { os.Unsetenv("CI") })
+		_ = os.Setenv("CI", "true")
+		t.Cleanup(func() { _ = os.Unsetenv("CI") })
 
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", false)
@@ -123,11 +123,11 @@ func TestNewReader(t *testing.T) {
 
 	t.Run("wraps reader when not disabled and not CI", func(t *testing.T) {
 		for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI"} {
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 		t.Cleanup(func() {
 			for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI"} {
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 		})
 
@@ -159,8 +159,8 @@ func TestNewWriter(t *testing.T) {
 	})
 
 	t.Run("returns writer in CI environment", func(t *testing.T) {
-		os.Setenv("CI", "true")
-		t.Cleanup(func() { os.Unsetenv("CI") })
+		_ = os.Setenv("CI", "true")
+		t.Cleanup(func() { _ = os.Unsetenv("CI") })
 
 		var buf bytes.Buffer
 		result := NewWriter(&buf, 100, "test", false)
@@ -183,7 +183,7 @@ func TestSpinner(t *testing.T) {
 		}
 	})
 
-	t.Run("disabled spinner does not animate", func(t *testing.T) {
+	t.Run("disabled spinner does not animate", func(_ *testing.T) {
 		spinner := NewSpinner("test", true)
 		spinner.Start()
 		time.Sleep(50 * time.Millisecond)
@@ -191,8 +191,8 @@ func TestSpinner(t *testing.T) {
 	})
 
 	t.Run("spinner in CI mode", func(t *testing.T) {
-		os.Setenv("CI", "true")
-		t.Cleanup(func() { os.Unsetenv("CI") })
+		_ = os.Setenv("CI", "true")
+		t.Cleanup(func() { _ = os.Unsetenv("CI") })
 
 		spinner := NewSpinner("test", false)
 		spinner.Start()

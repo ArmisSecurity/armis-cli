@@ -16,7 +16,7 @@ node_modules/
 !important.log
 `
 	ignoreFile := filepath.Join(tmpDir, ".armisignore")
-	if err := os.WriteFile(ignoreFile, []byte(ignoreContent), 0644); err != nil {
+	if err := os.WriteFile(ignoreFile, []byte(ignoreContent), 0600); err != nil {
 		t.Fatalf("Failed to create test ignore file: %v", err)
 	}
 
@@ -70,17 +70,17 @@ func TestLoadIgnorePatternsNested(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	rootIgnore := filepath.Join(tmpDir, ".armisignore")
-	if err := os.WriteFile(rootIgnore, []byte("*.log\n"), 0644); err != nil {
+	if err := os.WriteFile(rootIgnore, []byte("*.log\n"), 0600); err != nil {
 		t.Fatalf("Failed to create root ignore file: %v", err)
 	}
 
 	subDir := filepath.Join(tmpDir, "subdir")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
+	if err := os.MkdirAll(subDir, 0750); err != nil {
 		t.Fatalf("Failed to create subdir: %v", err)
 	}
 
 	subIgnore := filepath.Join(subDir, ".armisignore")
-	if err := os.WriteFile(subIgnore, []byte("*.tmp\n"), 0644); err != nil {
+	if err := os.WriteFile(subIgnore, []byte("*.tmp\n"), 0600); err != nil {
 		t.Fatalf("Failed to create sub ignore file: %v", err)
 	}
 

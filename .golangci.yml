@@ -1,11 +1,11 @@
+version: "2"
+
 run:
   timeout: 5m
-  tests: true
 
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -15,27 +15,10 @@ linters:
     - gocognit
     - misspell
     - revive
-    - stylecheck
-    - unconvert
-    - unparam
-    - gofmt
-    - goimports
-
-linters-settings:
-  gocognit:
-    min-complexity: 50
-  gosec:
-    excludes:
-      - G114
-      - G204
-      - G306
-
-issues:
-  exclude-rules:
-    - linters: [errcheck]
-      text: "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*print(f|ln)?|os\\.(Un)?Setenv). is not checked"
-    - path: _test\.go
-      linters:
-        - gosec
-        - goconst
-        - errcheck
+  settings:
+    gocognit:
+      min-complexity: 50
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true

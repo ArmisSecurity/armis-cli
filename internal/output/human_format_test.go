@@ -302,7 +302,7 @@ func TestSortFindingsBySeverity(t *testing.T) {
 	}
 }
 
-func TestDisableColors(t *testing.T) {
+func TestDisableColors(_ *testing.T) {
 	disableColors()
 }
 

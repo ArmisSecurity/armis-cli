@@ -1,3 +1,4 @@
+// Package api provides the client for interacting with the Armis security API.
 package api
 
 import (
@@ -16,6 +17,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
 	uploadHTTPClient *httpclient.Client
@@ -25,8 +27,10 @@ type Client struct {
 	uploadTimeout    time.Duration
 }
 
+// ClientOption is a functional option for configuring the Client.
 type ClientOption func(*Client)
 
+// WithHTTPClient sets a custom HTTP client for the API client.
 func WithHTTPClient(client *httpclient.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = client
@@ -34,6 +38,7 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 	}
 }
 
+// NewClient creates a new API client with the given configuration.
 func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) *Client {
 	if uploadTimeout == 0 {
 		uploadTimeout = 10 * time.Minute
@@ -69,10 +74,12 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, o
 	return client
 }
 
+// IsDebug returns whether debug mode is enabled.
 func (c *Client) IsDebug() bool {
 	return c.debug
 }
 
+// StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
 	uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
 	defer cancel()
@@ -138,6 +145,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 	return result.ScanID, nil
 }
 
+// GetIngestStatus retrieves the current status of an ingestion.
 func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (*model.IngestStatusResponse, error) {
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/status/"
 	params := url.Values{}
@@ -170,6 +178,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	return &result, nil
 }
 
+// WaitForIngest polls until the ingestion is complete or times out.
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
 		timeout = 20 * time.Minute
@@ -211,6 +220,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 	}
 }
 
+// FetchNormalizedResults retrieves a page of normalized scan results.
 func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID string, limit int, cursor string) (*model.NormalizedResultsResponse, error) {
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/normalized-results"
 	params := url.Values{}
@@ -257,6 +267,7 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	return &result, nil
 }
 
+// FetchAllNormalizedResults retrieves all normalized scan results with pagination.
 func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID string, pageLimit int) ([]model.NormalizedFinding, error) {
 	var allFindings []model.NormalizedFinding
 	cursor := ""
@@ -281,6 +292,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 	return allFindings, nil
 }
 
+// GetScanResult retrieves the result of a completed scan.
 func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanResult, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/scans/"+scanID, nil)
 	if err != nil {
@@ -308,6 +320,7 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 	return &result, nil
 }
 
+// WaitForScan polls until the scan is complete.
 func (c *Client) WaitForScan(ctx context.Context, scanID string, pollInterval time.Duration) (*model.ScanResult, error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()

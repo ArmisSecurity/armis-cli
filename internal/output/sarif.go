@@ -7,6 +7,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// SARIFFormatter formats scan results as SARIF JSON.
 type SARIFFormatter struct{}
 
 type sarifReport struct {
@@ -26,7 +27,7 @@ type sarifTool struct {
 
 type sarifDriver struct {
 	Name           string `json:"name"`
-	InformationUri string `json:"informationUri"`
+	InformationURI string `json:"informationUri"`
 	Version        string `json:"version"`
 }
 
@@ -59,6 +60,7 @@ type sarifRegion struct {
 	StartColumn int `json:"startColumn,omitempty"`
 }
 
+// Format formats the scan result as SARIF JSON.
 func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	report := sarifReport{
 		Version: "2.1.0",
@@ -68,7 +70,7 @@ func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 				Tool: sarifTool{
 					Driver: sarifDriver{
 						Name:           "Armis Security Scanner",
-						InformationUri: "https://armis.com",
+						InformationURI: "https://armis.com",
 						Version:        "1.0.0",
 					},
 				},
@@ -132,6 +134,7 @@ func severityToSarifLevel(severity model.Severity) string {
 	}
 }
 
-func (f *SARIFFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+// FormatWithOptions formats the scan result as SARIF JSON with custom options.
+func (f *SARIFFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, _ FormatOptions) error {
 	return f.Format(result, w)
 }

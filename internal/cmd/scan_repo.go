@@ -17,7 +17,7 @@ var scanRepoCmd = &cobra.Command{
 	Short: "Scan a local repository",
 	Long:  `Scan a local repository for security vulnerabilities, secrets, and license risks.`,
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		repoPath := args[0]
 
 		token, err := getToken()

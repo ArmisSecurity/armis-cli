@@ -1,3 +1,4 @@
+// Package image provides container image scanning functionality.
 package image
 
 import (
@@ -16,11 +17,13 @@ import (
 )
 
 const (
+	// MaxImageSize is the maximum allowed size for container images.
 	MaxImageSize = 5 * 1024 * 1024 * 1024
 	dockerBinary = "docker"
 	podmanBinary = "podman"
 )
 
+// Scanner scans container images for security vulnerabilities.
 type Scanner struct {
 	client                *api.Client
 	noProgress            bool
@@ -31,6 +34,7 @@ type Scanner struct {
 	includeNonExploitable bool
 }
 
+// NewScanner creates a new image scanner with the given configuration.
 func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit int, includeTests bool, timeout time.Duration, includeNonExploitable bool) *Scanner {
 	return &Scanner{
 		client:                client,
@@ -43,6 +47,7 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 	}
 }
 
+// ScanImage scans a container image by name.
 func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanResult, error) {
 	normalised, err := validateImageName(imageName)
 	if err != nil {
@@ -62,19 +67,20 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 
 	fmt.Printf("Exporting image: %s\n", imageName)
 	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
-		tmpFile.Close() //nolint:errcheck // cleanup before remove
-		os.Remove(tmpFileName)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFileName)
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
 
 	result, scanErr := s.ScanTarball(ctx, tmpFileName)
 
-	tmpFile.Close() //nolint:errcheck // cleanup before remove
-	os.Remove(tmpFileName)
+	_ = tmpFile.Close()
+	_ = os.Remove(tmpFileName)
 
 	return result, scanErr
 }
 
+// ScanTarball scans a container image from a tarball file.
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
 	info, err := os.Stat(tarballPath)
 	if err != nil {
@@ -85,7 +91,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, fmt.Errorf("tarball size (%d bytes) exceeds maximum allowed size (%d bytes)", info.Size(), MaxImageSize)
 	}
 
-	file, err := os.Open(tarballPath)
+	file, err := os.Open(tarballPath) // #nosec G304 - tarball path is user-provided input
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tarball: %w", err)
 	}
