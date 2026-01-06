@@ -152,7 +152,7 @@ brews:
       owner: ArmisSecurity
       name: homebrew-tap
       token: "{{ .Env.GITHUB_TOKEN }}"
-    folder: Formula
+    directory: Formula
     homepage: https://github.com/ArmisSecurity/armis-cli
     description: "Enterprise-grade CLI tool for static application security scanning"
     license: Apache-2.0
