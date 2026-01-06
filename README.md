@@ -48,17 +48,17 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 ### Homebrew (macOS/Linux)
 ```bash
-brew install armis/tap/armis-cli
+brew install armissecurity/tap/armis-cli
 ```
 
 ### Quick Install Script
 **Linux/macOS:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
 ```
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 ```
 
 ### Scoop (Windows)
@@ -236,7 +236,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install Armis CLI
         run: |
-          curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+          curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
       - name: Scan Repository
         env:
           ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
@@ -251,7 +251,7 @@ security-scan:
   image: alpine:latest
   before_script:
     - apk add --no-cache curl bash
-    - curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+    - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
     - armis-cli scan repo . --format json --fail-on CRITICAL
   variables:
@@ -269,7 +269,7 @@ pipeline {
         stage('Security Scan') {
             steps {
                 sh '''
-                    curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+                    curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
                     armis-cli scan repo . --format junit > scan-results.xml
                 '''
                 junit 'scan-results.xml'
@@ -287,7 +287,7 @@ pool:
   vmImage: 'ubuntu-latest'
 steps:
 - script: |
-    curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+    curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   displayName: 'Install Armis CLI'
 - script: |
     armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
@@ -312,7 +312,7 @@ jobs:
       - run:
           name: Install Armis CLI
           command: |
-            curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+            curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
       - run:
           name: Run Security Scan
           command: |
@@ -333,7 +333,7 @@ pipelines:
         image: alpine:latest
         script:
           - apk add --no-cache curl bash
-          - curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
+          - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
           - armis-cli scan repo . --format json --fail-on CRITICAL
 ```
 

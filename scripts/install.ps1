@@ -1,5 +1,5 @@
 # Armis CLI Windows Installer
-# Usage: irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 # Or: .\install.ps1 [-Version "v1.0.0"] [-InstallDir "C:\Program Files\armis-cli"] [-Verify]
 
 param(
@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "armis/armis-cli"
+$Repo = "ArmisSecurity/armis-cli"
 $BinaryName = "armis-cli.exe"
 
 function Get-Architecture {

@@ -2,7 +2,7 @@
 
 set -e
 
-REPO="armis/armis-cli"
+REPO="ArmisSecurity/armis-cli"
 BINARY_NAME="armis-cli"
 INSTALL_DIR="/usr/local/bin"
 VERSION="${1:-latest}"
