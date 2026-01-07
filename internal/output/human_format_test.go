@@ -302,8 +302,137 @@ func TestSortFindingsBySeverity(t *testing.T) {
 	}
 }
 
-func TestDisableColors(_ *testing.T) {
+func TestDisableColors(t *testing.T) {
+	// Save original color values
+	origReset := colorReset
+	origRed := colorRed
+	origOrange := colorOrange
+	origYellow := colorYellow
+	origBlue := colorBlue
+	origGray := colorGray
+	origBgRed := colorBgRed
+	origBold := colorBold
+	origUnderline := colorUnderline
+
+	// Restore colors after test
+	defer func() {
+		colorReset = origReset
+		colorRed = origRed
+		colorOrange = origOrange
+		colorYellow = origYellow
+		colorBlue = origBlue
+		colorGray = origGray
+		colorBgRed = origBgRed
+		colorBold = origBold
+		colorUnderline = origUnderline
+	}()
+
+	// Call disableColors
 	disableColors()
+
+	// Verify all color variables are empty
+	if colorReset != "" {
+		t.Errorf("colorReset should be empty, got %q", colorReset)
+	}
+	if colorRed != "" {
+		t.Errorf("colorRed should be empty, got %q", colorRed)
+	}
+	if colorOrange != "" {
+		t.Errorf("colorOrange should be empty, got %q", colorOrange)
+	}
+	if colorYellow != "" {
+		t.Errorf("colorYellow should be empty, got %q", colorYellow)
+	}
+	if colorBlue != "" {
+		t.Errorf("colorBlue should be empty, got %q", colorBlue)
+	}
+	if colorGray != "" {
+		t.Errorf("colorGray should be empty, got %q", colorGray)
+	}
+	if colorBgRed != "" {
+		t.Errorf("colorBgRed should be empty, got %q", colorBgRed)
+	}
+	if colorBold != "" {
+		t.Errorf("colorBold should be empty, got %q", colorBold)
+	}
+	if colorUnderline != "" {
+		t.Errorf("colorUnderline should be empty, got %q", colorUnderline)
+	}
+}
+
+func TestFormattedOutputWithoutColors(t *testing.T) {
+	// Save original color values
+	origReset := colorReset
+	origRed := colorRed
+	origOrange := colorOrange
+	origYellow := colorYellow
+	origBlue := colorBlue
+	origGray := colorGray
+	origBgRed := colorBgRed
+	origBold := colorBold
+	origUnderline := colorUnderline
+
+	// Restore colors after test
+	defer func() {
+		colorReset = origReset
+		colorRed = origRed
+		colorOrange = origOrange
+		colorYellow = origYellow
+		colorBlue = origBlue
+		colorGray = origGray
+		colorBgRed = origBgRed
+		colorBold = origBold
+		colorUnderline = origUnderline
+	}()
+
+	// Disable colors
+	disableColors()
+
+	formatter := &HumanFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-scan",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:       "1",
+				Severity: model.SeverityCritical,
+				Title:    "Critical Issue",
+			},
+			{
+				ID:       "2",
+				Severity: model.SeverityHigh,
+				Title:    "High Issue",
+			},
+		},
+		Summary: model.Summary{
+			Total: 2,
+			BySeverity: map[model.Severity]int{
+				model.SeverityCritical: 1,
+				model.SeverityHigh:     1,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify no ANSI escape codes in output
+	if strings.Contains(output, "\033[") {
+		t.Error("Output should not contain ANSI escape codes when colors are disabled")
+	}
+
+	// Verify content is still present
+	if !strings.Contains(output, "Critical Issue") {
+		t.Error("Output should contain finding title")
+	}
+	if !strings.Contains(output, "CRITICAL") {
+		t.Error("Output should contain severity")
+	}
 }
 
 func TestIsGitRepo(t *testing.T) {
