@@ -82,6 +82,7 @@ jobs:
           version: v2.7.2
           args: --timeout=5m
 
+  # Posts a sticky coverage comment to PRs (updates in place, details collapsed)
   coverage-comment:
     name: Coverage Comment
     needs: test
