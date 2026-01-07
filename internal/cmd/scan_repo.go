@@ -58,6 +58,7 @@ var scanRepoCmd = &cobra.Command{
 		opts := output.FormatOptions{
 			GroupBy:  groupBy,
 			RepoPath: repoPath,
+			Debug:    debug,
 		}
 
 		if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {

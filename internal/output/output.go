@@ -12,6 +12,7 @@ import (
 type FormatOptions struct {
 	GroupBy  string
 	RepoPath string
+	Debug    bool
 }
 
 // Formatter is the interface for formatting scan results in different output formats.

@@ -191,6 +191,7 @@ filename test.go
 
 	if info == nil {
 		t.Fatal("Expected non-nil GitBlameInfo")
+		return
 	}
 
 	if info.Author != "John Doe" {
