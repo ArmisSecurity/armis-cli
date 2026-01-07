@@ -101,9 +101,26 @@ jobs:
             const fs = require('fs');
             const summary = fs.readFileSync('coverage/coverage.txt', 'utf8');
             const total = summary.split('\n').find(line => line.includes('total:'));
-            const body = `### Test Coverage Report\n\n\`\`\`\n${summary}\n\`\`\`\n\n**${total || 'Coverage data not found'}**`;
-            github.rest.issues.createComment({
+            const marker = '<!-- coverage-comment -->';
+            const body = `${marker}\n### Test Coverage Report\n\n**${total || 'Coverage data not found'}**\n\n<details>\n<summary>Coverage by function</summary>\n\n\`\`\`\n${summary}\n\`\`\`\n</details>`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
-              issue_number: context.issue.number,
-              body
+              issue_number: context.issue.number
             });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
