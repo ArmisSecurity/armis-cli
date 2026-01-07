@@ -166,7 +166,7 @@ func getSeverityColor(severity model.Severity) string {
 	}
 }
 
-const (
+var (
 	colorReset     = "\033[0m"
 	colorRed       = "\033[31m"
 	colorOrange    = "\033[33m"
@@ -175,16 +175,26 @@ const (
 	colorGray      = "\033[90m"
 	colorBgRed     = "\033[101m"
 	colorBold      = "\033[1m"
-	colorUnderline = "\033[4m"
+	colorUnderline = "\033[4m" //nolint:unused // reserved for future formatting options
 )
 
 func init() {
-	if strings.Contains(strings.ToLower(fmt.Sprintf("%v", os.Getenv("TERM"))), "dumb") {
+	// Support NO_COLOR standard (https://no-color.org/) and dumb terminals
+	if os.Getenv("NO_COLOR") != "" || strings.Contains(strings.ToLower(os.Getenv("TERM")), "dumb") {
 		disableColors()
 	}
 }
 
 func disableColors() {
+	colorReset = ""
+	colorRed = ""
+	colorOrange = ""
+	colorYellow = ""
+	colorBlue = ""
+	colorGray = ""
+	colorBgRed = ""
+	colorBold = ""
+	colorUnderline = ""
 }
 
 func sortFindingsBySeverity(findings []model.Finding) []model.Finding {
@@ -822,7 +832,7 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		_, _ = fmt.Fprintf(w, "Location:    %s\n", location)
 
 		if opts.RepoPath != "" && finding.StartLine > 0 {
-			if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine); blameInfo != nil {
+			if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine, opts.Debug); blameInfo != nil {
 				maskedEmail := maskEmail(blameInfo.Email)
 				_, _ = fmt.Fprintf(w, "Git Blame:   %s <%s> (%s, %s)\n",
 					blameInfo.Author, maskedEmail, blameInfo.Date, blameInfo.CommitSHA[:7])
@@ -940,13 +950,19 @@ func isGitRepo(repoPath string) bool {
 	return err == nil
 }
 
-func getGitBlame(repoPath, file string, line int) *GitBlameInfo {
+func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 	if !isGitRepo(repoPath) {
+		if debug {
+			fmt.Printf("DEBUG: git blame skipped - %s is not a git repository\n", repoPath)
+		}
 		return nil
 	}
 
 	filePath := filepath.Join(repoPath, file)
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		if debug {
+			fmt.Printf("DEBUG: git blame skipped - file does not exist: %s\n", filePath)
+		}
 		return nil
 	}
 
@@ -955,6 +971,9 @@ func getGitBlame(repoPath, file string, line int) *GitBlameInfo {
 	cmd.Dir = repoPath
 	output, err := cmd.Output()
 	if err != nil {
+		if debug {
+			fmt.Printf("DEBUG: git blame failed for %s:%d - %v\n", file, line, err)
+		}
 		return nil
 	}
 
