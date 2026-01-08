@@ -47,7 +47,7 @@ test:
 
 tools:
 	@echo "Installing dev tools..."
-	go install gotest.tools/gotestsum@latest
+	go install gotest.tools/gotestsum@v1.13.0
 
 lint:
 	@echo "Running linters..."
