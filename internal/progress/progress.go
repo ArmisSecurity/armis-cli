@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -63,6 +64,7 @@ func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Wr
 
 // Spinner displays an animated spinner with a message.
 type Spinner struct {
+	mu        sync.RWMutex
 	message   string
 	disabled  bool
 	stopChan  chan bool
@@ -101,10 +103,13 @@ func (s *Spinner) Start() {
 				return
 			default:
 				elapsed := time.Since(s.startTime)
+				s.mu.RLock()
+				msg := s.message
+				s.mu.RUnlock()
 				if s.showTimer {
-					fmt.Printf("\r%s %s [%s]", spinner[i%len(spinner)], s.message, formatDuration(elapsed))
+					fmt.Printf("\r%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
 				} else {
-					fmt.Printf("\r%s %s", spinner[i%len(spinner)], s.message)
+					fmt.Printf("\r%s %s", spinner[i%len(spinner)], msg)
 				}
 				i++
 				time.Sleep(100 * time.Millisecond)
@@ -124,12 +129,16 @@ func (s *Spinner) Stop() {
 
 // UpdateMessage updates the spinner message.
 func (s *Spinner) UpdateMessage(message string) {
+	s.mu.Lock()
 	s.message = message
+	s.mu.Unlock()
 }
 
 // Update updates the spinner message.
 func (s *Spinner) Update(message string) {
+	s.mu.Lock()
 	s.message = message
+	s.mu.Unlock()
 }
 
 // GetElapsed returns the elapsed time since the spinner started.
