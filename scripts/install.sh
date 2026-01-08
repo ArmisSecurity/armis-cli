@@ -56,6 +56,56 @@ is_in_path() {
     esac
 }
 
+add_to_path() {
+    local dir="$1"
+    local shell_name=$(basename "$SHELL")
+    local rc_file=""
+    local path_line="export PATH=\"$dir:\$PATH\""
+    
+    # Detect shell config file
+    case "$shell_name" in
+        zsh)
+            rc_file="$HOME/.zshrc"
+            ;;
+        bash)
+            if [ "$(uname -s)" = "Darwin" ]; then
+                rc_file="$HOME/.bash_profile"
+            else
+                rc_file="$HOME/.bashrc"
+            fi
+            ;;
+        *)
+            echo "⚠️  Unknown shell: $shell_name"
+            echo "   Please manually add '$dir' to your PATH"
+            return 1
+            ;;
+    esac
+    
+    # Check if already in config file
+    if [ -f "$rc_file" ] && grep -q "$dir" "$rc_file" 2>/dev/null; then
+        echo "ℹ️  PATH already configured in $rc_file"
+        echo "   Please restart your shell or run: source $rc_file"
+        return 0
+    fi
+    
+    # Add to config file
+    echo ""
+    echo "📝 Adding $dir to PATH in $rc_file..."
+    echo "$path_line" >> "$rc_file" || {
+        echo "❌ Failed to update $rc_file"
+        return 1
+    }
+    
+    echo "✅ PATH updated successfully!"
+    echo ""
+    echo "To use armis-cli immediately, run:"
+    echo "  source $rc_file"
+    echo ""
+    echo "Or simply open a new terminal window."
+    
+    return 0
+}
+
 print_path_help() {
     local dir="$1"
     cat <<EOF
@@ -246,16 +296,23 @@ main() {
     else
         echo "⚠️  Installed, but '$BINARY_NAME' is not currently discoverable in your PATH."
         if ! is_in_path "$INSTALL_DIR"; then
-            print_path_help "$INSTALL_DIR"
+            # Automatically add to PATH
+            if add_to_path "$INSTALL_DIR"; then
+                echo ""
+                echo "You can also run it directly now: $TARGET_PATH --help"
+            else
+                # Fallback to manual instructions if auto-add fails
+                print_path_help "$INSTALL_DIR"
+                echo ""
+                echo "You can also run it directly: $TARGET_PATH --help"
+                exit 1
+            fi
         else
             echo ""
             echo "PATH contains $INSTALL_DIR, but the command still isn't found."
             echo "Try running: hash -r"
             echo "Or open a new terminal window."
         fi
-        echo ""
-        echo "You can also run it directly: $TARGET_PATH --help"
-        exit 1
     fi
 }
 
