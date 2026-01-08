@@ -125,7 +125,7 @@ verify_checksums() {
     echo "🔍 Verifying checksums..."
     
     local expected_checksum
-    expected_checksum=$(grep "$(basename "$archive_file")" "$checksums_file" | awk '{print $1}')
+    expected_checksum=$(awk -v filename="$(basename "$archive_file")" '$2 == filename {print $1}' "$checksums_file")
     
     if [ -z "$expected_checksum" ]; then
         echo "⚠️  Could not find checksum for $(basename "$archive_file") in checksums file"
