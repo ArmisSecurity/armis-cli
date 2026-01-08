@@ -30,6 +30,7 @@ type Scanner struct {
 	includeTests          bool
 	timeout               time.Duration
 	includeNonExploitable bool
+	pollInterval          time.Duration
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -42,7 +43,14 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 		includeTests:          includeTests,
 		timeout:               timeout,
 		includeNonExploitable: includeNonExploitable,
+		pollInterval:          5 * time.Second,
 	}
+}
+
+// WithPollInterval sets a custom poll interval for the scanner (used for testing).
+func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
+	s.pollInterval = d
+	return s
 }
 
 // Scan scans a repository at the given path.
@@ -105,7 +113,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	analysisSpinner := progress.NewSpinner("Analyzing code for vulnerabilities...", s.noProgress)
 	analysisSpinner.Start()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
 
@@ -173,7 +181,8 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 			return err
 		}
 
-		header.Name = relPath
+		// Use forward slashes for tar paths (standard convention for cross-platform compatibility)
+		header.Name = filepath.ToSlash(relPath)
 
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return err

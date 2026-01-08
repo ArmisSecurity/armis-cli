@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint scan help
+.PHONY: build install clean test lint scan help tools
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
@@ -16,6 +16,7 @@ help:
 	@echo "  lint       - Run linters"
 	@echo "  scan       - Run security scan on this repository"
 	@echo "  release    - Build for multiple platforms"
+	@echo "  tools      - Install dev tools (gotestsum)"
 
 build:
 	@echo "Building $(BINARY_NAME)..."
@@ -33,9 +34,20 @@ clean:
 	@rm -rf $(BUILD_DIR)
 	$(GO) clean
 
+GOTESTSUM := $(shell command -v gotestsum 2>/dev/null || echo "$(shell go env GOPATH)/bin/gotestsum")
+
 test:
 	@echo "Running tests..."
-	$(GO) test -v ./...
+	@if [ -x "$(GOTESTSUM)" ]; then \
+		$(GOTESTSUM) --format testdox -- -v ./...; \
+	else \
+		echo "gotestsum not found, using go test (run 'make tools' for colored output)"; \
+		$(GO) test -v ./...; \
+	fi
+
+tools:
+	@echo "Installing dev tools..."
+	go install gotest.tools/gotestsum@latest
 
 lint:
 	@echo "Running linters..."

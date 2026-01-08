@@ -32,6 +32,7 @@ type Scanner struct {
 	includeTests          bool
 	timeout               time.Duration
 	includeNonExploitable bool
+	pollInterval          time.Duration
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -44,7 +45,14 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 		includeTests:          includeTests,
 		timeout:               timeout,
 		includeNonExploitable: includeNonExploitable,
+		pollInterval:          5 * time.Second,
 	}
+}
+
+// WithPollInterval sets a custom poll interval for the scanner (used for testing).
+func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
+	s.pollInterval = d
+	return s
 }
 
 // ScanImage scans a container image by name.
@@ -112,7 +120,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
 	spinner.Start()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, 5*time.Second, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
 	elapsed := spinner.GetElapsed()
 	spinner.Stop()
 

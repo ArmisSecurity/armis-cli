@@ -37,10 +37,13 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
       - name: Run tests with coverage
         shell: bash
         run: |
-          go test $(go list ./... | grep -v -e '/testutil$' -e '/test$') -race -coverprofile=coverage.out -covermode=atomic
+          gotestsum --format testdox -- $(go list ./... | grep -v -e '/testutil$' -e '/test$') -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage summary
         shell: bash
