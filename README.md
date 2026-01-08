@@ -47,6 +47,8 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 ## Installation
 
 ### Homebrew (macOS/Linux)
+**Prerequisites:** [Homebrew](https://brew.sh) must be installed first.
+
 ```bash
 brew install armissecurity/tap/armis-cli
 ```
@@ -56,6 +58,12 @@ brew install armissecurity/tap/armis-cli
 ```bash
 curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
 ```
+
+The script will automatically:
+- Install to `~/.local/bin` (no sudo required) or `/usr/local/bin` as fallback
+- Verify the installation
+- Check if the command is in your PATH
+
 **Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
@@ -74,6 +82,50 @@ Download the latest release for your platform from the [releases page](https://g
 ```bash
 go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ```
+
+### Verify Installation
+After installation, verify that the CLI is working:
+```bash
+which armis-cli
+armis-cli --version
+```
+
+### Troubleshooting: "command not found"
+
+If you see "command not found" after installation:
+
+1. **Check if it's installed:**
+   ```bash
+   ls -la ~/.local/bin/armis-cli
+   # or
+   ls -la /usr/local/bin/armis-cli
+   ```
+
+2. **Check your PATH:**
+   ```bash
+   echo $PATH
+   ```
+
+3. **Add to PATH if needed:**
+   
+   For **zsh** (default on macOS):
+   ```bash
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+   source ~/.zshrc
+   ```
+   
+   For **bash**:
+   ```bash
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile
+   source ~/.bash_profile
+   ```
+
+4. **Or open a new terminal window** and try again.
+
+5. **Run directly with full path:**
+   ```bash
+   ~/.local/bin/armis-cli --help
+   ```
 
 ---
 

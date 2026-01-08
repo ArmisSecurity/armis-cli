@@ -4,9 +4,11 @@ set -e
 
 REPO="ArmisSecurity/armis-cli"
 BINARY_NAME="armis-cli"
-INSTALL_DIR="/usr/local/bin"
 VERSION="${1:-latest}"
 VERIFY="${VERIFY:-true}"
+
+USER_BIN="$HOME/.local/bin"
+SYSTEM_BIN="/usr/local/bin"
 
 detect_os() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -39,6 +41,59 @@ download_file() {
         echo "Error: Neither curl nor wget found. Please install one of them."
         exit 1
     fi
+}
+
+fail() {
+    echo "❌ $*" >&2
+    exit 1
+}
+
+is_in_path() {
+    local dir="$1"
+    case ":$PATH:" in
+        *":$dir:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+print_path_help() {
+    local dir="$1"
+    cat <<EOF
+
+⚠️  '$BINARY_NAME' was installed to: $dir
+but '$dir' is not in your PATH, so the command may not be found.
+
+Current PATH:
+$PATH
+
+To fix this, add the following to your shell configuration:
+
+For zsh (default on macOS):
+  echo 'export PATH="$dir:\$PATH"' >> ~/.zshrc
+  source ~/.zshrc
+
+For bash:
+  echo 'export PATH="$dir:\$PATH"' >> ~/.bash_profile
+  source ~/.bash_profile
+
+Or simply open a new terminal window and try again.
+EOF
+}
+
+choose_install_dir() {
+    if [ -n "${INSTALL_DIR:-}" ]; then
+        echo "$INSTALL_DIR"
+        return
+    fi
+    
+    if [ -d "$USER_BIN" ] || mkdir -p "$USER_BIN" 2>/dev/null; then
+        if [ -w "$USER_BIN" ]; then
+            echo "$USER_BIN"
+            return
+        fi
+    fi
+    
+    echo "$SYSTEM_BIN"
 }
 
 verify_checksums() {
@@ -93,8 +148,11 @@ main() {
         exit 1
     fi
 
+    INSTALL_DIR=$(choose_install_dir)
+
     echo "Detected OS: $OS"
     echo "Detected Architecture: $ARCH"
+    echo "Install Directory: $INSTALL_DIR"
     echo ""
 
     if [ "$VERSION" = "latest" ]; then
@@ -141,17 +199,47 @@ main() {
     chmod +x "$BINARY_FILE"
 
     echo "📥 Installing to $INSTALL_DIR..."
+    
+    TARGET_PATH="$INSTALL_DIR/$BINARY_NAME"
+    
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$BINARY_FILE" "$INSTALL_DIR/$BINARY_NAME"
+        mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
         echo "   (requires sudo privileges)"
-        sudo mv "$BINARY_FILE" "$INSTALL_DIR/$BINARY_NAME"
+        sudo -v || fail "sudo authentication failed"
+        sudo mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH (sudo mv failed)"
     fi
+    
+    if [ -w "$TARGET_PATH" ]; then
+        chmod +x "$TARGET_PATH" 2>/dev/null || true
+    else
+        sudo chmod +x "$TARGET_PATH" 2>/dev/null || true
+    fi
+    
+    [ -f "$TARGET_PATH" ] || fail "Install appeared to succeed, but $TARGET_PATH does not exist"
 
     echo ""
-    echo "✅ Armis CLI installed successfully!"
+    echo "✅ Armis CLI installed to: $TARGET_PATH"
     echo ""
-    echo "Run 'armis-cli --help' to get started"
+    
+    if command -v "$BINARY_NAME" >/dev/null 2>&1; then
+        echo "✅ Verified: $(command -v "$BINARY_NAME")"
+        echo ""
+        echo "Run '$BINARY_NAME --help' to get started"
+    else
+        echo "⚠️  Installed, but '$BINARY_NAME' is not currently discoverable in your PATH."
+        if ! is_in_path "$INSTALL_DIR"; then
+            print_path_help "$INSTALL_DIR"
+        else
+            echo ""
+            echo "PATH contains $INSTALL_DIR, but the command still isn't found."
+            echo "Try running: hash -r"
+            echo "Or open a new terminal window."
+        fi
+        echo ""
+        echo "You can also run it directly: $TARGET_PATH --help"
+        exit 1
+    fi
 }
 
 main
