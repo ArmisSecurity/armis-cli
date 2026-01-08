@@ -1,7 +1,9 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -198,5 +200,70 @@ func TestClientDo_PersistentServerError(t *testing.T) {
 	_, err = client.Do(req)
 	if err == nil {
 		t.Error("Expected error after exhausting retries, got nil")
+	}
+}
+
+func TestClientDo_RetryWithBody(t *testing.T) {
+	const expectedBody = "test request body content"
+	attempts := 0
+	var receivedBodies []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, string(body))
+
+		if attempts == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("service unavailable"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("success"))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{
+		RetryMax:     3,
+		RetryWaitMin: 10 * time.Millisecond,
+		RetryWaitMax: 50 * time.Millisecond,
+		Timeout:      5 * time.Second,
+	})
+
+	// Create request with body using bytes.NewReader which supports GetBody
+	bodyReader := bytes.NewReader([]byte(expectedBody))
+	req, err := http.NewRequest("POST", server.URL, bodyReader)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Set GetBody so the body can be regenerated for retries
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader([]byte(expectedBody))), nil
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Expected success after retry, got error: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	if attempts != 2 {
+		t.Errorf("Expected 2 attempts, got %d", attempts)
+	}
+
+	if len(receivedBodies) != 2 {
+		t.Fatalf("Expected 2 received bodies, got %d", len(receivedBodies))
+	}
+
+	// Verify both attempts received the full body
+	for i, body := range receivedBodies {
+		if body != expectedBody {
+			t.Errorf("Attempt %d: expected body %q, got %q", i+1, expectedBody, body)
+		}
 	}
 }

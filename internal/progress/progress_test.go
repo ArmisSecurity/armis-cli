@@ -195,7 +195,9 @@ func TestSpinner(t *testing.T) {
 		_ = os.Setenv("CI", "true")
 		t.Cleanup(func() { _ = os.Unsetenv("CI") })
 
+		var buf bytes.Buffer
 		spinner := NewSpinner("test", false)
+		spinner.SetWriter(&buf)
 		spinner.Start()
 		time.Sleep(50 * time.Millisecond)
 		spinner.Stop()
@@ -239,7 +241,9 @@ func TestSpinner(t *testing.T) {
 			}
 		})
 
+		var buf bytes.Buffer
 		spinner := NewSpinner("initial", false)
+		spinner.SetWriter(&buf)
 		spinner.Start()
 
 		// Concurrently update the message while the spinner is running
