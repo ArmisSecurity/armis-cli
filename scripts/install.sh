@@ -123,13 +123,30 @@ verify_checksums() {
     fi
     
     echo "🔍 Verifying checksums..."
-    if command -v sha256sum > /dev/null 2>&1; then
-        grep "$(basename "$archive_file")" "$checksums_file" | sha256sum -c --status
+    
+    local expected_checksum
+    expected_checksum=$(grep "$(basename "$archive_file")" "$checksums_file" | awk '{print $1}')
+    
+    if [ -z "$expected_checksum" ]; then
+        echo "⚠️  Could not find checksum for $(basename "$archive_file") in checksums file"
+        return 1
+    fi
+    
+    local actual_checksum
+    if command -v sha256sum > /dev/null 2>&1 && sha256sum --version > /dev/null 2>&1; then
+        actual_checksum=$(sha256sum "$archive_file" | awk '{print $1}')
     elif command -v shasum > /dev/null 2>&1; then
-        grep "$(basename "$archive_file")" "$checksums_file" | shasum -a 256 -c --status
+        actual_checksum=$(shasum -a 256 "$archive_file" | awk '{print $1}')
     else
         echo "⚠️  No checksum tool found (sha256sum or shasum), skipping checksum verification"
         return 0
+    fi
+    
+    if [ "$expected_checksum" != "$actual_checksum" ]; then
+        echo "❌ Checksum verification failed!"
+        echo "   Expected: $expected_checksum"
+        echo "   Got:      $actual_checksum"
+        return 1
     fi
     
     echo "✓ Checksums verified successfully"
