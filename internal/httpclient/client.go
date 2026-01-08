@@ -58,6 +58,16 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	var err error
 
 	operation := func() error {
+		// Regenerate request body for retries if GetBody is set.
+		// This is necessary because the body is consumed after each attempt.
+		if req.GetBody != nil {
+			newBody, bodyErr := req.GetBody()
+			if bodyErr != nil {
+				return backoff.Permanent(fmt.Errorf("failed to regenerate request body: %w", bodyErr))
+			}
+			req.Body = newBody
+		}
+
 		resp, err = c.httpClient.Do(req)
 		if err != nil {
 			return err
