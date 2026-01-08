@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -217,6 +218,46 @@ func TestSpinner(t *testing.T) {
 		if elapsed < 100*time.Millisecond {
 			t.Errorf("Expected elapsed time >= 100ms, got %v", elapsed)
 		}
+	})
+
+	t.Run("concurrent update while running", func(t *testing.T) {
+		// Ensure we're not in CI mode for this test
+		ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+		originalEnv := make(map[string]string)
+		for _, key := range ciEnvVars {
+			if val, exists := os.LookupEnv(key); exists {
+				originalEnv[key] = val
+			}
+			_ = os.Unsetenv(key)
+		}
+		t.Cleanup(func() {
+			for _, key := range ciEnvVars {
+				_ = os.Unsetenv(key)
+			}
+			for key, val := range originalEnv {
+				_ = os.Setenv(key, val)
+			}
+		})
+
+		spinner := NewSpinner("initial", false)
+		spinner.Start()
+
+		// Concurrently update the message while the spinner is running
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				for j := 0; j < 10; j++ {
+					spinner.Update("message update")
+					spinner.UpdateMessage("message update via UpdateMessage")
+					time.Sleep(10 * time.Millisecond)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		spinner.Stop()
 	})
 }
 
