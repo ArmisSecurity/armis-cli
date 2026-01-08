@@ -71,6 +71,7 @@ type Spinner struct {
 	doneChan  chan bool
 	startTime time.Time
 	showTimer bool
+	writer    io.Writer
 }
 
 // NewSpinner creates a new spinner with the given message.
@@ -82,13 +83,20 @@ func NewSpinner(message string, disabled bool) *Spinner {
 		doneChan:  make(chan bool),
 		startTime: time.Now(),
 		showTimer: true,
+		writer:    os.Stdout,
 	}
+}
+
+// SetWriter sets the output writer for the spinner (useful for testing).
+// Must be called before Start to avoid data races.
+func (s *Spinner) SetWriter(w io.Writer) {
+	s.writer = w
 }
 
 // Start begins the spinner animation.
 func (s *Spinner) Start() {
 	if s.disabled || IsCI() {
-		fmt.Printf("%s (started at %s)\n", s.message, s.startTime.Format("15:04:05"))
+		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", s.message, s.startTime.Format("15:04:05"))
 		return
 	}
 
@@ -98,7 +106,7 @@ func (s *Spinner) Start() {
 		for {
 			select {
 			case <-s.stopChan:
-				fmt.Print("\r\033[K")
+				_, _ = fmt.Fprint(s.writer, "\r\033[K")
 				close(s.doneChan)
 				return
 			default:
@@ -107,9 +115,9 @@ func (s *Spinner) Start() {
 				msg := s.message
 				s.mu.RUnlock()
 				if s.showTimer {
-					fmt.Printf("\r%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
+					_, _ = fmt.Fprintf(s.writer, "\r%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
 				} else {
-					fmt.Printf("\r%s %s", spinner[i%len(spinner)], msg)
+					_, _ = fmt.Fprintf(s.writer, "\r%s %s", spinner[i%len(spinner)], msg)
 				}
 				i++
 				time.Sleep(100 * time.Millisecond)
