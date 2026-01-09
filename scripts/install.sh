@@ -62,6 +62,12 @@ add_to_path() {
     local rc_file=""
     local path_line="export PATH=\"$dir:\$PATH\""
     
+    # Skip in CI/CD environments
+    if is_ci_environment; then
+        echo "ℹ️  CI/CD environment detected, skipping PATH modification"
+        return 0
+    fi
+    
     # Detect shell config file
     case "$shell_name" in
         zsh)
@@ -74,6 +80,10 @@ add_to_path() {
                 rc_file="$HOME/.bashrc"
             fi
             ;;
+        fish)
+            rc_file="$HOME/.config/fish/config.fish"
+            path_line="set -gx PATH $dir \$PATH"
+            ;;
         *)
             echo "⚠️  Unknown shell: $shell_name"
             echo "   Please manually add '$dir' to your PATH"
@@ -84,27 +94,23 @@ add_to_path() {
     # Check if already in config file
     if [ -f "$rc_file" ] && grep -q "$dir" "$rc_file" 2>/dev/null; then
         echo "ℹ️  PATH already configured in $rc_file"
-        echo ""
-        echo "🔄 Restarting shell to apply changes..."
-        echo ""
-        exec "$SHELL" -l
+        return 0
     fi
     
     # Add to config file
     echo ""
     echo "📝 Adding $dir to PATH in $rc_file..."
+    
+    # Create config file directory if it doesn't exist (for fish)
+    mkdir -p "$(dirname "$rc_file")" 2>/dev/null || true
+    
     echo "$path_line" >> "$rc_file" || {
         echo "❌ Failed to update $rc_file"
         return 1
     }
     
-    echo "✅ PATH updated successfully!"
-    echo ""
-    echo "🔄 Restarting shell to apply changes..."
-    echo ""
-    
-    # Restart the shell to apply PATH changes
-    exec "$SHELL" -l
+    echo "✅ PATH updated in $rc_file"
+    return 0
 }
 
 print_path_help() {
@@ -131,19 +137,40 @@ Or simply open a new terminal window and try again.
 EOF
 }
 
+is_ci_environment() {
+    [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${GITLAB_CI:-}" ] || [ -n "${JENKINS_HOME:-}" ] || [ -n "${CIRCLECI:-}" ]
+}
+
 choose_install_dir() {
+    # Allow override via environment variable
     if [ -n "${INSTALL_DIR:-}" ]; then
         echo "$INSTALL_DIR"
         return
     fi
     
-    if [ -d "$USER_BIN" ] || mkdir -p "$USER_BIN" 2>/dev/null; then
-        if [ -w "$USER_BIN" ]; then
+    # Strategy: Prefer directories already in PATH to avoid shell restart
+    
+    # 1. Check if /usr/local/bin is writable (common on macOS with Homebrew)
+    if [ -d "$SYSTEM_BIN" ] && [ -w "$SYSTEM_BIN" ]; then
+        echo "$SYSTEM_BIN"
+        return
+    fi
+    
+    # 2. Check if ~/.local/bin exists and is already in PATH
+    if [ -d "$USER_BIN" ] && is_in_path "$USER_BIN"; then
+        echo "$USER_BIN"
+        return
+    fi
+    
+    # 3. Try to create ~/.local/bin if it doesn't exist
+    if [ ! -d "$USER_BIN" ] && mkdir -p "$USER_BIN" 2>/dev/null; then
+        if is_in_path "$USER_BIN"; then
             echo "$USER_BIN"
             return
         fi
     fi
     
+    # 4. Fall back to /usr/local/bin (will require sudo if not writable)
     echo "$SYSTEM_BIN"
 }
 
@@ -266,9 +293,21 @@ main() {
     
     chmod +x "$BINARY_FILE"
 
-    echo "📥 Installing to $INSTALL_DIR..."
-    
     TARGET_PATH="$INSTALL_DIR/$BINARY_NAME"
+    
+    # Check if upgrading existing installation
+    EXISTING_VERSION=""
+    if [ -f "$TARGET_PATH" ]; then
+        EXISTING_VERSION=$("$TARGET_PATH" --version 2>/dev/null | head -n1 || echo "")
+        if [ -n "$EXISTING_VERSION" ]; then
+            echo "📦 Upgrading existing installation..."
+            echo "   Current: $EXISTING_VERSION"
+        else
+            echo "📦 Replacing existing installation..."
+        fi
+    else
+        echo "📦 Installing to $INSTALL_DIR..."
+    fi
     
     if [ -w "$INSTALL_DIR" ]; then
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
@@ -286,33 +325,83 @@ main() {
     
     [ -f "$TARGET_PATH" ] || fail "Install appeared to succeed, but $TARGET_PATH does not exist"
 
+    # Get installed version
+    INSTALLED_VERSION=$("$TARGET_PATH" --version 2>/dev/null | head -n1 || echo "unknown")
+    
     echo ""
-    echo "✅ Armis CLI installed to: $TARGET_PATH"
+    echo "✅ Armis CLI installed successfully!"
+    echo "   Location: $TARGET_PATH"
+    echo "   Version: $INSTALLED_VERSION"
     echo ""
     
+    # Refresh command hash table for current shell
+    hash -r 2>/dev/null || rehash 2>/dev/null || true
+    
+    # Check if command is now available
     if command -v "$BINARY_NAME" >/dev/null 2>&1; then
-        echo "✅ Verified: $(command -v "$BINARY_NAME")"
-        echo ""
-        echo "Run '$BINARY_NAME --help' to get started"
+        # Success! Command is in PATH and discoverable
+        if is_in_path "$INSTALL_DIR"; then
+            echo "🎉 Ready to use! The command is available in your PATH."
+            echo ""
+            echo "   Try it now: $BINARY_NAME --help"
+            echo ""
+            if [ -t 0 ] && [ -z "${CI:-}" ]; then
+                echo "💡 Note: If you have other terminal windows open, you may need to:"
+                echo "   • Run 'hash -r' in those terminals, or"
+                echo "   • Open new terminal windows"
+            fi
+        else
+            echo "✅ Command is available!"
+        fi
     else
-        echo "⚠️  Installed, but '$BINARY_NAME' is not currently discoverable in your PATH."
+        # Command not in PATH yet
+        echo "⚠️  Installation complete, but '$BINARY_NAME' is not in your PATH yet."
+        echo ""
+        
         if ! is_in_path "$INSTALL_DIR"; then
-            # Automatically add to PATH
+            # Need to add to PATH
             if add_to_path "$INSTALL_DIR"; then
                 echo ""
-                echo "You can also run it directly now: $TARGET_PATH --help"
+                echo "📋 To use $BINARY_NAME, you need to reload your shell configuration:"
+                echo ""
+                local shell_name=$(basename "$SHELL")
+                case "$shell_name" in
+                    zsh)
+                        echo "   source ~/.zshrc"
+                        ;;
+                    bash)
+                        if [ "$(uname -s)" = "Darwin" ]; then
+                            echo "   source ~/.bash_profile"
+                        else
+                            echo "   source ~/.bashrc"
+                        fi
+                        ;;
+                    fish)
+                        echo "   source ~/.config/fish/config.fish"
+                        ;;
+                    *)
+                        echo "   (or open a new terminal window)"
+                        ;;
+                esac
+                echo ""
+                echo "   Or open a new terminal window."
+                echo ""
+                echo "   You can also run it directly: $TARGET_PATH --help"
             else
-                # Fallback to manual instructions if auto-add fails
+                # Failed to add to PATH
                 print_path_help "$INSTALL_DIR"
                 echo ""
-                echo "You can also run it directly: $TARGET_PATH --help"
+                echo "You can run it directly: $TARGET_PATH --help"
                 exit 1
             fi
         else
+            # Directory is in PATH but command not found (hash table issue)
+            echo "   PATH contains $INSTALL_DIR, but the command isn't cached yet."
             echo ""
-            echo "PATH contains $INSTALL_DIR, but the command still isn't found."
-            echo "Try running: hash -r"
-            echo "Or open a new terminal window."
+            echo "   Run: hash -r"
+            echo "   Or open a new terminal window."
+            echo ""
+            echo "   You can also run it directly: $TARGET_PATH --help"
         fi
     fi
 }
