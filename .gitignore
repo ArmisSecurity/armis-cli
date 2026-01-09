@@ -7,3 +7,7 @@ moose
 armis
 .idea/
 .claude/
+coverage.out
+coverage_output.out
+*.test
+*.prof

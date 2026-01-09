@@ -1,4 +1,4 @@
-![Armis Logo](https://github.com/ArmisSecurity/armis-cli/blob/main/logo-dark.svg)
+![Armis Logo](https://github.com/ArmisSecurity/armis-cli/blob/main/docs/assets/logo-dark.svg)
 # Armis CLI
 
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
@@ -476,15 +476,15 @@ make release
 
 ## Contributing
 We welcome contributions! Please see:
-- [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards
+- [CONTRIBUTING.md](.github/CONTRIBUTING.md) for contribution guidelines
+- [CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md) for community standards
 - [Issue Templates](.github/ISSUE_TEMPLATE/) for reporting bugs or requesting features
 
 ---
 
 ## Support
 - For issues, open a [GitHub Issue](https://github.com/ArmisSecurity/armis-cli/issues)
-- For security concerns, see [SECURITY.md](SECURITY.md)
+- For security concerns, see [SECURITY.md](.github/SECURITY.md)
 - For questions, contact support@armis.com
 
 ---
