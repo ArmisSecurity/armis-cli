@@ -84,8 +84,10 @@ add_to_path() {
     # Check if already in config file
     if [ -f "$rc_file" ] && grep -q "$dir" "$rc_file" 2>/dev/null; then
         echo "ℹ️  PATH already configured in $rc_file"
-        echo "   Please restart your shell or run: source $rc_file"
-        return 0
+        echo ""
+        echo "🔄 Restarting shell to apply changes..."
+        echo ""
+        exec "$SHELL" -l
     fi
     
     # Add to config file
@@ -98,12 +100,11 @@ add_to_path() {
     
     echo "✅ PATH updated successfully!"
     echo ""
-    echo "To use armis-cli immediately, run:"
-    echo "  source $rc_file"
+    echo "🔄 Restarting shell to apply changes..."
     echo ""
-    echo "Or simply open a new terminal window."
     
-    return 0
+    # Restart the shell to apply PATH changes
+    exec "$SHELL" -l
 }
 
 print_path_help() {
