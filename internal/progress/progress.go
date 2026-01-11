@@ -76,12 +76,12 @@ func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Wr
 type Spinner struct {
 	mu        sync.RWMutex
 	message   string
-	disabled  bool
+	disabled  bool // Immutable after construction - safe to read without mutex
 	stopChan  chan struct{}
 	doneChan  chan struct{}
 	startTime time.Time
-	showTimer bool
-	writer    io.Writer
+	showTimer bool      // Immutable after construction - safe to read without mutex
+	writer    io.Writer // Immutable after construction - safe to read without mutex
 
 	// Fields for goroutine leak prevention
 	ctx      context.Context    // Parent context for cancellation

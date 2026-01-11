@@ -316,20 +316,19 @@ func main() {
 		}
 	})
 
-	t.Run("handles absolute path", func(t *testing.T) {
+	t.Run("rejects absolute path without repository context", func(t *testing.T) {
 		finding := model.Finding{
-			File:      testFile,
+			File:      testFile, // testFile is an absolute path
 			StartLine: 10,
 			EndLine:   10,
 		}
 
-		snippet, _, err := loadSnippetFromFile("", finding)
-		if err != nil {
-			t.Fatalf("Expected no error with absolute path, got %v", err)
+		_, _, err := loadSnippetFromFile("", finding)
+		if err == nil {
+			t.Fatal("Expected error for absolute path without repository context, got nil")
 		}
-
-		if !strings.Contains(snippet, "line 10") {
-			t.Errorf("Expected snippet to contain target line 10")
+		if !strings.Contains(err.Error(), "absolute path not allowed") {
+			t.Errorf("Expected error to mention 'absolute path not allowed', got: %v", err)
 		}
 	})
 

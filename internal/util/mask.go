@@ -19,8 +19,9 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(private[_-]?key|privatekey)\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
 	// Connection strings
 	regexp.MustCompile(`(?i)(connection[_-]?string|conn[_-]?str)\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
-	// Generic credentials
-	regexp.MustCompile(`(?i)(credential|cred|auth)\s*[:=]\s*['"]?([^\s'"]{4,})['"]?`),
+	// Generic credentials - uses word boundaries and 8-char minimum to reduce false positives
+	// on common variable names like 'authService' or 'credType'
+	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*[:=]\s*['"]?([^\s'"]{8,})['"]?`),
 	// JWT tokens - header starts with eyJ (base64 of '{"'), payload and signature are any base64url
 	regexp.MustCompile(`(eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)`),
 	// Hex strings that look like secrets (32+ chars)

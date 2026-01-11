@@ -50,13 +50,6 @@ validate_install_dir() {
             exit 1
             ;;
     esac
-
-    case "$dir" in
-        *//*)
-            echo "Error: Install directory cannot contain consecutive slashes: $dir" >&2
-            exit 1
-            ;;
-    esac
 }
 
 USER_BIN="$HOME/.local/bin"

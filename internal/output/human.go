@@ -241,6 +241,9 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 		}
 	} else {
 		// Without repoPath, only allow relative paths without traversal
+		if filepath.IsAbs(finding.File) {
+			return "", 0, fmt.Errorf("absolute path not allowed without repository context: %q", finding.File)
+		}
 		sanitized, pathErr := util.SanitizePath(finding.File)
 		if pathErr != nil {
 			return "", 0, fmt.Errorf("invalid file path: %w", pathErr)
