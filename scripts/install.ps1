@@ -94,7 +94,16 @@ function Main {
     Write-Host ""
     Write-Host "Installing Armis CLI..." -ForegroundColor Cyan
     Write-Host ""
-    
+
+    # Validate InstallDir to prevent path traversal attacks
+    $normalizedInstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+    if ($normalizedInstallDir -ne $InstallDir -and $InstallDir -match '\.\.') {
+        Write-Error "Invalid install directory: path traversal sequences (..) are not allowed"
+        exit 1
+    }
+    # Use the normalized path
+    $script:InstallDir = $normalizedInstallDir
+
     $arch = Get-Architecture
     Write-Host "Detected Architecture: $arch"
     Write-Host ""

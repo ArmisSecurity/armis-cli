@@ -70,13 +70,22 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 		resp, err = c.httpClient.Do(req)
 		if err != nil {
+			// Close response body if present to prevent resource leaks
+			// (some HTTP errors may return both a response and an error)
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close() //nolint:errcheck // best-effort cleanup in error path
+			}
 			return err
 		}
 
 		if resp.StatusCode >= 500 {
-			body, _ := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(resp.Body)
 			_ = resp.Body.Close() // #nosec G104 - error not critical in error path
-			return fmt.Errorf("server error: %d - %s", resp.StatusCode, string(body))
+			bodyStr := string(body)
+			if readErr != nil {
+				bodyStr = "<body read failed>"
+			}
+			return fmt.Errorf("server error: %d - %s", resp.StatusCode, bodyStr)
 		}
 
 		return nil

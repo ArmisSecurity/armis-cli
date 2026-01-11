@@ -2,8 +2,10 @@ package progress
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -306,4 +308,263 @@ func TestFormatDuration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSpinnerStopIdempotent(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(io.Discard)
+	spinner.Start()
+
+	// Stop should not panic when called multiple times
+	spinner.Stop()
+	spinner.Stop()
+	spinner.Stop()
+}
+
+func TestSpinnerWithContextCancellation(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	spinner := NewSpinnerWithContext(ctx, "test", false)
+	spinner.SetWriter(io.Discard)
+	spinner.Start()
+
+	// Cancel the context
+	cancel()
+
+	// Give the goroutine time to notice the cancellation
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop should still work (idempotent)
+	spinner.Stop()
+}
+
+func TestSpinnerAutoTimeout(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	// Use a very short timeout for testing
+	spinner := NewSpinnerWithTimeout("test", false, 200*time.Millisecond)
+	spinner.SetWriter(io.Discard)
+	spinner.Start()
+
+	// Wait for longer than the timeout
+	time.Sleep(500 * time.Millisecond)
+
+	// Stop should still work (idempotent) even after auto-timeout
+	spinner.Stop()
+}
+
+func TestSpinnerStopBeforeStart(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(io.Discard)
+
+	// Should not panic - Stop before Start should be safe
+	spinner.Stop()
+}
+
+func TestSpinnerDoubleStart(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(io.Discard)
+
+	spinner.Start()
+	spinner.Start() // Second start should be no-op
+
+	spinner.Stop()
+}
+
+func TestSpinnerConcurrentStop(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(io.Discard)
+	spinner.Start()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			spinner.Stop()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSpinnerNoGoroutineLeak(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	// Allow some time for any background goroutines to settle
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+	initialGoroutines := runtime.NumGoroutine()
+
+	for i := 0; i < 50; i++ {
+		spinner := NewSpinnerWithTimeout("test", false, time.Second)
+		spinner.SetWriter(io.Discard)
+		spinner.Start()
+		time.Sleep(10 * time.Millisecond)
+		spinner.Stop()
+	}
+
+	// Allow some time for goroutines to clean up
+	time.Sleep(200 * time.Millisecond)
+	runtime.GC()
+
+	finalGoroutines := runtime.NumGoroutine()
+	// Allow for some variance due to runtime behavior
+	if finalGoroutines > initialGoroutines+5 {
+		t.Errorf("Possible goroutine leak: started with %d, ended with %d",
+			initialGoroutines, finalGoroutines)
+	}
+}
+
+func TestSpinnerWithContextDeadline(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	spinner := NewSpinnerWithContext(ctx, "test", false)
+	spinner.SetWriter(io.Discard)
+	spinner.Start()
+
+	// Wait for context deadline
+	time.Sleep(400 * time.Millisecond)
+
+	// Stop should still work after context deadline
+	spinner.Stop()
 }

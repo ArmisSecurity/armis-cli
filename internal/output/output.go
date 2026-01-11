@@ -56,6 +56,10 @@ func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
 // ExitIfNeeded exits the program with the specified exit code if the scan should fail.
 func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode int) {
 	if ShouldFail(result, failOnSeverities) {
+		// Normalize exit code to valid POSIX range (0-255)
+		if exitCode < 0 || exitCode > 255 {
+			exitCode = 1
+		}
 		os.Exit(exitCode)
 	}
 }

@@ -254,6 +254,84 @@ func TestGetPageLimit(t *testing.T) {
 	})
 }
 
+func TestValidateFailOn(t *testing.T) {
+	tests := []struct {
+		name       string
+		severities []string
+		wantErr    bool
+	}{
+		{
+			name:       "valid single severity",
+			severities: []string{"CRITICAL"},
+			wantErr:    false,
+		},
+		{
+			name:       "valid multiple severities",
+			severities: []string{"HIGH", "CRITICAL"},
+			wantErr:    false,
+		},
+		{
+			name:       "valid all severities",
+			severities: []string{"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"},
+			wantErr:    false,
+		},
+		{
+			name:       "invalid severity lowercase",
+			severities: []string{"high"},
+			wantErr:    true,
+		},
+		{
+			name:       "invalid severity unknown",
+			severities: []string{"INVALID"},
+			wantErr:    true,
+		},
+		{
+			name:       "invalid mixed valid and invalid",
+			severities: []string{"HIGH", "invalid"},
+			wantErr:    true,
+		},
+		{
+			name:       "empty slice is valid",
+			severities: []string{},
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFailOn(tt.severities)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateFailOn(%v) error = %v, wantErr %v", tt.severities, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestGetFailOn(t *testing.T) {
+	t.Run("returns valid severities", func(t *testing.T) {
+		failOn = []string{"HIGH", "CRITICAL"}
+		defer func() { failOn = []string{"CRITICAL"} }()
+
+		result, err := getFailOn()
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+		if len(result) != 2 || result[0] != "HIGH" || result[1] != "CRITICAL" {
+			t.Errorf("Expected [HIGH CRITICAL], got %v", result)
+		}
+	})
+
+	t.Run("returns error for invalid severity", func(t *testing.T) {
+		failOn = []string{"invalid"}
+		defer func() { failOn = []string{"CRITICAL"} }()
+
+		_, err := getFailOn()
+		if err == nil {
+			t.Error("Expected error for invalid severity")
+		}
+	})
+}
+
 func TestExecute(t *testing.T) {
 	err := Execute()
 	if err != nil {

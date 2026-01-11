@@ -113,3 +113,27 @@ func validatePageLimit(limit int) error {
 	}
 	return nil
 }
+
+// validSeverities contains the valid severity level strings for the --fail-on flag.
+var validSeverities = []string{"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
+func validateFailOn(severities []string) error {
+	validSet := make(map[string]bool)
+	for _, s := range validSeverities {
+		validSet[s] = true
+	}
+
+	for _, sev := range severities {
+		if !validSet[sev] {
+			return fmt.Errorf("invalid severity level %q: must be one of %v", sev, validSeverities)
+		}
+	}
+	return nil
+}
+
+func getFailOn() ([]string, error) {
+	if err := validateFailOn(failOn); err != nil {
+		return nil, err
+	}
+	return failOn, nil
+}
