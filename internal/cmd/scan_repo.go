@@ -36,10 +36,6 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		if baseURL == "" {
-			return fmt.Errorf("API base URL not configured: use --dev flag for development environment")
-		}
-
 		client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
