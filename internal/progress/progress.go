@@ -142,10 +142,12 @@ func (s *Spinner) Start() {
 	}
 	s.started = true
 	s.startTime = time.Now() // Reset start time on Start()
-	// Recreate channels to ensure they are fresh. This guards against future changes
-	// that might allow spinner reuse - closed channels cannot be reused in Go.
+	// Recreate channels and reset stopOnce to ensure they are fresh. This guards against
+	// future changes that might allow spinner reuse - closed channels cannot be reused in Go,
+	// and an exhausted sync.Once would make subsequent Stop() calls no-ops.
 	s.stopChan = make(chan struct{})
 	s.doneChan = make(chan struct{})
+	s.stopOnce = sync.Once{}
 	s.mu.Unlock()
 
 	if s.disabled || IsCI() {

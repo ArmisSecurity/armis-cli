@@ -256,8 +256,13 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 		return "", 0, fmt.Errorf("open file: %w", err)
 	}
 	defer func() {
-		if closeErr := f.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close file: %w", closeErr)
+		if closeErr := f.Close(); closeErr != nil {
+			if err != nil {
+				// Wrap both errors to avoid losing the close error
+				err = fmt.Errorf("close file: %w (original error: %v)", closeErr, err)
+			} else {
+				err = fmt.Errorf("close file: %w", closeErr)
+			}
 		}
 	}()
 

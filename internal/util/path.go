@@ -52,7 +52,10 @@ func SafeJoinPath(basePath, relativePath string) (string, error) {
 	cleanBase := filepath.Clean(basePath)
 	cleanRel := filepath.Clean(relativePath)
 
-	// Check for path traversal in the relative path after cleaning
+	// Early check for obvious path traversal in the cleaned relative path.
+	// This is an optimization to fail fast on common cases.
+	// Note: This check may not catch all edge cases (e.g., "foo/../../bar" cleans to "../bar").
+	// The authoritative verification is done below using filepath.Rel (lines 73-78).
 	if cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
 		return "", errors.New("path traversal detected")
 	}

@@ -14,21 +14,21 @@ import (
 var secretPatterns = []*regexp.Regexp{
 	// AWS credentials (most specific - matches aws_secret_access_key before generic "secret")
 	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*[:=]\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),
-	// Private keys (detect key content)
-	regexp.MustCompile(`(?i)(private[-_]?key|privatekey)\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
-	// Connection strings
+	// Private keys (detect key content; require 16+ chars to reduce false positives on short values)
+	regexp.MustCompile(`(?i)(private[-_]?key|privatekey)\s*[:=]\s*['"]?([^\s'"]{16,})['"]?`),
+	// Connection strings (require 10+ chars to reduce false positives)
 	regexp.MustCompile(`(?i)(connection[-_]?string|conn[-_]?str)\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
-	// API keys and tokens (various formats)
-	regexp.MustCompile(`(?i)(api[-_]?key|apikey|api_token|access[-_]?token|auth[-_]?token|bearer|token)\s*[:=]\s*['"]?([A-Za-z0-9_./+=-]{8,})['"]?`),
+	// API keys and tokens (require 10+ chars to avoid short non-secrets like "true" or "null")
+	regexp.MustCompile(`(?i)(api[-_]?key|apikey|api_token|access[-_]?token|auth[-_]?token|bearer|token)\s*[:=]\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
 	// JWT tokens - header starts with eyJ (base64 of '{"'), payload and signature are any base64url
 	regexp.MustCompile(`(eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)`),
-	// Password patterns
-	regexp.MustCompile(`(?i)(password|passwd|pwd|secret)\s*[:=]\s*['"]?([^\s'"]{4,})['"]?`),
+	// Password patterns (require 8+ chars to avoid masking "secret = true" or short literals)
+	regexp.MustCompile(`(?i)(password|passwd|pwd|secret)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?`),
 	// Hex strings that look like secrets (32+ chars)
 	regexp.MustCompile(`(?i)(secret|key|hash)\s*[:=]\s*['"]?([A-Fa-f0-9]{32,})['"]?`),
-	// Generic credentials (least specific) - uses word boundaries and 8-char minimum
+	// Generic credentials (least specific) - uses word boundaries and 10-char minimum
 	// to reduce false positives on common variable names like 'authService' or 'credType'
-	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*[:=]\s*['"]?([^\s'"]{8,})['"]?`),
+	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
 }
 
 // MaskSecretInLine replaces secret values in a line with asterisks while
