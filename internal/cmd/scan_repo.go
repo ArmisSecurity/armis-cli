@@ -45,9 +45,14 @@ var scanRepoCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		ctx := context.Background()
+		ctx, cancel := NewSignalContext()
+		defer cancel()
+
 		result, err := scanner.Scan(ctx, repoPath)
 		if err != nil {
+			if ctx.Err() == context.Canceled {
+				fmt.Fprintln(os.Stderr, "\nScan cancelled")
+			}
 			return fmt.Errorf("scan failed: %w", err)
 		}
 

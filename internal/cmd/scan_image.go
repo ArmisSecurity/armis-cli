@@ -53,7 +53,9 @@ var scanImageCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		ctx := context.Background()
+		ctx, cancel := NewSignalContext()
+		defer cancel()
+
 		var result *model.ScanResult
 
 		if tarballPath != "" {
@@ -63,12 +65,18 @@ var scanImageCmd = &cobra.Command{
 			}
 			result, err = scanner.ScanTarball(ctx, sanitizedPath)
 			if err != nil {
+				if ctx.Err() == context.Canceled {
+					fmt.Fprintln(os.Stderr, "\nScan cancelled")
+				}
 				return fmt.Errorf("scan failed: %w", err)
 			}
 		} else {
 			imageName := args[0]
 			result, err = scanner.ScanImage(ctx, imageName)
 			if err != nil {
+				if ctx.Err() == context.Canceled {
+					fmt.Fprintln(os.Stderr, "\nScan cancelled")
+				}
 				return fmt.Errorf("scan failed: %w", err)
 			}
 		}

@@ -74,19 +74,18 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	}
 	tmpFileName := tmpFile.Name()
 
-	fmt.Printf("Exporting image: %s\n", imageName)
-	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
+	// Ensure cleanup always runs, even on context cancellation
+	defer func() {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpFileName)
+	}()
+
+	fmt.Printf("Exporting image: %s\n", imageName)
+	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
 
-	result, scanErr := s.ScanTarball(ctx, tmpFileName)
-
-	_ = tmpFile.Close()
-	_ = os.Remove(tmpFileName)
-
-	return result, scanErr
+	return s.ScanTarball(ctx, tmpFileName)
 }
 
 // ScanTarball scans a container image from a tarball file.
