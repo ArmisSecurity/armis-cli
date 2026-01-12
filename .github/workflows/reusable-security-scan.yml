@@ -1,0 +1,164 @@
+name: Reusable Armis Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan-type:
+        description: 'Type of scan to perform: repo or image'
+        type: string
+        default: 'repo'
+      scan-target:
+        description: 'Target to scan (path for repo, image name for image scan)'
+        type: string
+        default: '.'
+      fail-on:
+        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+        type: string
+        default: 'CRITICAL'
+      pr-comment:
+        description: 'Post scan results as PR comment'
+        type: boolean
+        default: true
+      upload-artifact:
+        description: 'Upload SARIF results as artifact'
+        type: boolean
+        default: true
+      artifact-retention-days:
+        description: 'Number of days to retain artifacts'
+        type: number
+        default: 30
+      image-tarball:
+        description: 'Path to image tarball (only for image scans)'
+        type: string
+        default: ''
+    secrets:
+      api-token:
+        description: 'Armis API token for authentication'
+        required: true
+      tenant-id:
+        description: 'Tenant identifier for Armis Cloud'
+        required: true
+
+jobs:
+  security-scan:
+    name: Armis Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Armis Security Scan
+        id: armis_scan
+        uses: ArmisSecurity/armis-cli@main
+        with:
+          scan-type: ${{ inputs.scan-type }}
+          scan-target: ${{ inputs.scan-target }}
+          api-token: ${{ secrets.api-token }}
+          tenant-id: ${{ secrets.tenant-id }}
+          format: sarif
+          fail-on: ${{ inputs.fail-on }}
+          output-file: armis-results.sarif
+          image-tarball: ${{ inputs.image-tarball }}
+        continue-on-error: true
+
+      - name: Ensure SARIF exists
+        if: always()
+        run: |
+          if [ ! -s armis-results.sarif ]; then
+            echo '{"version":"2.1.0","$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","runs":[{"tool":{"driver":{"name":"armis-cli","version":"1.0.0"}},"results":[]}]}' > armis-results.sarif
+          fi
+
+      - name: Post PR Comment with Results
+        if: always() && inputs.pr-comment && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read SARIF results
+            const sarif = JSON.parse(fs.readFileSync('armis-results.sarif', 'utf8'));
+            const results = sarif.runs?.[0]?.results || [];
+
+            // Count by severity
+            const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
+            for (const r of results) {
+              const level = r.level || 'warning';
+              const severity = {
+                'error': 'CRITICAL',
+                'warning': 'HIGH',
+                'note': 'MEDIUM',
+                'none': 'LOW'
+              }[level] || 'INFO';
+              counts[severity]++;
+            }
+            const total = results.length;
+
+            // Build comment body
+            const marker = '<!-- armis-security-scan -->';
+            const status = counts.CRITICAL > 0 ? '🔴 CRITICAL issues found' :
+                           counts.HIGH > 0 ? '🟠 HIGH issues found' :
+                           total > 0 ? '🟡 Issues found' : '✅ No issues';
+
+            let body = `${marker}\n## 🛡️ Armis Security Scan Results\n\n**${status}**\n\n`;
+            body += `| Severity | Count |\n|----------|-------|\n`;
+            if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
+            if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
+            if (counts.MEDIUM > 0) body += `| 🟡 MEDIUM | ${counts.MEDIUM} |\n`;
+            if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
+            if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
+            body += `\n**Total: ${total}**\n`;
+            body += `\n<details><summary>View full results</summary>\n\nSee the Security tab or download the \`armis-security-results\` artifact for the complete SARIF report.\n</details>`;
+
+            // Find and update existing comment, or create new
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: armis-results.sarif
+          category: armis-security-scan
+
+      - name: Upload SARIF as Artifact
+        if: always() && inputs.upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armis-security-results
+          path: armis-results.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Check for Failures
+        if: always()
+        run: |
+          if [ "${{ steps.armis_scan.outcome }}" = "failure" ]; then
+            echo "::error::Security vulnerabilities detected by Armis (threshold: ${{ inputs.fail-on }})"
+            exit 1
+          fi
