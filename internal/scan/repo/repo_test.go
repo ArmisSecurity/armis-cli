@@ -815,6 +815,34 @@ func TestCalculateDirSize(t *testing.T) {
 			t.Error("expected error for non-existent directory")
 		}
 	})
+
+	t.Run("skips symlinks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file
+		targetFile := filepath.Join(tmpDir, "target.go")
+		targetContent := "package target"
+		if err := os.WriteFile(targetFile, []byte(targetContent), 0600); err != nil {
+			t.Fatalf("failed to create target.go: %v", err)
+		}
+
+		// Create a symlink pointing to the target
+		symlinkPath := filepath.Join(tmpDir, "link.go")
+		if err := os.Symlink(targetFile, symlinkPath); err != nil {
+			t.Fatalf("failed to create symlink: %v", err)
+		}
+
+		size, err := calculateDirSize(tmpDir, true, nil)
+		if err != nil {
+			t.Fatalf("calculateDirSize failed: %v", err)
+		}
+
+		// Should only count target.go (14 bytes), not the symlink
+		expectedSize := int64(len(targetContent))
+		if size != expectedSize {
+			t.Errorf("size = %d, want %d (symlink should be excluded)", size, expectedSize)
+		}
+	})
 }
 
 func TestTarGzDirectory(t *testing.T) {

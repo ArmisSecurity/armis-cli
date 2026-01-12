@@ -246,6 +246,12 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 			}
 			return nil
 		}
+
+		// Skip symlinks for consistency with tarGzDirectory
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		if !info.IsDir() {
 			size += info.Size()
 		}
