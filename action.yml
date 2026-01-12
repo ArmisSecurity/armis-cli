@@ -109,7 +109,7 @@ runs:
 
     - name: Upload SARIF Results
       if: inputs.format == 'sarif' && inputs.output-file != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ inputs.output-file }}
       continue-on-error: true
