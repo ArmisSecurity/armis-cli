@@ -181,6 +181,13 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 			return nil
 		}
 
+		// Skip symlinks to avoid security risks (symlinks pointing outside repo)
+		// and potential issues (broken symlinks, loops)
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			return nil
+		}
+
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err

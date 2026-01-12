@@ -884,6 +884,61 @@ func TestTarGzDirectory(t *testing.T) {
 		}
 	})
 
+	t.Run("skips symlinks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file
+		targetFile := filepath.Join(tmpDir, "target.go")
+		if err := os.WriteFile(targetFile, []byte("package target"), 0600); err != nil {
+			t.Fatalf("failed to create target.go: %v", err)
+		}
+
+		// Create a symlink pointing to the target
+		symlinkPath := filepath.Join(tmpDir, "link.go")
+		if err := os.Symlink(targetFile, symlinkPath); err != nil {
+			t.Fatalf("failed to create symlink: %v", err)
+		}
+
+		scanner := NewScanner(nil, true, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzDirectory(tmpDir, &buf, nil)
+		if err != nil {
+			t.Fatalf("tarGzDirectory failed: %v", err)
+		}
+
+		// Read tar contents
+		gzReader, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gzReader.Close() //nolint:errcheck // test cleanup
+
+		tarReader := tar.NewReader(gzReader)
+		files := make(map[string]bool)
+
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("failed to read tar entry: %v", err)
+			}
+			files[header.Name] = true
+		}
+
+		// Verify target file is included
+		if !files["target.go"] {
+			t.Error("target.go should be in archive")
+		}
+
+		// Verify symlink is NOT included
+		if files["link.go"] {
+			t.Error("symlink link.go should NOT be in archive")
+		}
+	})
+
 	t.Run("excludes node_modules directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
