@@ -96,13 +96,13 @@ function Main {
     Write-Host ""
 
     # Validate InstallDir to prevent path traversal attacks
-    $normalizedInstallDir = [System.IO.Path]::GetFullPath($InstallDir)
-    if ($normalizedInstallDir -ne $InstallDir -and $InstallDir -match '\.\.') {
+    # Reject any input containing ".." for clarity and defense-in-depth
+    if ($InstallDir -match '\.\.') {
         Write-Error "Invalid install directory: path traversal sequences (..) are not allowed"
         exit 1
     }
-    # Use the normalized path
-    $script:InstallDir = $normalizedInstallDir
+    # Normalize the path for consistent handling
+    $script:InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
     $arch = Get-Architecture
     Write-Host "Detected Architecture: $arch"

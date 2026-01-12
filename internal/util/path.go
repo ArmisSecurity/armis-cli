@@ -14,11 +14,16 @@ func SanitizePath(p string) (string, error) {
 		return "", errors.New("empty path")
 	}
 
-	// Check for path traversal in the original input before cleaning
-	// This prevents bypasses where patterns like "dir/.." get cleaned to "."
-	// but should have been flagged as suspicious
-	if strings.Contains(p, "..") {
-		return "", errors.New("path traversal detected")
+	// Check for ".." as a path component, not as a substring.
+	// This allows valid filenames like "my..file.txt" while rejecting
+	// path traversal attempts like "../etc/passwd" or "foo/../bar".
+	segments := strings.FieldsFunc(p, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	for _, seg := range segments {
+		if seg == ".." {
+			return "", errors.New("path traversal detected")
+		}
 	}
 
 	cleaned := filepath.Clean(p)
