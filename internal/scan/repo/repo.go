@@ -113,7 +113,8 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
 	}
 
-	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
+	spinner.Stop()
+	fmt.Printf("Scan initiated with ID: %s\n\n", scanID)
 
 	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Analyzing code for vulnerabilities...", s.noProgress)
 	analysisSpinner.Start()
@@ -121,6 +122,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
 	elapsed := analysisSpinner.GetElapsed()
+	analysisSpinner.Stop()
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}

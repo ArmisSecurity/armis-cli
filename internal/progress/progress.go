@@ -202,9 +202,9 @@ func (s *Spinner) Start() {
 				msg := s.message
 				s.mu.RUnlock()
 				if s.showTimer {
-					_, _ = fmt.Fprintf(s.writer, "\r%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
+					_, _ = fmt.Fprintf(s.writer, "\r\033[K%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
 				} else {
-					_, _ = fmt.Fprintf(s.writer, "\r%s %s", spinner[i%len(spinner)], msg)
+					_, _ = fmt.Fprintf(s.writer, "\r\033[K%s %s", spinner[i%len(spinner)], msg)
 				}
 				i++
 			}
