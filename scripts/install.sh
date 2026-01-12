@@ -7,6 +7,53 @@ BINARY_NAME="armis-cli"
 VERSION="${1:-latest}"
 VERIFY="${VERIFY:-true}"
 
+validate_version() {
+    local ver="$1"
+    if [ "$ver" = "latest" ]; then
+        return 0
+    fi
+    # Allow: v1.0.0, 1.0.0, v1.0.0-beta.1, 1.0.0-rc1
+    if ! echo "$ver" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+        echo "Error: Invalid version format: $ver"
+        echo "Expected format: v1.2.3 or 1.2.3 (optionally with suffix like -beta.1)"
+        exit 1
+    fi
+}
+
+validate_install_dir() {
+    local dir="$1"
+
+    if [ -z "$dir" ]; then
+        echo "Error: Install directory cannot be empty" >&2
+        exit 1
+    fi
+
+    case "$dir" in
+        /*) ;;  # Must be absolute path
+        *)
+            echo "Error: Install directory must be an absolute path: $dir" >&2
+            exit 1
+            ;;
+    esac
+
+    # Only allow safe characters: alphanumeric, underscore, hyphen, dot, forward slash
+    # This blocks shell metacharacters that could enable command injection
+    if ! printf '%s' "$dir" | grep -qE '^[a-zA-Z0-9/_.-]+$'; then
+        echo "Error: Install directory contains invalid characters: $dir" >&2
+        echo "Only alphanumeric characters, underscores, hyphens, dots, and forward slashes are allowed." >&2
+        exit 1
+    fi
+
+    # Disallow parent directory traversal segments like "../" or "/../"
+    # This allows valid paths with ".." in filenames (e.g., /opt/app..v1/bin)
+    case "$dir" in
+        */../*|../*|*/..)
+            echo "Error: Install directory cannot contain parent directory segment '..': $dir" >&2
+            exit 1
+            ;;
+    esac
+}
+
 USER_BIN="$HOME/.local/bin"
 SYSTEM_BIN="/usr/local/bin"
 
@@ -82,7 +129,7 @@ add_to_path() {
             ;;
         fish)
             rc_file="$HOME/.config/fish/config.fish"
-            path_line="set -gx PATH $dir \$PATH"
+            path_line="set -gx PATH \"$dir\" \$PATH"
             ;;
         *)
             echo "⚠️  Unknown shell: $shell_name"
@@ -144,6 +191,7 @@ is_ci_environment() {
 choose_install_dir() {
     # Allow override via environment variable
     if [ -n "${INSTALL_DIR:-}" ]; then
+        validate_install_dir "$INSTALL_DIR"
         echo "$INSTALL_DIR"
         return
     fi
@@ -233,6 +281,8 @@ verify_checksums() {
 main() {
     echo "Installing Armis CLI..."
     echo ""
+
+    validate_version "$VERSION"
 
     OS=$(detect_os)
     ARCH=$(detect_arch)

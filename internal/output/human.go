@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -232,19 +233,38 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 	}
 
 	var fullPath string
-	if filepath.IsAbs(finding.File) {
-		fullPath = finding.File
-	} else if repoPath != "" {
-		fullPath = filepath.Join(repoPath, finding.File)
+	if repoPath != "" {
+		var pathErr error
+		fullPath, pathErr = util.SafeJoinPath(repoPath, finding.File)
+		if pathErr != nil {
+			return "", 0, fmt.Errorf("invalid file path %q: %w", finding.File, pathErr)
+		}
 	} else {
-		fullPath = finding.File
+		// Without repoPath, only allow relative paths without traversal
+		if filepath.IsAbs(finding.File) {
+			return "", 0, fmt.Errorf("absolute path not allowed without repository context: %q", finding.File)
+		}
+		sanitized, pathErr := util.SanitizePath(finding.File)
+		if pathErr != nil {
+			return "", 0, fmt.Errorf("invalid file path: %w", pathErr)
+		}
+		fullPath = sanitized
 	}
 
 	f, err := os.Open(fullPath) // #nosec G304 - file path is from scan results
 	if err != nil {
 		return "", 0, fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck // file opened for reading
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			if err != nil {
+				// Wrap both errors to avoid losing the close error
+				err = fmt.Errorf("close file: %w (original error: %v)", closeErr, err)
+			} else {
+				err = fmt.Errorf("close file: %w", closeErr)
+			}
+		}
+	}()
 
 	start := finding.SnippetStartLine
 	if start <= 0 {
@@ -958,7 +978,13 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 		return nil
 	}
 
-	filePath := filepath.Join(repoPath, file)
+	filePath, err := util.SafeJoinPath(repoPath, file)
+	if err != nil {
+		if debug {
+			fmt.Printf("DEBUG: git blame skipped - invalid file path %q: %v\n", file, err)
+		}
+		return nil
+	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		if debug {
 			fmt.Printf("DEBUG: git blame skipped - file does not exist: %s\n", filePath)

@@ -94,7 +94,22 @@ function Main {
     Write-Host ""
     Write-Host "Installing Armis CLI..." -ForegroundColor Cyan
     Write-Host ""
-    
+
+    # Validate InstallDir to prevent path traversal attacks
+    # Reject any input containing ".." for clarity and defense-in-depth
+    if ($InstallDir -match '\.\.') {
+        Write-Error "Invalid install directory: path traversal sequences (..) are not allowed"
+        exit 1
+    }
+    # Normalize the path for consistent handling
+    $script:InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+
+    # Validate Version format (except for the special 'latest' value)
+    if ($Version -ne "latest" -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[0-9A-Za-z\.-]+)?$') {
+        Write-Error "Invalid version format: '$Version'. Expected formats like 'v1.2.3' or '1.2.3' (optionally with suffix like -beta.1), or 'latest'."
+        exit 1
+    }
+
     $arch = Get-Architecture
     Write-Host "Detected Architecture: $arch"
     Write-Host ""

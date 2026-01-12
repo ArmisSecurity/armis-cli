@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +42,14 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 
 // NewClient creates a new API client with the given configuration.
 func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) *Client {
+	// Warn about non-HTTPS URLs (except localhost) as credentials may be exposed
+	if parsedURL, err := url.Parse(baseURL); err == nil && parsedURL.Scheme != "https" {
+		host := parsedURL.Hostname()
+		if host != "localhost" && host != "127.0.0.1" {
+			fmt.Fprintf(os.Stderr, "Warning: using non-HTTPS URL %q - credentials may be transmitted insecurely\n", baseURL)
+		}
+	}
+
 	if uploadTimeout == 0 {
 		uploadTimeout = 10 * time.Minute
 	}
@@ -101,7 +111,8 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		return "", fmt.Errorf("failed to write scan_type field: %w", err)
 	}
 
-	part, err := writer.CreateFormFile("tar_file", filename)
+	// Use filepath.Base to sanitize filename and prevent path traversal in multipart
+	part, err := writer.CreateFormFile("tar_file", filepath.Base(filename))
 	if err != nil {
 		return "", fmt.Errorf("failed to create form file: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 const (
@@ -105,25 +106,23 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 	defer file.Close() //nolint:errcheck // file opened for reading
 
-	uploadSpinner := progress.NewSpinner("Uploading image...", s.noProgress)
+	uploadSpinner := progress.NewSpinnerWithContext(ctx, "Uploading image...", s.noProgress)
 	uploadSpinner.Start()
+	defer uploadSpinner.Stop()
 
 	scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), file, info.Size())
-	uploadSpinner.Stop()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
 
 	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
 
-	spinner := progress.NewSpinner("Waiting for scan to complete...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Waiting for scan to complete...", s.noProgress)
 	spinner.Start()
+	defer spinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
 	elapsed := spinner.GetElapsed()
-	spinner.Stop()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
@@ -305,6 +304,10 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		if loc.HasSecret {
 			finding.Type = model.FindingTypeSecret
+			// Mask sensitive content in code snippets when secrets are detected
+			if finding.CodeSnippet != "" {
+				finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+			}
 		}
 
 		if finding.Type == "" {

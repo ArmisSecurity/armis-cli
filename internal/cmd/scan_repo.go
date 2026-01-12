@@ -35,6 +35,11 @@ var scanRepoCmd = &cobra.Command{
 			return err
 		}
 
+		failOnSeverities, err := getFailOn()
+		if err != nil {
+			return err
+		}
+
 		baseURL := getAPIBaseURL()
 		client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
@@ -61,7 +66,7 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		output.ExitIfNeeded(result, failOn, exitCode)
+		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},
 }

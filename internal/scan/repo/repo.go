@@ -16,6 +16,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // MaxRepoSize is the maximum allowed size for repositories.
@@ -55,6 +56,11 @@ func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 
 // Scan scans a repository at the given path.
 func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
+	// Validate path to prevent path traversal
+	if _, err := util.SanitizePath(path); err != nil {
+		return nil, fmt.Errorf("invalid repository path: %w", err)
+	}
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
@@ -85,8 +91,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	pr, pw := io.Pipe()
 
-	spinner := progress.NewSpinner("Creating a compressed archive...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Creating a compressed archive...", s.noProgress)
 	spinner.Start()
+	defer spinner.Stop()
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -98,8 +105,6 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	spinner.Update("Uploading archive to Armis Cloud...")
 
 	scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
-	spinner.Stop()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
 	}
@@ -108,27 +113,27 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
 	}
 
-	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
+	spinner.Stop()
+	fmt.Printf("Scan initiated with ID: %s\n\n", scanID)
 
-	analysisSpinner := progress.NewSpinner("Analyzing code for vulnerabilities...", s.noProgress)
+	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Analyzing code for vulnerabilities...", s.noProgress)
 	analysisSpinner.Start()
+	defer analysisSpinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
 	fmt.Printf("Analysis completed in %s\n\n", formatElapsed(elapsed))
 
-	fetchSpinner := progress.NewSpinner("Fetching scan results...", s.noProgress)
+	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Fetching scan results...", s.noProgress)
 	fetchSpinner.Start()
+	defer fetchSpinner.Stop()
 
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
-	fetchSpinner.Stop()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch results: %w", err)
 	}
@@ -358,8 +363,12 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		if debug {
-			rawJSON, _ := json.Marshal(nf)
-			fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+			rawJSON, err := json.Marshal(nf)
+			if err != nil {
+				fmt.Printf("\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
+			} else {
+				fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+			}
 		}
 
 		finding := model.Finding{
@@ -419,6 +428,10 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		if loc.HasSecret {
 			finding.Type = model.FindingTypeSecret
+			// Mask sensitive content in code snippets when secrets are detected
+			if finding.CodeSnippet != "" {
+				finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+			}
 		}
 
 		if finding.Type == "" {
