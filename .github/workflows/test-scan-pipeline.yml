@@ -27,8 +27,8 @@ jobs:
           ARMIS_TENANT_ID: ${{ secrets.ARMIS_TENANT_ID }}
         run: |
           echo "Scanning repository for security vulnerabilities..."
-          armis-cli scan repo . --format json --fail-on CRITICAL
-          echo "Scan completed successfully - no critical findings!"
+          armis-cli scan repo . --format json --fail-on HIGH
+          echo "Scan completed successfully - no high or critical findings!"
 
   deploy:
     name: Deploy Application
