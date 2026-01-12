@@ -278,6 +278,48 @@ armis-cli scan repo ./my-app --format junit > results.xml
 ## CI/CD Integration
 
 ### GitHub Actions
+
+#### Option 1: Reusable Workflow (Recommended)
+
+The simplest way to integrate Armis scanning. This reusable workflow handles everything: scanning, PR comments, SARIF uploads, and artifact storage.
+
+```yaml
+name: Security Scan
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  security-scan:
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    with:
+      pr-comment: true        # Post results as PR comment (default: true)
+      fail-on: CRITICAL       # Fail on severity level (default: CRITICAL)
+      upload-artifact: true   # Upload SARIF artifact (default: true)
+    secrets:
+      api-token: ${{ secrets.ARMIS_API_TOKEN }}
+      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+```
+
+**Available inputs:**
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
+| `scan-target` | string | `.` | Path for repo scan, image name for image scan |
+| `fail-on` | string | `CRITICAL` | Severity levels to fail on (e.g., `HIGH,CRITICAL`) |
+| `pr-comment` | boolean | `true` | Post scan results as PR comment |
+| `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
+| `artifact-retention-days` | number | `30` | Days to retain artifacts |
+| `image-tarball` | string | | Path to image tarball (for image scans) |
+
+**Required secrets:**
+- `api-token`: Armis API token for authentication
+- `tenant-id`: Tenant identifier for Armis Cloud
+
+#### Option 2: GitHub Action
+
+Use the action directly for more control over your workflow:
+
 ```yaml
 name: Security Scan
 on: [push, pull_request]
@@ -285,7 +327,27 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: ArmisSecurity/armis-cli@main
+        with:
+          scan-type: repo
+          api-token: ${{ secrets.ARMIS_API_TOKEN }}
+          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          fail-on: HIGH,CRITICAL
+```
+
+#### Option 3: Manual Installation
+
+For full control, install and run the CLI directly:
+
+```yaml
+name: Security Scan
+on: [push, pull_request]
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Install Armis CLI
         run: |
           curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
