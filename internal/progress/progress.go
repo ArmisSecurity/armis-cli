@@ -148,10 +148,14 @@ func (s *Spinner) Start() {
 	s.stopChan = make(chan struct{})
 	s.doneChan = make(chan struct{})
 	s.stopOnce = sync.Once{}
+
+	// Capture values while holding mutex to avoid race conditions
+	startTime := s.startTime
+	message := s.message
 	s.mu.Unlock()
 
 	if s.disabled || IsCI() {
-		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", s.message, s.startTime.Format("15:04:05"))
+		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", message, startTime.Format("15:04:05"))
 		return
 	}
 
@@ -175,7 +179,10 @@ func (s *Spinner) Start() {
 		}
 	}
 
+	// Set cancel under mutex to avoid race with Stop()
+	s.mu.Lock()
 	s.cancel = cancel
+	s.mu.Unlock()
 
 	go func() {
 		defer close(s.doneChan)
@@ -197,7 +204,7 @@ func (s *Spinner) Start() {
 				_, _ = fmt.Fprint(s.writer, "\r\033[K")
 				return
 			case <-ticker.C:
-				elapsed := time.Since(s.startTime)
+				elapsed := time.Since(startTime)
 				s.mu.RLock()
 				msg := s.message
 				s.mu.RUnlock()
@@ -223,6 +230,7 @@ func (s *Spinner) Stop() {
 	s.stopOnce.Do(func() {
 		s.mu.RLock()
 		started := s.started
+		cancel := s.cancel
 		s.mu.RUnlock()
 
 		if !started {
@@ -230,8 +238,8 @@ func (s *Spinner) Stop() {
 		}
 
 		// Cancel the internal context first (belt and suspenders)
-		if s.cancel != nil {
-			s.cancel()
+		if cancel != nil {
+			cancel()
 		}
 
 		// Close stopChan to signal the goroutine
@@ -264,7 +272,10 @@ func (s *Spinner) Update(message string) {
 
 // GetElapsed returns the elapsed time since the spinner started.
 func (s *Spinner) GetElapsed() time.Duration {
-	return time.Since(s.startTime)
+	s.mu.RLock()
+	startTime := s.startTime
+	s.mu.RUnlock()
+	return time.Since(startTime)
 }
 
 func formatDuration(d time.Duration) string {
