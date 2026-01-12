@@ -1,0 +1,45 @@
+name: Test Security Scan Pipeline
+
+on:
+  push:
+    branches: [ test-cicd-pipeline ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Armis CLI
+        run: |
+          curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Scan Repository for Vulnerabilities
+        env:
+          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+        run: |
+          echo "Scanning repository for security vulnerabilities..."
+          armis-cli scan repo . --format json --fail-on CRITICAL
+          echo "Scan completed successfully - no critical findings!"
+
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: scan
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Simulate Deployment
+        run: |
+          echo "🚀 Deploying application to production..."
+          echo "✅ Deployment successful!"
+          echo "This step should NOT run if the scan job fails with critical findings."
