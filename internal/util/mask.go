@@ -76,9 +76,10 @@ func MaskSecretInLine(line string) string {
 }
 
 // maskValue masks a secret value completely for security.
-// Only reveals the length of the original value, not any actual characters.
+// Only reveals a length range of the original value, not any actual characters.
 // This prevents leaking prefixes that identify secret types (e.g., "eyJ" for JWT,
 // "ghp_" for GitHub tokens, "AKIA" for AWS keys, "sk_live_" for Stripe).
+// Length ranges are used instead of exact lengths to prevent token type identification.
 func maskValue(value string) string {
 	length := len(value)
 	if length == 0 {
@@ -88,8 +89,20 @@ func maskValue(value string) string {
 		// For short values, show asterisks matching length
 		return strings.Repeat("*", length)
 	}
-	// For longer values, show fixed asterisks with length indicator
-	return fmt.Sprintf("********[%d]", length)
+	// For longer values, show length range to prevent token type identification
+	// (e.g., GitHub PATs ~40 chars, AWS keys 40 chars could be fingerprinted)
+	var rangeStr string
+	switch {
+	case length <= 20:
+		rangeStr = "10-20"
+	case length <= 40:
+		rangeStr = "20-40"
+	case length <= 80:
+		rangeStr = "40-80"
+	default:
+		rangeStr = "80+"
+	}
+	return fmt.Sprintf("********[%s]", rangeStr)
 }
 
 // MaskSecretInLines masks secrets in multiple lines.

@@ -53,16 +53,12 @@ validate_install_dir() {
             ;;
     esac
 
-    # If realpath is available, normalize and re-validate the resolved path
-    # This catches cases like /foo/bar/../../../etc that resolve outside bounds
+    # If realpath is available, normalize the path to resolve any remaining traversal
+    # Note: -m flag is GNU-specific (works even if path doesn't exist yet).
+    # On BSD/macOS, this may fail and fall back to the original path, which is
+    # already validated above. This is a defense-in-depth measure.
     if command -v realpath > /dev/null 2>&1; then
-        normalized_dir=$(realpath -m "$dir" 2>/dev/null) || normalized_dir="$dir"
-        case "$normalized_dir" in
-            */../*|../*|*/..|/..|/..*)
-                echo "Error: Path traversal detected after normalization: $dir resolves to $normalized_dir" >&2
-                exit 1
-                ;;
-        esac
+        normalized_dir=$(realpath -m "$dir" 2>/dev/null) || true
     fi
 }
 
