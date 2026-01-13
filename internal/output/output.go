@@ -60,6 +60,8 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 		if exitCode < 0 || exitCode > 255 {
 			exitCode = 1
 		}
+		// Flush stdout to ensure all output is written before exit
+		_ = os.Stdout.Sync()
 		os.Exit(exitCode)
 	}
 }
