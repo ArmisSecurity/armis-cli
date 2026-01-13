@@ -155,10 +155,38 @@ jobs:
           path: armis-results.sarif
           retention-days: ${{ inputs.artifact-retention-days }}
 
-      - name: Check for Failures
+      - name: Analyze Scan Results
+        id: scan_analysis
         if: always()
         run: |
-          if [ "${{ steps.armis_scan.outcome }}" = "failure" ]; then
-            echo "::error::Security vulnerabilities detected by Armis (threshold: ${{ inputs.fail-on }})"
-            exit 1
+          # Check if SARIF file exists and has actual results
+          if [ -s armis-results.sarif ]; then
+            RESULTS=$(jq -r '.runs[0].results | length' armis-results.sarif 2>/dev/null || echo "0")
+            echo "results_count=$RESULTS" >> $GITHUB_OUTPUT
+            echo "has_results=true" >> $GITHUB_OUTPUT
+          else
+            echo "results_count=0" >> $GITHUB_OUTPUT
+            echo "has_results=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Check for Failures
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.armis_scan.outcome }}
+          HAS_RESULTS: ${{ steps.scan_analysis.outputs.has_results }}
+          RESULTS_COUNT: ${{ steps.scan_analysis.outputs.results_count }}
+          FAIL_ON: ${{ inputs.fail-on }}
+        run: |
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            if [ "$HAS_RESULTS" = "false" ] || [ "$RESULTS_COUNT" = "0" ]; then
+              # Scan failed without producing results - likely timeout or API error
+              echo "::error::Armis scan failed (timeout, API error, or other issue). Check the 'Run Armis Security Scan' step for details."
+              exit 1
+            else
+              # Scan completed but found vulnerabilities above threshold
+              echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
+              exit 1
+            fi
+          fi
+
+          echo "Scan completed successfully with no issues above threshold."
