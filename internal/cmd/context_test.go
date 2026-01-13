@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +43,79 @@ func TestNewSignalContext(t *testing.T) {
 			t.Fatal("context should not be cancelled before cancel() is called")
 		default:
 			// Expected - context is still active
+		}
+	})
+}
+
+func TestHandleScanError(t *testing.T) {
+	// Helper to capture stderr output
+	captureStderr := func(f func()) string {
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		f()
+
+		w.Close()
+		os.Stderr = oldStderr
+
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		return buf.String()
+	}
+
+	t.Run("prints cancellation message when error contains context.Canceled", func(t *testing.T) {
+		ctx := context.Background()
+		cancelErr := fmt.Errorf("operation failed: %w", context.Canceled)
+
+		var resultErr error
+		output := captureStderr(func() {
+			resultErr = handleScanError(ctx, cancelErr)
+		})
+
+		if !strings.Contains(output, "Scan cancelled") {
+			t.Errorf("expected stderr to contain 'Scan cancelled', got: %q", output)
+		}
+
+		if !errors.Is(resultErr, context.Canceled) {
+			t.Errorf("expected wrapped error to contain context.Canceled")
+		}
+
+		if !strings.Contains(resultErr.Error(), "scan failed") {
+			t.Errorf("expected error message to contain 'scan failed', got: %q", resultErr.Error())
+		}
+	})
+
+	t.Run("does not print cancellation message for non-cancellation errors", func(t *testing.T) {
+		ctx := context.Background()
+		otherErr := errors.New("network timeout")
+
+		var resultErr error
+		output := captureStderr(func() {
+			resultErr = handleScanError(ctx, otherErr)
+		})
+
+		if strings.Contains(output, "Scan cancelled") {
+			t.Errorf("expected stderr NOT to contain 'Scan cancelled' for non-cancellation error, got: %q", output)
+		}
+
+		if !strings.Contains(resultErr.Error(), "scan failed") {
+			t.Errorf("expected error message to contain 'scan failed', got: %q", resultErr.Error())
+		}
+
+		if !strings.Contains(resultErr.Error(), "network timeout") {
+			t.Errorf("expected wrapped error to contain original error message")
+		}
+	})
+
+	t.Run("wraps error correctly", func(t *testing.T) {
+		ctx := context.Background()
+		originalErr := errors.New("original error")
+
+		resultErr := handleScanError(ctx, originalErr)
+
+		if !errors.Is(resultErr, originalErr) {
+			t.Errorf("expected wrapped error to unwrap to original error")
 		}
 	})
 }
