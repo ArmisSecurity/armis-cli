@@ -61,7 +61,10 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 			exitCode = 1
 		}
 		// Flush stdout to ensure all output is written before exit
-		_ = os.Stdout.Sync()
+		if err := os.Stdout.Sync(); err != nil {
+			// Log flush failure to stderr (stdout may be broken)
+			fmt.Fprintf(os.Stderr, "Warning: failed to flush stdout before exit: %v\n", err)
+		}
 		os.Exit(exitCode)
 	}
 }

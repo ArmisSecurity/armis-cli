@@ -44,14 +44,26 @@ validate_install_dir() {
         exit 1
     fi
 
-    # Disallow parent directory traversal segments like "../" or "/../"
+    # Disallow parent directory traversal segments like "../" or "/../" or "/.."
     # This allows valid paths with ".." in filenames (e.g., /opt/app..v1/bin)
     case "$dir" in
-        */../*|../*|*/..)
+        */../*|../*|*/..|/..|/..*)
             echo "Error: Install directory cannot contain parent directory segment '..': $dir" >&2
             exit 1
             ;;
     esac
+
+    # If realpath is available, normalize and re-validate the resolved path
+    # This catches cases like /foo/bar/../../../etc that resolve outside bounds
+    if command -v realpath > /dev/null 2>&1; then
+        normalized_dir=$(realpath -m "$dir" 2>/dev/null) || normalized_dir="$dir"
+        case "$normalized_dir" in
+            */../*|../*|*/..|/..|/..*)
+                echo "Error: Path traversal detected after normalization: $dir resolves to $normalized_dir" >&2
+                exit 1
+                ;;
+        esac
+    fi
 }
 
 USER_BIN="$HOME/.local/bin"
