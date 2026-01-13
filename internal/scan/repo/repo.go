@@ -13,10 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ArmisSecurity/armis-cli/internal/api"
-	"github.com/ArmisSecurity/armis-cli/internal/model"
-	"github.com/ArmisSecurity/armis-cli/internal/progress"
-	"github.com/ArmisSecurity/armis-cli/internal/util"
+        "github.com/ArmisSecurity/armis-cli/internal/api"
+        "github.com/ArmisSecurity/armis-cli/internal/model"
+        "github.com/ArmisSecurity/armis-cli/internal/progress"
+        "github.com/ArmisSecurity/armis-cli/internal/scan"
+        "github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // MaxRepoSize is the maximum allowed size for repositories.
@@ -431,25 +432,19 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = *loc.Snippet
 		}
 
-		if loc.SnippetStartLine != nil {
-			finding.SnippetStartLine = *loc.SnippetStartLine
-		}
+                if loc.SnippetStartLine != nil {
+                        finding.SnippetStartLine = *loc.SnippetStartLine
+                }
 
-		if len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0 {
-			finding.Type = model.FindingTypeVulnerability
-		}
+                finding.Type = scan.DeriveFindingType(
+                        len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0,
+                        loc.HasSecret,
+                        finding.FindingCategory,
+                )
 
-		if loc.HasSecret {
-			finding.Type = model.FindingTypeSecret
-			// Mask sensitive content in code snippets when secrets are detected
-			if finding.CodeSnippet != "" {
-				finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
-			}
-		}
-
-		if finding.Type == "" {
-			finding.Type = model.FindingTypeSCA
-		}
+                if loc.HasSecret && finding.CodeSnippet != "" {
+                        finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+                }
 
 		finding.Title = finding.Description
 

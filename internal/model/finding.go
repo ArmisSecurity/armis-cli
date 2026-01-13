@@ -29,6 +29,8 @@ const (
 	FindingTypeSecret FindingType = "SECRET"
 	// FindingTypeLicense represents a license compliance finding.
 	FindingTypeLicense FindingType = "LICENSE"
+	// FindingTypeMisconfig represents an infrastructure misconfiguration finding.
+	FindingTypeMisconfig FindingType = "MISCONFIG"
 )
 
 // Finding represents a single security finding from a scan.
