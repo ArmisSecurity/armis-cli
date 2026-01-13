@@ -815,6 +815,34 @@ func TestCalculateDirSize(t *testing.T) {
 			t.Error("expected error for non-existent directory")
 		}
 	})
+
+	t.Run("skips symlinks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file
+		targetFile := filepath.Join(tmpDir, "target.go")
+		targetContent := "package target"
+		if err := os.WriteFile(targetFile, []byte(targetContent), 0600); err != nil {
+			t.Fatalf("failed to create target.go: %v", err)
+		}
+
+		// Create a symlink pointing to the target
+		symlinkPath := filepath.Join(tmpDir, "link.go")
+		if err := os.Symlink(targetFile, symlinkPath); err != nil {
+			t.Fatalf("failed to create symlink: %v", err)
+		}
+
+		size, err := calculateDirSize(tmpDir, true, nil)
+		if err != nil {
+			t.Fatalf("calculateDirSize failed: %v", err)
+		}
+
+		// Should only count target.go (14 bytes), not the symlink
+		expectedSize := int64(len(targetContent))
+		if size != expectedSize {
+			t.Errorf("size = %d, want %d (symlink should be excluded)", size, expectedSize)
+		}
+	})
 }
 
 func TestTarGzDirectory(t *testing.T) {
@@ -881,6 +909,186 @@ func TestTarGzDirectory(t *testing.T) {
 			t.Error("pkg/helper.go not found in archive")
 		} else if content != "package pkg" {
 			t.Errorf("pkg/helper.go content = %q, want %q", content, "package pkg")
+		}
+	})
+
+	t.Run("skips symlinks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file
+		targetFile := filepath.Join(tmpDir, "target.go")
+		if err := os.WriteFile(targetFile, []byte("package target"), 0600); err != nil {
+			t.Fatalf("failed to create target.go: %v", err)
+		}
+
+		// Create a symlink pointing to the target
+		symlinkPath := filepath.Join(tmpDir, "link.go")
+		if err := os.Symlink(targetFile, symlinkPath); err != nil {
+			t.Fatalf("failed to create symlink: %v", err)
+		}
+
+		scanner := NewScanner(nil, true, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzDirectory(tmpDir, &buf, nil)
+		if err != nil {
+			t.Fatalf("tarGzDirectory failed: %v", err)
+		}
+
+		// Read tar contents
+		gzReader, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gzReader.Close() //nolint:errcheck // test cleanup
+
+		tarReader := tar.NewReader(gzReader)
+		files := make(map[string]bool)
+
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("failed to read tar entry: %v", err)
+			}
+			files[header.Name] = true
+		}
+
+		// Verify target file is included
+		if !files["target.go"] {
+			t.Error("target.go should be in archive")
+		}
+
+		// Verify symlink is NOT included
+		if files["link.go"] {
+			t.Error("symlink link.go should NOT be in archive")
+		}
+	})
+
+	t.Run("skips symlinks to directories", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file in root
+		rootFile := filepath.Join(tmpDir, "main.go")
+		if err := os.WriteFile(rootFile, []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+
+		// Create a real directory with a file
+		realDir := filepath.Join(tmpDir, "realdir")
+		if err := os.MkdirAll(realDir, 0750); err != nil {
+			t.Fatalf("failed to create realdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(realDir, "helper.go"), []byte("package helper"), 0600); err != nil {
+			t.Fatalf("failed to create helper.go: %v", err)
+		}
+
+		// Create a symlink pointing to the directory
+		symlinkDir := filepath.Join(tmpDir, "linkdir")
+		if err := os.Symlink(realDir, symlinkDir); err != nil {
+			t.Fatalf("failed to create symlink to directory: %v", err)
+		}
+
+		scanner := NewScanner(nil, true, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzDirectory(tmpDir, &buf, nil)
+		if err != nil {
+			t.Fatalf("tarGzDirectory failed: %v", err)
+		}
+
+		// Read tar contents
+		gzReader, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gzReader.Close() //nolint:errcheck // test cleanup
+
+		tarReader := tar.NewReader(gzReader)
+		files := make(map[string]bool)
+
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("failed to read tar entry: %v", err)
+			}
+			files[header.Name] = true
+		}
+
+		// Verify real directory contents are included
+		if !files["main.go"] {
+			t.Error("main.go should be in archive")
+		}
+		if !files["realdir/helper.go"] {
+			t.Error("realdir/helper.go should be in archive")
+		}
+
+		// Verify symlinked directory is NOT included
+		if files["linkdir"] {
+			t.Error("symlinked directory linkdir should NOT be in archive")
+		}
+		if files["linkdir/helper.go"] {
+			t.Error("files inside symlinked directory should NOT be in archive")
+		}
+	})
+
+	t.Run("skips broken symlinks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a regular file
+		regularFile := filepath.Join(tmpDir, "regular.go")
+		if err := os.WriteFile(regularFile, []byte("package regular"), 0600); err != nil {
+			t.Fatalf("failed to create regular.go: %v", err)
+		}
+
+		// Create a broken symlink pointing to non-existent target
+		brokenSymlink := filepath.Join(tmpDir, "broken.go")
+		if err := os.Symlink(filepath.Join(tmpDir, "nonexistent.go"), brokenSymlink); err != nil {
+			t.Fatalf("failed to create broken symlink: %v", err)
+		}
+
+		scanner := NewScanner(nil, true, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzDirectory(tmpDir, &buf, nil)
+		if err != nil {
+			t.Fatalf("tarGzDirectory failed: %v", err)
+		}
+
+		// Read tar contents
+		gzReader, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gzReader.Close() //nolint:errcheck // test cleanup
+
+		tarReader := tar.NewReader(gzReader)
+		files := make(map[string]bool)
+
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("failed to read tar entry: %v", err)
+			}
+			files[header.Name] = true
+		}
+
+		// Verify regular file is included
+		if !files["regular.go"] {
+			t.Error("regular.go should be in archive")
+		}
+
+		// Verify broken symlink is NOT included
+		if files["broken.go"] {
+			t.Error("broken symlink broken.go should NOT be in archive")
 		}
 	})
 
