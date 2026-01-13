@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -50,10 +49,7 @@ var scanRepoCmd = &cobra.Command{
 
 		result, err := scanner.Scan(ctx, repoPath)
 		if err != nil {
-			if ctx.Err() == context.Canceled {
-				fmt.Fprintln(os.Stderr, "\nScan cancelled")
-			}
-			return fmt.Errorf("scan failed: %w", err)
+			return handleScanError(ctx, err)
 		}
 
 		formatter, err := output.GetFormatter(format)

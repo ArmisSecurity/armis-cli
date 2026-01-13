@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -65,19 +64,13 @@ var scanImageCmd = &cobra.Command{
 			}
 			result, err = scanner.ScanTarball(ctx, sanitizedPath)
 			if err != nil {
-				if ctx.Err() == context.Canceled {
-					fmt.Fprintln(os.Stderr, "\nScan cancelled")
-				}
-				return fmt.Errorf("scan failed: %w", err)
+				return handleScanError(ctx, err)
 			}
 		} else {
 			imageName := args[0]
 			result, err = scanner.ScanImage(ctx, imageName)
 			if err != nil {
-				if ctx.Err() == context.Canceled {
-					fmt.Fprintln(os.Stderr, "\nScan cancelled")
-				}
-				return fmt.Errorf("scan failed: %w", err)
+				return handleScanError(ctx, err)
 			}
 		}
 
