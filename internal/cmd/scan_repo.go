@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -45,10 +44,12 @@ var scanRepoCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		ctx := context.Background()
+		ctx, cancel := NewSignalContext()
+		defer cancel()
+
 		result, err := scanner.Scan(ctx, repoPath)
 		if err != nil {
-			return fmt.Errorf("scan failed: %w", err)
+			return handleScanError(ctx, err)
 		}
 
 		formatter, err := output.GetFormatter(format)

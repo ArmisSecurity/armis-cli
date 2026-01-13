@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -53,7 +52,9 @@ var scanImageCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		ctx := context.Background()
+		ctx, cancel := NewSignalContext()
+		defer cancel()
+
 		var result *model.ScanResult
 
 		if tarballPath != "" {
@@ -63,13 +64,13 @@ var scanImageCmd = &cobra.Command{
 			}
 			result, err = scanner.ScanTarball(ctx, sanitizedPath)
 			if err != nil {
-				return fmt.Errorf("scan failed: %w", err)
+				return handleScanError(ctx, err)
 			}
 		} else {
 			imageName := args[0]
 			result, err = scanner.ScanImage(ctx, imageName)
 			if err != nil {
-				return fmt.Errorf("scan failed: %w", err)
+				return handleScanError(ctx, err)
 			}
 		}
 
