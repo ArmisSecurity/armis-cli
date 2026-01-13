@@ -182,7 +182,7 @@ jobs:
           RESULTS_COUNT: ${{ steps.scan_analysis.outputs.results_count }}
           FAIL_ON: ${{ inputs.fail-on }}
         run: |
-          if [ "$SCAN_OUTCOME" = "failure" ]; then
+          if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_OUTCOME" = "cancelled" ]; then
             if [ "$HAS_RESULTS" = "false" ] || [ "$RESULTS_COUNT" = "0" ]; then
               # Scan failed without producing results - likely timeout or API error
               echo "::error::Armis scan failed (timeout, API error, or other issue). Check the 'Run Armis Security Scan' step for details."
