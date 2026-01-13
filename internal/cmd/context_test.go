@@ -49,18 +49,23 @@ func TestNewSignalContext(t *testing.T) {
 
 func TestHandleScanError(t *testing.T) {
 	// Helper to capture stderr output
-	captureStderr := func(f func()) string {
+	captureStderr := func(t *testing.T, f func()) string {
+		t.Helper()
 		oldStderr := os.Stderr
 		r, w, _ := os.Pipe()
 		os.Stderr = w
 
 		f()
 
-		w.Close()
+		if err := w.Close(); err != nil {
+			t.Fatalf("failed to close pipe writer: %v", err)
+		}
 		os.Stderr = oldStderr
 
 		var buf bytes.Buffer
-		io.Copy(&buf, r)
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy stderr output: %v", err)
+		}
 		return buf.String()
 	}
 
@@ -69,7 +74,7 @@ func TestHandleScanError(t *testing.T) {
 		cancelErr := fmt.Errorf("operation failed: %w", context.Canceled)
 
 		var resultErr error
-		output := captureStderr(func() {
+		output := captureStderr(t, func() {
 			resultErr = handleScanError(ctx, cancelErr)
 		})
 
@@ -91,7 +96,7 @@ func TestHandleScanError(t *testing.T) {
 		otherErr := errors.New("network timeout")
 
 		var resultErr error
-		output := captureStderr(func() {
+		output := captureStderr(t, func() {
 			resultErr = handleScanError(ctx, otherErr)
 		})
 
