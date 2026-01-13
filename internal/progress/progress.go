@@ -109,7 +109,7 @@ func NewSpinnerWithTimeout(message string, disabled bool, timeout time.Duration)
 		doneChan:  make(chan struct{}),
 		startTime: time.Now(),
 		showTimer: true,
-		writer:    os.Stdout,
+		writer:    os.Stderr,
 		timeout:   timeout,
 	}
 }

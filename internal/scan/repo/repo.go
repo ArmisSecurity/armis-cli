@@ -114,7 +114,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	spinner.Stop()
-	fmt.Printf("Scan initiated with ID: %s\n\n", scanID)
+	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
 
 	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Analyzing code for vulnerabilities...", s.noProgress)
 	analysisSpinner.Start()
@@ -127,7 +127,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
-	fmt.Printf("Analysis completed in %s\n\n", formatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "Analysis completed in %s\n\n", formatElapsed(elapsed))
 
 	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Fetching scan results...", s.noProgress)
 	fetchSpinner.Start()
@@ -378,9 +378,9 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		if debug {
 			rawJSON, err := json.Marshal(nf)
 			if err != nil {
-				fmt.Printf("\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				fmt.Printf("\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
 			}
 		}
 
