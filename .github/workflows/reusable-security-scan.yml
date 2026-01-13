@@ -31,6 +31,10 @@ on:
         description: 'Path to image tarball (only for image scans)'
         type: string
         default: ''
+      scan-timeout:
+        description: 'Scan timeout in minutes'
+        type: number
+        default: 20
     secrets:
       api-token:
         description: 'Armis API token for authentication'
@@ -68,6 +72,7 @@ jobs:
           fail-on: ${{ inputs.fail-on }}
           output-file: armis-results.sarif
           image-tarball: ${{ inputs.image-tarball }}
+          scan-timeout: ${{ inputs.scan-timeout }}
         continue-on-error: true
 
       - name: Ensure SARIF exists

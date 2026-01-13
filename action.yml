@@ -42,6 +42,10 @@ inputs:
   output-file:
     description: 'File path to write scan results (optional)'
     required: false
+  scan-timeout:
+    description: 'Scan timeout in minutes'
+    required: false
+    default: '20'
 
 outputs:
   results:
@@ -80,7 +84,8 @@ runs:
         SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
         SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
         SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
-        
+        SCAN_CMD="$SCAN_CMD --scan-timeout ${{ inputs.scan-timeout }}"
+
         if [ "${{ inputs.no-progress }}" = "true" ]; then
           SCAN_CMD="$SCAN_CMD --no-progress"
         fi
