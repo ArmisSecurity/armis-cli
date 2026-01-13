@@ -52,7 +52,10 @@ func TestHandleScanError(t *testing.T) {
 	captureStderr := func(t *testing.T, f func()) string {
 		t.Helper()
 		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
 		os.Stderr = w
 
 		f()

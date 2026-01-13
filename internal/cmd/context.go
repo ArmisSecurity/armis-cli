@@ -16,8 +16,10 @@ func NewSignalContext() (context.Context, context.CancelFunc) {
 }
 
 // handleScanError prints a cancellation message if the error indicates cancellation
-// and returns a wrapped scan error.
-func handleScanError(_ context.Context, err error) error {
+// and returns a wrapped scan error. The ctx parameter is accepted for API consistency
+// and future extensibility (e.g., logging or metrics).
+func handleScanError(ctx context.Context, err error) error {
+	_ = ctx // unused but kept for API consistency
 	if errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "\nScan cancelled")
 	}
