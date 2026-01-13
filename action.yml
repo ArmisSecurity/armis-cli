@@ -64,7 +64,7 @@ runs:
     - name: Verify Installation
       shell: bash
       run: |
-        armis-cli version
+        armis-cli --version
 
     - name: Run Security Scan
       id: scan
