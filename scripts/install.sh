@@ -47,7 +47,7 @@ validate_install_dir() {
     # Disallow parent directory traversal segments like "../" or "/../" or "/.."
     # This allows valid paths with ".." in filenames (e.g., /opt/app..v1/bin)
     case "$dir" in
-        */../*|../*|*/..|/..|/..*)
+        */../*|../*|*/..|/..*)
             echo "Error: Install directory cannot contain parent directory segment '..': $dir" >&2
             exit 1
             ;;

@@ -150,3 +150,53 @@ func TestMaskSecretInLines_EmptySlice(t *testing.T) {
 		t.Errorf("MaskSecretInLines([]) = %v, want empty slice", result)
 	}
 }
+
+// TestMaskSecretInLine_NoPrefixLeakage verifies that identifying secret prefixes
+// are NOT leaked in masked output. This prevents attackers from identifying
+// secret types from masked output.
+func TestMaskSecretInLine_NoPrefixLeakage(t *testing.T) {
+	tests := []struct {
+		name              string
+		input             string
+		forbiddenPrefixes []string // prefixes that must NOT appear in output
+	}{
+		{
+			name:              "JWT token prefix eyJ must not leak",
+			input:             `token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"`,
+			forbiddenPrefixes: []string{"eyJ"},
+		},
+		{
+			name:              "GitHub token prefix ghp_ must not leak",
+			input:             `auth_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			forbiddenPrefixes: []string{"ghp_"},
+		},
+		{
+			name:              "AWS key prefix AKIA must not leak",
+			input:             `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`,
+			forbiddenPrefixes: []string{"AKIA"},
+		},
+		{
+			name:              "Stripe key prefix sk_live_ must not leak",
+			input:             `api_key = "sk_live_51H7example123456789"`,
+			forbiddenPrefixes: []string{"sk_live_"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+
+			// Verify forbidden prefixes are NOT in output
+			for _, prefix := range tt.forbiddenPrefixes {
+				if strings.Contains(result, prefix) {
+					t.Errorf("MaskSecretInLine(%q) = %q, must NOT contain identifying prefix %q", tt.input, result, prefix)
+				}
+			}
+
+			// Verify output contains masking pattern (asterisks with length range)
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine(%q) = %q, expected masking pattern with asterisks", tt.input, result)
+			}
+		})
+	}
+}
