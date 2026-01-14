@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-        "github.com/ArmisSecurity/armis-cli/internal/api"
-        "github.com/ArmisSecurity/armis-cli/internal/model"
-        "github.com/ArmisSecurity/armis-cli/internal/progress"
-        "github.com/ArmisSecurity/armis-cli/internal/scan"
-        "github.com/ArmisSecurity/armis-cli/internal/util"
+	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 const (
@@ -294,19 +294,19 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = *loc.Snippet
 		}
 
-                if loc.SnippetStartLine != nil {
-                        finding.SnippetStartLine = *loc.SnippetStartLine
-                }
+		if loc.SnippetStartLine != nil {
+			finding.SnippetStartLine = *loc.SnippetStartLine
+		}
 
-                finding.Type = scan.DeriveFindingType(
-                        len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0,
-                        loc.HasSecret,
-                        finding.FindingCategory,
-                )
+		finding.Type = scan.DeriveFindingType(
+			len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0,
+			loc.HasSecret,
+			finding.FindingCategory,
+		)
 
-                if loc.HasSecret && finding.CodeSnippet != "" {
-                        finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
-                }
+		if loc.HasSecret && finding.CodeSnippet != "" {
+			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+		}
 
 		finding.Title = finding.Description
 
