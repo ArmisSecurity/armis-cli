@@ -10,7 +10,7 @@ import (
 
 // Package-level variables for testability
 var (
-	stdoutSyncer = func() error { return os.Stdout.Sync() }
+	stdoutSyncer           = func() error { return os.Stdout.Sync() }
 	stderrWriter io.Writer = os.Stderr
 	osExit                 = os.Exit
 )
@@ -70,7 +70,7 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 		// Flush stdout to ensure all output is written before exit
 		if err := stdoutSyncer(); err != nil {
 			// Log flush failure to stderr (stdout may be broken)
-			fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
+			_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
 		}
 		osExit(exitCode)
 	}
