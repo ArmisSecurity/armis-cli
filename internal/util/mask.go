@@ -85,8 +85,8 @@ func maskValue(value string) string {
 	if length == 0 {
 		return ""
 	}
-	if length <= 8 {
-		// For short values, show asterisks matching length
+	if length < 10 {
+		// For short values (up to 9 chars), show asterisks matching length
 		return strings.Repeat("*", length)
 	}
 	// For longer values, show length range to prevent token type identification
