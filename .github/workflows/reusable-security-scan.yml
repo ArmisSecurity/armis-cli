@@ -34,7 +34,7 @@ on:
       scan-timeout:
         description: 'Scan timeout in minutes'
         type: number
-        default: 20
+        default: 60
     secrets:
       api-token:
         description: 'Armis API token for authentication'
@@ -47,7 +47,7 @@ jobs:
   security-scan:
     name: Armis Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       contents: read
       security-events: write

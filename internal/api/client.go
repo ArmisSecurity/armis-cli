@@ -196,7 +196,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 // WaitForIngest polls until the ingestion is complete or times out.
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
-		timeout = 20 * time.Minute
+		timeout = 60 * time.Minute
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)

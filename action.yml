@@ -45,7 +45,7 @@ inputs:
   scan-timeout:
     description: 'Scan timeout in minutes'
     required: false
-    default: '20'
+    default: '60'
 
 outputs:
   results:
