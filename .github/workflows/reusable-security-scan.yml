@@ -157,8 +157,11 @@ jobs:
 
       - name: Check for Failures
         if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.armis_scan.outcome }}
+          FAIL_ON_THRESHOLD: ${{ inputs.fail-on }}
         run: |
-          if [ "${{ steps.armis_scan.outcome }}" = "failure" ]; then
-            echo "::error::Security vulnerabilities detected by Armis (threshold: ${{ inputs.fail-on }})"
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON_THRESHOLD)"
             exit 1
           fi

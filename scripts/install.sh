@@ -44,14 +44,40 @@ validate_install_dir() {
         exit 1
     fi
 
-    # Disallow parent directory traversal segments like "../" or "/../"
+    # Disallow parent directory traversal segments like "../" or "/../" or "/.."
     # This allows valid paths with ".." in filenames (e.g., /opt/app..v1/bin)
     case "$dir" in
-        */../*|../*|*/..)
+        */../*|../*|*/..|/..)
             echo "Error: Install directory cannot contain parent directory segment '..': $dir" >&2
             exit 1
             ;;
     esac
+
+    # If realpath is available, normalize the path to resolve any remaining traversal
+    # Note: -m flag is GNU-specific (works even if path doesn't exist yet).
+    # On BSD/macOS, this may fail and fall back to the original path, which is
+    # already validated above. This is a defense-in-depth measure.
+    if command -v realpath > /dev/null 2>&1; then
+        normalized_dir=$(realpath -m "$dir" 2>/dev/null) || true
+
+        # Re-validate the normalized path as an additional defense-in-depth check.
+        if [ -n "$normalized_dir" ]; then
+            # Only allow safe characters in the normalized path
+            if ! printf '%s' "$normalized_dir" | grep -qE '^[a-zA-Z0-9/_.-]+$'; then
+                echo "Error: Normalized install directory contains invalid characters: $normalized_dir" >&2
+                echo "Only alphanumeric characters, underscores, hyphens, dots, and forward slashes are allowed." >&2
+                exit 1
+            fi
+
+            # Disallow parent directory traversal segments in the normalized path
+            case "$normalized_dir" in
+                */../*|../*|*/..|/..)
+                    echo "Error: Normalized install directory cannot contain parent directory segment '..': $normalized_dir" >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+    fi
 }
 
 USER_BIN="$HOME/.local/bin"

@@ -96,13 +96,16 @@ function Main {
     Write-Host ""
 
     # Validate InstallDir to prevent path traversal attacks
-    # Reject any input containing ".." for clarity and defense-in-depth
-    if ($InstallDir -match '\.\.') {
-        Write-Error "Invalid install directory: path traversal sequences (..) are not allowed"
+    # First normalize the path to resolve any relative segments (like ..\..),
+    # then validate the normalized result for defense-in-depth
+    $script:InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+
+    # After normalization, verify no ".." segments remain
+    # GetFullPath should resolve all "..", but we double-check for defense-in-depth
+    if ($InstallDir -match '\\\.\.\\|\\\.\.($)') {
+        Write-Error "Invalid install directory: path traversal detected after normalization"
         exit 1
     }
-    # Normalize the path for consistent handling
-    $script:InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
     # Validate Version format (except for the special 'latest' value)
     if ($Version -ne "latest" -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[0-9A-Za-z\.-]+)?$') {

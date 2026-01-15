@@ -42,8 +42,12 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 
 // NewClient creates a new API client with the given configuration.
 func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) *Client {
-	// Warn about non-HTTPS URLs (except localhost) as credentials may be exposed
-	if parsedURL, err := url.Parse(baseURL); err == nil && parsedURL.Scheme != "https" {
+	// Validate and warn about URL issues
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: invalid base URL %q: %v - requests may fail\n", baseURL, err)
+	} else if parsedURL.Scheme != "https" {
+		// Warn about non-HTTPS URLs (except localhost) as credentials may be exposed
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
 			fmt.Fprintf(os.Stderr, "Warning: using non-HTTPS URL %q - credentials may be transmitted insecurely\n", baseURL)
