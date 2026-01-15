@@ -224,6 +224,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 
 			status := statusResp.Data[0]
 			statusUpper := strings.ToUpper(status.ScanStatus)
+			fmt.Printf("[DEBUG] Scan %s status: %q (raw: %q)\n", scanID, statusUpper, status.ScanStatus)
 
 			if statusUpper == "COMPLETED" || statusUpper == "FAILED" {
 				if status.LastError != nil && *status.LastError != "" {
