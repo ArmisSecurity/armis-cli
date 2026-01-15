@@ -47,7 +47,7 @@ jobs:
   security-scan:
     name: Armis Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 135
     permissions:
       contents: read
       security-events: write
