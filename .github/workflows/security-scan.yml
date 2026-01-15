@@ -1,0 +1,19 @@
+name: Security Scan
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+
+jobs:
+  scan:
+    uses: ./.github/workflows/reusable-security-scan.yml
+    with:
+      scan-type: repo
+      scan-target: '.'
+      fail-on: ''  # Don't fail on findings
+      pr-comment: false  # No PR context for scheduled runs
+      upload-artifact: true
+    secrets:
+      api-token: ${{ secrets.ARMIS_API_TOKEN }}
+      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
