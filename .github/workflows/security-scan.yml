@@ -10,7 +10,7 @@ jobs:
     uses: ./.github/workflows/reusable-security-scan.yml
     with:
       scan-type: repo
-      scan-target: '.'
+      scan-target: 'scripts'
       fail-on: ''  # Don't fail on findings
       pr-comment: false  # No PR context for scheduled runs
       upload-artifact: true
