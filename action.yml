@@ -82,7 +82,9 @@ runs:
         SCAN_CMD="armis-cli scan ${{ inputs.scan-type }} ${{ inputs.scan-target }}"
         SCAN_CMD="$SCAN_CMD --tenant-id ${{ inputs.tenant-id }}"
         SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
-        SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
+        fi
         SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
         SCAN_CMD="$SCAN_CMD --scan-timeout ${{ inputs.scan-timeout }}"
 
