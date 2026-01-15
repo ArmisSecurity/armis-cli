@@ -98,7 +98,7 @@ function Main {
     # Validate InstallDir to prevent path traversal attacks
     # First normalize the path to resolve any relative segments (like ..\..),
     # then validate the normalized result for defense-in-depth
-    $script:InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+    $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
     # After normalization, verify no ".." segments remain
     # GetFullPath should resolve all "..", but we double-check for defense-in-depth
