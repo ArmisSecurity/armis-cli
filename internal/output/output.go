@@ -8,6 +8,13 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// Package-level variables for testability
+var (
+	stdoutSyncer           = func() error { return os.Stdout.Sync() }
+	stderrWriter io.Writer = os.Stderr
+	osExit                 = os.Exit
+)
+
 // FormatOptions contains options for formatting scan results.
 type FormatOptions struct {
 	GroupBy  string
@@ -61,7 +68,10 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 			exitCode = 1
 		}
 		// Flush stdout to ensure all output is written before exit
-		_ = os.Stdout.Sync()
-		os.Exit(exitCode)
+		if err := stdoutSyncer(); err != nil {
+			// Log flush failure to stderr (stdout may be broken)
+			_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
+		}
+		osExit(exitCode)
 	}
 }

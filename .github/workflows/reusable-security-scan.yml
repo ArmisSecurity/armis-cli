@@ -163,6 +163,9 @@ jobs:
       - name: Analyze Scan Results
         id: scan_analysis
         if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.armis_scan.outcome }}
+          FAIL_ON_THRESHOLD: ${{ inputs.fail-on }}
         run: |
           # Check if SARIF file exists and has actual results
           if [ -s armis-results.sarif ]; then
