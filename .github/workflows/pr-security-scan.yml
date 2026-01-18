@@ -22,6 +22,11 @@ jobs:
         uses: tj-actions/changed-files@v46
         with:
           separator: ','
+          # Exclude test files from security scan - they contain intentional
+          # path traversal test data that triggers false positives
+          files_ignore: |
+            **/*_test.go
+            **/testdata/**
 
   security-scan:
     name: Security Scan

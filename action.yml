@@ -87,7 +87,59 @@ runs:
       shell: bash
       run: |
         echo "Installing Armis CLI..."
-        curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+
+        # Detect OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        case "$OS" in
+          linux*)  OS="linux" ;;
+          darwin*) OS="darwin" ;;
+          *)       echo "Error: Unsupported OS: $OS"; exit 1 ;;
+        esac
+
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64|amd64) ARCH="amd64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+          *)            echo "Error: Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+
+        # Download binary directly from GitHub releases
+        REPO="ArmisSecurity/armis-cli"
+        ARCHIVE_NAME="armis-cli-${OS}-${ARCH}.tar.gz"
+        CHECKSUMS_NAME="armis-cli-checksums.txt"
+        BASE_URL="https://github.com/${REPO}/releases/latest/download"
+
+        TMP_DIR=$(mktemp -d)
+        trap 'rm -rf "$TMP_DIR"' EXIT
+
+        echo "Downloading $ARCHIVE_NAME..."
+        curl -fsSL "${BASE_URL}/${ARCHIVE_NAME}" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+        curl -fsSL "${BASE_URL}/${CHECKSUMS_NAME}" -o "${TMP_DIR}/${CHECKSUMS_NAME}"
+
+        # Verify checksum
+        echo "Verifying checksum..."
+        cd "$TMP_DIR"
+        EXPECTED=$(grep "$ARCHIVE_NAME" "$CHECKSUMS_NAME" | awk '{print $1}')
+        if command -v sha256sum > /dev/null 2>&1; then
+          ACTUAL=$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')
+        else
+          ACTUAL=$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')
+        fi
+
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "Error: Checksum verification failed!"
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+          exit 1
+        fi
+        echo "Checksum verified successfully"
+
+        # Extract and install
+        tar -xzf "$ARCHIVE_NAME"
+        mkdir -p "$HOME/.local/bin"
+        mv armis-cli "$HOME/.local/bin/"
+        chmod +x "$HOME/.local/bin/armis-cli"
+        echo "Armis CLI installed successfully"
         echo "$HOME/.local/bin" >> $GITHUB_PATH
 
     - name: Verify Installation
