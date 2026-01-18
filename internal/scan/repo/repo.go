@@ -88,6 +88,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	var ignoreMatcher *IgnoreMatcher
 
 	pr, pw := io.Pipe()
+	defer pr.Close() // Ensure pipe reader is closed to prevent resource leaks
 
 	if s.includeFiles != nil {
 		// Targeted file scanning mode - scan only specified files
@@ -275,6 +276,9 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 		}
 	}()
 
+	// Note: The 'err' variables declared with := inside the loop shadow the named return value.
+	// This is intentional - direct returns like 'return copyErr' still set the named return,
+	// allowing the deferred close functions above to check if an error occurred.
 	filesWritten := 0
 	for _, relPath := range files {
 		absPath := filepath.Join(repoRoot, relPath)
@@ -313,15 +317,10 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 		if err != nil {
 			return err
 		}
+		defer file.Close() //nolint:errcheck // Read-only file, close error is non-critical
 
-		_, copyErr := io.Copy(tarWriter, file)
-		closeErr := file.Close()
-
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
+		if _, err := io.Copy(tarWriter, file); err != nil {
+			return err
 		}
 		filesWritten++
 	}

@@ -60,7 +60,14 @@ type sarifResult struct {
 }
 
 type sarifResultProperties struct {
-	Severity string `json:"severity"`
+	Severity    string   `json:"severity"`
+	Type        string   `json:"type,omitempty"`
+	CodeSnippet string   `json:"codeSnippet,omitempty"`
+	CVEs        []string `json:"cves,omitempty"`
+	CWEs        []string `json:"cwes,omitempty"`
+	Package     string   `json:"package,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	FixVersion  string   `json:"fixVersion,omitempty"`
 }
 
 type sarifMessage struct {
@@ -150,7 +157,14 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 				Text: finding.Title + ": " + finding.Description,
 			},
 			Properties: &sarifResultProperties{
-				Severity: string(finding.Severity),
+				Severity:    string(finding.Severity),
+				Type:        string(finding.Type),
+				CodeSnippet: finding.CodeSnippet,
+				CVEs:        finding.CVEs,
+				CWEs:        finding.CWEs,
+				Package:     finding.Package,
+				Version:     finding.Version,
+				FixVersion:  finding.FixVersion,
 			},
 		}
 
