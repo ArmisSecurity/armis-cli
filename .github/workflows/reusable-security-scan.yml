@@ -93,16 +93,16 @@ jobs:
             const sarif = JSON.parse(fs.readFileSync('armis-results.sarif', 'utf8'));
             const results = sarif.runs?.[0]?.results || [];
 
-            // Count by severity
+            // Count by severity - read from properties.severity if available
             const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
             for (const r of results) {
-              const level = r.level || 'warning';
-              const severity = {
-                'error': 'CRITICAL',
-                'warning': 'HIGH',
-                'note': 'MEDIUM',
-                'none': 'LOW'
-              }[level] || 'INFO';
+              // Prefer properties.severity (set by armis-cli), fallback to level mapping
+              const severity = r.properties?.severity || {
+                'error': 'HIGH',
+                'warning': 'MEDIUM',
+                'note': 'LOW',
+                'none': 'INFO'
+              }[r.level || 'warning'] || 'INFO';
               counts[severity]++;
             }
             const total = results.length;
