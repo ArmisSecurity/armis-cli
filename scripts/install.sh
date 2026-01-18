@@ -337,8 +337,8 @@ main() {
         ARCHIVE_NAME="${BINARY_NAME}-${OS}-${ARCH}.zip"
     fi
     
-    TMP_DIR=$(mktemp -d)
-    trap "rm -rf $TMP_DIR" EXIT
+    TMP_DIR=$(mktemp -d) || { echo "Error: Failed to create temporary directory" >&2; exit 1; }
+    trap 'rm -rf "$TMP_DIR"' EXIT
     
     ARCHIVE_FILE="$TMP_DIR/$ARCHIVE_NAME"
     CHECKSUMS_FILE="$TMP_DIR/${BINARY_NAME}-checksums.txt"

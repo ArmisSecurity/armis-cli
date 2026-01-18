@@ -246,15 +246,13 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 			if err != nil {
 				return err
 			}
+			// Close error is intentionally ignored: for read-only files, Close() errors are
+			// extremely rare (typically only on NFS with errors deferred until close).
+			// The io.Copy error below catches any actual read failures.
+			defer file.Close() //nolint:errcheck
 
-			_, copyErr := io.Copy(tarWriter, file)
-			closeErr := file.Close()
-
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
+			if _, err := io.Copy(tarWriter, file); err != nil {
+				return err
 			}
 		}
 

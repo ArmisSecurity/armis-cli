@@ -25,5 +25,8 @@ runs:
         chmod +x armis-cli
     - name: Run Armis CLI
       shell: bash
+      env:
+        ARMIS_ARGS: ${{ inputs.args }}
+        ARMIS_API_TOKEN: ${{ inputs.api_token }}
       run: |
-        ./armis-cli ${{ inputs.args }} --token "${{ inputs.api_token }}"
+        ./armis-cli $ARMIS_ARGS --token "$ARMIS_API_TOKEN"

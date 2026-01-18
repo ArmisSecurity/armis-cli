@@ -1,6 +1,7 @@
 package util_test
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -131,6 +132,9 @@ func TestSanitizePathCleaning(t *testing.T) {
 }
 
 func TestSafeJoinPath(t *testing.T) {
+	// Create a real temporary directory for tests that need an existing base path
+	baseDir := t.TempDir()
+
 	tests := []struct {
 		name         string
 		basePath     string
@@ -140,26 +144,26 @@ func TestSafeJoinPath(t *testing.T) {
 	}{
 		{
 			name:         "valid simple path",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "file.txt",
 			wantErr:      false,
 		},
 		{
 			name:         "valid nested path",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "subdir/file.txt",
 			wantErr:      false,
 		},
 		{
 			name:         "empty relative path",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "",
 			wantErr:      true,
 			errSubstr:    "empty relative path",
 		},
 		{
 			name:     "absolute path rejected",
-			basePath: "/base/dir",
+			basePath: baseDir,
 			relativePath: func() string {
 				if runtime.GOOS == "windows" {
 					return `C:\Windows\System32`
@@ -171,41 +175,41 @@ func TestSafeJoinPath(t *testing.T) {
 		},
 		{
 			name:         "path traversal with double dots",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "../etc/passwd",
 			wantErr:      true,
 			errSubstr:    "path traversal detected",
 		},
 		{
 			name:         "path traversal with multiple double dots",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "../../../etc/passwd",
 			wantErr:      true,
 			errSubstr:    "path traversal detected",
 		},
 		{
 			name:         "path traversal hidden in path",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "subdir/../../etc/passwd",
 			wantErr:      true,
 			errSubstr:    "path traversal detected",
 		},
 		{
 			name:         "just double dots",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "..",
 			wantErr:      true,
 			errSubstr:    "path traversal detected",
 		},
 		{
 			name:         "valid path with current dir",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "./file.txt",
 			wantErr:      false,
 		},
 		{
 			name:         "valid path with spaces",
-			basePath:     "/base/dir",
+			basePath:     baseDir,
 			relativePath: "my file.txt",
 			wantErr:      false,
 		},
@@ -235,6 +239,14 @@ func TestSafeJoinPath(t *testing.T) {
 			relativePath: ".",
 			wantErr:      false,
 		},
+		// New tests for directory verification
+		{
+			name:         "non-existent base path",
+			basePath:     "/non/existent/path",
+			relativePath: "file.txt",
+			wantErr:      true,
+			errSubstr:    "cannot access base path",
+		},
 	}
 
 	for _, tt := range tests {
@@ -258,28 +270,44 @@ func TestSafeJoinPath(t *testing.T) {
 	}
 }
 
+func TestSafeJoinPathWithFile(t *testing.T) {
+	// Test that base path must be a directory, not a file
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "file.txt")
+	if err := os.WriteFile(tmpFile, []byte("content"), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	_, err := util.SafeJoinPath(tmpFile, "something.txt")
+	if err == nil {
+		t.Error("SafeJoinPath should reject a file as base path")
+	}
+	if !strings.Contains(err.Error(), "base path must be a directory") {
+		t.Errorf("Expected error about directory, got: %v", err)
+	}
+}
+
 func TestSafeJoinPathResultsContainedInBase(t *testing.T) {
+	// Create a real temporary directory for tests
+	baseDir := t.TempDir()
+
 	tests := []struct {
 		name         string
-		basePath     string
 		relativePath string
 		wantSuffix   string
 	}{
 		{
 			name:         "simple file",
-			basePath:     "/base/dir",
 			relativePath: "file.txt",
 			wantSuffix:   "file.txt",
 		},
 		{
 			name:         "nested path",
-			basePath:     "/base/dir",
 			relativePath: "subdir/file.txt",
 			wantSuffix:   "subdir/file.txt",
 		},
 		{
 			name:         "current dir prefix cleaned",
-			basePath:     "/base/dir",
 			relativePath: "./subdir/file.txt",
 			wantSuffix:   "subdir/file.txt",
 		},
@@ -287,17 +315,17 @@ func TestSafeJoinPathResultsContainedInBase(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := util.SafeJoinPath(tt.basePath, tt.relativePath)
+			result, err := util.SafeJoinPath(baseDir, tt.relativePath)
 			if err != nil {
-				t.Fatalf("util.SafeJoinPath(%q, %q) unexpected error: %v", tt.basePath, tt.relativePath, err)
+				t.Fatalf("util.SafeJoinPath(%q, %q) unexpected error: %v", baseDir, tt.relativePath, err)
 			}
 			normalizedResult := filepath.ToSlash(result)
 			if !strings.HasSuffix(normalizedResult, tt.wantSuffix) {
-				t.Errorf("util.SafeJoinPath(%q, %q) = %q, want suffix %q", tt.basePath, tt.relativePath, normalizedResult, tt.wantSuffix)
+				t.Errorf("util.SafeJoinPath(%q, %q) = %q, want suffix %q", baseDir, tt.relativePath, normalizedResult, tt.wantSuffix)
 			}
-			normalizedBase := filepath.ToSlash(tt.basePath)
+			normalizedBase := filepath.ToSlash(baseDir)
 			if !strings.HasPrefix(normalizedResult, normalizedBase) {
-				t.Errorf("util.SafeJoinPath(%q, %q) = %q, should start with base %q", tt.basePath, tt.relativePath, normalizedResult, normalizedBase)
+				t.Errorf("util.SafeJoinPath(%q, %q) = %q, should start with base %q", baseDir, tt.relativePath, normalizedResult, normalizedBase)
 			}
 		})
 	}

@@ -41,7 +41,10 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		if err != nil {
+			return fmt.Errorf("failed to create API client: %w", err)
+		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 

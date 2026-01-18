@@ -15,7 +15,10 @@ import (
 
 func TestNewClient(t *testing.T) {
 	t.Run("creates client with defaults", func(t *testing.T) {
-		client := NewClient("https://api.example.com", "token123", false, 0)
+		client, err := NewClient("https://api.example.com", "token123", false, 0)
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		if client.baseURL != "https://api.example.com" {
 			t.Errorf("baseURL mismatch: got %s", client.baseURL)
@@ -29,7 +32,10 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("uses custom upload timeout", func(t *testing.T) {
-		client := NewClient("https://api.example.com", "token123", false, 5*time.Minute)
+		client, err := NewClient("https://api.example.com", "token123", false, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		if client.uploadTimeout != 5*time.Minute {
 			t.Errorf("Expected upload timeout of 5m, got %v", client.uploadTimeout)
@@ -38,21 +44,64 @@ func TestNewClient(t *testing.T) {
 
 	t.Run("accepts custom HTTP client", func(t *testing.T) {
 		customClient := httpclient.NewClient(httpclient.Config{Timeout: 30 * time.Second})
-		client := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(customClient))
+		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(customClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		if client.httpClient != customClient {
 			t.Error("Custom HTTP client not set")
 		}
 	})
+
+	t.Run("allows localhost HTTP", func(t *testing.T) {
+		client, err := NewClient("http://localhost:8080", "token123", false, 0)
+		if err != nil {
+			t.Fatalf("NewClient should allow localhost HTTP: %v", err)
+		}
+		if client == nil {
+			t.Error("Expected client to be created")
+		}
+	})
+
+	t.Run("allows 127.0.0.1 HTTP", func(t *testing.T) {
+		client, err := NewClient("http://127.0.0.1:8080", "token123", false, 0)
+		if err != nil {
+			t.Fatalf("NewClient should allow 127.0.0.1 HTTP: %v", err)
+		}
+		if client == nil {
+			t.Error("Expected client to be created")
+		}
+	})
+
+	t.Run("rejects non-localhost HTTP", func(t *testing.T) {
+		_, err := NewClient("http://api.example.com", "token123", false, 0)
+		if err == nil {
+			t.Error("Expected error for non-HTTPS non-localhost URL")
+		}
+	})
+
+	t.Run("rejects invalid URL", func(t *testing.T) {
+		_, err := NewClient("://invalid", "token123", false, 0)
+		if err == nil {
+			t.Error("Expected error for invalid URL")
+		}
+	})
 }
 
 func TestClient_IsDebug(t *testing.T) {
-	client := NewClient("https://api.example.com", "token", true, 0)
+	client, err := NewClient("https://api.example.com", "token", true, 0)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
 	if !client.IsDebug() {
 		t.Error("Expected debug to be true")
 	}
 
-	client2 := NewClient("https://api.example.com", "token", false, 0)
+	client2, err := NewClient("https://api.example.com", "token", false, 0)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
 	if client2.IsDebug() {
 		t.Error("Expected debug to be false")
 	}
@@ -82,7 +131,10 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		data := bytes.NewReader([]byte("test data"))
 		scanID, err := client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
@@ -101,10 +153,13 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		data := bytes.NewReader([]byte("test data"))
-		_, err := client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
+		_, err = client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
 
 		if err == nil {
 			t.Error("Expected error for failed upload")
@@ -118,10 +173,13 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 50*time.Millisecond, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 50*time.Millisecond, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		data := bytes.NewReader([]byte("test data"))
-		_, err := client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
+		_, err = client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
 
 		if err == nil {
 			t.Error("Expected timeout error")
@@ -158,7 +216,10 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		status, err := client.GetIngestStatus(context.Background(), "tenant-123", "scan-456")
 
@@ -179,9 +240,12 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
-		_, err := client.GetIngestStatus(context.Background(), "tenant-123", "scan-456")
+		_, err = client.GetIngestStatus(context.Background(), "tenant-123", "scan-456")
 
 		if err == nil {
 			t.Error("Expected error for failed status check")
@@ -227,7 +291,10 @@ func TestClient_FetchNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		results, err := client.FetchNormalizedResults(context.Background(), "tenant-123", "scan-456", 100, "")
 
@@ -263,9 +330,12 @@ func TestClient_FetchNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
-		_, err := client.FetchNormalizedResults(context.Background(), "tenant-123", "scan-456", 100, "existing-cursor")
+		_, err = client.FetchNormalizedResults(context.Background(), "tenant-123", "scan-456", 100, "existing-cursor")
 
 		if err != nil {
 			t.Fatalf("FetchNormalizedResults failed: %v", err)
@@ -313,7 +383,10 @@ func TestClient_FetchAllNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		findings, err := client.FetchAllNormalizedResults(context.Background(), "tenant-123", "scan-456", 100)
 
@@ -371,7 +444,10 @@ func TestClient_GetScanResult(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		result, err := client.GetScanResult(context.Background(), "scan-123")
 
@@ -401,9 +477,12 @@ func TestClient_DebugMode(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client := NewClient(server.URL, "token123", true, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, "token123", true, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
-		_, err := client.FetchNormalizedResults(context.Background(), "tenant-123", "scan-456", 100, "")
+		_, err = client.FetchNormalizedResults(context.Background(), "tenant-123", "scan-456", 100, "")
 
 		if err != nil {
 			t.Fatalf("FetchNormalizedResults failed: %v", err)

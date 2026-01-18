@@ -68,6 +68,18 @@ func TestMaskSecretInLine(t *testing.T) {
 			wantContains:   "secret_hash",
 			wantNotContain: "e5f6a1b2c3d4e5f6a1b2c3d4",
 		},
+		{
+			name:           "Go-style := assignment",
+			input:          `apiKey := "sk_live_abc123xyz789def"`,
+			wantContains:   "apiKey",
+			wantNotContain: "abc123xyz789",
+		},
+		{
+			name:           "arrow => assignment",
+			input:          `password => "supersecretpassword123"`,
+			wantContains:   "password",
+			wantNotContain: "supersecret",
+		},
 	}
 
 	for _, tt := range tests {
