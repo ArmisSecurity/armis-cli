@@ -26,16 +26,38 @@ type sarifTool struct {
 }
 
 type sarifDriver struct {
-	Name           string `json:"name"`
-	InformationURI string `json:"informationUri"`
-	Version        string `json:"version"`
+	Name           string      `json:"name"`
+	InformationURI string      `json:"informationUri"`
+	Version        string      `json:"version"`
+	Rules          []sarifRule `json:"rules,omitempty"`
+}
+
+type sarifRule struct {
+	ID                   string               `json:"id"`
+	ShortDescription     sarifMessage         `json:"shortDescription"`
+	DefaultConfiguration sarifRuleConfig      `json:"defaultConfiguration,omitempty"`
+	Properties           *sarifRuleProperties `json:"properties,omitempty"`
+}
+
+type sarifRuleConfig struct {
+	Level string `json:"level"`
+}
+
+type sarifRuleProperties struct {
+	SecuritySeverity string `json:"security-severity"`
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifMessage    `json:"message"`
-	Locations []sarifLocation `json:"locations,omitempty"`
+	RuleID     string                 `json:"ruleId"`
+	RuleIndex  int                    `json:"ruleIndex"`
+	Level      string                 `json:"level"`
+	Message    sarifMessage           `json:"message"`
+	Locations  []sarifLocation        `json:"locations,omitempty"`
+	Properties *sarifResultProperties `json:"properties,omitempty"`
+}
+
+type sarifResultProperties struct {
+	Severity string `json:"severity"`
 }
 
 type sarifMessage struct {
@@ -62,6 +84,7 @@ type sarifRegion struct {
 
 // Format formats the scan result as SARIF JSON.
 func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
+	rules, ruleIndexMap := buildRules(result.Findings)
 	report := sarifReport{
 		Version: "2.1.0",
 		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -72,9 +95,10 @@ func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 						Name:           "Armis Security Scanner",
 						InformationURI: "https://armis.com",
 						Version:        "1.0.0",
+						Rules:          rules,
 					},
 				},
-				Results: convertToSarifResults(result.Findings),
+				Results: convertToSarifResults(result.Findings, ruleIndexMap),
 			},
 		},
 	}
@@ -84,15 +108,46 @@ func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	return encoder.Encode(report)
 }
 
-func convertToSarifResults(findings []model.Finding) []sarifResult {
+// buildRules creates SARIF rules from findings, deduplicating by rule ID.
+// Returns the rules array and a map of rule ID to index.
+func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
+	ruleIndexMap := make(map[string]int)
+	var rules []sarifRule
+
+	for _, finding := range findings {
+		if _, exists := ruleIndexMap[finding.ID]; !exists {
+			ruleIndexMap[finding.ID] = len(rules)
+			rules = append(rules, sarifRule{
+				ID: finding.ID,
+				ShortDescription: sarifMessage{
+					Text: finding.Title,
+				},
+				DefaultConfiguration: sarifRuleConfig{
+					Level: severityToSarifLevel(finding.Severity),
+				},
+				Properties: &sarifRuleProperties{
+					SecuritySeverity: severityToSecurityScore(finding.Severity),
+				},
+			})
+		}
+	}
+
+	return rules, ruleIndexMap
+}
+
+func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int) []sarifResult {
 	results := make([]sarifResult, 0, len(findings))
 
 	for _, finding := range findings {
 		result := sarifResult{
-			RuleID: finding.ID,
-			Level:  severityToSarifLevel(finding.Severity),
+			RuleID:    finding.ID,
+			RuleIndex: ruleIndexMap[finding.ID],
+			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
 				Text: finding.Title + ": " + finding.Description,
+			},
+			Properties: &sarifResultProperties{
+				Severity: string(finding.Severity),
 			},
 		}
 
@@ -131,6 +186,29 @@ func severityToSarifLevel(severity model.Severity) string {
 		return "note"
 	default:
 		return "none"
+	}
+}
+
+// severityToSecurityScore maps severity to CVSS-style scores for GitHub Code Scanning.
+// GitHub uses these scores to categorize findings:
+// - Over 9.0: Critical
+// - 7.0 to 8.9: High
+// - 4.0 to 6.9: Medium
+// - 0.1 to 3.9: Low
+func severityToSecurityScore(severity model.Severity) string {
+	switch severity {
+	case model.SeverityCritical:
+		return "9.5"
+	case model.SeverityHigh:
+		return "8.0"
+	case model.SeverityMedium:
+		return "5.5"
+	case model.SeverityLow:
+		return "2.0"
+	case model.SeverityInfo:
+		return "0.0"
+	default:
+		return "0.0"
 	}
 }
 

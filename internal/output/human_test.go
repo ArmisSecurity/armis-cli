@@ -85,15 +85,15 @@ func TestGroupFindingsBySeverity(t *testing.T) {
 
 	for _, group := range groups {
 		switch group.Key {
-		case "CRITICAL":
+		case string(model.SeverityCritical):
 			if len(group.Findings) != 1 {
 				t.Errorf("Expected 1 CRITICAL finding, got %d", len(group.Findings))
 			}
-		case "HIGH":
+		case string(model.SeverityHigh):
 			if len(group.Findings) != 2 {
 				t.Errorf("Expected 2 HIGH findings, got %d", len(group.Findings))
 			}
-		case "MEDIUM":
+		case string(model.SeverityMedium):
 			if len(group.Findings) != 1 {
 				t.Errorf("Expected 1 MEDIUM finding, got %d", len(group.Findings))
 			}
