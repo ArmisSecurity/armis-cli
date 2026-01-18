@@ -88,7 +88,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	var ignoreMatcher *IgnoreMatcher
 
 	pr, pw := io.Pipe()
-	defer pr.Close() // Ensure pipe reader is closed to prevent resource leaks
+	defer pr.Close() //nolint:errcheck // Ensure pipe reader is closed to prevent resource leaks
 
 	if s.includeFiles != nil {
 		// Targeted file scanning mode - scan only specified files
