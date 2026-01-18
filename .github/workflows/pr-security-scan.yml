@@ -43,6 +43,7 @@ jobs:
       scan-type: repo
       fail-on: 'CRITICAL,HIGH'
       include-files: ${{ needs.get-changed-files.outputs.files }}
+      build-from-source: false
     secrets:
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}

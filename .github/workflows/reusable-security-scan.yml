@@ -40,9 +40,9 @@ on:
         type: string
         default: ''
       build-from-source:
-        description: 'Build CLI from source instead of downloading release (for testing)'
+        description: 'Build CLI from source instead of downloading release (for testing scanner changes)'
         type: boolean
-        default: true
+        default: false
     secrets:
       api-token:
         description: 'Armis API token for authentication'

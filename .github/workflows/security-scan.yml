@@ -18,6 +18,7 @@ jobs:
       pr-comment: false  # No PR context for scheduled runs
       upload-artifact: true
       scan-timeout: 120  # 2 hours
+      build-from-source: false
     secrets:
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
