@@ -83,44 +83,45 @@ runs:
         INCLUDE_FILES: ${{ inputs.include-files }}
       run: |
         set +e
-        
-        SCAN_CMD="armis-cli scan ${{ inputs.scan-type }} ${{ inputs.scan-target }}"
-        SCAN_CMD="$SCAN_CMD --tenant-id ${{ inputs.tenant-id }}"
-        SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
+
+        # Build command arguments as array to prevent command injection
+        SCAN_ARGS=("scan" "${{ inputs.scan-type }}" "${{ inputs.scan-target }}")
+        SCAN_ARGS+=("--tenant-id" "${{ inputs.tenant-id }}")
+        SCAN_ARGS+=("--format" "${{ inputs.format }}")
         if [ -n "${{ inputs.fail-on }}" ]; then
-          SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
+          SCAN_ARGS+=("--fail-on" "${{ inputs.fail-on }}")
         fi
-        SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
-        SCAN_CMD="$SCAN_CMD --scan-timeout ${{ inputs.scan-timeout }}"
+        SCAN_ARGS+=("--exit-code" "${{ inputs.exit-code }}")
+        SCAN_ARGS+=("--scan-timeout" "${{ inputs.scan-timeout }}")
 
         if [ "${{ inputs.no-progress }}" = "true" ]; then
-          SCAN_CMD="$SCAN_CMD --no-progress"
+          SCAN_ARGS+=("--no-progress")
         fi
-        
+
         if [ "${{ inputs.scan-type }}" = "image" ] && [ -n "${{ inputs.image-tarball }}" ]; then
-          SCAN_CMD="$SCAN_CMD --tarball ${{ inputs.image-tarball }}"
+          SCAN_ARGS+=("--tarball" "${{ inputs.image-tarball }}")
         fi
 
         if [ -n "$INCLUDE_FILES" ]; then
-          SCAN_CMD="$SCAN_CMD --include-files \"$INCLUDE_FILES\""
+          SCAN_ARGS+=("--include-files" "$INCLUDE_FILES")
         fi
 
         if [ -n "${{ inputs.output-file }}" ]; then
-          eval $SCAN_CMD > "${{ inputs.output-file }}"
+          armis-cli "${SCAN_ARGS[@]}" > "${{ inputs.output-file }}"
           SCAN_EXIT_CODE=$?
           SCAN_RESULTS=$(cat "${{ inputs.output-file }}")
         else
-          SCAN_RESULTS=$(eval $SCAN_CMD)
+          SCAN_RESULTS=$(armis-cli "${SCAN_ARGS[@]}")
           SCAN_EXIT_CODE=$?
         fi
-        
+
         echo "exit-code=$SCAN_EXIT_CODE" >> $GITHUB_OUTPUT
-        
+
         # For multiline output, use heredoc
         echo "results<<EOF" >> $GITHUB_OUTPUT
         echo "$SCAN_RESULTS" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-        
+
         exit $SCAN_EXIT_CODE
 
     - name: Upload SARIF Results
