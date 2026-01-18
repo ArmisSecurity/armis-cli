@@ -51,6 +51,14 @@ on:
         description: 'Tenant identifier for Armis Cloud'
         required: true
 
+# Top-level permissions define the maximum permissions available to this workflow.
+# Job-level permissions further restrict as needed.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+
 jobs:
   security-scan:
     name: Armis Security Scan

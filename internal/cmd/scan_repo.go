@@ -49,6 +49,9 @@ var scanRepoCmd = &cobra.Command{
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
 		// Handle --include-files flag for targeted file scanning
+		// Security: Path traversal protection is enforced by ParseFileList which
+		// validates all paths using SafeJoinPath to ensure they don't escape the
+		// repository root. Invalid or traversal paths are rejected with an error.
 		if len(includeFiles) > 0 {
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {

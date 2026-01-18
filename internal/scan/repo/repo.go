@@ -145,6 +145,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	errChan := make(chan error, 1)
 	go func() {
+		// Security: Check context before starting expensive tar operation
+		// to prevent resource leaks if context is already canceled.
+		select {
+		case <-ctx.Done():
+			errChan <- ctx.Err()
+			return
+		default:
+		}
 		errChan <- tarFunc()
 	}()
 
@@ -297,8 +305,11 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 	// This is intentional - direct returns like 'return copyErr' still set the named return,
 	// allowing the deferred close functions above to check if an error occurred.
 	//
-	// Note: TOCTOU between ValidateExistence and here is acceptable.
-	// Files that disappear are gracefully handled with warnings below.
+	// Security: TOCTOU (Time-of-Check-Time-of-Use) between ValidateExistence and file
+	// operations is an acceptable risk here. Files that disappear between validation and
+	// usage are gracefully handled with warnings. Symlinks are explicitly skipped to
+	// prevent escape attacks. Path traversal is prevented by SafeJoinPath validation
+	// and defense-in-depth isPathContained checks.
 	filesWritten := 0
 	for _, relPath := range files {
 		absPath := filepath.Join(repoRoot, relPath)
