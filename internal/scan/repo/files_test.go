@@ -128,25 +128,24 @@ func TestParseFileListPathTraversal(t *testing.T) {
 }
 
 func TestParseFileListAbsolutePathOutsideRepo(t *testing.T) {
-	tmpDir := t.TempDir()
+	// Create two separate temp directories - one is the "repo root", the other is "outside"
+	repoDir := t.TempDir()
+	outsideDir := t.TempDir()
 
-	// Test absolute paths that are outside the repo root
-	outsidePaths := []string{
-		"/etc/passwd",
-		"/tmp/some/other/file.go",
+	// Create a file in the outside directory to get a real absolute path
+	outsideFile := filepath.Join(outsideDir, "outside.go")
+	if err := os.WriteFile(outsideFile, []byte("package outside"), 0600); err != nil {
+		t.Fatalf("Failed to create outside file: %v", err)
 	}
 
-	for _, path := range outsidePaths {
-		t.Run(path, func(t *testing.T) {
-			_, err := ParseFileList(tmpDir, []string{path})
-			if err == nil {
-				t.Errorf("expected error for absolute path outside repo: %s", path)
-			}
-			// Verify the error message is clear about the issue
-			if err != nil && !strings.Contains(err.Error(), "outside repository root") {
-				t.Errorf("expected error message to mention 'outside repository root', got: %s", err.Error())
-			}
-		})
+	// Test that an absolute path outside the repo root is rejected
+	_, err := ParseFileList(repoDir, []string{outsideFile})
+	if err == nil {
+		t.Errorf("expected error for absolute path outside repo: %s", outsideFile)
+	}
+	// Verify the error message is clear about the issue
+	if err != nil && !strings.Contains(err.Error(), "outside repository root") {
+		t.Errorf("expected error message to mention 'outside repository root', got: %s", err.Error())
 	}
 }
 
