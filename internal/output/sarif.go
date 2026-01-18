@@ -2,9 +2,12 @@ package output
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // SARIFFormatter formats scan results as SARIF JSON.
@@ -152,10 +155,17 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 		}
 
 		if finding.File != "" {
+			// Sanitize file path to prevent path traversal in SARIF output
+			sanitizedFile, err := util.SanitizePath(finding.File)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not sanitize file path for finding %s: %v\n", finding.ID, err)
+				// Use finding ID to ensure unique placeholder paths in SARIF output
+				sanitizedFile = fmt.Sprintf("unknown-%s", finding.ID)
+			}
 			location := sarifLocation{
 				PhysicalLocation: sarifPhysicalLocation{
 					ArtifactLocation: sarifArtifactLocation{
-						URI: finding.File,
+						URI: sanitizedFile,
 					},
 				},
 			}

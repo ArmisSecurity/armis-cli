@@ -27,7 +27,9 @@ func JSONResponse(t *testing.T, w http.ResponseWriter, statusCode int, data inte
 }
 
 // ErrorResponse writes an error response with the given status code.
+// Sets Content-Type to text/plain to prevent HTML interpretation.
 func ErrorResponse(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(statusCode)
 	_, _ = w.Write([]byte(message))
 }

@@ -557,7 +557,10 @@ func TestScanTarball(t *testing.T) {
 
 		// Create API client pointing to mock server
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		// Create scanner with mock client
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
@@ -585,10 +588,13 @@ func TestScanTarball(t *testing.T) {
 
 	t.Run("fails for non-existent tarball", func(t *testing.T) {
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.ScanTarball(context.Background(), "/non/existent/tarball.tar")
+		_, err = scanner.ScanTarball(context.Background(), "/non/existent/tarball.tar")
 		if err == nil {
 			t.Error("expected error for non-existent tarball")
 		}
@@ -619,10 +625,13 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.ScanTarball(context.Background(), tarballPath)
+		_, err = scanner.ScanTarball(context.Background(), tarballPath)
 		if err == nil {
 			t.Error("expected error on upload failure")
 		}
@@ -659,10 +668,13 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 100*time.Millisecond, false) // Very short timeout
 
-		_, err := scanner.ScanTarball(context.Background(), tarballPath)
+		_, err = scanner.ScanTarball(context.Background(), tarballPath)
 		if err == nil {
 			t.Error("expected timeout error")
 		}
@@ -691,10 +703,13 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.ScanTarball(context.Background(), tarballPath)
+		_, err = scanner.ScanTarball(context.Background(), tarballPath)
 		if err == nil {
 			t.Error("expected error on fetch results failure")
 		}
@@ -717,13 +732,16 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
-		_, err := scanner.ScanTarball(ctx, tarballPath)
+		_, err = scanner.ScanTarball(ctx, tarballPath)
 		if err == nil {
 			t.Error("expected error when context is cancelled")
 		}

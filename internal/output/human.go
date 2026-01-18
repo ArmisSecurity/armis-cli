@@ -993,7 +993,8 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 	}
 
 	// #nosec G204 -- file path is validated above, git blame is intentional for showing code ownership
-	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", file)
+	// Use "--" separator to prevent file argument from being interpreted as an option
+	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", "--", file)
 	cmd.Dir = repoPath
 	output, err := cmd.Output()
 	if err != nil {
