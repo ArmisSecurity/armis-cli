@@ -60,7 +60,14 @@ type sarifResult struct {
 }
 
 type sarifResultProperties struct {
-	Severity string `json:"severity"`
+	Severity    string   `json:"severity"`
+	Type        string   `json:"type,omitempty"`
+	CodeSnippet string   `json:"codeSnippet,omitempty"`
+	CVEs        []string `json:"cves,omitempty"`
+	CWEs        []string `json:"cwes,omitempty"`
+	Package     string   `json:"package,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	FixVersion  string   `json:"fixVersion,omitempty"`
 }
 
 type sarifMessage struct {
@@ -138,8 +145,17 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	return rules, ruleIndexMap
 }
 
+// maxSarifResultsCapacity is the maximum initial capacity for SARIF results slice
+// to prevent resource exhaustion from extremely large finding lists (CWE-770).
+const maxSarifResultsCapacity = 10000
+
 func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int) []sarifResult {
-	results := make([]sarifResult, 0, len(findings))
+	// Cap the initial capacity to prevent excessive memory allocation (CWE-770)
+	capacity := len(findings)
+	if capacity > maxSarifResultsCapacity {
+		capacity = maxSarifResultsCapacity
+	}
+	results := make([]sarifResult, 0, capacity)
 
 	for _, finding := range findings {
 		result := sarifResult{
@@ -150,7 +166,14 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 				Text: finding.Title + ": " + finding.Description,
 			},
 			Properties: &sarifResultProperties{
-				Severity: string(finding.Severity),
+				Severity:    string(finding.Severity),
+				Type:        string(finding.Type),
+				CodeSnippet: util.MaskSecretInLine(finding.CodeSnippet), // Defense-in-depth: always sanitize
+				CVEs:        finding.CVEs,
+				CWEs:        finding.CWEs,
+				Package:     finding.Package,
+				Version:     finding.Version,
+				FixVersion:  finding.FixVersion,
 			},
 		}
 
