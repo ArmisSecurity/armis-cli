@@ -50,6 +50,10 @@ inputs:
     description: 'Comma-separated list of file paths to scan (relative to repository root)'
     required: false
     default: ''
+  build-from-source:
+    description: 'Build CLI from source instead of downloading release (for testing)'
+    required: false
+    default: 'false'
 
 outputs:
   results:
@@ -62,7 +66,24 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install Armis CLI
+    - name: Setup Go
+      if: inputs.build-from-source == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+
+    - name: Build Armis CLI from source
+      if: inputs.build-from-source == 'true'
+      shell: bash
+      run: |
+        echo "Building Armis CLI from source..."
+        go build -o armis-cli ./cmd/armis-cli
+        mkdir -p "$HOME/.local/bin"
+        mv armis-cli "$HOME/.local/bin/"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Install Armis CLI from release
+      if: inputs.build-from-source != 'true'
       shell: bash
       run: |
         echo "Installing Armis CLI..."

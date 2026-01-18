@@ -39,6 +39,10 @@ on:
         description: 'Comma-separated list of file paths to scan (relative to repository root)'
         type: string
         default: ''
+      build-from-source:
+        description: 'Build CLI from source instead of downloading release (for testing)'
+        type: boolean
+        default: true
     secrets:
       api-token:
         description: 'Armis API token for authentication'
@@ -78,6 +82,7 @@ jobs:
           image-tarball: ${{ inputs.image-tarball }}
           scan-timeout: ${{ inputs.scan-timeout }}
           include-files: ${{ inputs.include-files }}
+          build-from-source: ${{ inputs.build-from-source }}
         continue-on-error: true
 
       - name: Ensure SARIF exists
