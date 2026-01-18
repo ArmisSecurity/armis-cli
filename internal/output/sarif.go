@@ -145,8 +145,17 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	return rules, ruleIndexMap
 }
 
+// maxSarifResultsCapacity is the maximum initial capacity for SARIF results slice
+// to prevent resource exhaustion from extremely large finding lists (CWE-770).
+const maxSarifResultsCapacity = 10000
+
 func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int) []sarifResult {
-	results := make([]sarifResult, 0, len(findings))
+	// Cap the initial capacity to prevent excessive memory allocation (CWE-770)
+	capacity := len(findings)
+	if capacity > maxSarifResultsCapacity {
+		capacity = maxSarifResultsCapacity
+	}
+	results := make([]sarifResult, 0, capacity)
 
 	for _, finding := range findings {
 		result := sarifResult{

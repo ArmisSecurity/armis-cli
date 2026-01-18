@@ -53,10 +53,26 @@ func (fl *FileList) addFile(path string) error {
 
 	// Convert absolute paths to relative
 	if filepath.IsAbs(path) {
-		// Check if absolute path is within repo root before converting
-		if !strings.HasPrefix(path, fl.repoRoot+string(filepath.Separator)) && path != fl.repoRoot {
+		// Security: Resolve symlinks to prevent path traversal attacks (CWE-22).
+		// Using filepath.EvalSymlinks ensures we compare actual filesystem paths,
+		// preventing symlink-based escapes from the repository root.
+		evalPath, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			// Path doesn't exist yet - fall back to Clean for normalization
+			evalPath = filepath.Clean(path)
+		}
+		evalRoot, err := filepath.EvalSymlinks(fl.repoRoot)
+		if err != nil {
+			evalRoot = filepath.Clean(fl.repoRoot)
+		}
+
+		// Use filepath.Rel to check containment - it returns an error or
+		// a path starting with ".." if the path is outside the root
+		relCheck, err := filepath.Rel(evalRoot, evalPath)
+		if err != nil || strings.HasPrefix(relCheck, "..") {
 			return fmt.Errorf("absolute path %q is outside repository root %q", path, fl.repoRoot)
 		}
+
 		rel, err := filepath.Rel(fl.repoRoot, path)
 		if err != nil {
 			return fmt.Errorf("cannot make path relative to repo: %s", path)
