@@ -33,6 +33,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	includeFiles          *FileList
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -52,6 +53,12 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithIncludeFiles sets a specific list of files to scan instead of the entire directory.
+func (s *Scanner) WithIncludeFiles(fl *FileList) *Scanner {
+	s.includeFiles = fl
 	return s
 }
 
@@ -76,21 +83,55 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	ignoreMatcher, err := LoadIgnorePatterns(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
-	}
+	var size int64
+	var tarFunc func() error
+	var ignoreMatcher *IgnoreMatcher
 
-	size, err := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+	pr, pw := io.Pipe()
+
+	if s.includeFiles != nil {
+		// Targeted file scanning mode - scan only specified files
+		existing, warnings := s.includeFiles.ValidateExistence()
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+
+		if len(existing) == 0 {
+			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
+		}
+
+		var err error
+		size, err = calculateFilesSize(absPath, existing)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate files size: %w", err)
+		}
+
+		tarFunc = func() error {
+			defer pw.Close() //nolint:errcheck // signals EOF to reader
+			return s.tarGzFiles(absPath, existing, pw)
+		}
+	} else {
+		// Full directory scanning mode (existing behavior)
+		var err error
+		ignoreMatcher, err = LoadIgnorePatterns(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+		}
+
+		size, err = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+		}
+
+		tarFunc = func() error {
+			defer pw.Close() //nolint:errcheck // signals EOF to reader
+			return s.tarGzDirectory(absPath, pw, ignoreMatcher)
+		}
 	}
 
 	if size > MaxRepoSize {
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
 	}
-
-	pr, pw := io.Pipe()
 
 	spinner := progress.NewSpinnerWithContext(ctx, "Creating a compressed archive...", s.noProgress)
 	spinner.Start()
@@ -98,8 +139,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	errChan := make(chan error, 1)
 	go func() {
-		defer pw.Close() //nolint:errcheck // signals EOF to reader
-		errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
+		errChan <- tarFunc()
 	}()
 
 	time.Sleep(500 * time.Millisecond)
@@ -220,6 +260,94 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 
 		return nil
 	})
+}
+
+func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) (err error) {
+	gzWriter := gzip.NewWriter(writer)
+	defer func() {
+		if closeErr := gzWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	tarWriter := tar.NewWriter(gzWriter)
+	defer func() {
+		if closeErr := tarWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	filesWritten := 0
+	for _, relPath := range files {
+		absPath := filepath.Join(repoRoot, relPath)
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			// Skip files that don't exist (may have been deleted)
+			fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", relPath, err)
+			continue
+		}
+
+		// Skip directories - we only handle files
+		if info.IsDir() {
+			continue
+		}
+
+		// Skip symlinks for security
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			continue
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+
+		// Use forward slashes for tar paths
+		header.Name = filepath.ToSlash(relPath)
+
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		file, err := os.Open(absPath) // #nosec G304 - path is validated via SafeJoinPath
+		if err != nil {
+			return err
+		}
+
+		_, copyErr := io.Copy(tarWriter, file)
+		closeErr := file.Close()
+
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		filesWritten++
+	}
+
+	if filesWritten == 0 {
+		return fmt.Errorf("no files were added to archive")
+	}
+
+	return nil
+}
+
+func calculateFilesSize(repoRoot string, files []string) (int64, error) {
+	var size int64
+	for _, relPath := range files {
+		absPath := filepath.Join(repoRoot, relPath)
+		info, err := os.Stat(absPath)
+		if err != nil {
+			continue // Skip non-existent files
+		}
+		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			size += info.Size()
+		}
+	}
+	return size, nil
 }
 
 func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatcher) (int64, error) {

@@ -46,6 +46,10 @@ inputs:
     description: 'Scan timeout in minutes'
     required: false
     default: '60'
+  include-files:
+    description: 'Comma-separated list of file paths to scan (relative to repository root)'
+    required: false
+    default: ''
 
 outputs:
   results:
@@ -76,6 +80,7 @@ runs:
       env:
         ARMIS_API_TOKEN: ${{ inputs.api-token }}
         ARMIS_TENANT_ID: ${{ inputs.tenant-id }}
+        INCLUDE_FILES: ${{ inputs.include-files }}
       run: |
         set +e
         
@@ -95,7 +100,11 @@ runs:
         if [ "${{ inputs.scan-type }}" = "image" ] && [ -n "${{ inputs.image-tarball }}" ]; then
           SCAN_CMD="$SCAN_CMD --tarball ${{ inputs.image-tarball }}"
         fi
-        
+
+        if [ -n "$INCLUDE_FILES" ]; then
+          SCAN_CMD="$SCAN_CMD --include-files \"$INCLUDE_FILES\""
+        fi
+
         if [ -n "${{ inputs.output-file }}" ]; then
           eval $SCAN_CMD > "${{ inputs.output-file }}"
           SCAN_EXIT_CODE=$?

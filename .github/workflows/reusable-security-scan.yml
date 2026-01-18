@@ -35,6 +35,10 @@ on:
         description: 'Scan timeout in minutes'
         type: number
         default: 60
+      include-files:
+        description: 'Comma-separated list of file paths to scan (relative to repository root)'
+        type: string
+        default: ''
     secrets:
       api-token:
         description: 'Armis API token for authentication'
@@ -73,6 +77,7 @@ jobs:
           output-file: armis-results.sarif
           image-tarball: ${{ inputs.image-tarball }}
           scan-timeout: ${{ inputs.scan-timeout }}
+          include-files: ${{ inputs.include-files }}
         continue-on-error: true
 
       - name: Ensure SARIF exists

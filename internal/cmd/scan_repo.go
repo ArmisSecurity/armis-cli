@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
@@ -43,6 +44,19 @@ var scanRepoCmd = &cobra.Command{
 		client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+
+		// Handle --include-files flag for targeted file scanning
+		if len(includeFiles) > 0 {
+			absPath, err := filepath.Abs(repoPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path: %w", err)
+			}
+			fileList, err := repo.ParseFileList(absPath, includeFiles)
+			if err != nil {
+				return fmt.Errorf("invalid --include-files: %w", err)
+			}
+			scanner = scanner.WithIncludeFiles(fileList)
+		}
 
 		ctx, cancel := NewSignalContext()
 		defer cancel()
