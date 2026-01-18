@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 06:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
   scan:
     uses: ./.github/workflows/reusable-security-scan.yml

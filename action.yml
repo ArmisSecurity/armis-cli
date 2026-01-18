@@ -76,42 +76,61 @@ runs:
       env:
         ARMIS_API_TOKEN: ${{ inputs.api-token }}
         ARMIS_TENANT_ID: ${{ inputs.tenant-id }}
+        SCAN_TYPE: ${{ inputs.scan-type }}
+        SCAN_TARGET: ${{ inputs.scan-target }}
+        OUTPUT_FORMAT: ${{ inputs.format }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        EXIT_CODE_VAL: ${{ inputs.exit-code }}
+        SCAN_TIMEOUT: ${{ inputs.scan-timeout }}
+        NO_PROGRESS: ${{ inputs.no-progress }}
+        IMAGE_TARBALL: ${{ inputs.image-tarball }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
       run: |
         set +e
-        
-        SCAN_CMD="armis-cli scan ${{ inputs.scan-type }} ${{ inputs.scan-target }}"
-        SCAN_CMD="$SCAN_CMD --tenant-id ${{ inputs.tenant-id }}"
-        SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
-        if [ -n "${{ inputs.fail-on }}" ]; then
-          SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
-        fi
-        SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
-        SCAN_CMD="$SCAN_CMD --scan-timeout ${{ inputs.scan-timeout }}"
 
-        if [ "${{ inputs.no-progress }}" = "true" ]; then
-          SCAN_CMD="$SCAN_CMD --no-progress"
+        # Validate scan-type to prevent injection
+        if [[ "$SCAN_TYPE" != "repo" && "$SCAN_TYPE" != "image" ]]; then
+          echo "Error: Invalid scan-type '$SCAN_TYPE'. Must be 'repo' or 'image'."
+          exit 1
         fi
-        
-        if [ "${{ inputs.scan-type }}" = "image" ] && [ -n "${{ inputs.image-tarball }}" ]; then
-          SCAN_CMD="$SCAN_CMD --tarball ${{ inputs.image-tarball }}"
+
+        # Build command arguments array for safe execution
+        SCAN_ARGS=("scan" "$SCAN_TYPE" "$SCAN_TARGET")
+        SCAN_ARGS+=("--tenant-id" "$ARMIS_TENANT_ID")
+        SCAN_ARGS+=("--format" "$OUTPUT_FORMAT")
+
+        if [ -n "$FAIL_ON" ]; then
+          SCAN_ARGS+=("--fail-on" "$FAIL_ON")
         fi
-        
-        if [ -n "${{ inputs.output-file }}" ]; then
-          eval $SCAN_CMD > "${{ inputs.output-file }}"
+
+        SCAN_ARGS+=("--exit-code" "$EXIT_CODE_VAL")
+        SCAN_ARGS+=("--scan-timeout" "$SCAN_TIMEOUT")
+
+        if [ "$NO_PROGRESS" = "true" ]; then
+          SCAN_ARGS+=("--no-progress")
+        fi
+
+        if [ "$SCAN_TYPE" = "image" ] && [ -n "$IMAGE_TARBALL" ]; then
+          SCAN_ARGS+=("--tarball" "$IMAGE_TARBALL")
+        fi
+
+        # Execute command safely without eval
+        if [ -n "$OUTPUT_FILE" ]; then
+          armis-cli "${SCAN_ARGS[@]}" > "$OUTPUT_FILE"
           SCAN_EXIT_CODE=$?
-          SCAN_RESULTS=$(cat "${{ inputs.output-file }}")
+          SCAN_RESULTS=$(cat "$OUTPUT_FILE")
         else
-          SCAN_RESULTS=$(eval $SCAN_CMD)
+          SCAN_RESULTS=$(armis-cli "${SCAN_ARGS[@]}")
           SCAN_EXIT_CODE=$?
         fi
-        
+
         echo "exit-code=$SCAN_EXIT_CODE" >> $GITHUB_OUTPUT
-        
+
         # For multiline output, use heredoc
         echo "results<<EOF" >> $GITHUB_OUTPUT
         echo "$SCAN_RESULTS" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-        
+
         exit $SCAN_EXIT_CODE
 
     - name: Upload SARIF Results

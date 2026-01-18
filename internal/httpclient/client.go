@@ -106,5 +106,12 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
+	// Defensive check: resp should never be nil at this point since operation
+	// returned nil error only after a successful request with resp assigned.
+	// This check guards against potential future code changes.
+	if resp == nil {
+		return nil, fmt.Errorf("unexpected nil response after successful operation")
+	}
+
 	return resp, nil
 }

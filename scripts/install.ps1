@@ -102,7 +102,8 @@ function Main {
 
     # After normalization, verify no ".." segments remain
     # GetFullPath should resolve all "..", but we double-check for defense-in-depth
-    if ($InstallDir -match '\\\.\.\\|\\\.\.($)') {
+    # Pattern matches ".." as a complete path segment (between backslashes or at boundaries)
+    if ($InstallDir -match '(^|\\)\.\.($|\\)') {
         Write-Error "Invalid install directory: path traversal detected after normalization"
         exit 1
     }
@@ -124,7 +125,8 @@ function Main {
     }
     
     $archiveName = "armis-cli-windows-$arch.zip"
-    $tmpDir = Join-Path $env:TEMP "armis-cli-install-$(Get-Random)"
+    # Use GUID for cryptographically secure random directory name
+    $tmpDir = Join-Path $env:TEMP "armis-cli-install-$([guid]::NewGuid().ToString())"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     
     try {

@@ -1328,7 +1328,10 @@ func TestScan(t *testing.T) {
 
 		// Create API client pointing to mock server
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 
 		// Create scanner with mock client
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
@@ -1356,10 +1359,13 @@ func TestScan(t *testing.T) {
 
 	t.Run("fails for non-existent directory", func(t *testing.T) {
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.Scan(context.Background(), "/non/existent/path")
+		_, err = scanner.Scan(context.Background(), "/non/existent/path")
 		if err == nil {
 			t.Error("expected error for non-existent directory")
 		}
@@ -1375,10 +1381,13 @@ func TestScan(t *testing.T) {
 		}
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.Scan(context.Background(), tmpFile)
+		_, err = scanner.Scan(context.Background(), tmpFile)
 		if err == nil {
 			t.Error("expected error for file instead of directory")
 		}
@@ -1398,10 +1407,13 @@ func TestScan(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
-		_, err := scanner.Scan(context.Background(), tmpDir)
+		_, err = scanner.Scan(context.Background(), tmpDir)
 		if err == nil {
 			t.Error("expected error on upload failure")
 		}
@@ -1423,13 +1435,16 @@ func TestScan(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
-		_, err := scanner.Scan(ctx, tmpDir)
+		_, err = scanner.Scan(ctx, tmpDir)
 		if err == nil {
 			t.Error("expected error when context is cancelled")
 		}
