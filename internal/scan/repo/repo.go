@@ -317,10 +317,13 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 		if err != nil {
 			return err
 		}
-		defer file.Close() //nolint:errcheck // Read-only file, close error is non-critical
-
-		if _, err := io.Copy(tarWriter, file); err != nil {
-			return err
+		_, copyErr := io.Copy(tarWriter, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 		filesWritten++
 	}
