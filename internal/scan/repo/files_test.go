@@ -185,3 +185,39 @@ func TestFileListFiles(t *testing.T) {
 		t.Errorf("expected test.go, got %s", files[0])
 	}
 }
+
+func TestParseFileListMaxFilesLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Generate more files than the limit
+	files := make([]string, MaxFiles+1)
+	for i := range files {
+		files[i] = "file.go" // Doesn't need to exist for this test
+	}
+
+	_, err := ParseFileList(tmpDir, files)
+	if err == nil {
+		t.Errorf("expected error when exceeding MaxFiles limit (%d), got nil", MaxFiles)
+	}
+	if err != nil && !strings.Contains(err.Error(), "too many files") {
+		t.Errorf("expected error message to mention 'too many files', got: %s", err.Error())
+	}
+}
+
+func TestParseFileListAtMaxFilesLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Generate exactly MaxFiles files (should succeed)
+	files := make([]string, MaxFiles)
+	for i := range files {
+		files[i] = "file.go" // Doesn't need to exist for this test
+	}
+
+	fl, err := ParseFileList(tmpDir, files)
+	if err != nil {
+		t.Errorf("expected success at exactly MaxFiles limit (%d), got error: %v", MaxFiles, err)
+	}
+	if fl != nil && len(fl.Files()) != MaxFiles {
+		t.Errorf("expected %d files, got %d", MaxFiles, len(fl.Files()))
+	}
+}

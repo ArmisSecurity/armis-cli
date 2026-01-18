@@ -88,7 +88,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	var ignoreMatcher *IgnoreMatcher
 
 	pr, pw := io.Pipe()
-	defer pr.Close() //nolint:errcheck // Ensure pipe reader is closed to prevent resource leaks
+	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
+	// Error is intentionally ignored (nolint:errcheck) because:
+	// 1. PipeReader.Close() rarely returns meaningful errors
+	// 2. The critical close is PipeWriter.Close() which signals EOF to the reader
+	// 3. Any actual read errors will surface through the main error flow
+	defer pr.Close() //nolint:errcheck
 
 	if s.includeFiles != nil {
 		// Targeted file scanning mode - scan only specified files
@@ -261,6 +266,18 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 	})
 }
 
+// isPathContained verifies that absPath is contained within baseDir.
+// This is a defense-in-depth check to prevent path traversal attacks,
+// complementing the SafeJoinPath validation performed at file list parsing.
+func isPathContained(baseDir, absPath string) bool {
+	rel, err := filepath.Rel(baseDir, absPath)
+	if err != nil {
+		return false
+	}
+	// Path escapes if it starts with ".." or is absolute
+	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+}
+
 func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) (err error) {
 	gzWriter := gzip.NewWriter(writer)
 	defer func() {
@@ -279,9 +296,18 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 	// Note: The 'err' variables declared with := inside the loop shadow the named return value.
 	// This is intentional - direct returns like 'return copyErr' still set the named return,
 	// allowing the deferred close functions above to check if an error occurred.
+	//
+	// Note: TOCTOU between ValidateExistence and here is acceptable.
+	// Files that disappear are gracefully handled with warnings below.
 	filesWritten := 0
 	for _, relPath := range files {
 		absPath := filepath.Join(repoRoot, relPath)
+
+		// Defense-in-depth: verify path is within repo root
+		if !isPathContained(repoRoot, absPath) {
+			fmt.Fprintf(os.Stderr, "Warning: skipping path outside repository: %s\n", relPath)
+			continue
+		}
 
 		info, err := os.Stat(absPath)
 		if err != nil {
@@ -339,6 +365,12 @@ func calculateFilesSize(repoRoot string, files []string) (int64, error) {
 	var size int64
 	for _, relPath := range files {
 		absPath := filepath.Join(repoRoot, relPath)
+
+		// Defense-in-depth: verify path is within repo root
+		if !isPathContained(repoRoot, absPath) {
+			continue // Skip paths outside repository
+		}
+
 		info, err := os.Stat(absPath)
 		if err != nil {
 			continue // Skip non-existent files

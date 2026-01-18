@@ -159,7 +159,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			Properties: &sarifResultProperties{
 				Severity:    string(finding.Severity),
 				Type:        string(finding.Type),
-				CodeSnippet: finding.CodeSnippet,
+				CodeSnippet: util.MaskSecretInLine(finding.CodeSnippet), // Defense-in-depth: always sanitize
 				CVEs:        finding.CVEs,
 				CWEs:        finding.CWEs,
 				Package:     finding.Package,

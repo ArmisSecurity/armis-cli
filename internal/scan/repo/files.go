@@ -10,6 +10,10 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
+// MaxFiles is the maximum number of files that can be specified via --include-files.
+// This limit prevents resource exhaustion from extremely large file lists.
+const MaxFiles = 1000
+
 // FileList represents a list of files to be scanned.
 type FileList struct {
 	files    []string
@@ -35,6 +39,11 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 }
 
 func (fl *FileList) addFile(path string) error {
+	// Check file count limit to prevent resource exhaustion
+	if len(fl.files) >= MaxFiles {
+		return fmt.Errorf("too many files: maximum %d files allowed", MaxFiles)
+	}
+
 	if path == "" {
 		return nil // Skip empty paths
 	}
