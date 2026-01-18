@@ -149,6 +149,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		// to prevent resource leaks if context is already canceled.
 		select {
 		case <-ctx.Done():
+			pw.Close() // Close pipe to unblock StartIngest
 			errChan <- ctx.Err()
 			return
 		default:
