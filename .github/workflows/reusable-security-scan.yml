@@ -78,7 +78,7 @@ jobs:
 
       - name: Run Armis Security Scan
         id: armis_scan
-        uses: ArmisSecurity/armis-cli@v1
+        uses: ArmisSecurity/armis-cli@main
         with:
           scan-type: ${{ inputs.scan-type }}
           scan-target: ${{ inputs.scan-target }}
