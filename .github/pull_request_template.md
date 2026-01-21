@@ -1,6 +1,9 @@
-## Jira Ticket
+## Related Issue
+
+<!-- Link to Jira ticket or GitHub issue. Delete the one you don't use. -->
 
 * [PPSC-XXXX](https://your-jira.atlassian.net/browse/PPSC-XXXX)
+* Fixes #XXX
 
 ## Type of Change
 - [ ] Bug fix (non-breaking change which fixes an issue)
