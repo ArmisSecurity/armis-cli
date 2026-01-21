@@ -65,18 +65,60 @@ func TestSARIFFormatter_Format(t *testing.T) {
 		t.Fatalf("Expected 2 results, got %d", len(run.Results))
 	}
 
+	// Verify rules are generated
+	if len(run.Tool.Driver.Rules) != 2 {
+		t.Fatalf("Expected 2 rules, got %d", len(run.Tool.Driver.Rules))
+	}
+
+	// Verify first rule has security-severity
+	rule1 := run.Tool.Driver.Rules[0]
+	if rule1.ID != "finding-1" {
+		t.Errorf("Rule ID mismatch: got %s, want finding-1", rule1.ID)
+	}
+	if rule1.Properties == nil {
+		t.Fatal("Expected rule properties to be set")
+	}
+	if rule1.Properties.SecuritySeverity != "8.0" {
+		t.Errorf("Security severity mismatch: got %s, want 8.0 (HIGH)", rule1.Properties.SecuritySeverity)
+	}
+
+	// Verify second rule (CRITICAL)
+	rule2 := run.Tool.Driver.Rules[1]
+	if rule2.Properties.SecuritySeverity != "9.5" {
+		t.Errorf("Security severity mismatch: got %s, want 9.5 (CRITICAL)", rule2.Properties.SecuritySeverity)
+	}
+
 	result1 := run.Results[0]
 	if result1.RuleID != "finding-1" {
 		t.Errorf("RuleID mismatch: got %s, want finding-1", result1.RuleID)
 	}
+	if result1.RuleIndex != 0 {
+		t.Errorf("RuleIndex mismatch: got %d, want 0", result1.RuleIndex)
+	}
 	if result1.Level != "error" {
 		t.Errorf("Level mismatch: got %s, want error", result1.Level)
+	}
+	// Verify properties.severity is set
+	if result1.Properties == nil {
+		t.Fatal("Expected result properties to be set")
+	}
+	if result1.Properties.Severity != "HIGH" {
+		t.Errorf("Severity property mismatch: got %s, want HIGH", result1.Properties.Severity)
 	}
 	if len(result1.Locations) != 1 {
 		t.Fatalf("Expected 1 location, got %d", len(result1.Locations))
 	}
 	if result1.Locations[0].PhysicalLocation.ArtifactLocation.URI != "main.go" {
 		t.Errorf("File mismatch: got %s", result1.Locations[0].PhysicalLocation.ArtifactLocation.URI)
+	}
+
+	// Verify second result
+	result2 := run.Results[1]
+	if result2.RuleIndex != 1 {
+		t.Errorf("RuleIndex mismatch: got %d, want 1", result2.RuleIndex)
+	}
+	if result2.Properties.Severity != "CRITICAL" {
+		t.Errorf("Severity property mismatch: got %s, want CRITICAL", result2.Properties.Severity)
 	}
 }
 
@@ -98,6 +140,29 @@ func TestSeverityToSarifLevel(t *testing.T) {
 			result := severityToSarifLevel(tt.severity)
 			if result != tt.expected {
 				t.Errorf("severityToSarifLevel(%s) = %s, want %s", tt.severity, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSeverityToSecurityScore(t *testing.T) {
+	tests := []struct {
+		severity model.Severity
+		expected string
+	}{
+		{model.SeverityCritical, "9.5"},
+		{model.SeverityHigh, "8.0"},
+		{model.SeverityMedium, "5.5"},
+		{model.SeverityLow, "2.0"},
+		{model.SeverityInfo, "0.0"},
+		{model.Severity("UNKNOWN"), "0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.severity), func(t *testing.T) {
+			result := severityToSecurityScore(tt.severity)
+			if result != tt.expected {
+				t.Errorf("severityToSecurityScore(%s) = %s, want %s", tt.severity, result, tt.expected)
 			}
 		})
 	}

@@ -10,7 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,16 +40,23 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 }
 
 // NewClient creates a new API client with the given configuration.
-func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) *Client {
-	// Validate and warn about URL issues
+// Returns an error if the URL is invalid or uses non-HTTPS for non-localhost hosts.
+//
+// BREAKING CHANGE: This function now returns (*Client, error) instead of *Client.
+// Callers must handle the error return value. This change enforces URL validation
+// and HTTPS requirements at client creation time rather than at request time.
+func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) (*Client, error) {
+	// Validate URL
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: invalid base URL %q: %v - requests may fail\n", baseURL, err)
-	} else if parsedURL.Scheme != "https" {
-		// Warn about non-HTTPS URLs (except localhost) as credentials may be exposed
+		return nil, fmt.Errorf("invalid base URL %q: %w", baseURL, err)
+	}
+
+	// Enforce HTTPS for non-localhost hosts to protect credentials
+	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
-			fmt.Fprintf(os.Stderr, "Warning: using non-HTTPS URL %q - credentials may be transmitted insecurely\n", baseURL)
+			return nil, fmt.Errorf("HTTPS required for non-localhost URL %q to protect credentials", baseURL)
 		}
 	}
 
@@ -85,7 +91,7 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, o
 		opt(client)
 	}
 
-	return client
+	return client, nil
 }
 
 // IsDebug returns whether debug mode is enabled.
@@ -196,7 +202,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 // WaitForIngest polls until the ingestion is complete or times out.
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
-		timeout = 20 * time.Minute
+		timeout = 60 * time.Minute
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)

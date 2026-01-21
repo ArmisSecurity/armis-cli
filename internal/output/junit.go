@@ -107,6 +107,8 @@ func countFailures(findings []model.Finding) int {
 }
 
 // FormatWithOptions formats the scan result as JUnit XML with custom options.
+// Note: JUnit format does not currently use FormatOptions; options are accepted
+// for interface compatibility but are not applied to the output.
 func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, _ FormatOptions) error {
 	return f.Format(result, w)
 }

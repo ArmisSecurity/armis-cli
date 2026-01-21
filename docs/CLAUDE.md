@@ -56,7 +56,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 - Max repository size: 2GB (`repo.MaxRepoSize`)
 - Max image size: 5GB (`image.MaxImageSize`)
-- Default scan timeout: 20 minutes
+- Default scan timeout: 60 minutes
 - Default upload timeout: 10 minutes
 - Page limit range: 1-1000 (default 500)
 

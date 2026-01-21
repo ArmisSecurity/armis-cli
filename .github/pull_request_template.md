@@ -1,44 +1,53 @@
-## Description
+## Related Issue
 
-Brief description of the changes in this PR.
+<!-- Link to Jira ticket or GitHub issue. Delete the one you don't use. -->
+
+* [PPSC-XXXX](https://your-jira.atlassian.net/browse/PPSC-XXXX)
+* Fixes #XXX
 
 ## Type of Change
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-- [ ] Performance improvement
-- [ ] Test coverage improvement
+* [ ] Bug fix (non-breaking change which fixes an issue)
+* [ ] New feature (non-breaking change which adds functionality)
+* [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+* [ ] Documentation update
+* [ ] Refactoring (no functional changes)
+* [ ] Performance improvement
 
-## Related Issues
+## Problem
 
-Fixes #(issue number)
+<!-- What problem does this PR solve? Why is this change needed? -->
+
+## Solution
+
+<!-- How does this PR solve the problem? What approach did you take? -->
 
 ## Testing
 
-Describe the tests you ran and how to reproduce them:
+### Automated Tests
 
-- [ ] Unit tests pass locally
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing performed
+* [ ] Unit tests added/updated
+* [ ] Integration tests added/updated
+* [ ] All tests passing locally
+
+### Manual Testing
+
+<!-- How did you verify this works? Steps to reproduce -->
+
+## Reviewer Notes
+
+<!-- Anything specific reviewers should focus on? -->
+<!-- Any trade-offs, technical debt, or follow-up work? -->
 
 ## Checklist
 
-- [ ] My code follows the project's code style
-- [ ] I have performed a self-review of my code
-- [ ] I have commented my code where necessary
-- [ ] I have updated the documentation accordingly
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published
+* [ ] Code follows project style guidelines
+* [ ] Pre-commit hooks pass
+* [ ] Self-review performed
+* [ ] Documentation updated (if needed)
+* [ ] Breaking changes documented (if applicable)
+* [ ] No new warnings generated
 
 ## Screenshots (if applicable)
 
-Add screenshots to help explain your changes.
-
-## Additional Notes
-
-Any additional information that reviewers should know.
+<!-- Add screenshots to help explain visual changes -->

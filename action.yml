@@ -45,7 +45,15 @@ inputs:
   scan-timeout:
     description: 'Scan timeout in minutes'
     required: false
-    default: '20'
+    default: '60'
+  include-files:
+    description: 'Comma-separated list of file paths to scan (relative to repository root)'
+    required: false
+    default: ''
+  build-from-source:
+    description: 'Build CLI from source instead of downloading release (for testing)'
+    required: false
+    default: 'false'
 
 outputs:
   results:
@@ -58,11 +66,80 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install Armis CLI
+    - name: Setup Go
+      if: inputs.build-from-source == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+
+    - name: Build Armis CLI from source
+      if: inputs.build-from-source == 'true'
+      shell: bash
+      run: |
+        echo "Building Armis CLI from source..."
+        go build -o armis-cli ./cmd/armis-cli
+        mkdir -p "$HOME/.local/bin"
+        mv armis-cli "$HOME/.local/bin/"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Install Armis CLI from release
+      if: inputs.build-from-source != 'true'
       shell: bash
       run: |
         echo "Installing Armis CLI..."
-        curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+
+        # Detect OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        case "$OS" in
+          linux*)  OS="linux" ;;
+          darwin*) OS="darwin" ;;
+          *)       echo "Error: Unsupported OS: $OS"; exit 1 ;;
+        esac
+
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64|amd64) ARCH="amd64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+          *)            echo "Error: Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+
+        # Download binary directly from GitHub releases
+        REPO="ArmisSecurity/armis-cli"
+        ARCHIVE_NAME="armis-cli-${OS}-${ARCH}.tar.gz"
+        CHECKSUMS_NAME="armis-cli-checksums.txt"
+        BASE_URL="https://github.com/${REPO}/releases/latest/download"
+
+        TMP_DIR=$(mktemp -d)
+        trap 'rm -rf "$TMP_DIR"' EXIT
+
+        echo "Downloading $ARCHIVE_NAME..."
+        curl -fsSL "${BASE_URL}/${ARCHIVE_NAME}" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+        curl -fsSL "${BASE_URL}/${CHECKSUMS_NAME}" -o "${TMP_DIR}/${CHECKSUMS_NAME}"
+
+        # Verify checksum
+        echo "Verifying checksum..."
+        cd "$TMP_DIR"
+        EXPECTED=$(grep " ${ARCHIVE_NAME}$" "$CHECKSUMS_NAME" | awk '{print $1}')
+        if command -v sha256sum > /dev/null 2>&1; then
+          ACTUAL=$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')
+        else
+          ACTUAL=$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')
+        fi
+
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "Error: Checksum verification failed!"
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+          exit 1
+        fi
+        echo "Checksum verified successfully"
+
+        # Extract and install
+        tar -xzf "$ARCHIVE_NAME"
+        mkdir -p "$HOME/.local/bin"
+        mv armis-cli "$HOME/.local/bin/"
+        chmod +x "$HOME/.local/bin/armis-cli"
+        echo "Armis CLI installed successfully"
         echo "$HOME/.local/bin" >> $GITHUB_PATH
 
     - name: Verify Installation
@@ -76,42 +153,66 @@ runs:
       env:
         ARMIS_API_TOKEN: ${{ inputs.api-token }}
         ARMIS_TENANT_ID: ${{ inputs.tenant-id }}
+        SCAN_TYPE: ${{ inputs.scan-type }}
+        SCAN_TARGET: ${{ inputs.scan-target }}
+        OUTPUT_FORMAT: ${{ inputs.format }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        EXIT_CODE_VAL: ${{ inputs.exit-code }}
+        SCAN_TIMEOUT: ${{ inputs.scan-timeout }}
+        NO_PROGRESS: ${{ inputs.no-progress }}
+        IMAGE_TARBALL: ${{ inputs.image-tarball }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+        INCLUDE_FILES: ${{ inputs.include-files }}
       run: |
         set +e
-        
-        SCAN_CMD="armis-cli scan ${{ inputs.scan-type }} ${{ inputs.scan-target }}"
-        SCAN_CMD="$SCAN_CMD --tenant-id ${{ inputs.tenant-id }}"
-        SCAN_CMD="$SCAN_CMD --format ${{ inputs.format }}"
-        if [ -n "${{ inputs.fail-on }}" ]; then
-          SCAN_CMD="$SCAN_CMD --fail-on ${{ inputs.fail-on }}"
-        fi
-        SCAN_CMD="$SCAN_CMD --exit-code ${{ inputs.exit-code }}"
-        SCAN_CMD="$SCAN_CMD --scan-timeout ${{ inputs.scan-timeout }}"
 
-        if [ "${{ inputs.no-progress }}" = "true" ]; then
-          SCAN_CMD="$SCAN_CMD --no-progress"
+        # Validate scan-type to prevent injection
+        if [[ "$SCAN_TYPE" != "repo" && "$SCAN_TYPE" != "image" ]]; then
+          echo "Error: Invalid scan-type '$SCAN_TYPE'. Must be 'repo' or 'image'."
+          exit 1
         fi
-        
-        if [ "${{ inputs.scan-type }}" = "image" ] && [ -n "${{ inputs.image-tarball }}" ]; then
-          SCAN_CMD="$SCAN_CMD --tarball ${{ inputs.image-tarball }}"
+
+        # Build command arguments array for safe execution
+        SCAN_ARGS=("scan" "$SCAN_TYPE" "$SCAN_TARGET")
+        SCAN_ARGS+=("--tenant-id" "$ARMIS_TENANT_ID")
+        SCAN_ARGS+=("--format" "$OUTPUT_FORMAT")
+
+        if [ -n "$FAIL_ON" ]; then
+          SCAN_ARGS+=("--fail-on" "$FAIL_ON")
         fi
-        
-        if [ -n "${{ inputs.output-file }}" ]; then
-          eval $SCAN_CMD > "${{ inputs.output-file }}"
+
+        SCAN_ARGS+=("--exit-code" "$EXIT_CODE_VAL")
+        SCAN_ARGS+=("--scan-timeout" "$SCAN_TIMEOUT")
+
+        if [ "$NO_PROGRESS" = "true" ]; then
+          SCAN_ARGS+=("--no-progress")
+        fi
+
+        if [ "$SCAN_TYPE" = "image" ] && [ -n "$IMAGE_TARBALL" ]; then
+          SCAN_ARGS+=("--tarball" "$IMAGE_TARBALL")
+        fi
+
+        if [ -n "$INCLUDE_FILES" ]; then
+          SCAN_ARGS+=("--include-files" "$INCLUDE_FILES")
+        fi
+
+        # Execute command safely without eval
+        if [ -n "$OUTPUT_FILE" ]; then
+          armis-cli "${SCAN_ARGS[@]}" > "$OUTPUT_FILE"
           SCAN_EXIT_CODE=$?
-          SCAN_RESULTS=$(cat "${{ inputs.output-file }}")
+          SCAN_RESULTS=$(cat "$OUTPUT_FILE")
         else
-          SCAN_RESULTS=$(eval $SCAN_CMD)
+          SCAN_RESULTS=$(armis-cli "${SCAN_ARGS[@]}")
           SCAN_EXIT_CODE=$?
         fi
-        
+
         echo "exit-code=$SCAN_EXIT_CODE" >> $GITHUB_OUTPUT
-        
+
         # For multiline output, use heredoc
         echo "results<<EOF" >> $GITHUB_OUTPUT
         echo "$SCAN_RESULTS" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-        
+
         exit $SCAN_EXIT_CODE
 
     - name: Upload SARIF Results

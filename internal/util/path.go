@@ -4,6 +4,7 @@ package util
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -38,7 +39,25 @@ func SanitizePath(p string) (string, error) {
 // SafeJoinPath joins basePath and relativePath, ensuring the result
 // stays within basePath. Returns an error if relativePath attempts
 // path traversal or is an absolute path.
+//
+// BREAKING CHANGE: This function now requires basePath to be an existing directory.
+// Callers that previously used this to construct paths for directories they planned
+// to create will need to ensure the directory exists first, or use filepath.Join
+// with manual validation for the directory creation use case.
+//
+// This change was made to prevent TOCTOU (Time-of-Check-Time-of-Use) vulnerabilities
+// where a path could be validated before the directory exists and then exploited
+// after creation by a malicious symlink or directory structure.
 func SafeJoinPath(basePath, relativePath string) (string, error) {
+	// Verify base path is an existing directory
+	info, err := os.Stat(basePath)
+	if err != nil {
+		return "", fmt.Errorf("cannot access base path: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("base path must be a directory")
+	}
+
 	if relativePath == "" {
 		return "", errors.New("empty relative path")
 	}

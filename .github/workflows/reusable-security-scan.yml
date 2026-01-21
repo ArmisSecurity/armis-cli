@@ -34,7 +34,15 @@ on:
       scan-timeout:
         description: 'Scan timeout in minutes'
         type: number
-        default: 20
+        default: 60
+      include-files:
+        description: 'Comma-separated list of file paths to scan (relative to repository root)'
+        type: string
+        default: ''
+      build-from-source:
+        description: 'Build CLI from source instead of downloading release (for testing scanner changes)'
+        type: boolean
+        default: false
     secrets:
       api-token:
         description: 'Armis API token for authentication'
@@ -43,11 +51,19 @@ on:
         description: 'Tenant identifier for Armis Cloud'
         required: true
 
+# Top-level permissions define the maximum permissions available to this workflow.
+# Job-level permissions further restrict as needed.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+
 jobs:
   security-scan:
     name: Armis Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 135
     permissions:
       contents: read
       security-events: write
@@ -73,6 +89,8 @@ jobs:
           output-file: armis-results.sarif
           image-tarball: ${{ inputs.image-tarball }}
           scan-timeout: ${{ inputs.scan-timeout }}
+          include-files: ${{ inputs.include-files }}
+          build-from-source: ${{ inputs.build-from-source }}
         continue-on-error: true
 
       - name: Ensure SARIF exists
@@ -93,16 +111,16 @@ jobs:
             const sarif = JSON.parse(fs.readFileSync('armis-results.sarif', 'utf8'));
             const results = sarif.runs?.[0]?.results || [];
 
-            // Count by severity
+            // Count by severity - read from properties.severity if available
             const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
             for (const r of results) {
-              const level = r.level || 'warning';
-              const severity = {
-                'error': 'CRITICAL',
-                'warning': 'HIGH',
-                'note': 'MEDIUM',
-                'none': 'LOW'
-              }[level] || 'INFO';
+              // Prefer properties.severity (set by armis-cli), fallback to level mapping
+              const severity = r.properties?.severity || {
+                'error': 'HIGH',
+                'warning': 'MEDIUM',
+                'note': 'LOW',
+                'none': 'INFO'
+              }[r.level || 'warning'] || 'INFO';
               counts[severity]++;
             }
             const total = results.length;
@@ -121,7 +139,76 @@ jobs:
             if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
             if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
             body += `\n**Total: ${total}**\n`;
-            body += `\n<details><summary>View full results</summary>\n\nSee the Security tab or download the \`armis-security-results\` artifact for the complete SARIF report.\n</details>`;
+
+            // Build detailed findings section
+            if (total > 0) {
+              body += `\n<details><summary>View all ${total} findings</summary>\n\n`;
+
+              // Group results by severity
+              const severityOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+              const severityEmoji = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵', INFO: '⚪' };
+
+              for (const severity of severityOrder) {
+                const severityResults = results.filter(r =>
+                  (r.properties?.severity || 'INFO') === severity
+                );
+
+                if (severityResults.length > 0) {
+                  body += `### ${severityEmoji[severity]} ${severity} (${severityResults.length})\n\n`;
+
+                  for (const r of severityResults) {
+                    const file = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || '';
+                    const line = r.locations?.[0]?.physicalLocation?.region?.startLine || '';
+                    const location = file ? (line ? `${file}:${line}` : file) : 'Unknown location';
+
+                    // Parse title and description from message
+                    const msgParts = (r.message?.text || '').split(': ');
+                    const title = msgParts[0] || r.ruleId;
+                    const description = msgParts.slice(1).join(': ') || '';
+
+                    body += `<details><summary><code>${r.ruleId}</code> - ${title}</summary>\n\n`;
+                    body += `**Location:** \`${location}\`\n\n`;
+
+                    if (description) {
+                      body += `${description}\n\n`;
+                    }
+
+                    // Code snippet
+                    const snippet = r.properties?.codeSnippet;
+                    if (snippet) {
+                      body += '```\n' + snippet + '\n```\n\n';
+                    }
+
+                    // CVEs and CWEs
+                    const cves = r.properties?.cves || [];
+                    const cwes = r.properties?.cwes || [];
+                    if (cves.length > 0) {
+                      body += `**CVEs:** ${cves.join(', ')}\n\n`;
+                    }
+                    if (cwes.length > 0) {
+                      body += `**CWEs:** ${cwes.join(', ')}\n\n`;
+                    }
+
+                    // Package info
+                    const pkg = r.properties?.package;
+                    const version = r.properties?.version;
+                    const fixVersion = r.properties?.fixVersion;
+                    if (pkg) {
+                      let pkgInfo = `**Package:** ${pkg}`;
+                      if (version) pkgInfo += ` (${version})`;
+                      if (fixVersion) pkgInfo += ` → Fix: ${fixVersion}`;
+                      body += pkgInfo + '\n\n';
+                    }
+
+                    body += `</details>\n\n`;
+                  }
+                }
+              }
+
+              body += `</details>`;
+            } else {
+              body += `\n<details><summary>View full results</summary>\n\nNo security issues found.\n</details>`;
+            }
 
             // Find and update existing comment, or create new
             const { data: comments } = await github.rest.issues.listComments({

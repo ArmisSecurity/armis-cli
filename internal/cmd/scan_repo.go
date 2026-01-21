@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
@@ -40,9 +41,28 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		client := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		if err != nil {
+			return fmt.Errorf("failed to create API client: %w", err)
+		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+
+		// Handle --include-files flag for targeted file scanning
+		// Security: Path traversal protection is enforced by ParseFileList which
+		// validates all paths using SafeJoinPath to ensure they don't escape the
+		// repository root. Invalid or traversal paths are rejected with an error.
+		if len(includeFiles) > 0 {
+			absPath, err := filepath.Abs(repoPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path: %w", err)
+			}
+			fileList, err := repo.ParseFileList(absPath, includeFiles)
+			if err != nil {
+				return fmt.Errorf("invalid --include-files: %w", err)
+			}
+			scanner = scanner.WithIncludeFiles(fileList)
+		}
 
 		ctx, cancel := NewSignalContext()
 		defer cancel()

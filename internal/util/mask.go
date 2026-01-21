@@ -12,24 +12,34 @@ import (
 // IMPORTANT: Patterns are ordered from most specific to least specific to prevent
 // early matches by generic patterns (e.g., "secret" in password patterns matching
 // before the more specific AWS credentials pattern).
+// Assignment operators supported: =, :, :=, =>
+// The regex (?::=|[:=]>?) matches := first, then falls back to :, =, =>, or :>
 var secretPatterns = []*regexp.Regexp{
 	// AWS credentials (most specific - matches aws_secret_access_key before generic "secret")
-	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*[:=]\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),
+	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),
 	// Private keys (detect key content; require 16+ chars to reduce false positives)
-	regexp.MustCompile(`(?i)(private[-_]?key|privatekey)\s*[:=]\s*['"]?([^\s'"]{16,})['"]?`),
+	regexp.MustCompile(`(?i)(private[-_]?key|privatekey|ssh[-_]?key|ssh[-_]?private[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{16,})['"]?`),
+	// OAuth client secrets
+	regexp.MustCompile(`(?i)(client[-_]?secret|client[-_]?id)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	// Database connection strings and passwords
+	regexp.MustCompile(`(?i)(database[-_]?url|db[-_]?password|db[-_]?pass|database[-_]?password)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{8,})['"]?`),
 	// Connection strings (require 10+ chars to reduce false positives)
-	regexp.MustCompile(`(?i)(connection[-_]?string|conn[-_]?str)\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(connection[-_]?string|conn[-_]?str)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{10,})['"]?`),
+	// Service-specific tokens (Slack, Discord, Stripe, etc.)
+	regexp.MustCompile(`(?i)(slack[-_]?token|discord[-_]?token|stripe[-_]?key|stripe[-_]?secret|twilio[-_]?auth|npm[-_]?token|pypi[-_]?token|github[-_]?token|gitlab[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
 	// API keys and tokens (require 10+ chars to avoid short non-secrets)
-	regexp.MustCompile(`(?i)(api[-_]?key|apikey|api_token|access[-_]?token|auth[-_]?token|bearer|token)\s*[:=]\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(api[-_]?key|apikey|api_token|access[-_]?token|auth[-_]?token|bearer|token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	// Signing and encryption keys
+	regexp.MustCompile(`(?i)(signing[-_]?key|encryption[-_]?key|secret[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{16,})['"]?`),
 	// JWT tokens - header starts with eyJ (base64 of '{"'), payload and signature are any base64url
 	regexp.MustCompile(`(eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)`),
 	// Password patterns (require 8+ chars to reduce false positives)
-	regexp.MustCompile(`(?i)(password|passwd|pwd|secret)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?`),
+	regexp.MustCompile(`(?i)(password|passwd|pwd|secret)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{8,})['"]?`),
 	// Hex strings that look like secrets (32+ chars)
-	regexp.MustCompile(`(?i)(secret|key|hash)\s*[:=]\s*['"]?([A-Fa-f0-9]{32,})['"]?`),
+	regexp.MustCompile(`(?i)(secret|key|hash)\s*(?::=|[:=]>?)\s*['"]?([A-Fa-f0-9]{32,})['"]?`),
 	// Generic credentials (least specific) - uses word boundaries and 10-char minimum
 	// to reduce false positives on common variable names like 'authService' or 'credType'
-	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*[:=]\s*['"]?([^\s'"]{10,})['"]?`),
+	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{10,})['"]?`),
 }
 
 // commonLiterals contains values that should not be masked even if they match a pattern.

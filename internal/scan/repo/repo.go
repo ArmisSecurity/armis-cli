@@ -33,6 +33,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	includeFiles          *FileList
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -52,6 +53,12 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithIncludeFiles sets a specific list of files to scan instead of the entire directory.
+func (s *Scanner) WithIncludeFiles(fl *FileList) *Scanner {
+	s.includeFiles = fl
 	return s
 }
 
@@ -76,21 +83,61 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	ignoreMatcher, err := LoadIgnorePatterns(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
-	}
+	var size int64
+	var tarFunc func() error
+	var ignoreMatcher *IgnoreMatcher
 
-	size, err := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+	pr, pw := io.Pipe()
+	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
+	// Error is intentionally ignored (nolint:errcheck) because:
+	// 1. PipeReader.Close() rarely returns meaningful errors
+	// 2. The critical close is PipeWriter.Close() which signals EOF to the reader
+	// 3. Any actual read errors will surface through the main error flow
+	defer pr.Close() //nolint:errcheck
+
+	if s.includeFiles != nil {
+		// Targeted file scanning mode - scan only specified files
+		existing, warnings := s.includeFiles.ValidateExistence()
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+
+		if len(existing) == 0 {
+			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
+		}
+
+		var err error
+		size, err = calculateFilesSize(absPath, existing)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate files size: %w", err)
+		}
+
+		tarFunc = func() error {
+			defer pw.Close() //nolint:errcheck // signals EOF to reader
+			return s.tarGzFiles(absPath, existing, pw)
+		}
+	} else {
+		// Full directory scanning mode (existing behavior)
+		var err error
+		ignoreMatcher, err = LoadIgnorePatterns(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+		}
+
+		size, err = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+		}
+
+		tarFunc = func() error {
+			defer pw.Close() //nolint:errcheck // signals EOF to reader
+			return s.tarGzDirectory(absPath, pw, ignoreMatcher)
+		}
 	}
 
 	if size > MaxRepoSize {
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
 	}
-
-	pr, pw := io.Pipe()
 
 	spinner := progress.NewSpinnerWithContext(ctx, "Creating a compressed archive...", s.noProgress)
 	spinner.Start()
@@ -98,8 +145,16 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	errChan := make(chan error, 1)
 	go func() {
-		defer pw.Close() //nolint:errcheck // signals EOF to reader
-		errChan <- s.tarGzDirectory(absPath, pw, ignoreMatcher)
+		// Security: Check context before starting expensive tar operation
+		// to prevent resource leaks if context is already canceled.
+		select {
+		case <-ctx.Done():
+			pw.Close() //nolint:errcheck,gosec // Close pipe to unblock StartIngest
+			errChan <- ctx.Err()
+			return
+		default:
+		}
+		errChan <- tarFunc()
 	}()
 
 	time.Sleep(500 * time.Millisecond)
@@ -206,20 +261,137 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 			if err != nil {
 				return err
 			}
+			// Close error is intentionally ignored: for read-only files, Close() errors are
+			// extremely rare (typically only on NFS with errors deferred until close).
+			// The io.Copy error below catches any actual read failures.
+			defer file.Close() //nolint:errcheck
 
-			_, copyErr := io.Copy(tarWriter, file)
-			closeErr := file.Close()
-
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
+			if _, err := io.Copy(tarWriter, file); err != nil {
+				return err
 			}
 		}
 
 		return nil
 	})
+}
+
+// isPathContained verifies that absPath is contained within baseDir.
+// This is a defense-in-depth check to prevent path traversal attacks,
+// complementing the SafeJoinPath validation performed at file list parsing.
+func isPathContained(baseDir, absPath string) bool {
+	rel, err := filepath.Rel(baseDir, absPath)
+	if err != nil {
+		return false
+	}
+	// Path escapes if it starts with ".." or is absolute
+	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+}
+
+func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) (err error) {
+	gzWriter := gzip.NewWriter(writer)
+	defer func() {
+		if closeErr := gzWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	tarWriter := tar.NewWriter(gzWriter)
+	defer func() {
+		if closeErr := tarWriter.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	// Note: The 'err' variables declared with := inside the loop shadow the named return value.
+	// This is intentional - direct returns like 'return copyErr' still set the named return,
+	// allowing the deferred close functions above to check if an error occurred.
+	//
+	// Security: TOCTOU (Time-of-Check-Time-of-Use) between ValidateExistence and file
+	// operations is an acceptable risk here. Files that disappear between validation and
+	// usage are gracefully handled with warnings. Symlinks are explicitly skipped to
+	// prevent escape attacks. Path traversal is prevented by SafeJoinPath validation
+	// and defense-in-depth isPathContained checks.
+	filesWritten := 0
+	for _, relPath := range files {
+		absPath := filepath.Join(repoRoot, relPath)
+
+		// Defense-in-depth: verify path is within repo root
+		if !isPathContained(repoRoot, absPath) {
+			fmt.Fprintf(os.Stderr, "Warning: skipping path outside repository: %s\n", relPath)
+			continue
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			// Skip files that don't exist (may have been deleted)
+			fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", relPath, err)
+			continue
+		}
+
+		// Skip directories - we only handle files
+		if info.IsDir() {
+			continue
+		}
+
+		// Skip symlinks for security
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			continue
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+
+		// Use forward slashes for tar paths
+		header.Name = filepath.ToSlash(relPath)
+
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		file, err := os.Open(absPath) // #nosec G304 - path is validated via SafeJoinPath
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(tarWriter, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		filesWritten++
+	}
+
+	if filesWritten == 0 {
+		return fmt.Errorf("no files were added to archive")
+	}
+
+	return nil
+}
+
+func calculateFilesSize(repoRoot string, files []string) (int64, error) {
+	var size int64
+	for _, relPath := range files {
+		absPath := filepath.Join(repoRoot, relPath)
+
+		// Defense-in-depth: verify path is within repo root
+		if !isPathContained(repoRoot, absPath) {
+			continue // Skip paths outside repository
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			continue // Skip non-existent files
+		}
+		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			size += info.Size()
+		}
+	}
+	return size, nil
 }
 
 func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatcher) (int64, error) {

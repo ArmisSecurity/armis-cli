@@ -10,6 +10,7 @@ var (
 	uploadTimeout         int
 	includeNonExploitable bool
 	groupBy               string
+	includeFiles          []string
 )
 
 var scanCmd = &cobra.Command{
@@ -20,10 +21,11 @@ var scanCmd = &cobra.Command{
 
 func init() {
 	scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan (test files are excluded by default)")
-	scanCmd.PersistentFlags().IntVar(&scanTimeout, "scan-timeout", 20, "Maximum time in minutes to wait for scan analysis to complete")
+	scanCmd.PersistentFlags().IntVar(&scanTimeout, "scan-timeout", 60, "Maximum time in minutes to wait for scan analysis to complete")
 	scanCmd.PersistentFlags().IntVar(&uploadTimeout, "upload-timeout", 10, "Maximum time in minutes to wait for artifact upload to complete")
 	scanCmd.PersistentFlags().BoolVar(&includeNonExploitable, "include-non-exploitable", false, "Include findings marked as non-exploitable (only exploitable findings shown by default)")
 	scanCmd.PersistentFlags().StringVar(&groupBy, "group-by", "none", "Group findings by: none, cwe, severity, file")
+	scanCmd.PersistentFlags().StringSliceVar(&includeFiles, "include-files", nil, "Comma-separated list of file paths to include in scan (relative to repository root)")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}
