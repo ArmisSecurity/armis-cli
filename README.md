@@ -277,6 +277,8 @@ armis-cli scan repo ./my-app --format junit > results.xml
 
 ## CI/CD Integration
 
+For advanced patterns (PR scanning with changed files, scheduled scans, container image scanning) and other CI platforms, see the **[CI Integration Guide](docs/CI-INTEGRATION.md)**.
+
 ### GitHub Actions
 
 #### Option 1: Reusable Workflow (Recommended)
@@ -289,13 +291,16 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
 jobs:
   security-scan:
     uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     with:
-      pr-comment: true        # Post results as PR comment (default: true)
-      fail-on: CRITICAL       # Fail on severity level (default: CRITICAL)
-      upload-artifact: true   # Upload SARIF artifact (default: true)
+      fail-on: CRITICAL,HIGH
     secrets:
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
@@ -311,6 +316,8 @@ jobs:
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
 | `image-tarball` | string | | Path to image tarball (for image scans) |
+| `scan-timeout` | number | `60` | Scan timeout in minutes |
+| `include-files` | string | | Comma-separated file paths to scan (for targeted scanning) |
 
 **Required secrets:**
 - `api-token`: Armis API token for authentication
@@ -326,6 +333,9 @@ on: [push, pull_request]
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: ArmisSecurity/armis-cli@main
@@ -333,7 +343,13 @@ jobs:
           scan-type: repo
           api-token: ${{ secrets.ARMIS_API_TOKEN }}
           tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          format: sarif
+          output-file: results.sarif
           fail-on: HIGH,CRITICAL
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: results.sarif
 ```
 
 #### Option 3: Manual Installation
@@ -346,6 +362,9 @@ on: [push, pull_request]
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - name: Install Armis CLI
@@ -355,7 +374,15 @@ jobs:
         env:
           ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
         run: |
-          armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
+          armis-cli scan repo . \
+            --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
+            --format sarif \
+            --fail-on HIGH,CRITICAL \
+            > results.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: results.sarif
 ```
 
 ### GitLab CI
@@ -367,9 +394,10 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
   variables:
     ARMIS_API_TOKEN: $ARMIS_API_TOKEN
+    ARMIS_TENANT_ID: $ARMIS_TENANT_ID
 ```
 
 ### Jenkins
@@ -378,13 +406,14 @@ pipeline {
     agent any
     environment {
         ARMIS_API_TOKEN = credentials('armis-api-token')
+        ARMIS_TENANT_ID = credentials('armis-tenant-id')
     }
     stages {
         stage('Security Scan') {
             steps {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-                    armis-cli scan repo . --format junit > scan-results.xml
+                    armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format junit > scan-results.xml
                 '''
                 junit 'scan-results.xml'
             }
@@ -404,7 +433,7 @@ steps:
     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   displayName: 'Install Armis CLI'
 - script: |
-    armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --tenant-id "$(ARMIS_TENANT_ID)" --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
   env:
     ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
   displayName: 'Run Security Scan'
@@ -430,12 +459,13 @@ jobs:
       - run:
           name: Run Security Scan
           command: |
-            armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
+            armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on HIGH,CRITICAL
 workflows:
   version: 2
   scan:
     jobs:
-      - security-scan
+      - security-scan:
+          context: armis-credentials
 ```
 
 ### BitBucket Pipelines
@@ -448,7 +478,7 @@ pipelines:
         script:
           - apk add --no-cache curl bash
           - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-          - armis-cli scan repo . --format json --fail-on CRITICAL
+          - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
 ```
 
 ---
