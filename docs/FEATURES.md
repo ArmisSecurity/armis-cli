@@ -6,7 +6,7 @@
 
 The CLI now displays scan results in a clean, box-drawn dashboard format:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │  📊 SCAN SUMMARY                                            │
 ├─────────────────────────────────────────────────────────────┤
@@ -51,7 +51,7 @@ armis-cli scan repo . --group-by none
 
 Example grouped output:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ CWE: CWE-89                                                 │
 │ Count: 3                                                    │
@@ -66,12 +66,13 @@ SQL Injection vulnerability detected...
 
 When scanning a git repository, the CLI automatically shows who introduced each vulnerability:
 
-```
+```text
 Location:    internal/api/client.go:45
 Git Blame:   John Doe <j***@e***.com> (2024-11-15, abc1234)
 ```
 
 Features:
+
 - Automatically detects if directory is a git repository
 - Shows author, partially masked email, date, and commit SHA
 - Gracefully handles non-git directories
@@ -85,7 +86,7 @@ Exclude files and directories from scans using `.armisignore` files.
 
 Create a `.armisignore` file in your repository root:
 
-```
+```text
 # Exclude build outputs
 dist/
 build/
@@ -114,6 +115,7 @@ vendor/
 ### How It Works
 
 Files matching `.armisignore` patterns are excluded **before** creating the upload archive, reducing:
+
 - Upload time
 - Scan time
 - Bandwidth usage
@@ -128,6 +130,7 @@ armis-cli scan repo --help
 ```
 
 Flags include:
+
 - Clear descriptions of what each flag does
 - Default values
 - Valid options and ranges

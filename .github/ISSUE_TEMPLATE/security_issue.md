@@ -13,6 +13,7 @@ assignees: ''
 Please report security vulnerabilities by following the process in our [SECURITY.md](../../SECURITY.md) file.
 
 For responsible disclosure:
+
 1. Email security contact listed in SECURITY.md
 2. Include detailed description and reproduction steps
 3. Allow time for patch before public disclosure

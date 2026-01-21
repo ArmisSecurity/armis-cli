@@ -36,24 +36,28 @@ This document outlines the steps needed to complete the distribution setup for a
 You need to create two new repositories in the `armis` organization:
 
 #### Homebrew Tap Repository
+
 ```bash
 # Create repository: ArmisSecurity/homebrew-tap
 # This will be auto-populated by GoReleaser on each release
 ```
 
 **Repository Settings:**
+
 - Name: `homebrew-tap`
 - Description: "Homebrew formulae for Armis CLI tools"
 - Public repository
 - Initialize with README (optional)
 
 #### Scoop Bucket Repository
+
 ```bash
 # Create repository: ArmisSecurity/scoop-bucket
 # This will be auto-populated by GoReleaser on each release
 ```
 
 **Repository Settings:**
+
 - Name: `scoop-bucket`
 - Description: "Scoop bucket for Armis CLI tools"
 - Public repository
@@ -96,6 +100,7 @@ git push origin v1.0.0
 ```
 
 GoReleaser will automatically:
+
 - Build binaries for all platforms
 - Sign checksums with cosign
 - Create GitHub release with notes
@@ -107,39 +112,46 @@ GoReleaser will automatically:
 Once released, users can install via:
 
 ### Homebrew (macOS/Linux)
+
 ```bash
 brew install armis/tap/armis-cli
 ```
 
 ### Scoop (Windows)
+
 ```powershell
 scoop bucket add armis https://github.com/ArmisSecurity/scoop-bucket
 scoop install armis-cli
 ```
 
 ### Install Script (Linux/macOS)
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.sh | bash
 ```
 
 ### Install Script (Windows)
+
 ```powershell
 irm https://raw.githubusercontent.com/armis/armis-cli/main/scripts/install.ps1 | iex
 ```
 
 ### Go Install
+
 ```bash
 go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Manual Download
-Download from: https://github.com/ArmisSecurity/armis-cli/releases
+
+Download from: <https://github.com/ArmisSecurity/armis-cli/releases>
 
 ## 🔐 Signature Verification
 
 All releases are signed with cosign (keyless signing via GitHub OIDC).
 
 Users can verify downloads:
+
 ```bash
 # Download files
 curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
@@ -162,6 +174,7 @@ sha256sum --ignore-missing -c armis-cli-checksums.txt
 ### Cosign Signing Still Fails
 
 If you still see timeout errors:
+
 1. Check that `id-token: write` permission is set in the workflow
 2. Verify `COSIGN_YES` and `COSIGN_EXPERIMENTAL` are set
 3. Check GitHub Actions logs for detailed error messages
@@ -170,6 +183,7 @@ If you still see timeout errors:
 ### Homebrew/Scoop Updates Fail
 
 If GoReleaser can't push to tap/bucket repositories:
+
 1. Verify the repositories exist and are public
 2. Check that `GITHUB_TOKEN` has write access to those repos
 3. Review GoReleaser logs in GitHub Actions
@@ -177,6 +191,7 @@ If GoReleaser can't push to tap/bucket repositories:
 ### Module Import Issues
 
 If users report import issues:
+
 1. Ensure `go.mod` has the correct module name: `github.com/ArmisSecurity/armis-cli`
 2. Tag and push a new release
 3. Wait for Go proxy to update (can take a few minutes)
@@ -195,6 +210,7 @@ If users report import issues:
 ## 🎉 Success Criteria
 
 You'll know everything is working when:
+
 - ✅ GitHub release is created automatically on tag push
 - ✅ Binaries are built for all platforms
 - ✅ Checksums are signed with cosign

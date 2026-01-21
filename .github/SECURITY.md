@@ -20,9 +20,10 @@ We take security issues seriously and appreciate responsible disclosure.
 If you believe you have identified a security vulnerability in this CLI,
 please report it **privately by email**.
 
-**Email:** security@armis.com
+**Email:** <security@armis.com>
 
 When reporting, please include:
+
 - CLI version
 - Operating system and runtime environment
 - Clear steps to reproduce or a proof of concept
@@ -102,4 +103,4 @@ Our vulnerability disclosure approach aligns with widely accepted
 responsible disclosure practices, including those described in the
 Armis Vulnerability Disclosure Policy:
 
-https://www.armis.com/legal-compliance/vulnerability-disclosure-policy/
+<https://www.armis.com/legal-compliance/vulnerability-disclosure-policy/>

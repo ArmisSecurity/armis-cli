@@ -11,6 +11,7 @@ The Armis CLI uses GitHub Actions to automatically scan itself on every commit a
 The pipeline consists of two jobs:
 
 ### 1. Build & Unit Tests
+
 - Runs on every push and pull request
 - Sets up Go 1.21
 - Downloads dependencies
@@ -18,6 +19,7 @@ The pipeline consists of two jobs:
 - Builds the CLI binary
 
 ### 2. Security Scan
+
 - Runs after successful build and tests
 - Uses the Armis CLI to scan its own repository
 - Fails the pipeline if CRITICAL or HIGH severity issues are found
@@ -33,6 +35,7 @@ The pipeline requires one GitHub secret:
 - `ARMIS_API_TOKEN`: API token for authenticating with Armis Cloud
 
 To set this up:
+
 1. Go to your repository settings
 2. Navigate to Secrets and variables → Actions
 3. Click "New repository secret"
@@ -42,12 +45,14 @@ To set this up:
 ### Severity Thresholds
 
 The pipeline is configured to:
+
 - **FAIL** on: CRITICAL, HIGH severity findings
 - **WARN** on: MEDIUM, LOW severity findings (shown but don't fail the build)
 
 ### Branches
 
 The pipeline runs on:
+
 - All branches on push
 - All pull requests
 
@@ -70,14 +75,18 @@ export ARMIS_API_TOKEN="your-token"
 ## Viewing Results
 
 ### GitHub Security Tab
+
 SARIF results are automatically uploaded to GitHub's Security tab:
+
 1. Go to your repository
 2. Click on "Security" tab
 3. Click on "Code scanning alerts"
 4. View detailed findings from Armis scans
 
 ### Workflow Logs
+
 Human-readable results are printed in the workflow logs:
+
 1. Go to "Actions" tab
 2. Click on a workflow run
 3. Click on "Armis Security Scan" job
@@ -127,15 +136,18 @@ on:
 ## Troubleshooting
 
 ### Pipeline Fails with "ARMIS_API_TOKEN not set"
+
 - Ensure the secret is configured in repository settings
 - Check that the secret name matches exactly: `ARMIS_API_TOKEN`
 
 ### Pipeline Fails with "API connection error"
+
 - Verify the API token is valid
 - Check if Armis Cloud API is accessible from GitHub Actions runners
 - Review the API endpoint configuration
 
 ### SARIF Upload Fails
+
 - Ensure the repository has "security-events: write" permission
 - Check that the SARIF file is valid JSON
 - Verify GitHub Advanced Security is enabled (for private repos)
