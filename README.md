@@ -1,4 +1,5 @@
 ![Armis Logo](https://github.com/ArmisSecurity/armis-cli/blob/main/docs/assets/logo-dark.svg)
+
 # Armis CLI
 
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
@@ -14,6 +15,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 ---
 
 ## Table of Contents
+
 - [Features](#features)
 - [Installation](#installation)
 - [Verification](#verification)
@@ -36,17 +38,17 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 ---
 
 ## Features
+
 - Scan repositories and container images
 - Multiple output formats: human, JSON, SARIF, JUnit XML
 - CI/CD ready: GitHub Actions, Jenkins, GitLab, Azure, Bitbucket, CircleCI
 - Configurable exit codes and fail-on severity
 - Secure authentication, size limits, and best practices
 
-
-
 ## Installation
 
 ### Homebrew (macOS/Linux)
+
 **Prerequisites:** [Homebrew](https://brew.sh) must be installed first.
 
 ```bash
@@ -54,37 +56,46 @@ brew install armissecurity/tap/armis-cli
 ```
 
 ### Quick Install Script
+
 **Linux/macOS:**
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
 ```
 
 The script will automatically:
+
 - Install to `~/.local/bin` (no sudo required) or `/usr/local/bin` as fallback
 - Verify the installation
 - Check if the command is in your PATH
 
 **Windows (PowerShell):**
+
 ```powershell
 irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 ```
 
 ### Scoop (Windows)
+
 ```powershell
 scoop bucket add armis https://github.com/ArmisSecurity/scoop-bucket
 scoop install armis-cli
 ```
 
 ### Manual Download
+
 Download the latest release for your platform from the [releases page](https://github.com/ArmisSecurity/armis-cli/releases).
 
 ### Using Go
+
 ```bash
 go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ```
 
 ### Verify Installation
+
 After installation, verify that the CLI is working:
+
 ```bash
 which armis-cli
 armis-cli --version
@@ -95,6 +106,7 @@ armis-cli --version
 If you see "command not found" after installation:
 
 1. **Check if it's installed:**
+
    ```bash
    ls -la ~/.local/bin/armis-cli
    # or
@@ -102,19 +114,22 @@ If you see "command not found" after installation:
    ```
 
 2. **Check your PATH:**
+
    ```bash
    echo $PATH
    ```
 
 3. **Add to PATH if needed:**
-   
+
    For **zsh** (default on macOS):
+
    ```bash
    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
    source ~/.zshrc
    ```
-   
+
    For **bash**:
+
    ```bash
    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile
    source ~/.bash_profile
@@ -123,6 +138,7 @@ If you see "command not found" after installation:
 4. **Or open a new terminal window** and try again.
 
 5. **Run directly with full path:**
+
    ```bash
    ~/.local/bin/armis-cli --help
    ```
@@ -134,6 +150,7 @@ If you see "command not found" after installation:
 All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security.
 
 ### Verify Checksums (Cosign)
+
 ```bash
 # Download the binary, checksums, and signature
 curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz
@@ -152,6 +169,7 @@ sha256sum --ignore-missing -c armis-cli-checksums.txt
 ```
 
 ### Verify SLSA Provenance (Supply Chain Security)
+
 ```bash
 # Install slsa-verifier
 go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
@@ -167,6 +185,7 @@ slsa-verifier verify-artifact \
 ```
 
 ### Inspect SBOM (Software Bill of Materials)
+
 ```bash
 # Download SBOM (CycloneDX JSON format)
 curl -LO https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-linux-amd64.tar.gz.sbom.cdx.json
@@ -180,6 +199,7 @@ cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 ```
 
 **Learn more:**
+
 - [SLSA Framework](https://slsa.dev/)
 - [Sigstore Cosign](https://docs.sigstore.dev/cosign/overview/)
 - [CycloneDX SBOM](https://cyclonedx.org/)
@@ -189,16 +209,19 @@ cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 ## Quick Start
 
 ### Set up authentication
+
 ```bash
 export ARMIS_API_TOKEN="your-api-token-here"
 ```
 
 ### Scan a repository
+
 ```bash
 armis-cli scan repo ./my-project
 ```
 
 ### Scan a container image
+
 ```bash
 armis-cli scan image nginx:latest
 ```
@@ -208,7 +231,8 @@ armis-cli scan image nginx:latest
 ## Usage
 
 ### Global Flags
-```
+
+```text
 --token string          API token for authentication (or use ARMIS_API_TOKEN env var)
 --api-url string        Armis Cloud API base URL (default: https://api.armis.cloud/v1)
 --format string         Output format: human, json, sarif, junit (default: human)
@@ -218,24 +242,32 @@ armis-cli scan image nginx:latest
 ```
 
 ### Scan Repository
+
 Scans a local directory, creates a tarball, and uploads to Armis Cloud for analysis.
+
 ```bash
 armis-cli scan repo [path] --tenant-id [tenant-id]
 ```
+
 **Size Limit**: 2GB
 **Example**:
+
 ```bash
 armis-cli scan repo ./my-app --tenant-id my-tenant --format json --fail-on HIGH,CRITICAL
 ```
 
 ### Scan Container Image
+
 Scans a container image (local or remote) or a tarball.
+
 ```bash
 armis-cli scan image [image-name] --tenant-id [tenant-id]
 armis-cli scan image --tarball [path-to-tarball] --tenant-id [tenant-id]
 ```
+
 **Size Limit**: 5GB
 **Examples**:
+
 ```bash
 # Scan remote image
 armis-cli scan image nginx:latest --tenant-id my-tenant
@@ -250,25 +282,33 @@ armis-cli scan image --tarball ./image.tar --tenant-id my-tenant
 ## Output Formats
 
 ### Human-Readable (Default)
+
 Colorful, formatted output with tables and summaries.
+
 ```bash
 armis-cli scan repo ./my-app
 ```
 
 ### JSON
+
 Machine-readable JSON output.
+
 ```bash
 armis-cli scan repo ./my-app --format json
 ```
 
 ### SARIF
+
 Static Analysis Results Interchange Format for tool integration.
+
 ```bash
 armis-cli scan repo ./my-app --format sarif > results.sarif
 ```
 
 ### JUnit XML
+
 Test report format for CI/CD integration.
+
 ```bash
 armis-cli scan repo ./my-app --format junit > results.xml
 ```
@@ -307,6 +347,7 @@ jobs:
 ```
 
 **Available inputs:**
+
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
@@ -320,6 +361,7 @@ jobs:
 | `include-files` | string | | Comma-separated file paths to scan (for targeted scanning) |
 
 **Required secrets:**
+
 - `api-token`: Armis API token for authentication
 - `tenant-id`: Tenant identifier for Armis Cloud
 
@@ -386,6 +428,7 @@ jobs:
 ```
 
 ### GitLab CI
+
 ```yaml
 security-scan:
   stage: test
@@ -401,6 +444,7 @@ security-scan:
 ```
 
 ### Jenkins
+
 ```groovy
 pipeline {
     agent any
@@ -423,6 +467,7 @@ pipeline {
 ```
 
 ### Azure DevOps
+
 ```yaml
 trigger:
   - main
@@ -444,6 +489,7 @@ steps:
 ```
 
 ### CircleCI
+
 ```yaml
 version: 2.1
 jobs:
@@ -469,6 +515,7 @@ workflows:
 ```
 
 ### BitBucket Pipelines
+
 ```yaml
 pipelines:
   default:
@@ -545,16 +592,19 @@ Visit the [releases page](https://github.com/ArmisSecurity/armis-cli/releases) t
 ---
 
 ## Building from Source
+
 ```bash
 git clone https://github.com/ArmisSecurity/armis-cli.git
 cd armis-cli
 make build
 ```
+
 The binary will be in `bin/armis-cli`.
 
 ---
 
 ## Development
+
 ```bash
 # Run tests
 make test
@@ -567,7 +617,9 @@ make release
 ---
 
 ## Contributing
+
 We welcome contributions! Please see:
+
 - [CONTRIBUTING.md](.github/CONTRIBUTING.md) for contribution guidelines
 - [CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md) for community standards
 - [Issue Templates](.github/ISSUE_TEMPLATE/) for reporting bugs or requesting features
@@ -575,13 +627,15 @@ We welcome contributions! Please see:
 ---
 
 ## Support
+
 - For issues, open a [GitHub Issue](https://github.com/ArmisSecurity/armis-cli/issues)
 - For security concerns, see [SECURITY.md](.github/SECURITY.md)
-- For questions, contact support@armis.com
+- For questions, contact <support@armis.com>
 
 ---
 
 ## License
+
 This CLI is open source software licensed under the Apache License 2.0.
 It is intended to be used as a client for interacting with the Armis cloud platform APIs. The CLI itself does not contain any proprietary detection logic or security analysis engines.
 Use of the CLI is subject to the terms of service of the corresponding cloud APIs.

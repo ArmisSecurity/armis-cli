@@ -17,6 +17,7 @@ make release        # Build for all platforms (linux/darwin/windows, amd64/arm64
 ```
 
 Run a single test:
+
 ```bash
 go test -v ./internal/api -run TestClientStartIngest
 go test -v ./internal/output/... -run TestHumanFormatter
@@ -25,6 +26,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 ## Architecture
 
 ### Entry Point and Command Structure
+
 - `cmd/armis-cli/main.go` - Entry point, sets version info and calls `cmd.Execute()`
 - `internal/cmd/` - Cobra command definitions
   - `root.go` - Root command with global flags (token, format, fail-on, tenant-id, debug)
@@ -33,6 +35,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
   - `scan_image.go` - Container image scanning subcommand
 
 ### Core Packages
+
 - `internal/api/` - API client for Armis Cloud communication (upload, status polling, results fetching)
 - `internal/model/` - Data structures for findings, scan results, API responses
 - `internal/output/` - Output formatters (human, json, sarif, junit) implementing `Formatter` interface
@@ -42,6 +45,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/httpclient/` - HTTP client with retry logic and exponential backoff
 
 ### Scan Flow
+
 1. Scanner creates compressed archive (repo) or exports image to tarball (image)
 2. API client uploads to `/api/v1/ingest/tar` endpoint
 3. Client polls `/api/v1/ingest/status/` until scan completes
@@ -49,6 +53,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 5. Results converted to internal `Finding` model and formatted for output
 
 ### Key Constants
+
 - Max repository size: 2GB (`repo.MaxRepoSize`)
 - Max image size: 5GB (`image.MaxImageSize`)
 - Default scan timeout: 60 minutes
@@ -56,6 +61,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - Page limit range: 1-1000 (default 500)
 
 ### Environment Variables
+
 - `ARMIS_API_TOKEN` - API authentication token
 - `ARMIS_TENANT_ID` - Tenant identifier
 - `ARMIS_FORMAT` - Default output format

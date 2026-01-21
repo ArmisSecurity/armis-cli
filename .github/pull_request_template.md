@@ -6,12 +6,13 @@
 * Fixes #XXX
 
 ## Type of Change
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-- [ ] Performance improvement
+
+* [ ] Bug fix (non-breaking change which fixes an issue)
+* [ ] New feature (non-breaking change which adds functionality)
+* [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+* [ ] Documentation update
+* [ ] Refactoring (no functional changes)
+* [ ] Performance improvement
 
 ## Problem
 
@@ -24,11 +25,13 @@
 ## Testing
 
 ### Automated Tests
-- [ ] Unit tests added/updated
-- [ ] Integration tests added/updated
-- [ ] All tests passing locally
+
+* [ ] Unit tests added/updated
+* [ ] Integration tests added/updated
+* [ ] All tests passing locally
 
 ### Manual Testing
+
 <!-- How did you verify this works? Steps to reproduce -->
 
 ## Reviewer Notes
@@ -37,12 +40,13 @@
 <!-- Any trade-offs, technical debt, or follow-up work? -->
 
 ## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Pre-commit hooks pass
-- [ ] Self-review performed
-- [ ] Documentation updated (if needed)
-- [ ] Breaking changes documented (if applicable)
-- [ ] No new warnings generated
+
+* [ ] Code follows project style guidelines
+* [ ] Pre-commit hooks pass
+* [ ] Self-review performed
+* [ ] Documentation updated (if needed)
+* [ ] Breaking changes documented (if applicable)
+* [ ] No new warnings generated
 
 ## Screenshots (if applicable)
 
