@@ -1,0 +1,58 @@
+# GitHub Actions - Scheduled Security Scan
+#
+# This workflow runs comprehensive security scans on a schedule for ongoing monitoring.
+# Results are uploaded to GitHub Code Scanning without blocking (fail-on: '').
+#
+# Use cases:
+#   - Daily/weekly security monitoring
+#   - Detecting vulnerabilities in dependencies (new CVEs)
+#   - Compliance reporting
+#
+# Required secrets:
+#   - ARMIS_API_TOKEN: Your Armis API token
+#   - ARMIS_TENANT_ID: Your Armis tenant identifier
+
+name: Scheduled Security Scan
+
+on:
+  # Manual trigger for ad-hoc scans
+  workflow_dispatch:
+
+  # Scheduled runs
+  schedule:
+    # Daily at 06:00 UTC (adjust to your timezone)
+    - cron: '0 6 * * *'
+
+    # Alternatives:
+    # Weekly on Monday at 06:00 UTC
+    # - cron: '0 6 * * 1'
+    # Twice daily at 06:00 and 18:00 UTC
+    # - cron: '0 6,18 * * *'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  scan:
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    with:
+      scan-type: repo
+      scan-target: '.'
+
+      # Don't fail the workflow - this is for monitoring
+      fail-on: ''
+
+      # No PR context for scheduled runs
+      pr-comment: false
+
+      # Store results for historical tracking
+      upload-artifact: true
+      artifact-retention-days: 90      # Keep longer for compliance
+
+      # Allow more time for comprehensive scans
+      scan-timeout: 120
+    secrets:
+      api-token: ${{ secrets.ARMIS_API_TOKEN }}
+      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}

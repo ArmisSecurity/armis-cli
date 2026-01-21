@@ -1,0 +1,50 @@
+# GitHub Actions - Reusable Workflow (Recommended)
+#
+# This is the simplest way to integrate Armis security scanning.
+# The reusable workflow handles:
+#   - CLI installation with checksum verification
+#   - SARIF upload to GitHub Code Scanning
+#   - PR comments with severity breakdown
+#   - Artifact storage
+#
+# Required secrets:
+#   - ARMIS_API_TOKEN: Your Armis API token
+#   - ARMIS_TENANT_ID: Your Armis tenant identifier
+
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  security-scan:
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    with:
+      # Scan configuration
+      scan-type: repo                    # 'repo' or 'image'
+      scan-target: '.'                   # Path to scan (default: repository root)
+
+      # Failure threshold
+      fail-on: 'CRITICAL,HIGH'           # Fail on these severities (default: CRITICAL)
+
+      # PR integration
+      pr-comment: true                   # Post results as PR comment (default: true)
+
+      # Artifact storage
+      upload-artifact: true              # Upload SARIF as artifact (default: true)
+      artifact-retention-days: 30        # Days to retain artifacts (default: 30)
+
+      # Advanced options
+      # scan-timeout: 60                 # Timeout in minutes (default: 60)
+      # include-files: ''                # Comma-separated file paths for targeted scanning
+    secrets:
+      api-token: ${{ secrets.ARMIS_API_TOKEN }}
+      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}

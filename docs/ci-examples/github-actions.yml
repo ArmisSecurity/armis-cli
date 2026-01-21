@@ -1,31 +1,44 @@
+# GitHub Actions - Direct Action Usage
+#
+# This example uses the Armis CLI GitHub Action directly.
+# For the recommended reusable workflow approach, see github-actions-reusable.yml
+#
+# Required secrets:
+#   - ARMIS_API_TOKEN: Your Armis API token
+#   - ARMIS_TENANT_ID: Your Armis tenant identifier
+
 name: Armis Security Scan
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Install Armis CLI
-        run: |
-          curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-      
-      - name: Scan Repository
-        env:
-          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
-        run: |
-          armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL > results.sarif
-      
+        uses: actions/checkout@v4
+
+      - name: Run Armis Security Scan
+        uses: ArmisSecurity/armis-cli@main
+        with:
+          scan-type: repo
+          scan-target: '.'
+          api-token: ${{ secrets.ARMIS_API_TOKEN }}
+          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          format: sarif
+          output-file: results.sarif
+          fail-on: HIGH,CRITICAL
+
       - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: results.sarif
