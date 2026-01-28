@@ -15,7 +15,8 @@ import (
 
 func TestNewClient(t *testing.T) {
 	t.Run("creates client with defaults", func(t *testing.T) {
-		client, err := NewClient("https://api.example.com", "token123", false, 0)
+		authProvider := testutil.NewTestAuthProvider("token123")
+		client, err := NewClient("https://api.example.com", authProvider, false, 0)
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -23,8 +24,8 @@ func TestNewClient(t *testing.T) {
 		if client.baseURL != "https://api.example.com" {
 			t.Errorf("baseURL mismatch: got %s", client.baseURL)
 		}
-		if client.token != "token123" {
-			t.Errorf("token mismatch: got %s", client.token)
+		if client.authProvider != authProvider {
+			t.Error("authProvider mismatch")
 		}
 		if client.uploadTimeout != 10*time.Minute {
 			t.Errorf("Expected default upload timeout of 10m, got %v", client.uploadTimeout)
@@ -32,7 +33,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("uses custom upload timeout", func(t *testing.T) {
-		client, err := NewClient("https://api.example.com", "token123", false, 5*time.Minute)
+		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 5*time.Minute)
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -44,7 +45,7 @@ func TestNewClient(t *testing.T) {
 
 	t.Run("accepts custom HTTP client", func(t *testing.T) {
 		customClient := httpclient.NewClient(httpclient.Config{Timeout: 30 * time.Second})
-		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(customClient))
+		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(customClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -55,7 +56,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("allows localhost HTTP", func(t *testing.T) {
-		client, err := NewClient("http://localhost:8080", "token123", false, 0)
+		client, err := NewClient("http://localhost:8080", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err != nil {
 			t.Fatalf("NewClient should allow localhost HTTP: %v", err)
 		}
@@ -65,7 +66,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("allows 127.0.0.1 HTTP", func(t *testing.T) {
-		client, err := NewClient("http://127.0.0.1:8080", "token123", false, 0)
+		client, err := NewClient("http://127.0.0.1:8080", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err != nil {
 			t.Fatalf("NewClient should allow 127.0.0.1 HTTP: %v", err)
 		}
@@ -75,14 +76,14 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("rejects non-localhost HTTP", func(t *testing.T) {
-		_, err := NewClient("http://api.example.com", "token123", false, 0)
+		_, err := NewClient("http://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err == nil {
 			t.Error("Expected error for non-HTTPS non-localhost URL")
 		}
 	})
 
 	t.Run("rejects invalid URL", func(t *testing.T) {
-		_, err := NewClient("://invalid", "token123", false, 0)
+		_, err := NewClient("://invalid", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err == nil {
 			t.Error("Expected error for invalid URL")
 		}
@@ -90,7 +91,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_IsDebug(t *testing.T) {
-	client, err := NewClient("https://api.example.com", "token", true, 0)
+	client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token"), true, 0)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestClient_IsDebug(t *testing.T) {
 		t.Error("Expected debug to be true")
 	}
 
-	client2, err := NewClient("https://api.example.com", "token", false, 0)
+	client2, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token"), false, 0)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -153,7 +154,7 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -173,7 +174,7 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 50*time.Millisecond, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 50*time.Millisecond, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -216,7 +217,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -240,7 +241,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -291,7 +292,7 @@ func TestClient_FetchNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -330,7 +331,7 @@ func TestClient_FetchNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -383,7 +384,7 @@ func TestClient_FetchAllNormalizedResults(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -444,7 +445,7 @@ func TestClient_GetScanResult(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -477,7 +478,7 @@ func TestClient_DebugMode(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, "token123", true, 0, WithHTTPClient(httpClient))
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), true, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
