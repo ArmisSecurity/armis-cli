@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,11 @@ var (
 	tenantID   string
 	pageLimit  int
 	debug      bool
+
+	// JWT authentication
+	clientID     string
+	clientSecret string
+	authEndpoint string
 
 	version = "dev"
 	commit  = "none"
@@ -51,13 +57,21 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&token, "token", os.Getenv("ARMIS_API_TOKEN"), "API token for authentication (env: ARMIS_API_TOKEN)")
+	// Legacy Basic authentication
+	rootCmd.PersistentFlags().StringVar(&token, "token", os.Getenv("ARMIS_API_TOKEN"), "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
+
+	// JWT authentication
+	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
+	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
+	rootCmd.PersistentFlags().StringVar(&authEndpoint, "auth-endpoint", os.Getenv("ARMIS_AUTH_ENDPOINT"), "Authentication service endpoint URL (env: ARMIS_AUTH_ENDPOINT)")
+
+	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
 	rootCmd.PersistentFlags().StringVar(&format, "format", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
 	rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Disable progress indicators and spinners")
 	rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Fail build on severity levels (comma-separated): INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code to return when build fails")
-	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 	rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
 }
@@ -98,6 +112,18 @@ func getTenantID() (string, error) {
 		return "", fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 	}
 	return tenantID, nil
+}
+
+// getAuthProvider creates an AuthProvider based on the provided credentials.
+// Priority: JWT auth (--client-id, --client-secret, --auth-endpoint) > Basic auth (--token)
+func getAuthProvider() (*auth.AuthProvider, error) {
+	return auth.NewAuthProvider(auth.AuthConfig{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		AuthEndpoint: authEndpoint,
+		Token:        token,
+		TenantID:     tenantID,
+	})
 }
 
 func getPageLimit() (int, error) {
