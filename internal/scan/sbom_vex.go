@@ -113,8 +113,9 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		}
 	}
 
-	// Size limiting (100MB max) and timeout (5min) handled by DownloadFromPresignedURL
-	data, err := d.client.DownloadFromPresignedURL(ctx, url) // lgtm[go/uncontrolled-allocation-size]
+	// DownloadFromPresignedURL enforces size limits (100MB max via io.LimitReader)
+	// and timeout (5min) to prevent resource exhaustion attacks
+	data, err := d.client.DownloadFromPresignedURL(ctx, url)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", docType, err)
 	}
