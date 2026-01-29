@@ -41,6 +41,8 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 - Scan repositories and container images
 - Multiple output formats: human, JSON, SARIF, JUnit XML
+- **SBOM generation**: Generate CycloneDX Software Bill of Materials
+- **VEX generation**: Generate Vulnerability Exploitability eXchange documents
 - CI/CD ready: GitHub Actions, Jenkins, GitLab, Azure, Bitbucket, CircleCI
 - Configurable exit codes and fail-on severity
 - Secure authentication, size limits, and best practices
@@ -239,6 +241,10 @@ armis-cli scan image nginx:latest
 --no-progress           Disable progress indicators
 --fail-on strings       Fail build on severity levels (default: [CRITICAL])
 --exit-code int         Exit code to use when failing (default: 1)
+--sbom                  Generate Software Bill of Materials (CycloneDX format)
+--vex                   Generate Vulnerability Exploitability eXchange document
+--sbom-output string    Custom output path for SBOM (default: .armis/<artifact>-sbom.json)
+--vex-output string     Custom output path for VEX (default: .armis/<artifact>-vex.json)
 ```
 
 ### Scan Repository
@@ -254,6 +260,9 @@ armis-cli scan repo [path] --tenant-id [tenant-id]
 
 ```bash
 armis-cli scan repo ./my-app --tenant-id my-tenant --format json --fail-on HIGH,CRITICAL
+
+# Generate SBOM and VEX documents
+armis-cli scan repo ./my-app --tenant-id my-tenant --sbom --vex
 ```
 
 ### Scan Container Image

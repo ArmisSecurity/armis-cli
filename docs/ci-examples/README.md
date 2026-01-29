@@ -32,9 +32,30 @@ All examples require these secrets to be configured in your CI platform:
 | `ARMIS_API_TOKEN` | Your Armis API token for authentication |
 | `ARMIS_TENANT_ID` | Your Armis tenant identifier |
 
+## SBOM and VEX Generation
+
+Generate Software Bill of Materials and Vulnerability Exploitability eXchange documents alongside your scans:
+
+```bash
+armis-cli scan repo . \
+  --tenant-id "$ARMIS_TENANT_ID" \
+  --sbom --vex \
+  --sbom-output ./artifacts/sbom.json \
+  --vex-output ./artifacts/vex.json
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--sbom` | Generate CycloneDX SBOM | `false` |
+| `--vex` | Generate VEX document | `false` |
+| `--sbom-output` | Custom SBOM output path | `.armis/<artifact>-sbom.json` |
+| `--vex-output` | Custom VEX output path | `.armis/<artifact>-vex.json` |
+
+Store SBOM/VEX artifacts for compliance and audit purposes. See the [CI Integration Guide](../CI-INTEGRATION.md#sbom-and-vex-generation) for detailed examples.
+
 ## Quick Start
 
-### GitHub Actions
+### For GitHub Actions
 
 Copy the appropriate example file to `.github/workflows/` in your repository:
 
@@ -44,9 +65,10 @@ curl -o .github/workflows/security-scan.yml \
   https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/docs/ci-examples/github-actions-reusable.yml
 ```
 
-### Other Platforms
+### For Other Platforms
 
 Copy the example file for your platform to the appropriate location:
+
 - **GitLab**: `.gitlab-ci.yml` (root)
 - **Jenkins**: `Jenkinsfile` (root)
 - **Azure DevOps**: `azure-pipelines.yml` (root or `.azure-pipelines/`)

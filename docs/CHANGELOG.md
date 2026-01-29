@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SBOM (Software Bill of Materials) generation in CycloneDX format via `--sbom` flag
+- VEX (Vulnerability Exploitability eXchange) document generation via `--vex` flag
+- Custom output paths for SBOM/VEX via `--sbom-output` and `--vex-output` flags
 - Initial public release
 - Repository scanning for security vulnerabilities
 - Container image scanning
@@ -28,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+- Added SSRF protection for pre-signed URL downloads (only AWS S3 endpoints allowed)
+- Added response size limits (100MB for downloads, 5GB for uploads, 1MB for API responses)
+- HTTPS enforcement for credential transmission (except localhost for testing)
+- Path traversal protection for artifact names and output paths
+- Credential exposure prevention in debug output
 
 ---
 
