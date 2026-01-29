@@ -18,12 +18,19 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// AuthHeaderProvider provides authorization headers for API requests.
+// This interface allows for different authentication mechanisms (JWT, Basic auth)
+// while keeping the API client decoupled from specific auth implementations.
+type AuthHeaderProvider interface {
+	GetAuthorizationHeader(ctx context.Context) (string, error)
+}
+
 // Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
 	uploadHTTPClient *httpclient.Client
 	baseURL          string
-	token            string
+	authProvider     AuthHeaderProvider
 	debug            bool
 	uploadTimeout    time.Duration
 }
@@ -42,10 +49,10 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 // NewClient creates a new API client with the given configuration.
 // Returns an error if the URL is invalid or uses non-HTTPS for non-localhost hosts.
 //
-// BREAKING CHANGE: This function now returns (*Client, error) instead of *Client.
-// Callers must handle the error return value. This change enforces URL validation
-// and HTTPS requirements at client creation time rather than at request time.
-func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, opts ...ClientOption) (*Client, error) {
+// The authProvider parameter handles authorization for all API requests.
+// Use auth.NewAuthProvider() to create a provider that supports both
+// JWT authentication and legacy Basic authentication.
+func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uploadTimeout time.Duration, opts ...ClientOption) (*Client, error) {
 	// Validate URL
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
@@ -82,7 +89,7 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, o
 		httpClient:       httpClient,
 		uploadHTTPClient: uploadHTTPClient,
 		baseURL:          baseURL,
-		token:            token,
+		authProvider:     authProvider,
 		debug:            debug,
 		uploadTimeout:    uploadTimeout,
 	}
@@ -141,7 +148,11 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Basic "+c.token)
+	authHeader, err := c.authProvider.GetAuthorizationHeader(uploadCtx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get authorization header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.uploadHTTPClient.Do(req)
@@ -178,7 +189,11 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Basic "+c.token)
+	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -258,7 +273,11 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Basic "+c.token)
+	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -320,7 +339,11 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Basic "+c.token)
+	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
