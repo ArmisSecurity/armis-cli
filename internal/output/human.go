@@ -98,26 +98,32 @@ func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
 func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
 	ew := &errWriter{w: w}
 
+	// 1. Header banner
 	ew.write("\n")
 	ew.write("═══════════════════════════════════════════════════════════════\n")
 	ew.write("  ARMIS SECURITY SCAN RESULTS\n")
 	ew.write("═══════════════════════════════════════════════════════════════\n")
 	ew.write("\n")
+
+	// 2. Scan ID & Status
 	ew.write("Scan ID:     %s\n", result.ScanID)
 	ew.write("Status:      %s\n", result.Status)
 	ew.write("\n")
 
-	if err := renderSummaryDashboard(w, result); err != nil {
+	// 3. Brief status line for immediate orientation
+	if err := renderBriefStatus(w, result); err != nil {
 		return err
 	}
-	ew.write("\n")
 
+	// 4. Findings section
 	if len(result.Findings) > 0 {
+		ew.write("\n")
 		ew.write("───────────────────────────────────────────────────────────────\n")
 		ew.write("  FINDINGS\n")
 		ew.write("───────────────────────────────────────────────────────────────\n")
 		ew.write("\n")
 
+		// 5. Individual findings
 		if opts.GroupBy != "" && opts.GroupBy != "none" {
 			groups := groupFindings(result.Findings, opts.GroupBy)
 			renderGroupedFindings(w, groups, opts)
@@ -126,6 +132,16 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 			renderFindings(w, sortedFindings, opts)
 		}
 	}
+
+	// 6. Full detailed summary dashboard at the end
+	ew.write("───────────────────────────────────────────────────────────────\n")
+	ew.write("  SUMMARY\n")
+	ew.write("───────────────────────────────────────────────────────────────\n")
+	ew.write("\n")
+	if err := renderSummaryDashboard(w, result); err != nil {
+		return err
+	}
+	ew.write("\n")
 
 	ew.write("═══════════════════════════════════════════════════════════════\n")
 	ew.write("\n")
@@ -712,6 +728,50 @@ func scanDuration(result *model.ScanResult) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+// pluralize returns singular or plural form based on count.
+func pluralize(word string, count int) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
+}
+
+// renderBriefStatus renders a concise one-line summary of findings count by severity.
+// Example output: "Found 5 issues: 2 critical, 1 high, 2 medium"
+func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
+	ew := &errWriter{w: w}
+
+	total := result.Summary.Total
+
+	// Handle edge case: no findings
+	if total == 0 {
+		ew.write("✅ No security issues found.\n")
+		return ew.err
+	}
+
+	// Build severity breakdown string
+	severities := []model.Severity{
+		model.SeverityCritical,
+		model.SeverityHigh,
+		model.SeverityMedium,
+		model.SeverityLow,
+		model.SeverityInfo,
+	}
+
+	var parts []string
+	for _, sev := range severities {
+		count := result.Summary.BySeverity[sev]
+		if count > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count, strings.ToLower(string(sev))))
+		}
+	}
+
+	// Format: "Found N issues: X critical, Y high, Z medium"
+	ew.write("⚠️  Found %d %s: %s\n", total, pluralize("issue", total), strings.Join(parts, ", "))
+
+	return ew.err
+}
+
 func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	ew := &errWriter{w: w}
 	width := 45
@@ -764,7 +824,7 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 		count := result.Summary.BySeverity[sev]
 		if count > 0 {
 			icon := getSeverityIcon(sev)
-			line := fmt.Sprintf("│ %s %s: %d", icon, sev, count)
+			line := fmt.Sprintf("│ %s  %s: %d", icon, sev, count)
 			padding := width - runewidth.StringWidth(line) - 1
 			ew.write("%s%s│\n", line, strings.Repeat(" ", padding))
 		}
