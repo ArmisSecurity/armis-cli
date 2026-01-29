@@ -70,10 +70,10 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 				outputPath = filepath.Join(".armis", sanitizedName+"-sbom.json")
 			}
 			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Warning: SBOM was requested but not available in results\n")
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: SBOM was requested but not available in results\n")
 		}
 	}
 
@@ -86,10 +86,10 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 				outputPath = filepath.Join(".armis", sanitizedName+"-vex.json")
 			}
 			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Warning: VEX was requested but not available in results\n")
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: VEX was requested but not available in results\n")
 		}
 	}
 
@@ -130,6 +130,6 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		return fmt.Errorf("failed to write %s to %s: %w", docType, outputPath, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "%s saved to: %s\n", docType, outputPath)
+	_, _ = fmt.Fprintf(os.Stderr, "%s saved to: %s\n", docType, outputPath)
 	return nil
 }
