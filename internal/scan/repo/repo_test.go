@@ -1450,3 +1450,181 @@ func TestScan(t *testing.T) {
 		}
 	})
 }
+
+func TestIsPathContained(t *testing.T) {
+	t.Run("valid contained path", func(t *testing.T) {
+		if !isPathContained("/repo", "/repo/src/main.go") {
+			t.Error("Expected path to be contained")
+		}
+	})
+
+	t.Run("nested valid path", func(t *testing.T) {
+		if !isPathContained("/repo", "/repo/a/b/c/file.go") {
+			t.Error("Expected nested path to be contained")
+		}
+	})
+
+	t.Run("path escapes with double dots", func(t *testing.T) {
+		if isPathContained("/repo", "/repo/../etc/passwd") {
+			t.Error("Expected path traversal to be rejected")
+		}
+	})
+
+	t.Run("absolute path outside base", func(t *testing.T) {
+		if isPathContained("/repo", "/etc/passwd") {
+			t.Error("Expected absolute path outside base to be rejected")
+		}
+	})
+
+	t.Run("path at root level", func(t *testing.T) {
+		if !isPathContained("/repo", "/repo/file.go") {
+			t.Error("Expected file at root level to be contained")
+		}
+	})
+
+	t.Run("same directory", func(t *testing.T) {
+		// The base directory itself should be considered contained
+		if !isPathContained("/repo", "/repo") {
+			t.Error("Expected base directory itself to be contained")
+		}
+	})
+}
+
+func TestTarGzFiles(t *testing.T) {
+	t.Run("creates valid tar.gz with files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create test files
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "util.go"), []byte("package util"), 0600); err != nil {
+			t.Fatalf("failed to create util.go: %v", err)
+		}
+
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzFiles(tmpDir, []string{"main.go", "util.go"}, &buf)
+		if err != nil {
+			t.Fatalf("tarGzFiles failed: %v", err)
+		}
+
+		// Verify it's a valid gzip
+		gzReader, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatalf("failed to read gzip: %v", err)
+		}
+		defer func() {
+			if closeErr := gzReader.Close(); closeErr != nil {
+				t.Errorf("failed to close gzip reader: %v", closeErr)
+			}
+		}()
+
+		// Verify it's a valid tar
+		tarReader := tar.NewReader(gzReader)
+		fileCount := 0
+		for {
+			_, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("failed to read tar entry: %v", err)
+			}
+			fileCount++
+		}
+
+		if fileCount != 2 {
+			t.Errorf("Expected 2 files in tar, got %d", fileCount)
+		}
+	})
+
+	t.Run("returns error when no files added", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzFiles(tmpDir, []string{}, &buf)
+
+		if err == nil {
+			t.Fatal("Expected error when no files to archive")
+		}
+		if !strings.Contains(err.Error(), "no files were added") {
+			t.Errorf("Expected 'no files were added' error, got: %v", err)
+		}
+	})
+
+	t.Run("skips non-existent files gracefully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create one valid file
+		if err := os.WriteFile(filepath.Join(tmpDir, "exists.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create exists.go: %v", err)
+		}
+
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzFiles(tmpDir, []string{"exists.go", "nonexistent.go"}, &buf)
+
+		if err != nil {
+			t.Fatalf("tarGzFiles failed: %v", err)
+		}
+	})
+
+	t.Run("skips directories", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a file and a subdirectory
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0750); err != nil {
+			t.Fatalf("failed to create subdir: %v", err)
+		}
+
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzFiles(tmpDir, []string{"main.go", "subdir"}, &buf)
+
+		if err != nil {
+			t.Fatalf("tarGzFiles failed: %v", err)
+		}
+	})
+
+	t.Run("error when all files are non-existent", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		err := scanner.tarGzFiles(tmpDir, []string{"nonexistent1.go", "nonexistent2.go"}, &buf)
+
+		if err == nil {
+			t.Fatal("Expected error when all files are non-existent")
+		}
+		if !strings.Contains(err.Error(), "no files were added") {
+			t.Errorf("Expected 'no files were added' error, got: %v", err)
+		}
+	})
+
+	t.Run("skips path outside repository", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a valid file
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+
+		scanner := NewScanner(nil, false, "tenant", 100, true, time.Minute, false)
+
+		var buf bytes.Buffer
+		// Include a path traversal attempt - this should be skipped
+		err := scanner.tarGzFiles(tmpDir, []string{"main.go", "../../../etc/passwd"}, &buf)
+
+		if err != nil {
+			t.Fatalf("tarGzFiles failed: %v", err)
+		}
+	})
+}
