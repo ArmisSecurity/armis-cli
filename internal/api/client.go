@@ -37,6 +37,7 @@ type Client struct {
 	token            string
 	debug            bool
 	uploadTimeout    time.Duration
+	allowLocalURLs   bool
 }
 
 // ClientOption is a functional option for configuring the Client.
@@ -47,6 +48,14 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = client
 		c.uploadHTTPClient = client
+	}
+}
+
+// WithAllowLocalURLs enables localhost/127.0.0.1 URLs for presigned URL validation.
+// This should only be used in tests. Production code should never enable this option.
+func WithAllowLocalURLs(allow bool) ClientOption {
+	return func(c *Client) {
+		c.allowLocalURLs = allow
 	}
 }
 
@@ -477,9 +486,10 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	return &result, nil
 }
 
-// ValidatePresignedURL validates that a presigned URL points to a recognized S3 endpoint.
+// validatePresignedURL validates that a presigned URL points to a recognized S3 endpoint.
 // This prevents SSRF attacks by ensuring downloads only go to expected cloud storage hosts.
-func ValidatePresignedURL(presignedURL string) error {
+// Localhost URLs are only allowed if WithAllowLocalURLs(true) was set on the client.
+func (c *Client) validatePresignedURL(presignedURL string) error {
 	parsed, err := url.Parse(presignedURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -487,9 +497,12 @@ func ValidatePresignedURL(presignedURL string) error {
 
 	host := strings.ToLower(parsed.Hostname())
 
-	// Allow localhost/127.0.0.1 for testing
+	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
 	if host == "localhost" || host == "127.0.0.1" {
-		return nil
+		if c.allowLocalURLs {
+			return nil
+		}
+		return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
 	}
 
 	// Allow AWS S3 bucket URL patterns:
@@ -506,7 +519,7 @@ func ValidatePresignedURL(presignedURL string) error {
 // DownloadFromPresignedURL downloads content from a pre-signed S3 URL.
 func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL string) ([]byte, error) {
 	// Validate URL to prevent SSRF attacks
-	if err := ValidatePresignedURL(presignedURL); err != nil {
+	if err := c.validatePresignedURL(presignedURL); err != nil {
 		return nil, fmt.Errorf("invalid presigned URL: %w", err)
 	}
 

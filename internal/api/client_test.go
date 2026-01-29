@@ -679,7 +679,8 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -700,7 +701,8 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -720,7 +722,8 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(httpClient))
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -754,44 +757,80 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 }
 
 func TestValidatePresignedURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		url         string
-		shouldError bool
-	}{
-		// Valid S3 URLs
-		{"S3 bucket URL legacy", "https://mybucket.s3.amazonaws.com/file.json", false},
-		{"S3 bucket URL with region", "https://mybucket.s3.us-east-1.amazonaws.com/file.json", false},
-		{"S3 path-style URL", "https://s3.us-west-2.amazonaws.com/mybucket/file.json", false},
-
-		// Valid localhost for testing
-		{"localhost HTTP", "http://localhost:8080/file", false},
-		{"localhost HTTPS", "https://localhost/file", false},
-		{"127.0.0.1", "http://127.0.0.1:9000/file", false},
-
-		// Invalid/malicious URLs
-		{"non-S3 AWS URL", "https://ec2.amazonaws.com/metadata", true},
-		{"arbitrary external URL", "https://malicious.example.com/steal-data", true},
-		{"internal service URL", "http://internal.company.local/admin", true},
-		{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/", true},
-		{"kubernetes API", "https://kubernetes.default.svc/api/v1/secrets", true},
-
-		// Invalid URL formats
-		{"empty URL", "", true},
-		{"malformed URL", "://invalid", true},
+	// Create clients for testing - one with localhost allowed, one without
+	clientWithLocalhost, err := NewClient("https://api.example.com", "token123", false, 0, WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("Failed to create client with localhost: %v", err)
+	}
+	clientWithoutLocalhost, err := NewClient("https://api.example.com", "token123", false, 0)
+	if err != nil {
+		t.Fatalf("Failed to create client without localhost: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidatePresignedURL(tt.url)
-			if tt.shouldError && err == nil {
-				t.Errorf("Expected error for URL %q, got none", tt.url)
-			}
-			if !tt.shouldError && err != nil {
-				t.Errorf("Unexpected error for URL %q: %v", tt.url, err)
-			}
-		})
-	}
+	t.Run("valid S3 URLs", func(t *testing.T) {
+		validS3URLs := []struct {
+			name string
+			url  string
+		}{
+			{"S3 bucket URL legacy", "https://mybucket.s3.amazonaws.com/file.json"},
+			{"S3 bucket URL with region", "https://mybucket.s3.us-east-1.amazonaws.com/file.json"},
+			{"S3 path-style URL", "https://s3.us-west-2.amazonaws.com/mybucket/file.json"},
+		}
+		for _, tt := range validS3URLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// S3 URLs should work regardless of localhost setting
+				if err := clientWithoutLocalhost.validatePresignedURL(tt.url); err != nil {
+					t.Errorf("Unexpected error for URL %q: %v", tt.url, err)
+				}
+			})
+		}
+	})
+
+	t.Run("localhost URLs require opt-in", func(t *testing.T) {
+		localhostURLs := []struct {
+			name string
+			url  string
+		}{
+			{"localhost HTTP", "http://localhost:8080/file"},
+			{"localhost HTTPS", "https://localhost/file"},
+			{"127.0.0.1", "http://127.0.0.1:9000/file"},
+		}
+		for _, tt := range localhostURLs {
+			t.Run(tt.name+" allowed", func(t *testing.T) {
+				if err := clientWithLocalhost.validatePresignedURL(tt.url); err != nil {
+					t.Errorf("Expected localhost URL %q to be allowed with opt-in: %v", tt.url, err)
+				}
+			})
+			t.Run(tt.name+" rejected by default", func(t *testing.T) {
+				if err := clientWithoutLocalhost.validatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected localhost URL %q to be rejected without opt-in", tt.url)
+				}
+			})
+		}
+	})
+
+	t.Run("invalid URLs always rejected", func(t *testing.T) {
+		invalidURLs := []struct {
+			name string
+			url  string
+		}{
+			{"non-S3 AWS URL", "https://ec2.amazonaws.com/metadata"},
+			{"arbitrary external URL", "https://malicious.example.com/steal-data"},
+			{"internal service URL", "http://internal.company.local/admin"},
+			{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/"},
+			{"kubernetes API", "https://kubernetes.default.svc/api/v1/secrets"},
+			{"empty URL", ""},
+			{"malformed URL", "://invalid"},
+		}
+		for _, tt := range invalidURLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// Invalid URLs should fail regardless of localhost setting
+				if err := clientWithLocalhost.validatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected error for URL %q, got none", tt.url)
+				}
+			})
+		}
+	})
 }
 
 func TestClient_StartIngest_SizeLimit(t *testing.T) {
