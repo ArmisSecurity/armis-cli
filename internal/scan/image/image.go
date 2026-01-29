@@ -98,6 +98,13 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 
 // ScanTarball scans a container image from a tarball file.
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
+	// Validate path for defense-in-depth (CLI layer also validates)
+	sanitizedPath, err := util.SanitizePath(tarballPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tarball path: %w", err)
+	}
+	tarballPath = sanitizedPath
+
 	info, err := os.Stat(tarballPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat tarball: %w", err)
@@ -276,7 +283,17 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		if debug {
-			rawJSON, err := json.Marshal(nf)
+			// Create a sanitized copy for debug output to prevent secret exposure
+			debugCopy := nf
+			if debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet != nil {
+				masked := util.MaskSecretInLine(*debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet)
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet = &masked
+			}
+			if len(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines) > 0 {
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines =
+					util.MaskSecretInLines(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines)
+			}
+			rawJSON, err := json.Marshal(debugCopy)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {

@@ -278,4 +278,81 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 			t.Error("Expected error on API failure")
 		}
 	})
+
+	t.Run("rejects path traversal in artifact name", func(t *testing.T) {
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient("https://api.example.com", "token123", false, 0, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{
+			GenerateSBOM: true,
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+
+		// Test various path traversal attempts
+		testCases := []string{
+			"../../../etc/passwd",
+			"..\\..\\windows\\system32",
+			"",
+			".",
+			"/",
+		}
+
+		for _, tc := range testCases {
+			err := downloader.Download(context.Background(), "scan-456", tc)
+			if err == nil {
+				t.Errorf("Expected error for artifact name %q", tc)
+			}
+		}
+	})
+
+	t.Run("validates path traversal in output path", func(t *testing.T) {
+		// Path traversal validation in output path is handled by downloadAndSave
+		// which prints a warning but doesn't fail the overall Download operation
+		// (by design - SBOM/VEX failures are non-fatal)
+		sbomContent := []byte(`{"bomFormat": "CycloneDX"}`)
+
+		var serverURL string
+		callCount := 0
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			callCount++
+			if callCount == 1 {
+				response := api.ArtifactScanResultsResponse{
+					ScanStatus: "COMPLETED",
+					Results: map[string]string{
+						"sbom_results": serverURL + "/download/sbom",
+					},
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, response)
+			} else {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(sbomContent)
+			}
+		})
+		serverURL = server.URL
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{
+			GenerateSBOM: true,
+			SBOMOutput:   "../../../tmp/evil.json", // Path traversal attempt
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+		// Download doesn't return error for SBOM/VEX failures (they're warnings)
+		// but the path traversal IS detected and the file is NOT written
+		_ = downloader.Download(context.Background(), "scan-456", "test-artifact")
+
+		// Verify the malicious file was NOT created
+		if _, err := os.Stat("../../../tmp/evil.json"); err == nil {
+			t.Error("Path traversal should have been blocked - file should not exist")
+		}
+	})
 }

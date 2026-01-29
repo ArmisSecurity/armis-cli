@@ -734,4 +734,115 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 			t.Error("Expected timeout error")
 		}
 	})
+
+	t.Run("rejects non-S3 URLs", func(t *testing.T) {
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.DownloadFromPresignedURL(context.Background(), "https://malicious.example.com/file")
+
+		if err == nil {
+			t.Error("Expected error for non-S3 URL")
+		}
+		if !strings.Contains(err.Error(), "not a recognized S3 endpoint") {
+			t.Errorf("Expected S3 endpoint error, got: %v", err)
+		}
+	})
+}
+
+func TestValidatePresignedURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		shouldError bool
+	}{
+		// Valid S3 URLs
+		{"S3 bucket URL legacy", "https://mybucket.s3.amazonaws.com/file.json", false},
+		{"S3 bucket URL with region", "https://mybucket.s3.us-east-1.amazonaws.com/file.json", false},
+		{"S3 path-style URL", "https://s3.us-west-2.amazonaws.com/mybucket/file.json", false},
+
+		// Valid localhost for testing
+		{"localhost HTTP", "http://localhost:8080/file", false},
+		{"localhost HTTPS", "https://localhost/file", false},
+		{"127.0.0.1", "http://127.0.0.1:9000/file", false},
+
+		// Invalid/malicious URLs
+		{"non-S3 AWS URL", "https://ec2.amazonaws.com/metadata", true},
+		{"arbitrary external URL", "https://malicious.example.com/steal-data", true},
+		{"internal service URL", "http://internal.company.local/admin", true},
+		{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/", true},
+		{"kubernetes API", "https://kubernetes.default.svc/api/v1/secrets", true},
+
+		// Invalid URL formats
+		{"empty URL", "", true},
+		{"malformed URL", "://invalid", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePresignedURL(tt.url)
+			if tt.shouldError && err == nil {
+				t.Errorf("Expected error for URL %q, got none", tt.url)
+			}
+			if !tt.shouldError && err != nil {
+				t.Errorf("Unexpected error for URL %q: %v", tt.url, err)
+			}
+		})
+	}
+}
+
+func TestClient_StartIngest_SizeLimit(t *testing.T) {
+	t.Run("rejects upload exceeding max size", func(t *testing.T) {
+		client, err := NewClient("https://api.example.com", "token123", false, 1*time.Minute)
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data := bytes.NewReader([]byte("test"))
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         MaxUploadSize + 1, // Exceeds limit
+		}
+		_, err = client.StartIngest(context.Background(), opts)
+
+		if err == nil {
+			t.Error("Expected error for oversized upload")
+		}
+		if !strings.Contains(err.Error(), "exceeds maximum allowed") {
+			t.Errorf("Expected size limit error, got: %v", err)
+		}
+	})
+
+	t.Run("accepts upload at max size", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestUploadResponse{ScanID: testScanID}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data := bytes.NewReader([]byte("test"))
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         MaxUploadSize, // Exactly at limit
+		}
+		_, err = client.StartIngest(context.Background(), opts)
+
+		if err != nil {
+			t.Errorf("Should accept upload at max size: %v", err)
+		}
+	})
 }

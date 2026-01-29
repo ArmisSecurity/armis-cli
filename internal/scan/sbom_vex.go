@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // Result key constants for SBOM/VEX API responses.
@@ -45,6 +46,12 @@ func NewSBOMVEXDownloader(client *api.Client, tenantID string, opts *SBOMVEXOpti
 // Individual file download errors are logged as warnings but don't fail the overall operation,
 // as SBOM/VEX download failures should not fail the overall scan.
 func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName string) error {
+	// Sanitize artifact name to prevent path traversal
+	sanitizedName := filepath.Base(artifactName)
+	if sanitizedName == "." || sanitizedName == "/" || sanitizedName == "" {
+		return fmt.Errorf("invalid artifact name")
+	}
+
 	results, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch artifact results: %w", err)
@@ -60,7 +67,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		if ok && sbomURL != "" {
 			outputPath := d.opts.SBOMOutput
 			if outputPath == "" {
-				outputPath = filepath.Join(".armis", artifactName+"-sbom.json")
+				outputPath = filepath.Join(".armis", sanitizedName+"-sbom.json")
 			}
 			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM"); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -76,7 +83,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		if ok && vexURL != "" {
 			outputPath := d.opts.VEXOutput
 			if outputPath == "" {
-				outputPath = filepath.Join(".armis", artifactName+"-vex.json")
+				outputPath = filepath.Join(".armis", sanitizedName+"-vex.json")
 			}
 			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX"); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -91,6 +98,13 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 
 // downloadAndSave downloads from a URL and saves to a file.
 func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string) error {
+	// Validate output path to prevent path traversal attacks
+	sanitizedPath, err := util.SanitizePath(outputPath)
+	if err != nil {
+		return fmt.Errorf("invalid %s output path: %w", docType, err)
+	}
+	outputPath = sanitizedPath
+
 	// Ensure parent directory exists
 	dir := filepath.Dir(outputPath)
 	if dir != "" && dir != "." {

@@ -21,6 +21,14 @@ import (
 // DownloadTimeout is the default timeout for downloading files from pre-signed URLs.
 const DownloadTimeout = 5 * time.Minute
 
+// MaxDownloadSize is the maximum allowed size for downloaded files (100MB).
+// This protects against memory exhaustion from maliciously large responses.
+const MaxDownloadSize = 100 * 1024 * 1024
+
+// MaxUploadSize is the maximum allowed upload size (5GB).
+// This provides defense-in-depth validation at the API layer.
+const MaxUploadSize = 5 * 1024 * 1024 * 1024
+
 // Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
@@ -115,6 +123,11 @@ type IngestOptions struct {
 
 // StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
+	// Validate upload size for defense-in-depth
+	if opts.Size > MaxUploadSize {
+		return "", fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
+	}
+
 	uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
 	defer cancel()
 
@@ -464,8 +477,39 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	return &result, nil
 }
 
+// ValidatePresignedURL validates that a presigned URL points to a recognized S3 endpoint.
+// This prevents SSRF attacks by ensuring downloads only go to expected cloud storage hosts.
+func ValidatePresignedURL(presignedURL string) error {
+	parsed, err := url.Parse(presignedURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+
+	// Allow localhost/127.0.0.1 for testing
+	if host == "localhost" || host == "127.0.0.1" {
+		return nil
+	}
+
+	// Allow AWS S3 bucket URL patterns:
+	// - bucket.s3.amazonaws.com (legacy)
+	// - bucket.s3.region.amazonaws.com (current)
+	// - s3.region.amazonaws.com/bucket (path-style)
+	if strings.HasSuffix(host, ".amazonaws.com") && strings.Contains(host, "s3") {
+		return nil
+	}
+
+	return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
+}
+
 // DownloadFromPresignedURL downloads content from a pre-signed S3 URL.
 func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL string) ([]byte, error) {
+	// Validate URL to prevent SSRF attacks
+	if err := ValidatePresignedURL(presignedURL); err != nil {
+		return nil, fmt.Errorf("invalid presigned URL: %w", err)
+	}
+
 	// Add timeout protection for large downloads
 	downloadCtx, cancel := context.WithTimeout(ctx, DownloadTimeout)
 	defer cancel()
@@ -486,9 +530,14 @@ func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL stri
 		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Use LimitReader to prevent memory exhaustion from large responses
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxDownloadSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read download response: %w", err)
+	}
+
+	if int64(len(data)) > MaxDownloadSize {
+		return nil, fmt.Errorf("download exceeds maximum allowed size (%d bytes)", MaxDownloadSize)
 	}
 
 	return data, nil

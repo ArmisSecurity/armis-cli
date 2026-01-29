@@ -577,7 +577,17 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		if debug {
-			rawJSON, err := json.Marshal(nf)
+			// Create a sanitized copy for debug output to prevent secret exposure
+			debugCopy := nf
+			if debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet != nil {
+				masked := util.MaskSecretInLine(*debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet)
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet = &masked
+			}
+			if len(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines) > 0 {
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines =
+					util.MaskSecretInLines(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines)
+			}
+			rawJSON, err := json.Marshal(debugCopy)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
