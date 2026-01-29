@@ -13,6 +13,11 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+const (
+	statusCompletedUpper = "COMPLETED"
+	statusCompletedLower = "completed"
+)
+
 func TestNewClient(t *testing.T) {
 	t.Run("creates client with defaults", func(t *testing.T) {
 		client, err := NewClient("https://api.example.com", "token123", false, 0)
@@ -207,7 +212,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 				Data: []model.IngestStatusData{
 					{
 						ScanID:     "scan-456",
-						ScanStatus: "COMPLETED",
+						ScanStatus: statusCompletedUpper,
 						TenantID:   "tenant-123",
 					},
 				},
@@ -229,8 +234,8 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		if len(status.Data) != 1 {
 			t.Fatalf("Expected 1 status data, got %d", len(status.Data))
 		}
-		if status.Data[0].ScanStatus != "COMPLETED" {
-			t.Errorf("Expected status COMPLETED, got %s", status.Data[0].ScanStatus)
+		if status.Data[0].ScanStatus != statusCompletedUpper {
+			t.Errorf("Expected status %s, got %s", statusCompletedUpper, status.Data[0].ScanStatus)
 		}
 	})
 
@@ -435,7 +440,7 @@ func TestClient_GetScanResult(t *testing.T) {
 
 			response := model.ScanResult{
 				ScanID: "scan-123",
-				Status: "completed",
+				Status: statusCompletedLower,
 				Findings: []model.Finding{
 					{ID: "finding-1", Severity: model.SeverityHigh},
 				},
@@ -457,8 +462,8 @@ func TestClient_GetScanResult(t *testing.T) {
 		if result.ScanID != "scan-123" {
 			t.Errorf("Expected scan ID 'scan-123', got %s", result.ScanID)
 		}
-		if result.Status != "completed" {
-			t.Errorf("Expected status 'completed', got %s", result.Status)
+		if result.Status != statusCompletedLower {
+			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
 		}
 	})
 }
@@ -499,7 +504,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			if callCount < 2 {
 				status = "PROCESSING"
 			} else {
-				status = "COMPLETED"
+				status = statusCompletedUpper
 			}
 			response := model.IngestStatusResponse{
 				Data: []model.IngestStatusData{
@@ -524,8 +529,8 @@ func TestClient_WaitForIngest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WaitForIngest failed: %v", err)
 		}
-		if result.ScanStatus != "COMPLETED" {
-			t.Errorf("Expected status COMPLETED, got %s", result.ScanStatus)
+		if result.ScanStatus != statusCompletedUpper {
+			t.Errorf("Expected status %s, got %s", statusCompletedUpper, result.ScanStatus)
 		}
 		if callCount < 2 {
 			t.Errorf("Expected at least 2 calls, got %d", callCount)
@@ -707,7 +712,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 				Data: []model.IngestStatusData{
 					{
 						ScanID:     "scan-123",
-						ScanStatus: "completed",
+						ScanStatus: statusCompletedLower,
 						TenantID:   "tenant-456",
 					},
 				},
@@ -741,7 +746,7 @@ func TestClient_WaitForScan(t *testing.T) {
 			if callCount < 2 {
 				status = "processing"
 			} else {
-				status = "completed"
+				status = statusCompletedLower
 			}
 			response := model.ScanResult{
 				ScanID: "scan-123",
@@ -761,8 +766,8 @@ func TestClient_WaitForScan(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WaitForScan failed: %v", err)
 		}
-		if result.Status != "completed" {
-			t.Errorf("Expected status 'completed', got %s", result.Status)
+		if result.Status != statusCompletedLower {
+			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
 		}
 		if callCount < 2 {
 			t.Errorf("Expected at least 2 calls, got %d", callCount)

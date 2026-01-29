@@ -16,6 +16,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+const testFindingID = "finding-1"
+
 func TestBuildScanResult(t *testing.T) {
 	t.Run("empty findings", func(t *testing.T) {
 		result := buildScanResult("scan-123", []model.NormalizedFinding{}, false, true)
@@ -39,7 +41,7 @@ func TestBuildScanResult(t *testing.T) {
 
 	t.Run("multiple findings with different severities and types", func(t *testing.T) {
 		findings := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "CRITICAL", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "CRITICAL", "vulnerability", []string{"CVE-2023-1234"}, nil),
 			testhelpers.CreateNormalizedFinding("finding-2", "HIGH", "vulnerability", []string{"CVE-2023-5678"}, nil),
 			testhelpers.CreateNormalizedFinding("finding-3", "MEDIUM", "sca", nil, nil),
 			testhelpers.CreateNormalizedFinding("finding-4", "LOW", "sca", nil, nil),
@@ -73,7 +75,7 @@ func TestBuildScanResult(t *testing.T) {
 
 	t.Run("tracks filtered non-exploitable count", func(t *testing.T) {
 		findings := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
 				{Description: "scanner code", Value: "38295677"},
 				{Description: "exploitable", Value: "false"},
@@ -106,7 +108,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 	t.Run("filters empty findings", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{}, // completely empty
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 		}
 
 		findings, _ := convertNormalizedFindings(input, false, true)
@@ -114,14 +116,14 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		if len(findings) != 1 {
 			t.Errorf("findings count = %d, want 1", len(findings))
 		}
-		if findings[0].ID != "finding-1" {
-			t.Errorf("finding ID = %s, want finding-1", findings[0].ID)
+		if findings[0].ID != testFindingID {
+			t.Errorf("finding ID = %s, want testFindingID", findings[0].ID)
 		}
 	})
 
 	t.Run("filters non-exploitable findings when flag is false", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
 				{Description: "scanner code", Value: "38295677"},
 				{Description: "exploitable", Value: "false"},
@@ -140,7 +142,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 	t.Run("keeps non-exploitable findings when flag is true", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
 				{Description: "scanner code", Value: "38295677"},
 				{Description: "exploitable", Value: "false"},
@@ -161,7 +163,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
 					Description:     "", // empty primary description
@@ -186,7 +188,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID:       "finding-1",
+					FindingID:       testFindingID,
 					LongDescription: &longDesc,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
@@ -217,7 +219,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 					ExtraData: model.ExtraData{
 						CodeLocation: model.CodeLocation{
 							FileName:         &fileName,
@@ -271,7 +273,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 					ExtraData: model.ExtraData{
 						CodeLocation: model.CodeLocation{
 							CodeSnippetLines: []string{"line 1", "line 2", "line 3"},
@@ -299,7 +301,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 	t.Run("finding type determination - CVE means Vulnerability", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 		}
 
 		findings, _ := convertNormalizedFindings(input, false, true)
@@ -313,7 +315,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 					ExtraData: model.ExtraData{
 						CodeLocation: model.CodeLocation{
 							HasSecret: true,
@@ -338,7 +340,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
 					Description:     "Outdated dependency",
@@ -358,7 +360,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 					ExtraData: model.ExtraData{
 						CodeLocation: model.CodeLocation{
 							HasSecret: true,
@@ -385,7 +387,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 	t.Run("maps CVEs and CWEs", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234", "CVE-2023-5678"}, []string{"CWE-79", "CWE-89"}),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234", "CVE-2023-5678"}, []string{"CWE-79", "CWE-89"}),
 		}
 
 		findings, _ := convertNormalizedFindings(input, false, true)
@@ -400,7 +402,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 	t.Run("title is set to description", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 		}
 		input[0].NormalizedRemediation.Description = "SQL Injection vulnerability"
 
@@ -415,7 +417,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
 					Description:     "Test finding",
@@ -438,7 +440,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
 					Description:     "Test finding",
@@ -461,7 +463,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{
 				NormalizedTask: model.NormalizedTask{
-					FindingID: "finding-1",
+					FindingID: testFindingID,
 				},
 				NormalizedRemediation: model.NormalizedRemediation{
 					Description:     "Test finding",
@@ -531,7 +533,7 @@ func TestScanTarball(t *testing.T) {
 								Findings: []model.NormalizedFinding{
 									{
 										NormalizedTask: model.NormalizedTask{
-											FindingID: "finding-1",
+											FindingID: testFindingID,
 										},
 										NormalizedRemediation: model.NormalizedRemediation{
 											ToolSeverity:    "HIGH",
@@ -581,8 +583,8 @@ func TestScanTarball(t *testing.T) {
 		if len(result.Findings) != 1 {
 			t.Errorf("Findings count = %d, want 1", len(result.Findings))
 		}
-		if result.Findings[0].ID != "finding-1" {
-			t.Errorf("Finding ID = %s, want finding-1", result.Findings[0].ID)
+		if result.Findings[0].ID != testFindingID {
+			t.Errorf("Finding ID = %s, want testFindingID", result.Findings[0].ID)
 		}
 	})
 
@@ -751,7 +753,7 @@ func TestScanTarball(t *testing.T) {
 func TestConvertNormalizedFindingsDebugMode(t *testing.T) {
 	t.Run("debug mode outputs JSON to stderr", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 		}
 
 		// debug=true should print to stderr but not affect the result
@@ -763,14 +765,14 @@ func TestConvertNormalizedFindingsDebugMode(t *testing.T) {
 		if filteredCount != 0 {
 			t.Errorf("filteredCount = %d, want 0", filteredCount)
 		}
-		if findings[0].ID != "finding-1" {
-			t.Errorf("finding ID = %s, want finding-1", findings[0].ID)
+		if findings[0].ID != testFindingID {
+			t.Errorf("finding ID = %s, want testFindingID", findings[0].ID)
 		}
 	})
 
 	t.Run("debug mode with multiple findings", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 			testhelpers.CreateNormalizedFinding("finding-2", "MEDIUM", "sca", []string{"CVE-2023-5678"}, nil),
 		}
 
@@ -784,7 +786,7 @@ func TestConvertNormalizedFindingsDebugMode(t *testing.T) {
 	t.Run("debug mode skips empty findings", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			{}, // empty finding - should be skipped even in debug mode
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
 		}
 
 		findings, _ := convertNormalizedFindings(input, true, true)
