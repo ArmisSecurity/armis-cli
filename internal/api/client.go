@@ -29,6 +29,13 @@ const MaxDownloadSize = 100 * 1024 * 1024
 // This provides defense-in-depth validation at the API layer.
 const MaxUploadSize = 5 * 1024 * 1024 * 1024
 
+// URL scheme and host constants for security validation.
+const (
+	schemeHTTPS    = "https"
+	hostLocalhost  = "localhost"
+	hostLoopbackIP = "127.0.0.1"
+)
+
 // Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
@@ -73,9 +80,9 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, o
 	}
 
 	// Enforce HTTPS for non-localhost hosts to protect credentials
-	if parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != schemeHTTPS {
 		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
+		if host != hostLocalhost && host != hostLoopbackIP {
 			return nil, fmt.Errorf("HTTPS required for non-localhost URL %q to protect credentials", baseURL)
 		}
 	}
@@ -127,13 +134,13 @@ func (c *Client) setAuthHeader(req *http.Request) error {
 	scheme := strings.ToLower(req.URL.Scheme)
 
 	// Allow localhost/127.0.0.1 for testing without HTTPS requirement
-	if host == "localhost" || host == "127.0.0.1" {
+	if host == hostLocalhost || host == hostLoopbackIP {
 		req.Header.Set("Authorization", "Basic "+c.token)
 		return nil
 	}
 
 	// Require HTTPS for all other hosts to protect credentials
-	if scheme != "https" {
+	if scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
 	}
 
@@ -525,7 +532,7 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	scheme := strings.ToLower(parsed.Scheme)
 
 	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
-	if host == "localhost" || host == "127.0.0.1" {
+	if host == hostLocalhost || host == hostLoopbackIP {
 		if c.allowLocalURLs {
 			return nil
 		}
@@ -534,7 +541,7 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 
 	// Require HTTPS for non-localhost URLs to protect presigned URL signatures
 	// Presigned URLs contain AWS authentication signatures that must not be exposed
-	if scheme != "https" {
+	if scheme != schemeHTTPS {
 		return fmt.Errorf("presigned URL must use HTTPS to protect authentication signatures")
 	}
 
