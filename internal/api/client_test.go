@@ -13,6 +13,13 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+// Test constants to satisfy goconst linter.
+const (
+	testScanID          = "scan-123"
+	testMethodGET       = "GET"
+	testStatusCompleted = "COMPLETED"
+)
+
 func TestNewClient(t *testing.T) {
 	t.Run("creates client with defaults", func(t *testing.T) {
 		client, err := NewClient("https://api.example.com", "token123", false, 0)
@@ -121,7 +128,7 @@ func TestClient_StartIngest(t *testing.T) {
 			}
 
 			response := model.IngestUploadResponse{
-				ScanID:       "scan-123",
+				ScanID:       testScanID,
 				ArtifactType: "image",
 				TenantID:     "tenant-456",
 				Filename:     "test.tar",
@@ -149,8 +156,8 @@ func TestClient_StartIngest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("StartIngest failed: %v", err)
 		}
-		if scanID != "scan-123" {
-			t.Errorf("Expected scan ID 'scan-123', got %s", scanID)
+		if scanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
 		}
 	})
 
@@ -183,7 +190,7 @@ func TestClient_StartIngest(t *testing.T) {
 	t.Run("context timeout", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123"})
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
@@ -222,7 +229,7 @@ func TestClient_StartIngest(t *testing.T) {
 			}
 
 			response := model.IngestUploadResponse{
-				ScanID:       "scan-123",
+				ScanID:       testScanID,
 				ArtifactType: "image",
 				TenantID:     "tenant-456",
 				Filename:     "test.tar",
@@ -252,8 +259,8 @@ func TestClient_StartIngest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("StartIngest failed: %v", err)
 		}
-		if scanID != "scan-123" {
-			t.Errorf("Expected scan ID 'scan-123', got %s", scanID)
+		if scanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
 		}
 	})
 }
@@ -261,8 +268,8 @@ func TestClient_StartIngest(t *testing.T) {
 func TestClient_GetIngestStatus(t *testing.T) {
 	t.Run("successful status check", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "GET" {
-				t.Errorf("Expected GET, got %s", r.Method)
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
 			}
 			if !strings.Contains(r.URL.Path, "/api/v1/ingest/status") {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
@@ -278,7 +285,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 				Data: []model.IngestStatusData{
 					{
 						ScanID:     "scan-456",
-						ScanStatus: "COMPLETED",
+						ScanStatus: testStatusCompleted,
 						TenantID:   "tenant-123",
 					},
 				},
@@ -300,8 +307,8 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		if len(status.Data) != 1 {
 			t.Fatalf("Expected 1 status data, got %d", len(status.Data))
 		}
-		if status.Data[0].ScanStatus != "COMPLETED" {
-			t.Errorf("Expected status COMPLETED, got %s", status.Data[0].ScanStatus)
+		if status.Data[0].ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, status.Data[0].ScanStatus)
 		}
 	})
 
@@ -500,12 +507,12 @@ func TestFormatBytes(t *testing.T) {
 func TestClient_GetScanResult(t *testing.T) {
 	t.Run("successful get", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if !strings.Contains(r.URL.Path, "/scans/scan-123") {
+			if !strings.Contains(r.URL.Path, "/scans/"+testScanID) {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
 			}
 
 			response := model.ScanResult{
-				ScanID: "scan-123",
+				ScanID: testScanID,
 				Status: "completed",
 				Findings: []model.Finding{
 					{ID: "finding-1", Severity: model.SeverityHigh},
@@ -520,13 +527,13 @@ func TestClient_GetScanResult(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.GetScanResult(context.Background(), "scan-123")
+		result, err := client.GetScanResult(context.Background(), testScanID)
 
 		if err != nil {
 			t.Fatalf("GetScanResult failed: %v", err)
 		}
-		if result.ScanID != "scan-123" {
-			t.Errorf("Expected scan ID 'scan-123', got %s", result.ScanID)
+		if result.ScanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, result.ScanID)
 		}
 		if result.Status != "completed" {
 			t.Errorf("Expected status 'completed', got %s", result.Status)
@@ -564,8 +571,8 @@ func TestClient_DebugMode(t *testing.T) {
 func TestClient_FetchArtifactScanResults(t *testing.T) {
 	t.Run("successful fetch with SBOM and VEX URLs", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "GET" {
-				t.Errorf("Expected GET, got %s", r.Method)
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
 			}
 			if !strings.Contains(r.URL.Path, "/api/v1/ingest/results") {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
@@ -582,7 +589,7 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 			}
 
 			response := ArtifactScanResultsResponse{
-				ScanStatus: "COMPLETED",
+				ScanStatus: testStatusCompleted,
 				Results: map[string]string{
 					"sbom_results": "https://s3.example.com/sbom.json",
 					"vex_results":  "https://s3.example.com/vex.json",
@@ -605,8 +612,8 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 		if result == nil {
 			t.Fatal("Expected result, got nil")
 		}
-		if result.ScanStatus != "COMPLETED" {
-			t.Errorf("Expected status COMPLETED, got %s", result.ScanStatus)
+		if result.ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, result.ScanStatus)
 		}
 		if result.Results["sbom_results"] != "https://s3.example.com/sbom.json" {
 			t.Errorf("Expected SBOM URL, got %s", result.Results["sbom_results"])
@@ -660,8 +667,8 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 	t.Run("successful download", func(t *testing.T) {
 		expectedContent := []byte(`{"sbom": "data", "components": []}`)
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "GET" {
-				t.Errorf("Expected GET, got %s", r.Method)
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
 			}
 			// Pre-signed URLs should NOT have authorization headers
 			if r.Header.Get("Authorization") != "" {
