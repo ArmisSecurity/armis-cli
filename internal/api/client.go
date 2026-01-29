@@ -18,6 +18,9 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// DownloadTimeout is the default timeout for downloading files from pre-signed URLs.
+const DownloadTimeout = 5 * time.Minute
+
 // Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
@@ -99,8 +102,19 @@ func (c *Client) IsDebug() bool {
 	return c.debug
 }
 
+// IngestOptions contains options for the artifact ingestion request.
+type IngestOptions struct {
+	TenantID     string
+	ArtifactType string
+	Filename     string
+	Data         io.Reader
+	Size         int64
+	GenerateSBOM bool
+	GenerateVEX  bool
+}
+
 // StartIngest uploads an artifact for scanning and returns the scan ID.
-func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
+func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
 	uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
 	defer cancel()
 
@@ -109,11 +123,11 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	if err := writer.WriteField("tenant_id", tenantID); err != nil {
+	if err := writer.WriteField("tenant_id", opts.TenantID); err != nil {
 		return "", fmt.Errorf("failed to write tenant_id field: %w", err)
 	}
 
-	if err := writer.WriteField("artifact_type", artifactType); err != nil {
+	if err := writer.WriteField("artifact_type", opts.ArtifactType); err != nil {
 		return "", fmt.Errorf("failed to write artifact_type field: %w", err)
 	}
 
@@ -121,13 +135,31 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		return "", fmt.Errorf("failed to write scan_type field: %w", err)
 	}
 
+	// Add SBOM/VEX generation flags if requested
+	if opts.GenerateSBOM {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: Sending sbom_generate=true ===\n")
+		}
+		if err := writer.WriteField("sbom_generate", "true"); err != nil {
+			return "", fmt.Errorf("failed to write sbom_generate field: %w", err)
+		}
+	}
+	if opts.GenerateVEX {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: Sending vex_generate=true ===\n")
+		}
+		if err := writer.WriteField("vex_generate", "true"); err != nil {
+			return "", fmt.Errorf("failed to write vex_generate field: %w", err)
+		}
+	}
+
 	// Use filepath.Base to sanitize filename and prevent path traversal in multipart
-	part, err := writer.CreateFormFile("tar_file", filepath.Base(filename))
+	part, err := writer.CreateFormFile("tar_file", filepath.Base(opts.Filename))
 	if err != nil {
 		return "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
-	if _, err := io.Copy(part, data); err != nil {
+	if _, err := io.Copy(part, opts.Data); err != nil {
 		return "", fmt.Errorf("failed to copy file data: %w", err)
 	}
 
@@ -147,7 +179,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 	resp, err := c.uploadHTTPClient.Do(req)
 	if err != nil {
 		elapsed := time.Since(start).Round(time.Millisecond)
-		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(size), err)
+		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(opts.Size), err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
@@ -155,7 +187,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		elapsed := time.Since(start).Round(time.Millisecond)
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("upload failed after %s (tar size=%s, status=%s): %s",
-			elapsed, formatBytes(size), resp.Status, strings.TrimSpace(string(bodyBytes)))
+			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
 	var result model.IngestUploadResponse
@@ -374,4 +406,90 @@ func formatBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// ArtifactScanResultsResponse represents the response from the artifact scan results endpoint.
+type ArtifactScanResultsResponse struct {
+	ScanStatus      string            `json:"scan_status"`
+	Results         map[string]string `json:"results"` // key -> presigned URL (e.g., "sbom_results", "vex_results")
+	ScanCompletedAt *string           `json:"scan_completed_at"`
+	StatusUpdatedAt *string           `json:"status_updated_at"`
+}
+
+// FetchArtifactScanResults retrieves the scan results including pre-signed URLs for SBOM and VEX documents.
+func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID string) (*ArtifactScanResultsResponse, error) {
+	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/results"
+	params := url.Values{}
+	params.Add("tenant_id", tenantID)
+	params.Add("scan_id", scanID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Basic "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch artifact scan results: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
+
+	if resp.StatusCode == http.StatusNotFound {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: FetchArtifactScanResults returned 404 for scan_id=%s ===\n", scanID)
+		}
+		return nil, nil // Results not yet available
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if c.debug {
+		fmt.Printf("\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+	}
+
+	var result ArtifactScanResultsResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DownloadFromPresignedURL downloads content from a pre-signed S3 URL.
+func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL string) ([]byte, error) {
+	// Add timeout protection for large downloads
+	downloadCtx, cancel := context.WithTimeout(ctx, DownloadTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", presignedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	// Note: Pre-signed URLs include authentication, so no auth header needed
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read download response: %w", err)
+	}
+
+	return data, nil
 }

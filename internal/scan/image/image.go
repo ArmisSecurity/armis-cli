@@ -35,6 +35,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	sbomVEXOpts           *scan.SBOMVEXOptions
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -54,6 +55,12 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithSBOMVEXOptions sets SBOM and VEX generation options.
+func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
+	s.sbomVEXOpts = opts
 	return s
 }
 
@@ -110,7 +117,19 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	uploadSpinner.Start()
 	defer uploadSpinner.Stop()
 
-	scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), file, info.Size())
+	ingestOpts := api.IngestOptions{
+		TenantID:     s.tenantID,
+		ArtifactType: "image",
+		Filename:     filepath.Base(tarballPath),
+		Data:         file,
+		Size:         info.Size(),
+	}
+	if s.sbomVEXOpts != nil {
+		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
+		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
+	}
+
+	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
@@ -132,6 +151,20 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch results: %w", err)
+	}
+
+	// Handle SBOM/VEX downloads if requested
+	if s.sbomVEXOpts != nil && (s.sbomVEXOpts.GenerateSBOM || s.sbomVEXOpts.GenerateVEX) {
+		// Extract artifact name from tarball path (remove extension)
+		artifactName := filepath.Base(tarballPath)
+		if ext := filepath.Ext(artifactName); ext != "" {
+			artifactName = artifactName[:len(artifactName)-len(ext)]
+		}
+		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
+		if err := downloader.Download(ctx, scanID, artifactName); err != nil {
+			// Log warning but don't fail the scan
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)

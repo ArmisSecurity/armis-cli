@@ -34,6 +34,7 @@ type Scanner struct {
 	includeNonExploitable bool
 	pollInterval          time.Duration
 	includeFiles          *FileList
+	sbomVEXOpts           *scan.SBOMVEXOptions
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -59,6 +60,12 @@ func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 // WithIncludeFiles sets a specific list of files to scan instead of the entire directory.
 func (s *Scanner) WithIncludeFiles(fl *FileList) *Scanner {
 	s.includeFiles = fl
+	return s
+}
+
+// WithSBOMVEXOptions sets SBOM and VEX generation options.
+func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
+	s.sbomVEXOpts = opts
 	return s
 }
 
@@ -160,7 +167,19 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	time.Sleep(500 * time.Millisecond)
 	spinner.Update("Uploading archive to Armis Cloud...")
 
-	scanID, err := s.client.StartIngest(ctx, s.tenantID, "repo", filepath.Base(absPath)+".tar.gz", pr, size)
+	ingestOpts := api.IngestOptions{
+		TenantID:     s.tenantID,
+		ArtifactType: "repo",
+		Filename:     filepath.Base(absPath) + ".tar.gz",
+		Data:         pr,
+		Size:         size,
+	}
+	if s.sbomVEXOpts != nil {
+		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
+		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
+	}
+
+	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
 	}
@@ -192,6 +211,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch results: %w", err)
+	}
+
+	// Handle SBOM/VEX downloads if requested
+	if s.sbomVEXOpts != nil && (s.sbomVEXOpts.GenerateSBOM || s.sbomVEXOpts.GenerateVEX) {
+		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
+		if err := downloader.Download(ctx, scanID, filepath.Base(absPath)); err != nil {
+			// Log warning but don't fail the scan
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)

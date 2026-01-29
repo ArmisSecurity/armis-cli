@@ -8,6 +8,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/image"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
@@ -54,6 +55,17 @@ var scanImageCmd = &cobra.Command{
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+
+		// Configure SBOM/VEX options if any flags are set
+		if generateSBOM || generateVEX {
+			sbomVEXOpts := &scan.SBOMVEXOptions{
+				GenerateSBOM: generateSBOM,
+				GenerateVEX:  generateVEX,
+				SBOMOutput:   sbomOutput,
+				VEXOutput:    vexOutput,
+			}
+			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
+		}
 
 		ctx, cancel := NewSignalContext()
 		defer cancel()
