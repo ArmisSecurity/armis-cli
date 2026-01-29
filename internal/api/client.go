@@ -29,6 +29,10 @@ const MaxDownloadSize = 100 * 1024 * 1024
 // This provides defense-in-depth validation at the API layer.
 const MaxUploadSize = 5 * 1024 * 1024 * 1024
 
+// MaxAPIResponseSize is the maximum allowed size for API JSON responses (1MB).
+// This protects against memory exhaustion from maliciously large API responses.
+const MaxAPIResponseSize = 1 * 1024 * 1024
+
 // URL scheme and host constants for security validation.
 const (
 	schemeHTTPS    = "https"
@@ -497,7 +501,8 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 		return nil, nil // Results not yet available
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	// Use LimitReader to prevent memory exhaustion from large responses
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
