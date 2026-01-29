@@ -747,3 +747,76 @@ func TestScanTarball(t *testing.T) {
 		}
 	})
 }
+
+func TestConvertNormalizedFindingsDebugMode(t *testing.T) {
+	t.Run("debug mode outputs JSON to stderr", func(t *testing.T) {
+		input := []model.NormalizedFinding{
+			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+		}
+
+		// debug=true should print to stderr but not affect the result
+		findings, filteredCount := convertNormalizedFindings(input, true, true)
+
+		if len(findings) != 1 {
+			t.Errorf("findings count = %d, want 1", len(findings))
+		}
+		if filteredCount != 0 {
+			t.Errorf("filteredCount = %d, want 0", filteredCount)
+		}
+		if findings[0].ID != "finding-1" {
+			t.Errorf("finding ID = %s, want finding-1", findings[0].ID)
+		}
+	})
+
+	t.Run("debug mode with multiple findings", func(t *testing.T) {
+		input := []model.NormalizedFinding{
+			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding("finding-2", "MEDIUM", "sca", []string{"CVE-2023-5678"}, nil),
+		}
+
+		findings, _ := convertNormalizedFindings(input, true, true)
+
+		if len(findings) != 2 {
+			t.Errorf("findings count = %d, want 2", len(findings))
+		}
+	})
+
+	t.Run("debug mode skips empty findings", func(t *testing.T) {
+		input := []model.NormalizedFinding{
+			{}, // empty finding - should be skipped even in debug mode
+			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+		}
+
+		findings, _ := convertNormalizedFindings(input, true, true)
+
+		if len(findings) != 1 {
+			t.Errorf("findings count = %d, want 1", len(findings))
+		}
+	})
+}
+
+func TestScanTarballEdgeCases(t *testing.T) {
+	t.Run("tarball file does not exist", func(t *testing.T) {
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		apiClient, _ := api.NewClient("https://example.com", "token", false, time.Minute, api.WithHTTPClient(httpClient))
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false)
+
+		_, err := scanner.ScanTarball(context.Background(), "/nonexistent/path/image.tar")
+		if err == nil {
+			t.Error("Expected error for non-existent tarball")
+		}
+	})
+
+	t.Run("tarball path is a directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		apiClient, _ := api.NewClient("https://example.com", "token", false, time.Minute, api.WithHTTPClient(httpClient))
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false)
+
+		_, err := scanner.ScanTarball(context.Background(), tmpDir)
+		if err == nil {
+			t.Error("Expected error when path is a directory")
+		}
+	})
+}
