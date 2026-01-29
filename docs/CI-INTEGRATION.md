@@ -14,6 +14,7 @@ Integrate Armis security scanning into your CI/CD pipeline to automatically dete
 - [Advanced Patterns](#advanced-patterns)
   - [PR Scanning with Changed Files](#pr-scanning-with-changed-files)
   - [Scheduled Repository Scans](#scheduled-repository-scans)
+  - [SBOM and VEX Generation](#sbom-and-vex-generation)
   - [Container Image Scanning](#container-image-scanning)
 - [Other CI Platforms](#other-ci-platforms)
   - [GitLab CI](#gitlab-ci)
@@ -48,12 +49,13 @@ jobs:
 ```
 
 That's it! This will:
+
 - Scan your repository on every PR
 - Post results as a PR comment
 - Upload findings to GitHub Code Scanning
 - Fail on CRITICAL vulnerabilities
 
-### Other CI Platforms
+### For Other CI Platforms
 
 ```bash
 # Install
@@ -71,6 +73,7 @@ armis-cli scan repo . --tenant-id your-tenant --format sarif --fail-on CRITICAL
 ### Option 1: Reusable Workflow (Recommended)
 
 The reusable workflow is the simplest way to integrate Armis scanning. It handles:
+
 - CLI installation with checksum verification
 - SARIF upload to GitHub Code Scanning
 - Detailed PR comments with severity breakdown
@@ -300,6 +303,7 @@ jobs:
 ```
 
 **Key points:**
+
 - Uses `tj-actions/changed-files` to detect modified files
 - Passes changed files via `include-files` input
 - Only runs if files actually changed
@@ -336,10 +340,71 @@ jobs:
 ```
 
 **Key points:**
+
 - Set `fail-on` to empty string for monitoring without blocking
 - Disable PR comments since there's no PR context
 - Increase timeout for comprehensive scans
 - Results still uploaded to GitHub Code Scanning
+
+---
+
+### SBOM and VEX Generation
+
+Generate Software Bill of Materials and VEX documents for compliance and supply chain security:
+
+```yaml
+name: Security Scan with SBOM/VEX
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Armis CLI
+        run: |
+          curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+
+      - name: Run Security Scan with SBOM/VEX
+        env:
+          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+        run: |
+          armis-cli scan repo . \
+            --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
+            --format sarif \
+            --sbom --vex \
+            --sbom-output ./artifacts/sbom.json \
+            --vex-output ./artifacts/vex.json \
+            > results.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: results.sarif
+
+      - name: Upload SBOM/VEX Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sbom-vex-${{ github.sha }}
+          path: ./artifacts/
+          retention-days: 90
+```
+
+**Key points:**
+
+- SBOM and VEX are generated server-side during the scan
+- Files are downloaded after scan completion
+- Store artifacts for compliance and audit purposes
+- VEX helps prioritize vulnerabilities that are actually exploitable
 
 ---
 
@@ -587,26 +652,30 @@ Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variabl
 
 ### Authentication Errors
 
-**"API token not set"**
+#### "API token not set"
+
 - Ensure `ARMIS_API_TOKEN` is configured as a secret
 - Check that the secret is accessible to the workflow/job
 - Verify the secret name matches exactly (case-sensitive)
 
-**"Invalid token" or "Unauthorized"**
+#### "Invalid token" or "Unauthorized"
+
 - Verify the token is valid and not expired
 - Check that the tenant ID matches the token's tenant
 - Ensure the token has sufficient permissions
 
 ### Timeout Issues
 
-**Scan times out**
+#### Scan times out
+
 - Increase `scan-timeout` (default: 60 minutes)
 - For large repositories, consider using `include-files` to scan specific paths
 - Check network connectivity to Armis Cloud
 
 ### SARIF Upload Failures
 
-**"Resource not accessible by integration"**
+#### "Resource not accessible by integration"
+
 - Ensure `security-events: write` permission is set
 - For private repositories, GitHub Advanced Security must be enabled
 - Check that the SARIF file was created successfully
@@ -621,6 +690,7 @@ Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variabl
 
 **Distinguishing findings from errors:**
 The reusable workflow's "Check for Failures" step differentiates between:
+
 - Scans that failed (timeout, API error) - always fails the workflow
 - Scans that found vulnerabilities - fails based on `fail-on` setting
 
@@ -644,6 +714,7 @@ The reusable workflow's "Check for Failures" step differentiates between:
 ### Supply Chain Security
 
 - **Pin action versions** to specific tags or commit SHAs:
+
   ```yaml
   # Good: pinned to version
   uses: ArmisSecurity/armis-cli@v1.0.0
@@ -651,6 +722,7 @@ The reusable workflow's "Check for Failures" step differentiates between:
   # Better: pinned to commit SHA
   uses: ArmisSecurity/armis-cli@abc123def456
   ```
+
 - The CLI installation verifies **checksums** automatically
 - Release binaries include **SLSA provenance** for verification
 

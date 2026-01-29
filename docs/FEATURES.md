@@ -78,6 +78,93 @@ Features:
 - Gracefully handles non-git directories
 - Caches results to avoid redundant git calls
 
+## 📦 SBOM and VEX Generation
+
+Generate industry-standard Software Bill of Materials (SBOM) and Vulnerability Exploitability eXchange (VEX) documents alongside your security scans.
+
+### What are SBOM and VEX?
+
+- **SBOM (Software Bill of Materials)**: A comprehensive inventory of all software components, dependencies, and libraries in your project. Essential for supply chain security, license compliance, and vulnerability management.
+
+- **VEX (Vulnerability Exploitability eXchange)**: A document that communicates the exploitability status of vulnerabilities in your specific context. Helps reduce alert fatigue by indicating which vulnerabilities actually affect your deployment.
+
+Both documents are generated in [CycloneDX](https://cyclonedx.org/) format, an OWASP standard widely supported by security tools.
+
+### Basic Usage
+
+```bash
+# Generate SBOM for a repository scan
+armis-cli scan repo . --tenant-id my-tenant --sbom
+
+# Generate both SBOM and VEX
+armis-cli scan repo . --tenant-id my-tenant --sbom --vex
+
+# Specify custom output paths
+armis-cli scan repo . --tenant-id my-tenant \
+  --sbom --sbom-output ./reports/sbom.json \
+  --vex --vex-output ./reports/vex.json
+
+# Generate SBOM for container image scan
+armis-cli scan image nginx:latest --tenant-id my-tenant --sbom --vex
+```
+
+### Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--sbom` | Generate Software Bill of Materials | `false` |
+| `--vex` | Generate VEX document | `false` |
+| `--sbom-output` | Custom output path for SBOM | `.armis/<artifact>-sbom.json` |
+| `--vex-output` | Custom output path for VEX | `.armis/<artifact>-vex.json` |
+
+### Output Location
+
+By default, SBOM and VEX files are saved to the `.armis/` directory:
+
+```text
+.armis/
+├── my-project-sbom.json
+└── my-project-vex.json
+```
+
+### CI/CD Example
+
+Generate SBOM and VEX as part of your CI pipeline:
+
+```yaml
+# GitHub Actions example
+- name: Security Scan with SBOM
+  run: |
+    armis-cli scan repo . \
+      --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
+      --sbom --vex \
+      --sbom-output ./artifacts/sbom.json \
+      --vex-output ./artifacts/vex.json
+
+- name: Upload SBOM Artifact
+  uses: actions/upload-artifact@v4
+  with:
+    name: sbom-vex
+    path: ./artifacts/
+```
+
+### Use Cases
+
+1. **Compliance**: Many regulations (Executive Order 14028, EU Cyber Resilience Act) require SBOM generation
+2. **Supply Chain Security**: Track all dependencies and detect supply chain attacks
+3. **License Management**: Identify all licenses in your software stack
+4. **Vulnerability Prioritization**: Use VEX to focus on actually exploitable vulnerabilities
+5. **Incident Response**: Quickly identify if vulnerable components are in your software
+
+### Notes
+
+- SBOM/VEX generation is performed server-side by Armis Cloud
+- Download failures are logged as warnings but do not fail the scan
+- Files are protected against path traversal attacks
+- Maximum download size is 100MB per file
+
+---
+
 ## 🚫 .armisignore Support
 
 Exclude files and directories from scans using `.armisignore` files.

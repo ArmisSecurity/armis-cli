@@ -22,8 +22,17 @@ repos:
     rev: v0.5.1
     hooks:
       - id: go-fmt
-      - id: go-vet
       - id: go-mod-tidy
+
+  # Go vet - run on all packages (local hook for proper recursive behavior)
+  - repo: local
+    hooks:
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
 
   # golangci-lint
   - repo: https://github.com/golangci/golangci-lint

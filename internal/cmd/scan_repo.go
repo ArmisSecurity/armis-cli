@@ -8,6 +8,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,17 @@ var scanRepoCmd = &cobra.Command{
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+
+		// Configure SBOM/VEX options if any flags are set
+		if generateSBOM || generateVEX {
+			sbomVEXOpts := &scan.SBOMVEXOptions{
+				GenerateSBOM: generateSBOM,
+				GenerateVEX:  generateVEX,
+				SBOMOutput:   sbomOutput,
+				VEXOutput:    vexOutput,
+			}
+			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
+		}
 
 		// Handle --include-files flag for targeted file scanning
 		// Security: Path traversal protection is enforced by ParseFileList which
