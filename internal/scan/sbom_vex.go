@@ -113,6 +113,11 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		}
 	}
 
+	// Validate URL to prevent SSRF - only allow recognized S3 endpoints over HTTPS
+	if err := d.client.ValidatePresignedURL(url); err != nil {
+		return fmt.Errorf("invalid %s URL: %w", docType, err)
+	}
+
 	// DownloadFromPresignedURL enforces size limits (100MB max via io.LimitReader)
 	// and timeout (5min) to prevent resource exhaustion attacks
 	data, err := d.client.DownloadFromPresignedURL(ctx, url)

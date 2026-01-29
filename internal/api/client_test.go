@@ -767,7 +767,7 @@ func TestValidatePresignedURL(t *testing.T) {
 		t.Fatalf("Failed to create client without localhost: %v", err)
 	}
 
-	t.Run("valid S3 URLs", func(t *testing.T) {
+	t.Run("valid S3 URLs with HTTPS", func(t *testing.T) {
 		validS3URLs := []struct {
 			name string
 			url  string
@@ -779,7 +779,7 @@ func TestValidatePresignedURL(t *testing.T) {
 		for _, tt := range validS3URLs {
 			t.Run(tt.name, func(t *testing.T) {
 				// S3 URLs should work regardless of localhost setting
-				if err := clientWithoutLocalhost.validatePresignedURL(tt.url); err != nil {
+				if err := clientWithoutLocalhost.ValidatePresignedURL(tt.url); err != nil {
 					t.Errorf("Unexpected error for URL %q: %v", tt.url, err)
 				}
 			})
@@ -797,13 +797,32 @@ func TestValidatePresignedURL(t *testing.T) {
 		}
 		for _, tt := range localhostURLs {
 			t.Run(tt.name+" allowed", func(t *testing.T) {
-				if err := clientWithLocalhost.validatePresignedURL(tt.url); err != nil {
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err != nil {
 					t.Errorf("Expected localhost URL %q to be allowed with opt-in: %v", tt.url, err)
 				}
 			})
 			t.Run(tt.name+" rejected by default", func(t *testing.T) {
-				if err := clientWithoutLocalhost.validatePresignedURL(tt.url); err == nil {
+				if err := clientWithoutLocalhost.ValidatePresignedURL(tt.url); err == nil {
 					t.Errorf("Expected localhost URL %q to be rejected without opt-in", tt.url)
+				}
+			})
+		}
+	})
+
+	t.Run("HTTP URLs rejected for non-localhost", func(t *testing.T) {
+		httpURLs := []struct {
+			name string
+			url  string
+		}{
+			{"S3 over HTTP", "http://mybucket.s3.amazonaws.com/file.json"},
+			{"internal service URL", "http://internal.company.local/admin"},
+			{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/"},
+		}
+		for _, tt := range httpURLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// HTTP URLs should be rejected to protect presigned URL signatures
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected HTTP URL %q to be rejected", tt.url)
 				}
 			})
 		}
@@ -816,8 +835,6 @@ func TestValidatePresignedURL(t *testing.T) {
 		}{
 			{"non-S3 AWS URL", "https://ec2.amazonaws.com/metadata"},
 			{"arbitrary external URL", "https://malicious.example.com/steal-data"},
-			{"internal service URL", "http://internal.company.local/admin"},
-			{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/"},
 			{"kubernetes API", "https://kubernetes.default.svc/api/v1/secrets"},
 			{"empty URL", ""},
 			{"malformed URL", "://invalid"},
@@ -825,7 +842,7 @@ func TestValidatePresignedURL(t *testing.T) {
 		for _, tt := range invalidURLs {
 			t.Run(tt.name, func(t *testing.T) {
 				// Invalid URLs should fail regardless of localhost setting
-				if err := clientWithLocalhost.validatePresignedURL(tt.url); err == nil {
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err == nil {
 					t.Errorf("Expected error for URL %q, got none", tt.url)
 				}
 			})

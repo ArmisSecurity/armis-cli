@@ -119,6 +119,28 @@ func (c *Client) IsDebug() bool {
 	return c.debug
 }
 
+// setAuthHeader sets the Authorization header on a request, but only if the
+// request URL uses HTTPS (or localhost for testing). This prevents credential
+// exposure over insecure channels.
+func (c *Client) setAuthHeader(req *http.Request) error {
+	host := req.URL.Hostname()
+	scheme := strings.ToLower(req.URL.Scheme)
+
+	// Allow localhost/127.0.0.1 for testing without HTTPS requirement
+	if host == "localhost" || host == "127.0.0.1" {
+		req.Header.Set("Authorization", "Basic "+c.token)
+		return nil
+	}
+
+	// Require HTTPS for all other hosts to protect credentials
+	if scheme != "https" {
+		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
+	}
+
+	req.Header.Set("Authorization", "Basic "+c.token)
+	return nil
+}
+
 // IngestOptions contains options for the artifact ingestion request.
 type IngestOptions struct {
 	TenantID     string
@@ -450,7 +472,10 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Basic "+c.token)
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(req); err != nil {
+		return nil, fmt.Errorf("failed to set auth header: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -486,16 +511,18 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	return &result, nil
 }
 
-// validatePresignedURL validates that a presigned URL points to a recognized S3 endpoint.
+// ValidatePresignedURL validates that a presigned URL points to a recognized S3 endpoint
+// and uses HTTPS to protect authentication signatures embedded in the URL.
 // This prevents SSRF attacks by ensuring downloads only go to expected cloud storage hosts.
 // Localhost URLs are only allowed if WithAllowLocalURLs(true) was set on the client.
-func (c *Client) validatePresignedURL(presignedURL string) error {
+func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	parsed, err := url.Parse(presignedURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
 	host := strings.ToLower(parsed.Hostname())
+	scheme := strings.ToLower(parsed.Scheme)
 
 	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
 	if host == "localhost" || host == "127.0.0.1" {
@@ -503,6 +530,12 @@ func (c *Client) validatePresignedURL(presignedURL string) error {
 			return nil
 		}
 		return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
+	}
+
+	// Require HTTPS for non-localhost URLs to protect presigned URL signatures
+	// Presigned URLs contain AWS authentication signatures that must not be exposed
+	if scheme != "https" {
+		return fmt.Errorf("presigned URL must use HTTPS to protect authentication signatures")
 	}
 
 	// Allow AWS S3 bucket URL patterns:
@@ -517,9 +550,10 @@ func (c *Client) validatePresignedURL(presignedURL string) error {
 }
 
 // DownloadFromPresignedURL downloads content from a pre-signed S3 URL.
+// The URL is validated to ensure it points to a recognized S3 endpoint and uses HTTPS.
 func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL string) ([]byte, error) {
-	// Validate URL to prevent SSRF attacks
-	if err := c.validatePresignedURL(presignedURL); err != nil {
+	// Validate URL to prevent SSRF attacks and ensure HTTPS
+	if err := c.ValidatePresignedURL(presignedURL); err != nil {
 		return nil, fmt.Errorf("invalid presigned URL: %w", err)
 	}
 
