@@ -13,6 +13,11 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+const (
+	statusCompletedUpper = "COMPLETED"
+	statusCompletedLower = "completed"
+)
+
 func TestNewClient(t *testing.T) {
 	t.Run("creates client with defaults", func(t *testing.T) {
 		client, err := NewClient("https://api.example.com", "token123", false, 0)
@@ -207,7 +212,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 				Data: []model.IngestStatusData{
 					{
 						ScanID:     "scan-456",
-						ScanStatus: "COMPLETED",
+						ScanStatus: statusCompletedUpper,
 						TenantID:   "tenant-123",
 					},
 				},
@@ -229,8 +234,8 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		if len(status.Data) != 1 {
 			t.Fatalf("Expected 1 status data, got %d", len(status.Data))
 		}
-		if status.Data[0].ScanStatus != "COMPLETED" {
-			t.Errorf("Expected status COMPLETED, got %s", status.Data[0].ScanStatus)
+		if status.Data[0].ScanStatus != statusCompletedUpper {
+			t.Errorf("Expected status %s, got %s", statusCompletedUpper, status.Data[0].ScanStatus)
 		}
 	})
 
@@ -435,7 +440,7 @@ func TestClient_GetScanResult(t *testing.T) {
 
 			response := model.ScanResult{
 				ScanID: "scan-123",
-				Status: "completed",
+				Status: statusCompletedLower,
 				Findings: []model.Finding{
 					{ID: "finding-1", Severity: model.SeverityHigh},
 				},
@@ -457,8 +462,8 @@ func TestClient_GetScanResult(t *testing.T) {
 		if result.ScanID != "scan-123" {
 			t.Errorf("Expected scan ID 'scan-123', got %s", result.ScanID)
 		}
-		if result.Status != "completed" {
-			t.Errorf("Expected status 'completed', got %s", result.Status)
+		if result.Status != statusCompletedLower {
+			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
 		}
 	})
 }
@@ -486,6 +491,363 @@ func TestClient_DebugMode(t *testing.T) {
 
 		if err != nil {
 			t.Fatalf("FetchNormalizedResults failed: %v", err)
+		}
+	})
+}
+
+func TestClient_WaitForIngest(t *testing.T) {
+	t.Run("successful completion", func(t *testing.T) {
+		callCount := 0
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			var status string
+			if callCount < 2 {
+				status = "PROCESSING"
+			} else {
+				status = statusCompletedUpper
+			}
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: status,
+						TenantID:   "tenant-456",
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err != nil {
+			t.Fatalf("WaitForIngest failed: %v", err)
+		}
+		if result.ScanStatus != statusCompletedUpper {
+			t.Errorf("Expected status %s, got %s", statusCompletedUpper, result.ScanStatus)
+		}
+		if callCount < 2 {
+			t.Errorf("Expected at least 2 calls, got %d", callCount)
+		}
+	})
+
+	t.Run("handles FAILED status with error", func(t *testing.T) {
+		errorMsg := "Scan processing failed"
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: "FAILED",
+						TenantID:   "tenant-456",
+						LastError:  &errorMsg,
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err == nil {
+			t.Fatal("Expected error for FAILED status")
+		}
+		if !strings.Contains(err.Error(), "scan failed") {
+			t.Errorf("Expected 'scan failed' error, got: %v", err)
+		}
+	})
+
+	t.Run("handles FAILED status without error message", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: "FAILED",
+						TenantID:   "tenant-456",
+						LastError:  nil,
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err != nil {
+			t.Fatalf("WaitForIngest failed: %v", err)
+		}
+		if result.ScanStatus != "FAILED" {
+			t.Errorf("Expected status FAILED, got %s", result.ScanStatus)
+		}
+	})
+
+	t.Run("timeout after deadline", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: "PROCESSING",
+						TenantID:   "tenant-456",
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 50*time.Millisecond)
+
+		if err == nil {
+			t.Fatal("Expected timeout error")
+		}
+		// Error can be "timed out" or "context deadline exceeded"
+		if !strings.Contains(err.Error(), "timed out") && !strings.Contains(err.Error(), "deadline exceeded") {
+			t.Errorf("Expected timeout error, got: %v", err)
+		}
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: "PROCESSING",
+						TenantID:   "tenant-456",
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			cancel()
+		}()
+
+		_, err = client.WaitForIngest(ctx, "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err == nil {
+			t.Fatal("Expected context cancellation error")
+		}
+	})
+
+	t.Run("empty status data", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err == nil {
+			t.Fatal("Expected error for empty status data")
+		}
+		if !strings.Contains(err.Error(), "no status data") {
+			t.Errorf("Expected 'no status data' error, got: %v", err)
+		}
+	})
+
+	t.Run("status check error", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.ErrorResponse(w, http.StatusInternalServerError, "Server error")
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 500 * time.Millisecond})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 100*time.Millisecond)
+
+		if err == nil {
+			t.Fatal("Expected error for failed status check")
+		}
+	})
+
+	t.Run("lowercase status handling", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{
+						ScanID:     "scan-123",
+						ScanStatus: statusCompletedLower,
+						TenantID:   "tenant-456",
+					},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+
+		if err != nil {
+			t.Fatalf("WaitForIngest failed: %v", err)
+		}
+		if result == nil {
+			t.Fatal("Expected non-nil result")
+		}
+	})
+}
+
+func TestClient_WaitForScan(t *testing.T) {
+	t.Run("polls until completed", func(t *testing.T) {
+		callCount := 0
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			callCount++
+			var status string
+			if callCount < 2 {
+				status = "processing"
+			} else {
+				status = statusCompletedLower
+			}
+			response := model.ScanResult{
+				ScanID: "scan-123",
+				Status: status,
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForScan(context.Background(), "scan-123", 10*time.Millisecond)
+
+		if err != nil {
+			t.Fatalf("WaitForScan failed: %v", err)
+		}
+		if result.Status != statusCompletedLower {
+			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
+		}
+		if callCount < 2 {
+			t.Errorf("Expected at least 2 calls, got %d", callCount)
+		}
+	})
+
+	t.Run("returns on failed status", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.ScanResult{
+				ScanID: "scan-123",
+				Status: "failed",
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForScan(context.Background(), "scan-123", 10*time.Millisecond)
+
+		if err != nil {
+			t.Fatalf("WaitForScan failed: %v", err)
+		}
+		if result.Status != "failed" {
+			t.Errorf("Expected status 'failed', got %s", result.Status)
+		}
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.ScanResult{
+				ScanID: "scan-123",
+				Status: "processing",
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			cancel()
+		}()
+
+		_, err = client.WaitForScan(ctx, "scan-123", 10*time.Millisecond)
+
+		if err == nil {
+			t.Fatal("Expected context cancellation error")
+		}
+		// Error may be wrapped or direct
+		if !strings.Contains(err.Error(), "canceled") {
+			t.Errorf("Expected cancellation error, got: %v", err)
+		}
+	})
+
+	t.Run("get scan result error", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.ErrorResponse(w, http.StatusInternalServerError, "Server error")
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 500 * time.Millisecond})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_, err = client.WaitForScan(ctx, "scan-123", 10*time.Millisecond)
+
+		if err == nil {
+			t.Fatal("Expected error for failed get scan result")
 		}
 	})
 }
