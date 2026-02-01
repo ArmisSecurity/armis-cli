@@ -668,7 +668,11 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
 		}
 
-		finding.Title = finding.Description
+		if finding.FindingCategory != "" {
+			finding.Title = util.FormatCategory(finding.FindingCategory)
+		} else {
+			finding.Title = finding.Description
+		}
 
 		findings = append(findings, finding)
 	}

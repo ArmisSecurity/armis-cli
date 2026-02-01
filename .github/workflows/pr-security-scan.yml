@@ -43,9 +43,13 @@ jobs:
     uses: ./.github/workflows/reusable-security-scan.yml
     with:
       scan-type: repo
-      fail-on: 'CRITICAL,HIGH'
+      # PRs: Block on CRITICAL,HIGH (pre-merge gate)
+      # Push to main: Don't fail (code already merged, just visibility)
+      fail-on: ${{ github.event_name == 'pull_request' && 'CRITICAL,HIGH' || '' }}
       include-files: ${{ needs.get-changed-files.outputs.files }}
       build-from-source: false
+      # PR comment only makes sense for pull_request events
+      pr-comment: ${{ github.event_name == 'pull_request' }}
     secrets:
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}

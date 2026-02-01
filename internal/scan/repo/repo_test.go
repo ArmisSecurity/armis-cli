@@ -20,6 +20,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+const testSQLInjectionDescription = "SQL Injection vulnerability"
+
 func TestBuildScanResult(t *testing.T) {
 	t.Run("empty findings", func(t *testing.T) {
 		result := buildScanResult("scan-123", []model.NormalizedFinding{}, false, true)
@@ -402,16 +404,29 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("title is set to description", func(t *testing.T) {
+	t.Run("title is set to formatted FindingCategory when available", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "CODE_VULNERABILITY", []string{"CVE-2023-1234"}, nil),
 		}
-		input[0].NormalizedRemediation.Description = "SQL Injection vulnerability"
+		input[0].NormalizedRemediation.Description = testSQLInjectionDescription
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
-		if findings[0].Title != "SQL Injection vulnerability" {
-			t.Errorf("Title = %q, want %q", findings[0].Title, "SQL Injection vulnerability")
+		if findings[0].Title != "Code Vulnerability" {
+			t.Errorf("Title = %q, want %q", findings[0].Title, "Code Vulnerability")
+		}
+	})
+
+	t.Run("title falls back to description when FindingCategory is empty", func(t *testing.T) {
+		input := []model.NormalizedFinding{
+			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "", []string{"CVE-2023-1234"}, nil),
+		}
+		input[0].NormalizedRemediation.Description = testSQLInjectionDescription
+
+		findings, _ := convertNormalizedFindings(input, false, true)
+
+		if findings[0].Title != testSQLInjectionDescription {
+			t.Errorf("Title = %q, want %q", findings[0].Title, testSQLInjectionDescription)
 		}
 	})
 

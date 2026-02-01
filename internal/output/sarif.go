@@ -181,7 +181,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			RuleIndex: ruleIndexMap[finding.ID],
 			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
-				Text: finding.Title + ": " + finding.Description,
+				Text: buildMessageText(finding.Title, finding.Description),
 			},
 			Properties: &sarifResultProperties{
 				Severity:    string(finding.Severity),
@@ -251,6 +251,14 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	}
 
 	return results
+}
+
+// buildMessageText creates a SARIF message text, avoiding duplication when title equals description.
+func buildMessageText(title, description string) string {
+	if title == "" || title == description {
+		return description
+	}
+	return title + ": " + description
 }
 
 func severityToSarifLevel(severity model.Severity) string {
