@@ -486,3 +486,166 @@ func TestScanDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestPluralize(t *testing.T) {
+	tests := []struct {
+		word     string
+		count    int
+		expected string
+	}{
+		{"issue", 0, "issues"},
+		{"issue", 1, "issue"},
+		{"issue", 2, "issues"},
+		{"issue", 100, "issues"},
+		{"finding", 1, "finding"},
+		{"finding", 5, "findings"},
+	}
+
+	for _, tt := range tests {
+		result := pluralize(tt.word, tt.count)
+		if result != tt.expected {
+			t.Errorf("pluralize(%q, %d) = %q, want %q", tt.word, tt.count, result, tt.expected)
+		}
+	}
+}
+
+func TestRenderBriefStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   *model.ScanResult
+		contains []string
+	}{
+		{
+			name: "no findings",
+			result: &model.ScanResult{
+				Summary: model.Summary{Total: 0},
+			},
+			contains: []string{"No security issues found"},
+		},
+		{
+			name: "single finding",
+			result: &model.ScanResult{
+				Summary: model.Summary{
+					Total: 1,
+					BySeverity: map[model.Severity]int{
+						model.SeverityHigh: 1,
+					},
+				},
+			},
+			contains: []string{"Found 1 issue", "1 high"},
+		},
+		{
+			name: "multiple severities",
+			result: &model.ScanResult{
+				Summary: model.Summary{
+					Total: 5,
+					BySeverity: map[model.Severity]int{
+						model.SeverityCritical: 2,
+						model.SeverityHigh:     1,
+						model.SeverityMedium:   2,
+					},
+				},
+			},
+			contains: []string{"Found 5 issues", "2 critical", "1 high", "2 medium"},
+		},
+		{
+			name: "all severities",
+			result: &model.ScanResult{
+				Summary: model.Summary{
+					Total: 10,
+					BySeverity: map[model.Severity]int{
+						model.SeverityCritical: 1,
+						model.SeverityHigh:     2,
+						model.SeverityMedium:   3,
+						model.SeverityLow:      2,
+						model.SeverityInfo:     2,
+					},
+				},
+			},
+			contains: []string{"Found 10 issues", "1 critical", "2 high", "3 medium", "2 low", "2 info"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := renderBriefStatus(&buf, tt.result)
+			if err != nil {
+				t.Fatalf("renderBriefStatus failed: %v", err)
+			}
+			output := buf.String()
+			for _, expected := range tt.contains {
+				if !strings.Contains(output, expected) {
+					t.Errorf("expected output to contain %q, got %q", expected, output)
+				}
+			}
+		})
+	}
+}
+
+func TestHybridOutputStructure(t *testing.T) {
+	formatter := &HumanFormatter{}
+
+	result := &model.ScanResult{
+		ScanID: "test-hybrid",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:       "1",
+				Severity: model.SeverityCritical,
+				Title:    "Critical Issue",
+			},
+			{
+				ID:       "2",
+				Severity: model.SeverityHigh,
+				Title:    "High Issue",
+			},
+		},
+		Summary: model.Summary{
+			Total: 2,
+			BySeverity: map[model.Severity]int{
+				model.SeverityCritical: 1,
+				model.SeverityHigh:     1,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify brief status appears before FINDINGS
+	briefStatusIdx := strings.Index(output, "Found 2 issues")
+	findingsIdx := strings.Index(output, "FINDINGS")
+	if briefStatusIdx == -1 {
+		t.Error("Expected brief status line in output")
+	}
+	if findingsIdx == -1 {
+		t.Error("Expected FINDINGS section in output")
+	}
+	if briefStatusIdx > findingsIdx {
+		t.Error("Brief status should appear before FINDINGS section")
+	}
+
+	// Verify SUMMARY section appears after FINDINGS
+	summaryIdx := strings.Index(output, "  SUMMARY")
+	if summaryIdx == -1 {
+		t.Error("Expected SUMMARY section in output")
+	}
+	if summaryIdx < findingsIdx {
+		t.Error("SUMMARY section should appear after FINDINGS section")
+	}
+
+	// Verify detailed summary dashboard appears at the end
+	dashboardIdx := strings.Index(output, "📊 SCAN SUMMARY")
+	if dashboardIdx == -1 {
+		t.Error("Expected detailed summary dashboard in output")
+	}
+	if dashboardIdx < summaryIdx {
+		t.Error("Detailed summary dashboard should appear after SUMMARY header")
+	}
+}
