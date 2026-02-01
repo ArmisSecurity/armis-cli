@@ -9,9 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+---
+
+## [1.0.6] - 2025-02-01
+
+### Added
+
 - SBOM (Software Bill of Materials) generation in CycloneDX format via `--sbom` flag
 - VEX (Vulnerability Exploitability eXchange) document generation via `--vex` flag
 - Custom output paths for SBOM/VEX via `--sbom-output` and `--vex-output` flags
+- Proposed fix support with AI validation for vulnerability remediation
+- Hybrid scan summary with brief status at top of output
+- Theme-aware logo support for documentation
+
+### Changed
+
+- Improved test coverage to 81.1%
+
+### Fixed
+
+- Workflow condition handling to avoid duplicated titles in scan output
+- Missing permissions in security-scan workflow
+
+### Documentation
+
+- Added comprehensive CI integration guide
+- Added OSS best practices and developer tooling documentation
+
+---
+
+## [1.0.5] - Initial Public Release
+
+### Added
+
 - Initial public release
 - Repository scanning for security vulnerabilities
 - Container image scanning
@@ -21,14 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-platform binaries (Linux, macOS, Windows)
 - Docker image support
 - Cosign signature verification
-
-### Changed
-
-### Deprecated
-
-### Removed
-
-### Fixed
 
 ### Security
 
