@@ -408,3 +408,419 @@ func TestSARIFFormatter_WithFixAndValidation(t *testing.T) {
 		t.Error("Expected no validation properties for finding without validation")
 	}
 }
+
+func TestSARIFFormatter_StandardFixesArray(t *testing.T) {
+	formatter := &SARIFFormatter{}
+
+	startLine := 42
+	endLine := 44
+
+	result := &model.ScanResult{
+		ScanID: "test-scan-fixes",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:          "vuln-with-proposed-fix",
+				Type:        model.FindingTypeVulnerability,
+				Severity:    model.SeverityCritical,
+				Title:       "SQL Injection",
+				Description: "User input directly concatenated into SQL query",
+				File:        "main.go",
+				StartLine:   42,
+				EndLine:     44,
+				Fix: &model.Fix{
+					IsValid:     true,
+					Explanation: "Use parameterized queries to prevent SQL injection",
+					VulnerableCode: &model.CodeSnippetFix{
+						FilePath:  "main.go",
+						StartLine: &startLine,
+						EndLine:   &endLine,
+						Content:   `query := "SELECT * FROM users WHERE id = '" + id + "'"`,
+					},
+					ProposedFixes: []model.CodeSnippetFix{
+						{
+							FilePath:  "main.go",
+							StartLine: &startLine,
+							EndLine:   &endLine,
+							Content:   `query := "SELECT * FROM users WHERE id = ?"`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("Failed to decode SARIF: %v", err)
+	}
+
+	if len(report.Runs[0].Results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(report.Runs[0].Results))
+	}
+
+	result1 := report.Runs[0].Results[0]
+
+	// Verify standard SARIF fixes array is present
+	if len(result1.Fixes) == 0 {
+		t.Fatal("Expected SARIF fixes array to be populated")
+	}
+
+	fix := result1.Fixes[0]
+
+	// Check description
+	if fix.Description == nil {
+		t.Error("Expected fix description to be set")
+	} else if fix.Description.Text != "Use parameterized queries to prevent SQL injection" {
+		t.Errorf("Fix description mismatch: got %q", fix.Description.Text)
+	}
+
+	// Check artifact changes
+	if len(fix.ArtifactChanges) == 0 {
+		t.Fatal("Expected artifact changes to be present")
+	}
+
+	artifactChange := fix.ArtifactChanges[0]
+	if artifactChange.ArtifactLocation.URI != "main.go" {
+		t.Errorf("Artifact location mismatch: got %q", artifactChange.ArtifactLocation.URI)
+	}
+
+	// Check replacements
+	if len(artifactChange.Replacements) == 0 {
+		t.Fatal("Expected replacements to be present")
+	}
+
+	replacement := artifactChange.Replacements[0]
+	if replacement.DeletedRegion.StartLine != 42 {
+		t.Errorf("DeletedRegion.StartLine mismatch: got %d, want 42", replacement.DeletedRegion.StartLine)
+	}
+	if replacement.DeletedRegion.EndLine != 44 {
+		t.Errorf("DeletedRegion.EndLine mismatch: got %d, want 44", replacement.DeletedRegion.EndLine)
+	}
+	if replacement.InsertedContent == nil {
+		t.Fatal("Expected InsertedContent to be present")
+	}
+	if replacement.InsertedContent.Text != `query := "SELECT * FROM users WHERE id = ?"` {
+		t.Errorf("InsertedContent mismatch: got %q", replacement.InsertedContent.Text)
+	}
+
+	// Verify custom properties fix is also present (backward compatibility)
+	if result1.Properties.Fix == nil {
+		t.Error("Expected custom properties fix to also be present for backward compatibility")
+	}
+}
+
+func TestSARIFFormatter_FixesArrayWithPatchFiles(t *testing.T) {
+	formatter := &SARIFFormatter{}
+
+	result := &model.ScanResult{
+		ScanID: "test-scan-patch-files",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:          "vuln-with-patch-files",
+				Type:        model.FindingTypeVulnerability,
+				Severity:    model.SeverityHigh,
+				Title:       "XSS Vulnerability",
+				Description: "Unescaped output",
+				File:        "template.html",
+				StartLine:   10,
+				EndLine:     12,
+				Fix: &model.Fix{
+					IsValid:     true,
+					Explanation: "Escape HTML output",
+					PatchFiles: map[string]string{
+						"template.html": "<div>{{ .UserInput | html }}</div>",
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("Failed to decode SARIF: %v", err)
+	}
+
+	result1 := report.Runs[0].Results[0]
+
+	// Verify fixes array is populated from PatchFiles
+	if len(result1.Fixes) == 0 {
+		t.Fatal("Expected SARIF fixes array to be populated from PatchFiles")
+	}
+
+	fix := result1.Fixes[0]
+	if len(fix.ArtifactChanges) == 0 {
+		t.Fatal("Expected artifact changes")
+	}
+
+	artifactChange := fix.ArtifactChanges[0]
+	if artifactChange.ArtifactLocation.URI != "template.html" {
+		t.Errorf("Expected template.html, got %s", artifactChange.ArtifactLocation.URI)
+	}
+
+	if len(artifactChange.Replacements) == 0 {
+		t.Fatal("Expected replacements")
+	}
+
+	if artifactChange.Replacements[0].InsertedContent.Text != "<div>{{ .UserInput | html }}</div>" {
+		t.Errorf("InsertedContent mismatch: got %q", artifactChange.Replacements[0].InsertedContent.Text)
+	}
+}
+
+func TestSARIFFormatter_NoFixesArrayWithoutFix(t *testing.T) {
+	formatter := &SARIFFormatter{}
+
+	result := &model.ScanResult{
+		ScanID: "test-scan-no-fix",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:          "vuln-no-fix",
+				Type:        model.FindingTypeVulnerability,
+				Severity:    model.SeverityMedium,
+				Title:       "Some Vulnerability",
+				Description: "No fix available",
+				File:        "main.go",
+				StartLine:   10,
+				// No Fix field
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("Failed to decode SARIF: %v", err)
+	}
+
+	result1 := report.Runs[0].Results[0]
+
+	// Verify no fixes array when no fix data
+	if len(result1.Fixes) != 0 {
+		t.Errorf("Expected no fixes array, got %d fixes", len(result1.Fixes))
+	}
+}
+
+func TestConvertFixToSarif(t *testing.T) {
+	startLine := 10
+	endLine := 15
+
+	tests := []struct {
+		name          string
+		finding       model.Finding
+		expectedFixes int
+		checkFirstFix func(t *testing.T, fix sarifFix)
+	}{
+		{
+			name: "nil fix returns nil",
+			finding: model.Finding{
+				ID:  "test-1",
+				Fix: nil,
+			},
+			expectedFixes: 0,
+		},
+		{
+			name: "empty fix returns nil",
+			finding: model.Finding{
+				ID:  "test-2",
+				Fix: &model.Fix{},
+			},
+			expectedFixes: 0,
+		},
+		{
+			name: "proposed fixes without vulnerable code returns empty",
+			finding: model.Finding{
+				ID: "test-3",
+				Fix: &model.Fix{
+					ProposedFixes: []model.CodeSnippetFix{
+						{Content: "fixed code"},
+					},
+					// VulnerableCode is nil
+				},
+			},
+			expectedFixes: 0,
+		},
+		{
+			name: "proposed fixes with vulnerable code",
+			finding: model.Finding{
+				ID:   "test-4",
+				File: "main.go",
+				Fix: &model.Fix{
+					Explanation: "Fix explanation",
+					VulnerableCode: &model.CodeSnippetFix{
+						FilePath:  "main.go",
+						StartLine: &startLine,
+						EndLine:   &endLine,
+					},
+					ProposedFixes: []model.CodeSnippetFix{
+						{
+							FilePath: "main.go",
+							Content:  "fixed code",
+						},
+					},
+				},
+			},
+			expectedFixes: 1,
+			checkFirstFix: func(t *testing.T, fix sarifFix) {
+				if fix.Description == nil || fix.Description.Text != "Fix explanation" {
+					t.Error("Expected description to be set")
+				}
+				if len(fix.ArtifactChanges) != 1 {
+					t.Fatalf("Expected 1 artifact change, got %d", len(fix.ArtifactChanges))
+				}
+				if fix.ArtifactChanges[0].ArtifactLocation.URI != "main.go" {
+					t.Errorf("Expected main.go, got %s", fix.ArtifactChanges[0].ArtifactLocation.URI)
+				}
+			},
+		},
+		{
+			name: "patch files creates fixes",
+			finding: model.Finding{
+				ID:        "test-5",
+				File:      "config.go",
+				StartLine: 5,
+				EndLine:   8,
+				Fix: &model.Fix{
+					Explanation: "Update config",
+					PatchFiles: map[string]string{
+						"config.go": "new config content",
+					},
+				},
+			},
+			expectedFixes: 1,
+			checkFirstFix: func(t *testing.T, fix sarifFix) {
+				if len(fix.ArtifactChanges) != 1 {
+					t.Fatalf("Expected 1 artifact change, got %d", len(fix.ArtifactChanges))
+				}
+				if fix.ArtifactChanges[0].Replacements[0].InsertedContent.Text != "new config content" {
+					t.Error("InsertedContent mismatch")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixes := convertFixToSarif(tt.finding)
+			if len(fixes) != tt.expectedFixes {
+				t.Errorf("Expected %d fixes, got %d", tt.expectedFixes, len(fixes))
+			}
+			if tt.checkFirstFix != nil && len(fixes) > 0 {
+				tt.checkFirstFix(t, fixes[0])
+			}
+		})
+	}
+}
+
+func TestGenerateHelpURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		finding  model.Finding
+		expected string
+	}{
+		{
+			name:     "CVE takes priority",
+			finding:  model.Finding{CVEs: []string{"CVE-2023-1234"}, CWEs: []string{"CWE-89"}},
+			expected: "https://nvd.nist.gov/vuln/detail/CVE-2023-1234",
+		},
+		{
+			name:     "uppercase CWE prefix",
+			finding:  model.Finding{CWEs: []string{"CWE-89"}},
+			expected: "https://cwe.mitre.org/data/definitions/89.html",
+		},
+		{
+			name:     "lowercase cwe prefix",
+			finding:  model.Finding{CWEs: []string{"cwe-123"}},
+			expected: "https://cwe.mitre.org/data/definitions/123.html",
+		},
+		{
+			name:     "CWE without prefix",
+			finding:  model.Finding{CWEs: []string{"456"}},
+			expected: "https://cwe.mitre.org/data/definitions/456.html",
+		},
+		{
+			name:     "mixed case CWE prefix",
+			finding:  model.Finding{CWEs: []string{"Cwe-789"}},
+			expected: "https://cwe.mitre.org/data/definitions/789.html",
+		},
+		{
+			name:     "URL fallback",
+			finding:  model.Finding{URLs: []string{"https://example.com/security"}},
+			expected: "https://example.com/security",
+		},
+		{
+			name:     "empty finding returns empty",
+			finding:  model.Finding{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateHelpURI(tt.finding)
+			if result != tt.expected {
+				t.Errorf("Expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestConvertFixToSarif_ProposedFixesPriority(t *testing.T) {
+	startLine := 10
+	endLine := 15
+
+	// When both ProposedFixes and PatchFiles exist, ProposedFixes should take priority
+	finding := model.Finding{
+		ID:        "test-priority",
+		File:      "main.go",
+		StartLine: 5,
+		EndLine:   8,
+		Fix: &model.Fix{
+			Explanation: "Fix via proposed fix",
+			VulnerableCode: &model.CodeSnippetFix{
+				FilePath:  "main.go",
+				StartLine: &startLine,
+				EndLine:   &endLine,
+			},
+			ProposedFixes: []model.CodeSnippetFix{
+				{
+					FilePath: "main.go",
+					Content:  "proposed fix content",
+				},
+			},
+			PatchFiles: map[string]string{
+				"main.go": "patch file content",
+			},
+		},
+	}
+
+	fixes := convertFixToSarif(finding)
+
+	// Should only have 1 fix (from ProposedFixes), not 2
+	if len(fixes) != 1 {
+		t.Fatalf("Expected 1 fix (ProposedFixes should take priority), got %d", len(fixes))
+	}
+
+	// Verify it's the ProposedFix, not the PatchFile
+	if fixes[0].ArtifactChanges[0].Replacements[0].InsertedContent.Text != "proposed fix content" {
+		t.Errorf("Expected proposed fix content, got %q", fixes[0].ArtifactChanges[0].Replacements[0].InsertedContent.Text)
+	}
+}

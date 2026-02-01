@@ -404,7 +404,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("title is set to formatted FindingCategory when available", func(t *testing.T) {
+	t.Run("title uses description when no OWASP categories available", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "CODE_VULNERABILITY", []string{"CVE-2023-1234"}, nil),
 		}
@@ -412,8 +412,9 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
-		if findings[0].Title != "Code Vulnerability" {
-			t.Errorf("Title = %q, want %q", findings[0].Title, "Code Vulnerability")
+		// New behavior: uses description as fallback for more descriptive titles
+		if findings[0].Title != testSQLInjectionDescription {
+			t.Errorf("Title = %q, want %q", findings[0].Title, testSQLInjectionDescription)
 		}
 	})
 
