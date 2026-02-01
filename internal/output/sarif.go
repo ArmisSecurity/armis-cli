@@ -60,14 +60,32 @@ type sarifResult struct {
 }
 
 type sarifResultProperties struct {
-	Severity    string   `json:"severity"`
-	Type        string   `json:"type,omitempty"`
-	CodeSnippet string   `json:"codeSnippet,omitempty"`
-	CVEs        []string `json:"cves,omitempty"`
-	CWEs        []string `json:"cwes,omitempty"`
-	Package     string   `json:"package,omitempty"`
-	Version     string   `json:"version,omitempty"`
-	FixVersion  string   `json:"fixVersion,omitempty"`
+	Severity    string                     `json:"severity"`
+	Type        string                     `json:"type,omitempty"`
+	CodeSnippet string                     `json:"codeSnippet,omitempty"`
+	CVEs        []string                   `json:"cves,omitempty"`
+	CWEs        []string                   `json:"cwes,omitempty"`
+	Package     string                     `json:"package,omitempty"`
+	Version     string                     `json:"version,omitempty"`
+	FixVersion  string                     `json:"fixVersion,omitempty"`
+	Fix         *sarifFixProperties        `json:"fix,omitempty"`
+	Validation  *sarifValidationProperties `json:"validation,omitempty"`
+}
+
+type sarifFixProperties struct {
+	IsValid         bool   `json:"isValid"`
+	Explanation     string `json:"explanation,omitempty"`
+	Recommendations string `json:"recommendations,omitempty"`
+	Patch           string `json:"patch,omitempty"`
+	Feedback        string `json:"feedback,omitempty"`
+}
+
+type sarifValidationProperties struct {
+	IsValid           bool   `json:"isValid"`
+	Confidence        int    `json:"confidence"`
+	ValidatedSeverity string `json:"validatedSeverity,omitempty"`
+	TaintPropagation  string `json:"taintPropagation,omitempty"`
+	Exposure          *int   `json:"exposure,omitempty"`
 }
 
 type sarifMessage struct {
@@ -175,6 +193,32 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 				Version:     finding.Version,
 				FixVersion:  finding.FixVersion,
 			},
+		}
+
+		// Add fix properties if available
+		if finding.Fix != nil {
+			result.Properties.Fix = &sarifFixProperties{
+				IsValid:         finding.Fix.IsValid,
+				Explanation:     finding.Fix.Explanation,
+				Recommendations: finding.Fix.Recommendations,
+				Feedback:        finding.Fix.Feedback,
+			}
+			if finding.Fix.Patch != nil {
+				result.Properties.Fix.Patch = *finding.Fix.Patch
+			}
+		}
+
+		// Add validation properties if available
+		if finding.Validation != nil {
+			result.Properties.Validation = &sarifValidationProperties{
+				IsValid:          finding.Validation.IsValid,
+				Confidence:       finding.Validation.Confidence,
+				TaintPropagation: string(finding.Validation.TaintPropagation),
+				Exposure:         finding.Validation.Exposure,
+			}
+			if finding.Validation.ValidatedSeverity != nil {
+				result.Properties.Validation.ValidatedSeverity = *finding.Validation.ValidatedSeverity
+			}
 		}
 
 		if finding.File != "" {

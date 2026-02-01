@@ -35,24 +35,26 @@ const (
 
 // Finding represents a single security finding from a scan.
 type Finding struct {
-	ID               string      `json:"id"`
-	Type             FindingType `json:"type"`
-	Severity         Severity    `json:"severity"`
-	Title            string      `json:"title"`
-	Description      string      `json:"description"`
-	File             string      `json:"file,omitempty"`
-	StartLine        int         `json:"start_line,omitempty"`
-	EndLine          int         `json:"end_line,omitempty"`
-	StartColumn      int         `json:"start_column,omitempty"`
-	EndColumn        int         `json:"end_column,omitempty"`
-	CodeSnippet      string      `json:"code_snippet,omitempty"`
-	SnippetStartLine int         `json:"snippet_start_line,omitempty"`
-	CVEs             []string    `json:"cves,omitempty"`
-	CWEs             []string    `json:"cwes,omitempty"`
-	FindingCategory  string      `json:"finding_category,omitempty"`
-	Package          string      `json:"package,omitempty"`
-	Version          string      `json:"version,omitempty"`
-	FixVersion       string      `json:"fix_version,omitempty"`
+	ID               string             `json:"id"`
+	Type             FindingType        `json:"type"`
+	Severity         Severity           `json:"severity"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	File             string             `json:"file,omitempty"`
+	StartLine        int                `json:"start_line,omitempty"`
+	EndLine          int                `json:"end_line,omitempty"`
+	StartColumn      int                `json:"start_column,omitempty"`
+	EndColumn        int                `json:"end_column,omitempty"`
+	CodeSnippet      string             `json:"code_snippet,omitempty"`
+	SnippetStartLine int                `json:"snippet_start_line,omitempty"`
+	CVEs             []string           `json:"cves,omitempty"`
+	CWEs             []string           `json:"cwes,omitempty"`
+	FindingCategory  string             `json:"finding_category,omitempty"`
+	Package          string             `json:"package,omitempty"`
+	Version          string             `json:"version,omitempty"`
+	FixVersion       string             `json:"fix_version,omitempty"`
+	Fix              *Fix               `json:"fix,omitempty"`
+	Validation       *FindingValidation `json:"validation,omitempty"`
 }
 
 // ScanResult represents the complete result of a security scan.
@@ -121,7 +123,51 @@ type CodeLocation struct {
 
 // ExtraData contains additional metadata for a finding.
 type ExtraData struct {
-	CodeLocation CodeLocation `json:"code_location"`
+	CodeLocation      CodeLocation       `json:"code_location"`
+	FindingValidation *FindingValidation `json:"finding_validation,omitempty"`
+	Fix               *Fix               `json:"fix,omitempty"`
+}
+
+// CodeSnippetFix represents a code snippet for fix display.
+type CodeSnippetFix struct {
+	FilePath  string `json:"file_path"`
+	StartLine *int   `json:"start_line,omitempty"`
+	EndLine   *int   `json:"end_line,omitempty"`
+	Content   string `json:"content"`
+}
+
+// TaintPropagation represents the taint analysis result.
+type TaintPropagation string
+
+const (
+	// TaintReachable indicates the vulnerability is reachable.
+	TaintReachable TaintPropagation = "REACHABLE"
+	// TaintNotReachable indicates the vulnerability is not reachable.
+	TaintNotReachable TaintPropagation = "NOT_REACHABLE"
+	// TaintNotApplicable indicates taint analysis is not applicable.
+	TaintNotApplicable TaintPropagation = "NOT_APPLICABLE"
+)
+
+// FindingValidation represents the AI validation result for a finding.
+type FindingValidation struct {
+	IsValid           bool             `json:"is_valid"`
+	ValidatedSeverity *string          `json:"validated_severity,omitempty"`
+	Confidence        int              `json:"confidence"`
+	Explanation       string           `json:"explanation"`
+	TaintPropagation  TaintPropagation `json:"taint_propagation"`
+	Exposure          *int             `json:"exposure,omitempty"`
+}
+
+// Fix represents a proposed fix from the AI verifier.
+type Fix struct {
+	VulnerableCode  *CodeSnippetFix   `json:"vulnerable_code,omitempty"`
+	ProposedFixes   []CodeSnippetFix  `json:"proposed_fixes,omitempty"`
+	Patch           *string           `json:"patch,omitempty"`
+	PatchFiles      map[string]string `json:"patch_files,omitempty"`
+	Explanation     string            `json:"explanation"`
+	Recommendations string            `json:"recommendations"`
+	IsValid         bool              `json:"is_valid"`
+	Feedback        string            `json:"feedback"`
 }
 
 // Label represents a classification label for a finding.

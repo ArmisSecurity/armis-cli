@@ -186,6 +186,7 @@ func getSeverityColor(severity model.Severity) string {
 var (
 	colorReset     = "\033[0m"
 	colorRed       = "\033[31m"
+	colorGreen     = "\033[32m"
 	colorOrange    = "\033[33m"
 	colorYellow    = "\033[93m"
 	colorBlue      = "\033[34m"
@@ -205,6 +206,7 @@ func init() {
 func disableColors() {
 	colorReset = ""
 	colorRed = ""
+	colorGreen = ""
 	colorOrange = ""
 	colorYellow = ""
 	colorBlue = ""
@@ -931,6 +933,16 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		_, _ = fmt.Fprintf(w, "\nCode:\n")
 		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippet(finding))
 	}
+
+	// Display proposed fix if available
+	if finding.Fix != nil {
+		_, _ = fmt.Fprintf(w, "%s", formatFixSection(finding.Fix))
+	}
+
+	// Display validation info if available
+	if finding.Validation != nil {
+		_, _ = fmt.Fprintf(w, "%s", formatValidationSection(finding.Validation))
+	}
 }
 
 func renderGroupedFindings(w io.Writer, groups []FindingGroup, opts FormatOptions) {
@@ -1132,4 +1144,152 @@ func getTopLevelDomain(domain string) string {
 		return parts[len(parts)-1]
 	}
 	return domain
+}
+
+// formatFixSection formats the proposed fix section for display.
+func formatFixSection(fix *model.Fix) string {
+	if fix == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// Display fix status header
+	sb.WriteString("\n")
+	if fix.IsValid {
+		sb.WriteString(colorGreen + "✓ Proposed Fix Available" + colorReset + "\n")
+	} else {
+		sb.WriteString(colorYellow + "⚠ Proposed Fix (Unvalidated)" + colorReset + "\n")
+	}
+
+	// Display explanation
+	if fix.Explanation != "" {
+		sb.WriteString("\nExplanation:\n")
+		sb.WriteString("  " + fix.Explanation + "\n")
+	}
+
+	// Display recommendations
+	if fix.Recommendations != "" {
+		sb.WriteString("\nRecommendations:\n")
+		sb.WriteString("  " + fix.Recommendations + "\n")
+	}
+
+	// Display proposed fixes (code snippets)
+	if len(fix.ProposedFixes) > 0 {
+		sb.WriteString("\nProposed Code Changes:\n")
+		for _, snippet := range fix.ProposedFixes {
+			sb.WriteString(formatProposedSnippet(snippet))
+		}
+	}
+
+	// Display patch if available
+	if fix.Patch != nil && *fix.Patch != "" {
+		sb.WriteString("\nUnified Diff:\n")
+		sb.WriteString(formatDiffWithColors(*fix.Patch))
+	}
+
+	// Display feedback if available
+	if fix.Feedback != "" {
+		sb.WriteString("\nFeedback:\n")
+		sb.WriteString("  " + fix.Feedback + "\n")
+	}
+
+	return sb.String()
+}
+
+// formatProposedSnippet formats a single code snippet for the proposed fix.
+func formatProposedSnippet(snippet model.CodeSnippetFix) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("  File: %s", snippet.FilePath))
+	if snippet.StartLine != nil && snippet.EndLine != nil {
+		sb.WriteString(fmt.Sprintf(" (lines %d-%d)", *snippet.StartLine, *snippet.EndLine))
+	} else if snippet.StartLine != nil {
+		sb.WriteString(fmt.Sprintf(" (line %d)", *snippet.StartLine))
+	}
+	sb.WriteString("\n")
+
+	// Display the code content with indentation
+	lines := strings.Split(snippet.Content, "\n")
+	startLine := 1
+	if snippet.StartLine != nil {
+		startLine = *snippet.StartLine
+	}
+	for i, line := range lines {
+		sb.WriteString(fmt.Sprintf("  %s%4d%s  %s\n", colorGray, startLine+i, colorReset, line))
+	}
+
+	return sb.String()
+}
+
+// formatDiffWithColors formats a unified diff with colored output.
+func formatDiffWithColors(patch string) string {
+	var sb strings.Builder
+	lines := strings.Split(patch, "\n")
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			sb.WriteString(colorGreen + "  " + line + colorReset + "\n")
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			sb.WriteString(colorRed + "  " + line + colorReset + "\n")
+		} else if strings.HasPrefix(line, "@@") {
+			sb.WriteString(colorBlue + "  " + line + colorReset + "\n")
+		} else {
+			sb.WriteString("  " + line + "\n")
+		}
+	}
+
+	return sb.String()
+}
+
+// formatValidationSection formats the finding validation section for display.
+func formatValidationSection(validation *model.FindingValidation) string {
+	if validation == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\nValidation:\n")
+
+	// Confidence
+	sb.WriteString(fmt.Sprintf("  Confidence:     %d%%\n", validation.Confidence))
+
+	// Validated severity (if different)
+	if validation.ValidatedSeverity != nil {
+		sb.WriteString(fmt.Sprintf("  AI Severity:    %s\n", *validation.ValidatedSeverity))
+	}
+
+	// Taint propagation
+	if validation.TaintPropagation != "" {
+		sb.WriteString(fmt.Sprintf("  Reachability:   %s\n", validation.TaintPropagation))
+	}
+
+	// Exposure level
+	if validation.Exposure != nil {
+		exposureDesc := getExposureDescription(*validation.Exposure)
+		sb.WriteString(fmt.Sprintf("  Exposure:       %d (%s)\n", *validation.Exposure, exposureDesc))
+	}
+
+	// Explanation
+	if validation.Explanation != "" {
+		sb.WriteString(fmt.Sprintf("  Analysis:       %s\n", validation.Explanation))
+	}
+
+	return sb.String()
+}
+
+// getExposureDescription returns a human-readable description for the exposure level.
+func getExposureDescription(exposure int) string {
+	switch {
+	case exposure == 0:
+		return "not exposed"
+	case exposure <= 2:
+		return "internal only"
+	case exposure <= 4:
+		return "limited exposure"
+	case exposure <= 5:
+		return "moderate exposure"
+	default:
+		return "externally accessible"
+	}
 }
