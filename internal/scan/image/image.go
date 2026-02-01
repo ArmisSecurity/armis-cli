@@ -35,6 +35,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	sbomVEXOpts           *scan.SBOMVEXOptions
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -54,6 +55,12 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithSBOMVEXOptions sets SBOM and VEX generation options.
+func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
+	s.sbomVEXOpts = opts
 	return s
 }
 
@@ -91,6 +98,13 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 
 // ScanTarball scans a container image from a tarball file.
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
+	// Validate path for defense-in-depth (CLI layer also validates)
+	sanitizedPath, err := util.SanitizePath(tarballPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tarball path: %w", err)
+	}
+	tarballPath = sanitizedPath
+
 	info, err := os.Stat(tarballPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat tarball: %w", err)
@@ -110,7 +124,19 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	uploadSpinner.Start()
 	defer uploadSpinner.Stop()
 
-	scanID, err := s.client.StartIngest(ctx, s.tenantID, "image", filepath.Base(tarballPath), file, info.Size())
+	ingestOpts := api.IngestOptions{
+		TenantID:     s.tenantID,
+		ArtifactType: "image",
+		Filename:     filepath.Base(tarballPath),
+		Data:         file,
+		Size:         info.Size(),
+	}
+	if s.sbomVEXOpts != nil {
+		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
+		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
+	}
+
+	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
@@ -132,6 +158,20 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch results: %w", err)
+	}
+
+	// Handle SBOM/VEX downloads if requested
+	if s.sbomVEXOpts != nil && (s.sbomVEXOpts.GenerateSBOM || s.sbomVEXOpts.GenerateVEX) {
+		// Extract artifact name from tarball path (remove extension)
+		artifactName := filepath.Base(tarballPath)
+		if ext := filepath.Ext(artifactName); ext != "" {
+			artifactName = artifactName[:len(artifactName)-len(ext)]
+		}
+		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
+		if err := downloader.Download(ctx, scanID, artifactName); err != nil {
+			// Log warning but don't fail the scan
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
@@ -243,7 +283,17 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		if debug {
-			rawJSON, err := json.Marshal(nf)
+			// Create a sanitized copy for debug output to prevent secret exposure
+			debugCopy := nf
+			if debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet != nil {
+				masked := util.MaskSecretInLine(*debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet)
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.Snippet = &masked
+			}
+			if len(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines) > 0 {
+				debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines =
+					util.MaskSecretInLines(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines)
+			}
+			rawJSON, err := json.Marshal(debugCopy)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {

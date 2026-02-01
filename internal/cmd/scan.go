@@ -11,6 +11,10 @@ var (
 	includeNonExploitable bool
 	groupBy               string
 	includeFiles          []string
+	generateSBOM          bool
+	generateVEX           bool
+	sbomOutput            string
+	vexOutput             string
 )
 
 var scanCmd = &cobra.Command{
@@ -26,6 +30,10 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&includeNonExploitable, "include-non-exploitable", false, "Include findings marked as non-exploitable (only exploitable findings shown by default)")
 	scanCmd.PersistentFlags().StringVar(&groupBy, "group-by", "none", "Group findings by: none, cwe, severity, file")
 	scanCmd.PersistentFlags().StringSliceVar(&includeFiles, "include-files", nil, "Comma-separated list of file paths to include in scan (relative to repository root)")
+	scanCmd.PersistentFlags().BoolVar(&generateSBOM, "sbom", false, "Generate Software Bill of Materials (SBOM) in CycloneDX format")
+	scanCmd.PersistentFlags().BoolVar(&generateVEX, "vex", false, "Generate Vulnerability Exploitability eXchange (VEX) document")
+	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
+	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}

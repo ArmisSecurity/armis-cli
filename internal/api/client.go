@@ -18,6 +18,28 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// DownloadTimeout is the default timeout for downloading files from pre-signed URLs.
+const DownloadTimeout = 5 * time.Minute
+
+// MaxDownloadSize is the maximum allowed size for downloaded files (100MB).
+// This protects against memory exhaustion from maliciously large responses.
+const MaxDownloadSize = 100 * 1024 * 1024
+
+// MaxUploadSize is the maximum allowed upload size (5GB).
+// This provides defense-in-depth validation at the API layer.
+const MaxUploadSize = 5 * 1024 * 1024 * 1024
+
+// MaxAPIResponseSize is the maximum allowed size for API JSON responses (1MB).
+// This protects against memory exhaustion from maliciously large API responses.
+const MaxAPIResponseSize = 1 * 1024 * 1024
+
+// URL scheme and host constants for security validation.
+const (
+	schemeHTTPS    = "https"
+	hostLocalhost  = "localhost"
+	hostLoopbackIP = "127.0.0.1"
+)
+
 // Client is the API client for communicating with the Armis security service.
 type Client struct {
 	httpClient       *httpclient.Client
@@ -26,6 +48,7 @@ type Client struct {
 	token            string
 	debug            bool
 	uploadTimeout    time.Duration
+	allowLocalURLs   bool
 }
 
 // ClientOption is a functional option for configuring the Client.
@@ -36,6 +59,14 @@ func WithHTTPClient(client *httpclient.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = client
 		c.uploadHTTPClient = client
+	}
+}
+
+// WithAllowLocalURLs enables localhost/127.0.0.1 URLs for presigned URL validation.
+// This should only be used in tests. Production code should never enable this option.
+func WithAllowLocalURLs(allow bool) ClientOption {
+	return func(c *Client) {
+		c.allowLocalURLs = allow
 	}
 }
 
@@ -53,9 +84,9 @@ func NewClient(baseURL, token string, debug bool, uploadTimeout time.Duration, o
 	}
 
 	// Enforce HTTPS for non-localhost hosts to protect credentials
-	if parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != schemeHTTPS {
 		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
+		if host != hostLocalhost && host != hostLoopbackIP {
 			return nil, fmt.Errorf("HTTPS required for non-localhost URL %q to protect credentials", baseURL)
 		}
 	}
@@ -99,8 +130,46 @@ func (c *Client) IsDebug() bool {
 	return c.debug
 }
 
+// setAuthHeader sets the Authorization header on a request, but only if the
+// request URL uses HTTPS (or localhost for testing). This prevents credential
+// exposure over insecure channels.
+func (c *Client) setAuthHeader(req *http.Request) error {
+	host := req.URL.Hostname()
+	scheme := strings.ToLower(req.URL.Scheme)
+
+	// Allow localhost/127.0.0.1 for testing without HTTPS requirement
+	if host == hostLocalhost || host == hostLoopbackIP {
+		req.Header.Set("Authorization", "Basic "+c.token)
+		return nil
+	}
+
+	// Require HTTPS for all other hosts to protect credentials
+	if scheme != schemeHTTPS {
+		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
+	}
+
+	req.Header.Set("Authorization", "Basic "+c.token)
+	return nil
+}
+
+// IngestOptions contains options for the artifact ingestion request.
+type IngestOptions struct {
+	TenantID     string
+	ArtifactType string
+	Filename     string
+	Data         io.Reader
+	Size         int64
+	GenerateSBOM bool
+	GenerateVEX  bool
+}
+
 // StartIngest uploads an artifact for scanning and returns the scan ID.
-func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filename string, data io.Reader, size int64) (string, error) {
+func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
+	// Validate upload size for defense-in-depth
+	if opts.Size > MaxUploadSize {
+		return "", fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
+	}
+
 	uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
 	defer cancel()
 
@@ -109,11 +178,11 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	if err := writer.WriteField("tenant_id", tenantID); err != nil {
+	if err := writer.WriteField("tenant_id", opts.TenantID); err != nil {
 		return "", fmt.Errorf("failed to write tenant_id field: %w", err)
 	}
 
-	if err := writer.WriteField("artifact_type", artifactType); err != nil {
+	if err := writer.WriteField("artifact_type", opts.ArtifactType); err != nil {
 		return "", fmt.Errorf("failed to write artifact_type field: %w", err)
 	}
 
@@ -121,13 +190,31 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		return "", fmt.Errorf("failed to write scan_type field: %w", err)
 	}
 
+	// Add SBOM/VEX generation flags if requested
+	if opts.GenerateSBOM {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: Sending sbom_generate=true ===\n")
+		}
+		if err := writer.WriteField("sbom_generate", "true"); err != nil {
+			return "", fmt.Errorf("failed to write sbom_generate field: %w", err)
+		}
+	}
+	if opts.GenerateVEX {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: Sending vex_generate=true ===\n")
+		}
+		if err := writer.WriteField("vex_generate", "true"); err != nil {
+			return "", fmt.Errorf("failed to write vex_generate field: %w", err)
+		}
+	}
+
 	// Use filepath.Base to sanitize filename and prevent path traversal in multipart
-	part, err := writer.CreateFormFile("tar_file", filepath.Base(filename))
+	part, err := writer.CreateFormFile("tar_file", filepath.Base(opts.Filename))
 	if err != nil {
 		return "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
-	if _, err := io.Copy(part, data); err != nil {
+	if _, err := io.Copy(part, opts.Data); err != nil {
 		return "", fmt.Errorf("failed to copy file data: %w", err)
 	}
 
@@ -147,7 +234,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 	resp, err := c.uploadHTTPClient.Do(req)
 	if err != nil {
 		elapsed := time.Since(start).Round(time.Millisecond)
-		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(size), err)
+		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(opts.Size), err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
@@ -155,7 +242,7 @@ func (c *Client) StartIngest(ctx context.Context, tenantID, artifactType, filena
 		elapsed := time.Since(start).Round(time.Millisecond)
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("upload failed after %s (tar size=%s, status=%s): %s",
-			elapsed, formatBytes(size), resp.Status, strings.TrimSpace(string(bodyBytes)))
+			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
 	var result model.IngestUploadResponse
@@ -374,4 +461,143 @@ func formatBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// ArtifactScanResultsResponse represents the response from the artifact scan results endpoint.
+type ArtifactScanResultsResponse struct {
+	ScanStatus      string            `json:"scan_status"`
+	Results         map[string]string `json:"results"` // key -> presigned URL (e.g., "sbom_results", "vex_results")
+	ScanCompletedAt *string           `json:"scan_completed_at"`
+	StatusUpdatedAt *string           `json:"status_updated_at"`
+}
+
+// FetchArtifactScanResults retrieves the scan results including pre-signed URLs for SBOM and VEX documents.
+func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID string) (*ArtifactScanResultsResponse, error) {
+	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/results"
+	params := url.Values{}
+	params.Add("tenant_id", tenantID)
+	params.Add("scan_id", scanID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(req); err != nil {
+		return nil, fmt.Errorf("failed to set auth header: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch artifact scan results: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
+
+	if resp.StatusCode == http.StatusNotFound {
+		if c.debug {
+			fmt.Printf("\n=== DEBUG: FetchArtifactScanResults returned 404 for scan_id=%s ===\n", scanID)
+		}
+		return nil, nil // Results not yet available
+	}
+
+	// Use LimitReader to prevent memory exhaustion from large responses
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if c.debug {
+		fmt.Printf("\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+	}
+
+	var result ArtifactScanResultsResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ValidatePresignedURL validates that a presigned URL points to a recognized S3 endpoint
+// and uses HTTPS to protect authentication signatures embedded in the URL.
+// This prevents SSRF attacks by ensuring downloads only go to expected cloud storage hosts.
+// Localhost URLs are only allowed if WithAllowLocalURLs(true) was set on the client.
+func (c *Client) ValidatePresignedURL(presignedURL string) error {
+	parsed, err := url.Parse(presignedURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	scheme := strings.ToLower(parsed.Scheme)
+
+	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
+	if host == hostLocalhost || host == hostLoopbackIP {
+		if c.allowLocalURLs {
+			return nil
+		}
+		return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
+	}
+
+	// Require HTTPS for non-localhost URLs to protect presigned URL signatures
+	// Presigned URLs contain AWS authentication signatures that must not be exposed
+	if scheme != schemeHTTPS {
+		return fmt.Errorf("presigned URL must use HTTPS to protect authentication signatures")
+	}
+
+	// Allow AWS S3 bucket URL patterns:
+	// - bucket.s3.amazonaws.com (legacy)
+	// - bucket.s3.region.amazonaws.com (current)
+	// - s3.region.amazonaws.com/bucket (path-style)
+	if strings.HasSuffix(host, ".amazonaws.com") && strings.Contains(host, "s3") {
+		return nil
+	}
+
+	return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
+}
+
+// DownloadFromPresignedURL downloads content from a pre-signed S3 URL.
+// The URL is validated to ensure it points to a recognized S3 endpoint and uses HTTPS.
+func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL string) ([]byte, error) {
+	// Validate URL to prevent SSRF attacks and ensure HTTPS
+	if err := c.ValidatePresignedURL(presignedURL); err != nil {
+		return nil, fmt.Errorf("invalid presigned URL: %w", err)
+	}
+
+	// Add timeout protection for large downloads
+	downloadCtx, cancel := context.WithTimeout(ctx, DownloadTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", presignedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	// Note: Pre-signed URLs include authentication, so no auth header needed
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // response body read-only
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Use LimitReader to prevent memory exhaustion from large responses
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxDownloadSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read download response: %w", err)
+	}
+
+	if int64(len(data)) > MaxDownloadSize {
+		return nil, fmt.Errorf("download exceeds maximum allowed size (%d bytes)", MaxDownloadSize)
+	}
+
+	return data, nil
 }

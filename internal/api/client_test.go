@@ -13,8 +13,11 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+// Test constants to satisfy goconst linter.
 const (
-	statusCompletedUpper = "COMPLETED"
+	testScanID           = "scan-123"
+	testMethodGET        = "GET"
+	testStatusCompleted  = "COMPLETED"
 	statusCompletedLower = "completed"
 )
 
@@ -126,7 +129,7 @@ func TestClient_StartIngest(t *testing.T) {
 			}
 
 			response := model.IngestUploadResponse{
-				ScanID:       "scan-123",
+				ScanID:       testScanID,
 				ArtifactType: "image",
 				TenantID:     "tenant-456",
 				Filename:     "test.tar",
@@ -142,13 +145,20 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 
 		data := bytes.NewReader([]byte("test data"))
-		scanID, err := client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         9,
+		}
+		scanID, err := client.StartIngest(context.Background(), opts)
 
 		if err != nil {
 			t.Fatalf("StartIngest failed: %v", err)
 		}
-		if scanID != "scan-123" {
-			t.Errorf("Expected scan ID 'scan-123', got %s", scanID)
+		if scanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
 		}
 	})
 
@@ -164,7 +174,14 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 
 		data := bytes.NewReader([]byte("test data"))
-		_, err = client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         9,
+		}
+		_, err = client.StartIngest(context.Background(), opts)
 
 		if err == nil {
 			t.Error("Expected error for failed upload")
@@ -174,7 +191,7 @@ func TestClient_StartIngest(t *testing.T) {
 	t.Run("context timeout", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123"})
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
@@ -184,10 +201,67 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 
 		data := bytes.NewReader([]byte("test data"))
-		_, err = client.StartIngest(context.Background(), "tenant-456", "image", "test.tar", data, 9)
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         9,
+		}
+		_, err = client.StartIngest(context.Background(), opts)
 
 		if err == nil {
 			t.Error("Expected timeout error")
+		}
+	})
+
+	t.Run("sends SBOM and VEX flags when set", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				t.Fatalf("Failed to parse multipart form: %v", err)
+			}
+
+			// Verify SBOM and VEX generation flags are sent
+			if r.FormValue("sbom_generate") != "true" {
+				t.Error("Expected sbom_generate=true in form data")
+			}
+			if r.FormValue("vex_generate") != "true" {
+				t.Error("Expected vex_generate=true in form data")
+			}
+
+			response := model.IngestUploadResponse{
+				ScanID:       testScanID,
+				ArtifactType: "image",
+				TenantID:     "tenant-456",
+				Filename:     "test.tar",
+				Message:      "Upload successful",
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data := bytes.NewReader([]byte("test data"))
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         9,
+			GenerateSBOM: true,
+			GenerateVEX:  true,
+		}
+		scanID, err := client.StartIngest(context.Background(), opts)
+
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if scanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
 		}
 	})
 }
@@ -195,8 +269,8 @@ func TestClient_StartIngest(t *testing.T) {
 func TestClient_GetIngestStatus(t *testing.T) {
 	t.Run("successful status check", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "GET" {
-				t.Errorf("Expected GET, got %s", r.Method)
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
 			}
 			if !strings.Contains(r.URL.Path, "/api/v1/ingest/status") {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
@@ -212,7 +286,7 @@ func TestClient_GetIngestStatus(t *testing.T) {
 				Data: []model.IngestStatusData{
 					{
 						ScanID:     "scan-456",
-						ScanStatus: statusCompletedUpper,
+						ScanStatus: testStatusCompleted,
 						TenantID:   "tenant-123",
 					},
 				},
@@ -234,8 +308,8 @@ func TestClient_GetIngestStatus(t *testing.T) {
 		if len(status.Data) != 1 {
 			t.Fatalf("Expected 1 status data, got %d", len(status.Data))
 		}
-		if status.Data[0].ScanStatus != statusCompletedUpper {
-			t.Errorf("Expected status %s, got %s", statusCompletedUpper, status.Data[0].ScanStatus)
+		if status.Data[0].ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, status.Data[0].ScanStatus)
 		}
 	})
 
@@ -434,12 +508,12 @@ func TestFormatBytes(t *testing.T) {
 func TestClient_GetScanResult(t *testing.T) {
 	t.Run("successful get", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if !strings.Contains(r.URL.Path, "/scans/scan-123") {
+			if !strings.Contains(r.URL.Path, "/scans/"+testScanID) {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
 			}
 
 			response := model.ScanResult{
-				ScanID: "scan-123",
+				ScanID: testScanID,
 				Status: statusCompletedLower,
 				Findings: []model.Finding{
 					{ID: "finding-1", Severity: model.SeverityHigh},
@@ -454,13 +528,13 @@ func TestClient_GetScanResult(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.GetScanResult(context.Background(), "scan-123")
+		result, err := client.GetScanResult(context.Background(), testScanID)
 
 		if err != nil {
 			t.Fatalf("GetScanResult failed: %v", err)
 		}
-		if result.ScanID != "scan-123" {
-			t.Errorf("Expected scan ID 'scan-123', got %s", result.ScanID)
+		if result.ScanID != testScanID {
+			t.Errorf("Expected scan ID %q, got %s", testScanID, result.ScanID)
 		}
 		if result.Status != statusCompletedLower {
 			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
@@ -495,16 +569,351 @@ func TestClient_DebugMode(t *testing.T) {
 	})
 }
 
+func TestClient_FetchArtifactScanResults(t *testing.T) {
+	t.Run("successful fetch with SBOM and VEX URLs", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
+			}
+			if !strings.Contains(r.URL.Path, "/api/v1/ingest/results") {
+				t.Errorf("Unexpected path: %s", r.URL.Path)
+			}
+
+			tenantID := r.URL.Query().Get("tenant_id")
+			scanID := r.URL.Query().Get("scan_id")
+			if tenantID != "tenant-123" || scanID != "scan-456" {
+				t.Errorf("Unexpected query params: tenant_id=%s, scan_id=%s", tenantID, scanID)
+			}
+
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Basic ") {
+				t.Error("Missing or invalid Authorization header")
+			}
+
+			response := ArtifactScanResultsResponse{
+				ScanStatus: testStatusCompleted,
+				Results: map[string]string{
+					"sbom_results": "https://s3.example.com/sbom.json",
+					"vex_results":  "https://s3.example.com/vex.json",
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+
+		if err != nil {
+			t.Fatalf("FetchArtifactScanResults failed: %v", err)
+		}
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+		if result.ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, result.ScanStatus)
+		}
+		if result.Results["sbom_results"] != "https://s3.example.com/sbom.json" {
+			t.Errorf("Expected SBOM URL, got %s", result.Results["sbom_results"])
+		}
+		if result.Results["vex_results"] != "https://s3.example.com/vex.json" {
+			t.Errorf("Expected VEX URL, got %s", result.Results["vex_results"])
+		}
+	})
+
+	t.Run("returns nil for 404", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+
+		if err != nil {
+			t.Fatalf("Expected no error for 404, got: %v", err)
+		}
+		if result != nil {
+			t.Error("Expected nil result for 404")
+		}
+	})
+
+	t.Run("returns error for server error", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.ErrorResponse(w, http.StatusInternalServerError, "Internal error")
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+
+		if err == nil {
+			t.Error("Expected error for server error response")
+		}
+	})
+}
+
+func TestClient_DownloadFromPresignedURL(t *testing.T) {
+	t.Run("successful download", func(t *testing.T) {
+		expectedContent := []byte(`{"sbom": "data", "components": []}`)
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != testMethodGET {
+				t.Errorf("Expected %s, got %s", testMethodGET, r.Method)
+			}
+			// Pre-signed URLs should NOT have authorization headers
+			if r.Header.Get("Authorization") != "" {
+				t.Error("Should not send auth header to presigned URL")
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(expectedContent)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data, err := client.DownloadFromPresignedURL(context.Background(), server.URL)
+
+		if err != nil {
+			t.Fatalf("DownloadFromPresignedURL failed: %v", err)
+		}
+		if string(data) != string(expectedContent) {
+			t.Errorf("Expected %s, got %s", expectedContent, data)
+		}
+	})
+
+	t.Run("handles download error", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.DownloadFromPresignedURL(context.Background(), server.URL)
+
+		if err == nil {
+			t.Error("Expected error for forbidden response")
+		}
+	})
+
+	t.Run("respects context cancellation", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(500 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data"))
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", "token123", false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err = client.DownloadFromPresignedURL(ctx, server.URL)
+
+		if err == nil {
+			t.Error("Expected timeout error")
+		}
+	})
+
+	t.Run("rejects non-S3 URLs", func(t *testing.T) {
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", "token123", false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.DownloadFromPresignedURL(context.Background(), "https://malicious.example.com/file")
+
+		if err == nil {
+			t.Error("Expected error for non-S3 URL")
+		}
+		if !strings.Contains(err.Error(), "not a recognized S3 endpoint") {
+			t.Errorf("Expected S3 endpoint error, got: %v", err)
+		}
+	})
+}
+
+func TestValidatePresignedURL(t *testing.T) {
+	// Create clients for testing - one with localhost allowed, one without
+	clientWithLocalhost, err := NewClient("https://api.example.com", "token123", false, 0, WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("Failed to create client with localhost: %v", err)
+	}
+	clientWithoutLocalhost, err := NewClient("https://api.example.com", "token123", false, 0)
+	if err != nil {
+		t.Fatalf("Failed to create client without localhost: %v", err)
+	}
+
+	t.Run("valid S3 URLs with HTTPS", func(t *testing.T) {
+		validS3URLs := []struct {
+			name string
+			url  string
+		}{
+			{"S3 bucket URL legacy", "https://mybucket.s3.amazonaws.com/file.json"},
+			{"S3 bucket URL with region", "https://mybucket.s3.us-east-1.amazonaws.com/file.json"},
+			{"S3 path-style URL", "https://s3.us-west-2.amazonaws.com/mybucket/file.json"},
+		}
+		for _, tt := range validS3URLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// S3 URLs should work regardless of localhost setting
+				if err := clientWithoutLocalhost.ValidatePresignedURL(tt.url); err != nil {
+					t.Errorf("Unexpected error for URL %q: %v", tt.url, err)
+				}
+			})
+		}
+	})
+
+	t.Run("localhost URLs require opt-in", func(t *testing.T) {
+		localhostURLs := []struct {
+			name string
+			url  string
+		}{
+			{"localhost HTTP", "http://localhost:8080/file"},
+			{"localhost HTTPS", "https://localhost/file"},
+			{"127.0.0.1", "http://127.0.0.1:9000/file"},
+		}
+		for _, tt := range localhostURLs {
+			t.Run(tt.name+" allowed", func(t *testing.T) {
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err != nil {
+					t.Errorf("Expected localhost URL %q to be allowed with opt-in: %v", tt.url, err)
+				}
+			})
+			t.Run(tt.name+" rejected by default", func(t *testing.T) {
+				if err := clientWithoutLocalhost.ValidatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected localhost URL %q to be rejected without opt-in", tt.url)
+				}
+			})
+		}
+	})
+
+	t.Run("HTTP URLs rejected for non-localhost", func(t *testing.T) {
+		httpURLs := []struct {
+			name string
+			url  string
+		}{
+			{"S3 over HTTP", "http://mybucket.s3.amazonaws.com/file.json"},
+			{"internal service URL", "http://internal.company.local/admin"},
+			{"cloud metadata URL", "http://169.254.169.254/latest/meta-data/"},
+		}
+		for _, tt := range httpURLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// HTTP URLs should be rejected to protect presigned URL signatures
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected HTTP URL %q to be rejected", tt.url)
+				}
+			})
+		}
+	})
+
+	t.Run("invalid URLs always rejected", func(t *testing.T) {
+		invalidURLs := []struct {
+			name string
+			url  string
+		}{
+			{"non-S3 AWS URL", "https://ec2.amazonaws.com/metadata"},
+			{"arbitrary external URL", "https://malicious.example.com/steal-data"},
+			{"kubernetes API", "https://kubernetes.default.svc/api/v1/secrets"},
+			{"empty URL", ""},
+			{"malformed URL", "://invalid"},
+		}
+		for _, tt := range invalidURLs {
+			t.Run(tt.name, func(t *testing.T) {
+				// Invalid URLs should fail regardless of localhost setting
+				if err := clientWithLocalhost.ValidatePresignedURL(tt.url); err == nil {
+					t.Errorf("Expected error for URL %q, got none", tt.url)
+				}
+			})
+		}
+	})
+}
+
+func TestClient_StartIngest_SizeLimit(t *testing.T) {
+	t.Run("rejects upload exceeding max size", func(t *testing.T) {
+		client, err := NewClient("https://api.example.com", "token123", false, 1*time.Minute)
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data := bytes.NewReader([]byte("test"))
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         MaxUploadSize + 1, // Exceeds limit
+		}
+		_, err = client.StartIngest(context.Background(), opts)
+
+		if err == nil {
+			t.Error("Expected error for oversized upload")
+		}
+		if !strings.Contains(err.Error(), "exceeds maximum allowed") {
+			t.Errorf("Expected size limit error, got: %v", err)
+		}
+	})
+
+	t.Run("accepts upload at max size", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := model.IngestUploadResponse{ScanID: testScanID}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, "token123", false, 1*time.Minute, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		data := bytes.NewReader([]byte("test"))
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         data,
+			Size:         MaxUploadSize, // Exactly at limit
+		}
+		_, err = client.StartIngest(context.Background(), opts)
+
+		if err != nil {
+			t.Errorf("Should accept upload at max size: %v", err)
+		}
+	})
+}
+
 func TestClient_WaitForIngest(t *testing.T) {
 	t.Run("successful completion", func(t *testing.T) {
 		callCount := 0
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			callCount++
 			var status string
 			if callCount < 2 {
 				status = "PROCESSING"
 			} else {
-				status = statusCompletedUpper
+				status = testStatusCompleted
 			}
 			response := model.IngestStatusResponse{
 				Data: []model.IngestStatusData{
@@ -529,8 +938,8 @@ func TestClient_WaitForIngest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WaitForIngest failed: %v", err)
 		}
-		if result.ScanStatus != statusCompletedUpper {
-			t.Errorf("Expected status %s, got %s", statusCompletedUpper, result.ScanStatus)
+		if result.ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, result.ScanStatus)
 		}
 		if callCount < 2 {
 			t.Errorf("Expected at least 2 calls, got %d", callCount)
