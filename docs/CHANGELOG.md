@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proposed fix support with AI validation for vulnerability remediation
 - Hybrid scan summary with brief status at top of output
 - Theme-aware logo support for documentation
+- Comprehensive CI integration guide
+- OSS best practices and developer tooling documentation
 
 ### Changed
 
@@ -40,11 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Workflow condition handling to avoid duplicated titles in scan output
 - Missing permissions in security-scan workflow
-
-### Documentation
-
-- Added comprehensive CI integration guide
-- Added OSS best practices and developer tooling documentation
 
 ---
 
@@ -94,3 +91,7 @@ Manual entries for significant releases:
 [1.0.0]: https://github.com/ArmisSecurity/armis-cli/compare/v0.9.0...v1.0.0
 
 -->
+
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/ArmisSecurity/armis-cli/releases/tag/v1.0.5
