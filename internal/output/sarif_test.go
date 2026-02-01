@@ -238,6 +238,55 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
+func TestBuildMessageText(t *testing.T) {
+	tests := []struct {
+		name        string
+		title       string
+		description string
+		expected    string
+	}{
+		{
+			name:        "different title and description",
+			title:       "SQL Injection",
+			description: "User input directly concatenated into SQL query",
+			expected:    "SQL Injection: User input directly concatenated into SQL query",
+		},
+		{
+			name:        "title equals description",
+			title:       "SQL Injection vulnerability",
+			description: "SQL Injection vulnerability",
+			expected:    "SQL Injection vulnerability",
+		},
+		{
+			name:        "empty title",
+			title:       "",
+			description: "Some vulnerability description",
+			expected:    "Some vulnerability description",
+		},
+		{
+			name:        "empty description with title",
+			title:       "SQL Injection",
+			description: "",
+			expected:    "SQL Injection: ",
+		},
+		{
+			name:        "both empty",
+			title:       "",
+			description: "",
+			expected:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildMessageText(tt.title, tt.description)
+			if result != tt.expected {
+				t.Errorf("buildMessageText(%q, %q) = %q, want %q", tt.title, tt.description, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestSARIFFormatter_WithFixAndValidation(t *testing.T) {
 	formatter := &SARIFFormatter{}
 
