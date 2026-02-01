@@ -648,6 +648,16 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.SnippetStartLine = *loc.SnippetStartLine
 		}
 
+		// Extract fix data if present
+		if nf.NormalizedTask.ExtraData.Fix != nil {
+			finding.Fix = nf.NormalizedTask.ExtraData.Fix
+		}
+
+		// Extract validation data if present
+		if nf.NormalizedTask.ExtraData.FindingValidation != nil {
+			finding.Validation = nf.NormalizedTask.ExtraData.FindingValidation
+		}
+
 		finding.Type = scan.DeriveFindingType(
 			len(nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs) > 0,
 			loc.HasSecret,
