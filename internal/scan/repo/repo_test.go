@@ -412,7 +412,8 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
-		// New behavior: uses description as fallback for more descriptive titles
+		// In the overall title priority chain (SCA with CVE > OWASP category title > Secret type > Description > Category),
+		// this test verifies that, once earlier options don't apply, Description is preferred over FindingCategory.
 		if findings[0].Title != testSQLInjectionDescription {
 			t.Errorf("Title = %q, want %q", findings[0].Title, testSQLInjectionDescription)
 		}

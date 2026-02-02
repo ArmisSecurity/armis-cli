@@ -465,11 +465,11 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 					DeletedRegion: sarifRegion{},
 				}
 
-				// Set deleted region from vulnerable code
-				if finding.Fix.VulnerableCode.StartLine != nil {
+				// Set deleted region from vulnerable code (SARIF uses 1-based line numbers)
+				if finding.Fix.VulnerableCode.StartLine != nil && *finding.Fix.VulnerableCode.StartLine > 0 {
 					replacement.DeletedRegion.StartLine = *finding.Fix.VulnerableCode.StartLine
 				}
-				if finding.Fix.VulnerableCode.EndLine != nil {
+				if finding.Fix.VulnerableCode.EndLine != nil && *finding.Fix.VulnerableCode.EndLine > 0 {
 					replacement.DeletedRegion.EndLine = *finding.Fix.VulnerableCode.EndLine
 				}
 
