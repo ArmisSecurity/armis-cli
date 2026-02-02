@@ -141,7 +141,8 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
 
-	fmt.Printf("\nScan initiated with ID: %s\n", scanID)
+	uploadSpinner.Stop()
+	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
 
 	spinner := progress.NewSpinnerWithContext(ctx, "Waiting for scan to complete...", s.noProgress)
 	spinner.Start()
@@ -153,7 +154,8 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
-	fmt.Printf("Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
+	spinner.Stop()
+	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
 
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
@@ -179,6 +181,14 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 }
 
 func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {
+	// Defense-in-depth: validate image name even though callers should have validated.
+	// This prevents command injection even if this method is called from a new code path.
+	normalised, err := validateImageName(imageName)
+	if err != nil {
+		return fmt.Errorf("invalid image name: %w", err)
+	}
+	imageName = normalised
+
 	dockerCmd := getDockerCommand()
 	if err := validateDockerCommand(dockerCmd); err != nil {
 		return err
@@ -372,7 +382,11 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
 		}
 
-		finding.Title = finding.Description
+		if finding.FindingCategory != "" {
+			finding.Title = util.FormatCategory(finding.FindingCategory)
+		} else {
+			finding.Title = finding.Description
+		}
 
 		findings = append(findings, finding)
 	}

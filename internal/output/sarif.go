@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -38,8 +41,16 @@ type sarifDriver struct {
 type sarifRule struct {
 	ID                   string               `json:"id"`
 	ShortDescription     sarifMessage         `json:"shortDescription"`
+	FullDescription      *sarifMessage        `json:"fullDescription,omitempty"`
+	HelpURI              string               `json:"helpUri,omitempty"`
+	Help                 *sarifHelp           `json:"help,omitempty"`
 	DefaultConfiguration sarifRuleConfig      `json:"defaultConfiguration,omitempty"`
 	Properties           *sarifRuleProperties `json:"properties,omitempty"`
+}
+
+type sarifHelp struct {
+	Text     string `json:"text"`
+	Markdown string `json:"markdown,omitempty"`
 }
 
 type sarifRuleConfig struct {
@@ -56,6 +67,7 @@ type sarifResult struct {
 	Level      string                 `json:"level"`
 	Message    sarifMessage           `json:"message"`
 	Locations  []sarifLocation        `json:"locations,omitempty"`
+	Fixes      []sarifFix             `json:"fixes,omitempty"`
 	Properties *sarifResultProperties `json:"properties,omitempty"`
 }
 
@@ -108,6 +120,50 @@ type sarifArtifactLocation struct {
 type sarifRegion struct {
 	StartLine   int `json:"startLine,omitempty"`
 	StartColumn int `json:"startColumn,omitempty"`
+	EndLine     int `json:"endLine,omitempty"`
+	EndColumn   int `json:"endColumn,omitempty"`
+}
+
+// SARIF 2.1.0 standard fix types for tool-consumable fix suggestions.
+type sarifFix struct {
+	Description     *sarifMessage         `json:"description,omitempty"`
+	ArtifactChanges []sarifArtifactChange `json:"artifactChanges"`
+}
+
+type sarifArtifactChange struct {
+	ArtifactLocation sarifArtifactLocation `json:"artifactLocation"`
+	Replacements     []sarifReplacement    `json:"replacements"`
+}
+
+type sarifReplacement struct {
+	DeletedRegion   sarifRegion           `json:"deletedRegion"`
+	InsertedContent *sarifArtifactContent `json:"insertedContent,omitempty"`
+}
+
+type sarifArtifactContent struct {
+	Text string `json:"text"`
+}
+
+// Compiled regexes for markdown stripping (package-level for reuse).
+var (
+	mdHeaderRegex     = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	mdBoldItalicRegex = regexp.MustCompile(`\*{1,3}([^*]+)\*{1,3}`)
+	mdLinkRegex       = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	mdCodeRegex       = regexp.MustCompile("`([^`]+)`")
+	mdBlockquoteRegex = regexp.MustCompile(`(?m)^>\s*`)
+)
+
+// stripMarkdown removes common markdown formatting to produce plain text.
+// Used to generate SARIF Help.Text from markdown content per SARIF 2.1.0 spec,
+// which requires Help.Text to be readable without markdown rendering.
+func stripMarkdown(md string) string {
+	result := md
+	result = mdHeaderRegex.ReplaceAllString(result, "")       // Remove # headers
+	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // **bold** → bold
+	result = mdLinkRegex.ReplaceAllString(result, "$1")       // [text](url) → text
+	result = mdCodeRegex.ReplaceAllString(result, "$1")       // `code` → code
+	result = mdBlockquoteRegex.ReplaceAllString(result, "")   // Remove > blockquotes
+	return strings.TrimSpace(result)
 }
 
 // Format formats the scan result as SARIF JSON.
@@ -145,7 +201,7 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	for _, finding := range findings {
 		if _, exists := ruleIndexMap[finding.ID]; !exists {
 			ruleIndexMap[finding.ID] = len(rules)
-			rules = append(rules, sarifRule{
+			rule := sarifRule{
 				ID: finding.ID,
 				ShortDescription: sarifMessage{
 					Text: finding.Title,
@@ -156,7 +212,42 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 				Properties: &sarifRuleProperties{
 					SecuritySeverity: severityToSecurityScore(finding.Severity),
 				},
-			})
+			}
+
+			// Add full description if available
+			if finding.LongDescriptionMarkdown != "" || finding.Description != "" {
+				desc := finding.LongDescriptionMarkdown
+				if desc == "" {
+					desc = finding.Description
+				}
+				rule.FullDescription = &sarifMessage{Text: desc}
+			}
+
+			// Add help URI (link to CVE/CWE documentation)
+			rule.HelpURI = generateHelpURI(finding)
+
+			// Add help with proper text/markdown differentiation per SARIF 2.1.0 spec:
+			// - Text: plain text readable without markdown rendering
+			// - Markdown: rich formatted version for tools that can render it (only if different from text)
+			if finding.LongDescriptionMarkdown != "" || finding.Description != "" {
+				rule.Help = &sarifHelp{}
+
+				// Text: always plain text (strip markdown if needed)
+				if finding.Description != "" && finding.LongDescriptionMarkdown == "" {
+					// Only have plain description
+					rule.Help.Text = finding.Description
+				} else if finding.LongDescriptionMarkdown != "" {
+					// Have markdown - strip it for text field
+					rule.Help.Text = stripMarkdown(finding.LongDescriptionMarkdown)
+				}
+
+				// Markdown: only include if it differs from text (avoids redundant output)
+				if finding.LongDescriptionMarkdown != "" && finding.LongDescriptionMarkdown != rule.Help.Text {
+					rule.Help.Markdown = finding.LongDescriptionMarkdown
+				}
+			}
+
+			rules = append(rules, rule)
 		}
 	}
 
@@ -181,7 +272,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			RuleIndex: ruleIndexMap[finding.ID],
 			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
-				Text: finding.Title + ": " + finding.Description,
+				Text: buildMessageText(finding.Title, finding.Description),
 			},
 			Properties: &sarifResultProperties{
 				Severity:    string(finding.Severity),
@@ -206,6 +297,9 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			if finding.Fix.Patch != nil {
 				result.Properties.Fix.Patch = *finding.Fix.Patch
 			}
+
+			// Add standard SARIF fixes array for tool consumption
+			result.Fixes = convertFixToSarif(finding)
 		}
 
 		// Add validation properties if available
@@ -253,6 +347,14 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	return results
 }
 
+// buildMessageText creates a SARIF message text, avoiding duplication when title equals description.
+func buildMessageText(title, description string) string {
+	if title == "" || title == description {
+		return description
+	}
+	return title + ": " + description
+}
+
 func severityToSarifLevel(severity model.Severity) string {
 	switch severity {
 	case model.SeverityCritical, model.SeverityHigh:
@@ -287,6 +389,146 @@ func severityToSecurityScore(severity model.Severity) string {
 	default:
 		return "0.0"
 	}
+}
+
+// generateHelpURI returns a documentation URL for the finding (CVE, CWE, or reference URL).
+func generateHelpURI(finding model.Finding) string {
+	if len(finding.CVEs) > 0 {
+		return "https://nvd.nist.gov/vuln/detail/" + finding.CVEs[0]
+	}
+	if len(finding.CWEs) > 0 {
+		cweID := finding.CWEs[0]
+		var cweNum string
+		// Handle case-insensitive CWE prefix (e.g., "CWE-123", "cwe-123", or just "123")
+		if strings.HasPrefix(strings.ToUpper(cweID), "CWE-") {
+			cweNum = cweID[4:]
+		} else {
+			cweNum = cweID
+		}
+		// Validate CWE number is numeric before generating URL
+		if _, err := strconv.Atoi(cweNum); err == nil {
+			return "https://cwe.mitre.org/data/definitions/" + cweNum + ".html"
+		}
+		// Fall through to URL fallback if CWE number is invalid
+	}
+	if len(finding.URLs) > 0 {
+		return finding.URLs[0]
+	}
+	return ""
+}
+
+// convertFixToSarif converts a Finding's Fix data to standard SARIF fixes format.
+// This enables tools like GitHub Code Scanning to display actionable fix suggestions.
+func convertFixToSarif(finding model.Finding) []sarifFix {
+	if finding.Fix == nil {
+		return nil
+	}
+
+	var fixes []sarifFix
+
+	// Convert ProposedFixes to SARIF format
+	if len(finding.Fix.ProposedFixes) > 0 && finding.Fix.VulnerableCode != nil {
+		for _, proposedFix := range finding.Fix.ProposedFixes {
+			fix := sarifFix{
+				ArtifactChanges: []sarifArtifactChange{},
+			}
+
+			// Add description if explanation is available
+			if finding.Fix.Explanation != "" {
+				fix.Description = &sarifMessage{Text: finding.Fix.Explanation}
+			}
+
+			// Build the artifact change
+			filePath := proposedFix.FilePath
+			if filePath == "" && finding.Fix.VulnerableCode.FilePath != "" {
+				filePath = finding.Fix.VulnerableCode.FilePath
+			}
+			if filePath == "" {
+				filePath = finding.File
+			}
+
+			if filePath != "" {
+				// Sanitize file path for security - skip if sanitization fails
+				sanitizedPath, err := util.SanitizePath(filePath)
+				if err != nil {
+					// Don't include potentially malicious paths in output
+					continue
+				}
+
+				artifactChange := sarifArtifactChange{
+					ArtifactLocation: sarifArtifactLocation{URI: sanitizedPath},
+					Replacements:     []sarifReplacement{},
+				}
+
+				// Build the replacement
+				replacement := sarifReplacement{
+					DeletedRegion: sarifRegion{},
+				}
+
+				// Set deleted region from vulnerable code (SARIF uses 1-based line numbers)
+				if finding.Fix.VulnerableCode.StartLine != nil && *finding.Fix.VulnerableCode.StartLine > 0 {
+					replacement.DeletedRegion.StartLine = *finding.Fix.VulnerableCode.StartLine
+				}
+				if finding.Fix.VulnerableCode.EndLine != nil && *finding.Fix.VulnerableCode.EndLine > 0 {
+					replacement.DeletedRegion.EndLine = *finding.Fix.VulnerableCode.EndLine
+				}
+
+				// Set inserted content from proposed fix
+				if proposedFix.Content != "" {
+					replacement.InsertedContent = &sarifArtifactContent{Text: proposedFix.Content}
+				}
+
+				artifactChange.Replacements = append(artifactChange.Replacements, replacement)
+				fix.ArtifactChanges = append(fix.ArtifactChanges, artifactChange)
+			}
+
+			if len(fix.ArtifactChanges) > 0 {
+				fixes = append(fixes, fix)
+			}
+		}
+	}
+
+	// Convert PatchFiles to SARIF format only if no ProposedFixes were converted.
+	// ProposedFixes take priority as they provide more structured fix information.
+	if len(fixes) == 0 && len(finding.Fix.PatchFiles) > 0 {
+		for filePath, patchContent := range finding.Fix.PatchFiles {
+			// Sanitize file path for security - skip if sanitization fails
+			sanitizedPath, err := util.SanitizePath(filePath)
+			if err != nil {
+				// Don't include potentially malicious paths in output
+				continue
+			}
+
+			replacement := sarifReplacement{
+				InsertedContent: &sarifArtifactContent{Text: patchContent},
+			}
+
+			// Only set DeletedRegion if both line numbers are valid (SARIF uses 1-based lines)
+			if finding.StartLine > 0 && finding.EndLine > 0 {
+				replacement.DeletedRegion = sarifRegion{
+					StartLine: finding.StartLine,
+					EndLine:   finding.EndLine,
+				}
+			}
+
+			fix := sarifFix{
+				ArtifactChanges: []sarifArtifactChange{
+					{
+						ArtifactLocation: sarifArtifactLocation{URI: sanitizedPath},
+						Replacements:     []sarifReplacement{replacement},
+					},
+				},
+			}
+
+			if finding.Fix.Explanation != "" {
+				fix.Description = &sarifMessage{Text: finding.Fix.Explanation}
+			}
+
+			fixes = append(fixes, fix)
+		}
+	}
+
+	return fixes
 }
 
 // FormatWithOptions formats the scan result as SARIF JSON with custom options.
