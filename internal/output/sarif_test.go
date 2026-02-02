@@ -836,3 +836,191 @@ func TestConvertFixToSarif_ProposedFixesPriority(t *testing.T) {
 		t.Errorf("Expected proposed fix content, got %q", fixes[0].ArtifactChanges[0].Replacements[0].InsertedContent.Text)
 	}
 }
+
+func TestStripMarkdown(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain text unchanged",
+			input:    "This is plain text without any markdown.",
+			expected: "This is plain text without any markdown.",
+		},
+		{
+			name:     "removes h1 header",
+			input:    "# Header One\nSome content",
+			expected: "Header One\nSome content",
+		},
+		{
+			name:     "removes h2 header",
+			input:    "## Header Two\nContent here",
+			expected: "Header Two\nContent here",
+		},
+		{
+			name:     "removes h3-h6 headers",
+			input:    "### H3\n#### H4\n##### H5\n###### H6",
+			expected: "H3\nH4\nH5\nH6",
+		},
+		{
+			name:     "removes bold formatting",
+			input:    "This is **bold** text",
+			expected: "This is bold text",
+		},
+		{
+			name:     "removes italic formatting",
+			input:    "This is *italic* text",
+			expected: "This is italic text",
+		},
+		{
+			name:     "removes bold-italic formatting",
+			input:    "This is ***bold-italic*** text",
+			expected: "This is bold-italic text",
+		},
+		{
+			name:     "removes links keeping text",
+			input:    "Check out [this link](https://example.com) for more info",
+			expected: "Check out this link for more info",
+		},
+		{
+			name:     "removes inline code backticks",
+			input:    "Use the `printf` function",
+			expected: "Use the printf function",
+		},
+		{
+			name:     "removes blockquotes",
+			input:    "> This is a quote\nNormal text",
+			expected: "This is a quote\nNormal text",
+		},
+		{
+			name:     "handles multiple markdown elements",
+			input:    "# Title\n\nThis is **bold** and *italic* with `code` and [link](url).",
+			expected: "Title\n\nThis is bold and italic with code and link.",
+		},
+		{
+			name:     "trims whitespace",
+			input:    "  \n# Header\n  ",
+			expected: "Header",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := stripMarkdown(tt.input)
+			if result != tt.expected {
+				t.Errorf("stripMarkdown(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSARIFFormatter_HelpTextMarkdownDifferentiation(t *testing.T) {
+	formatter := &SARIFFormatter{}
+
+	tests := []struct {
+		name             string
+		finding          model.Finding
+		expectedHelpText string
+		expectedMarkdown string
+		hasMarkdown      bool
+	}{
+		{
+			name: "markdown content is stripped for text field",
+			finding: model.Finding{
+				ID:                      "test-markdown",
+				Title:                   "Test Finding",
+				LongDescriptionMarkdown: "# Header\n\nThis is **bold** and [link](url).",
+			},
+			expectedHelpText: "Header\n\nThis is bold and link.",
+			expectedMarkdown: "# Header\n\nThis is **bold** and [link](url).",
+			hasMarkdown:      true,
+		},
+		{
+			name: "plain description only - no markdown field",
+			finding: model.Finding{
+				ID:          "test-plain",
+				Title:       "Test Finding",
+				Description: "Plain text description without any markdown.",
+			},
+			expectedHelpText: "Plain text description without any markdown.",
+			expectedMarkdown: "",
+			hasMarkdown:      false,
+		},
+		{
+			name: "both description and markdown - markdown preferred",
+			finding: model.Finding{
+				ID:                      "test-both",
+				Title:                   "Test Finding",
+				Description:             "Plain description",
+				LongDescriptionMarkdown: "**Markdown** description",
+			},
+			expectedHelpText: "Markdown description",
+			expectedMarkdown: "**Markdown** description",
+			hasMarkdown:      true,
+		},
+		{
+			name: "LongDescriptionMarkdown with plain text - omit redundant markdown field",
+			finding: model.Finding{
+				ID:                      "test-plain-in-markdown-field",
+				Title:                   "Test Finding",
+				LongDescriptionMarkdown: "Plain text in markdown field without any formatting.",
+			},
+			expectedHelpText: "Plain text in markdown field without any formatting.",
+			expectedMarkdown: "",
+			hasMarkdown:      false, // markdown omitted since it equals text
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &model.ScanResult{
+				ScanID:   "test-scan",
+				Findings: []model.Finding{tt.finding},
+			}
+
+			var buf bytes.Buffer
+			err := formatter.Format(result, &buf)
+			if err != nil {
+				t.Fatalf("Format failed: %v", err)
+			}
+
+			var report sarifReport
+			if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+				t.Fatalf("Failed to decode SARIF: %v", err)
+			}
+
+			if len(report.Runs[0].Tool.Driver.Rules) == 0 {
+				t.Fatal("Expected at least one rule")
+			}
+
+			rule := report.Runs[0].Tool.Driver.Rules[0]
+
+			if rule.Help == nil {
+				if tt.expectedHelpText != "" {
+					t.Fatal("Expected Help to be set")
+				}
+				return
+			}
+
+			if rule.Help.Text != tt.expectedHelpText {
+				t.Errorf("Help.Text mismatch:\ngot:  %q\nwant: %q", rule.Help.Text, tt.expectedHelpText)
+			}
+
+			if tt.hasMarkdown {
+				if rule.Help.Markdown != tt.expectedMarkdown {
+					t.Errorf("Help.Markdown mismatch:\ngot:  %q\nwant: %q", rule.Help.Markdown, tt.expectedMarkdown)
+				}
+			} else {
+				if rule.Help.Markdown != "" {
+					t.Errorf("Expected no Markdown field, got: %q", rule.Help.Markdown)
+				}
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -143,6 +144,28 @@ type sarifArtifactContent struct {
 	Text string `json:"text"`
 }
 
+// Compiled regexes for markdown stripping (package-level for reuse).
+var (
+	mdHeaderRegex     = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	mdBoldItalicRegex = regexp.MustCompile(`\*{1,3}([^*]+)\*{1,3}`)
+	mdLinkRegex       = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	mdCodeRegex       = regexp.MustCompile("`([^`]+)`")
+	mdBlockquoteRegex = regexp.MustCompile(`(?m)^>\s*`)
+)
+
+// stripMarkdown removes common markdown formatting to produce plain text.
+// Used to generate SARIF Help.Text from markdown content per SARIF 2.1.0 spec,
+// which requires Help.Text to be readable without markdown rendering.
+func stripMarkdown(md string) string {
+	result := md
+	result = mdHeaderRegex.ReplaceAllString(result, "")       // Remove # headers
+	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // **bold** → bold
+	result = mdLinkRegex.ReplaceAllString(result, "$1")       // [text](url) → text
+	result = mdCodeRegex.ReplaceAllString(result, "$1")       // `code` → code
+	result = mdBlockquoteRegex.ReplaceAllString(result, "")   // Remove > blockquotes
+	return strings.TrimSpace(result)
+}
+
 // Format formats the scan result as SARIF JSON.
 func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	rules, ruleIndexMap := buildRules(result.Findings)
@@ -203,17 +226,23 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 			// Add help URI (link to CVE/CWE documentation)
 			rule.HelpURI = generateHelpURI(finding)
 
-			// Add help with markdown support (consistent with FullDescription behavior)
+			// Add help with proper text/markdown differentiation per SARIF 2.1.0 spec:
+			// - Text: plain text readable without markdown rendering
+			// - Markdown: rich formatted version for tools that can render it (only if different from text)
 			if finding.LongDescriptionMarkdown != "" || finding.Description != "" {
-				// Use same priority as FullDescription: prefer LongDescriptionMarkdown
-				helpText := finding.LongDescriptionMarkdown
-				if helpText == "" {
-					helpText = finding.Description
+				rule.Help = &sarifHelp{}
+
+				// Text: always plain text (strip markdown if needed)
+				if finding.Description != "" && finding.LongDescriptionMarkdown == "" {
+					// Only have plain description
+					rule.Help.Text = finding.Description
+				} else if finding.LongDescriptionMarkdown != "" {
+					// Have markdown - strip it for text field
+					rule.Help.Text = stripMarkdown(finding.LongDescriptionMarkdown)
 				}
-				rule.Help = &sarifHelp{
-					Text: helpText,
-				}
-				if finding.LongDescriptionMarkdown != "" {
+
+				// Markdown: only include if it differs from text (avoids redundant output)
+				if finding.LongDescriptionMarkdown != "" && finding.LongDescriptionMarkdown != rule.Help.Text {
 					rule.Help.Markdown = finding.LongDescriptionMarkdown
 				}
 			}
