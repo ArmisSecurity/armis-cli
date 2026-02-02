@@ -753,8 +753,8 @@ func generateFindingTitle(finding *model.Finding) string {
 	// Fallback - use first sentence of description
 	if finding.Description != "" {
 		firstLine := strings.Split(finding.Description, "\n")[0]
-		// Truncate at first period if it's a sentence
-		if idx := strings.Index(firstLine, ". "); idx > 0 && idx < 80 {
+		// Truncate at first period if it's a sentence, within the first 80 characters
+		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= 80 {
 			firstLine = firstLine[:idx]
 		}
 		if len(firstLine) > 80 {

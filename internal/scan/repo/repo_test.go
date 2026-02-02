@@ -404,7 +404,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("title uses description when no OWASP categories available", func(t *testing.T) {
+	t.Run("title prioritizes description over FindingCategory", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding("finding-1", "HIGH", "CODE_VULNERABILITY", []string{"CVE-2023-1234"}, nil),
 		}
@@ -1643,4 +1643,204 @@ func TestTarGzFiles(t *testing.T) {
 			t.Fatalf("tarGzFiles failed: %v", err)
 		}
 	})
+}
+
+func TestGenerateFindingTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		finding  *model.Finding
+		expected string
+	}{
+		// SCA findings with CVE
+		{
+			name: "SCA with single CVE and package with version",
+			finding: &model.Finding{
+				Type:    model.FindingTypeSCA,
+				CVEs:    []string{"CVE-2023-12345"},
+				Package: "lodash",
+				Version: "4.17.15",
+			},
+			expected: "CVE-2023-12345 in lodash@4.17.15",
+		},
+		{
+			name: "SCA with multiple CVEs and package",
+			finding: &model.Finding{
+				Type:    model.FindingTypeSCA,
+				CVEs:    []string{"CVE-2023-1111", "CVE-2023-2222", "CVE-2023-3333"},
+				Package: "express",
+				Version: "4.18.0",
+			},
+			expected: "CVE-2023-1111 (+2 more) in express@4.18.0",
+		},
+		{
+			name: "SCA with CVE but no package info",
+			finding: &model.Finding{
+				Type: model.FindingTypeSCA,
+				CVEs: []string{"CVE-2023-99999"},
+			},
+			expected: "CVE-2023-99999",
+		},
+		{
+			name: "SCA with CVE and package but no version",
+			finding: &model.Finding{
+				Type:    model.FindingTypeSCA,
+				CVEs:    []string{"CVE-2023-44444"},
+				Package: "axios",
+			},
+			expected: "CVE-2023-44444 in axios",
+		},
+		{
+			name: "SCA without CVEs falls through to next priority",
+			finding: &model.Finding{
+				Type:        model.FindingTypeSCA,
+				Package:     "some-package",
+				Description: "Outdated dependency",
+			},
+			expected: "Outdated dependency",
+		},
+
+		// OWASP category handling
+		{
+			name: "OWASP category with CWE",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+				OWASPCategories: []model.OWASPCategory{
+					{ID: "A03:2021", Title: "Injection"},
+				},
+				CWEs: []string{"CWE-89", "CWE-79"},
+			},
+			expected: "Injection (CWE-89)",
+		},
+		{
+			name: "OWASP category without CWE",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+				OWASPCategories: []model.OWASPCategory{
+					{ID: "A01:2021", Title: "Broken Access Control"},
+				},
+			},
+			expected: "Broken Access Control",
+		},
+		{
+			name: "OWASP category with empty title falls through",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+				OWASPCategories: []model.OWASPCategory{
+					{ID: "A03:2021", Title: ""},
+				},
+				Description: "Some vulnerability description",
+			},
+			expected: "Some vulnerability description",
+		},
+		{
+			name: "multiple OWASP categories uses first one",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+				OWASPCategories: []model.OWASPCategory{
+					{ID: "A03:2021", Title: "Injection"},
+					{ID: "A07:2021", Title: "Identification and Authentication Failures"},
+				},
+				CWEs: []string{"CWE-89"},
+			},
+			expected: "Injection (CWE-89)",
+		},
+
+		// Secret findings
+		{
+			name: "Secret finding returns fixed string",
+			finding: &model.Finding{
+				Type:        model.FindingTypeSecret,
+				Description: "AWS API key exposed",
+			},
+			expected: "Exposed Secret",
+		},
+
+		// Description fallback
+		{
+			name: "description fallback - short description",
+			finding: &model.Finding{
+				Type:        model.FindingTypeVulnerability,
+				Description: "SQL Injection vulnerability",
+			},
+			expected: "SQL Injection vulnerability",
+		},
+		{
+			name: "description fallback - truncated at period",
+			finding: &model.Finding{
+				Type:        model.FindingTypeVulnerability,
+				Description: "SQL Injection vulnerability detected. This allows attackers to execute arbitrary SQL queries.",
+			},
+			expected: "SQL Injection vulnerability detected",
+		},
+		{
+			name: "description fallback - hard truncation at 77 chars",
+			finding: &model.Finding{
+				Type:        model.FindingTypeVulnerability,
+				Description: "This is a very long description that does not contain a period within the first eighty characters so it will be hard truncated",
+			},
+			expected: "This is a very long description that does not contain a period within the fir...",
+		},
+		{
+			name: "description fallback - multiline uses first line",
+			finding: &model.Finding{
+				Type:        model.FindingTypeVulnerability,
+				Description: "First line of description\nSecond line with more details\nThird line",
+			},
+			expected: "First line of description",
+		},
+		{
+			name: "description fallback - period at exactly position 80",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+				// Create a description where ". " appears at exactly position 80
+				Description: "This description has a period at exactly the eighty character boundary position. More text follows.",
+			},
+			expected: "This description has a period at exactly the eighty character boundary position",
+		},
+
+		// Category fallback
+		{
+			name: "category fallback - formats category name",
+			finding: &model.Finding{
+				Type:            model.FindingTypeVulnerability,
+				FindingCategory: "CODE_VULNERABILITY",
+			},
+			expected: "Code Vulnerability",
+		},
+		{
+			name: "category fallback - single word category",
+			finding: &model.Finding{
+				Type:            model.FindingTypeVulnerability,
+				FindingCategory: "VULNERABILITY",
+			},
+			expected: "Vulnerability",
+		},
+
+		// Default fallback
+		{
+			name: "default fallback - no info available",
+			finding: &model.Finding{
+				Type: model.FindingTypeVulnerability,
+			},
+			expected: "Security Finding",
+		},
+		{
+			name: "default fallback - empty strings",
+			finding: &model.Finding{
+				Type:            model.FindingTypeVulnerability,
+				Description:     "",
+				FindingCategory: "",
+			},
+			expected: "Security Finding",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateFindingTitle(tt.finding)
+			if result != tt.expected {
+				t.Errorf("generateFindingTitle() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
 }

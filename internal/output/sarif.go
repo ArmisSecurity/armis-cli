@@ -458,19 +458,23 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 				continue
 			}
 
+			replacement := sarifReplacement{
+				InsertedContent: &sarifArtifactContent{Text: patchContent},
+			}
+
+			// Only set DeletedRegion if line numbers are valid (SARIF uses 1-based lines)
+			if finding.StartLine > 0 || finding.EndLine > 0 {
+				replacement.DeletedRegion = sarifRegion{
+					StartLine: finding.StartLine,
+					EndLine:   finding.EndLine,
+				}
+			}
+
 			fix := sarifFix{
 				ArtifactChanges: []sarifArtifactChange{
 					{
 						ArtifactLocation: sarifArtifactLocation{URI: sanitizedPath},
-						Replacements: []sarifReplacement{
-							{
-								DeletedRegion: sarifRegion{
-									StartLine: finding.StartLine,
-									EndLine:   finding.EndLine,
-								},
-								InsertedContent: &sarifArtifactContent{Text: patchContent},
-							},
-						},
+						Replacements:     []sarifReplacement{replacement},
 					},
 				},
 			}
