@@ -1653,47 +1653,25 @@ func TestGenerateFindingTitle(t *testing.T) {
 	}{
 		// SCA findings with CVE
 		{
-			name: "SCA with single CVE and package with version",
-			finding: &model.Finding{
-				Type:    model.FindingTypeSCA,
-				CVEs:    []string{"CVE-2023-12345"},
-				Package: "lodash",
-				Version: "4.17.15",
-			},
-			expected: "CVE-2023-12345 in lodash@4.17.15",
-		},
-		{
-			name: "SCA with multiple CVEs and package",
-			finding: &model.Finding{
-				Type:    model.FindingTypeSCA,
-				CVEs:    []string{"CVE-2023-1111", "CVE-2023-2222", "CVE-2023-3333"},
-				Package: "express",
-				Version: "4.18.0",
-			},
-			expected: "CVE-2023-1111 (+2 more) in express@4.18.0",
-		},
-		{
-			name: "SCA with CVE but no package info",
+			name: "SCA with single CVE",
 			finding: &model.Finding{
 				Type: model.FindingTypeSCA,
-				CVEs: []string{"CVE-2023-99999"},
+				CVEs: []string{"CVE-2023-12345"},
 			},
-			expected: "CVE-2023-99999",
+			expected: "CVE-2023-12345",
 		},
 		{
-			name: "SCA with CVE and package but no version",
+			name: "SCA with multiple CVEs",
 			finding: &model.Finding{
-				Type:    model.FindingTypeSCA,
-				CVEs:    []string{"CVE-2023-44444"},
-				Package: "axios",
+				Type: model.FindingTypeSCA,
+				CVEs: []string{"CVE-2023-1111", "CVE-2023-2222", "CVE-2023-3333"},
 			},
-			expected: "CVE-2023-44444 in axios",
+			expected: "CVE-2023-1111 (+2 more)",
 		},
 		{
 			name: "SCA without CVEs falls through to next priority",
 			finding: &model.Finding{
 				Type:        model.FindingTypeSCA,
-				Package:     "some-package",
 				Description: "Outdated dependency",
 			},
 			expected: "Outdated dependency",
@@ -1796,6 +1774,14 @@ func TestGenerateFindingTitle(t *testing.T) {
 				Description: "This description has a period at exactly the eighty character boundary position. More text follows.",
 			},
 			expected: "This description has a period at exactly the eighty character boundary position",
+		},
+		{
+			name: "description fallback - trailing period without space",
+			finding: &model.Finding{
+				Type:        model.FindingTypeVulnerability,
+				Description: "Single sentence ending with period.",
+			},
+			expected: "Single sentence ending with period",
 		},
 
 		// Category fallback

@@ -769,6 +769,16 @@ func TestGenerateHelpURI(t *testing.T) {
 			expected: "https://example.com/security",
 		},
 		{
+			name:     "invalid CWE number falls through to URL",
+			finding:  model.Finding{CWEs: []string{"CWE-ABC"}, URLs: []string{"https://example.com/vuln"}},
+			expected: "https://example.com/vuln",
+		},
+		{
+			name:     "invalid CWE number without fallback returns empty",
+			finding:  model.Finding{CWEs: []string{"not-a-cwe"}},
+			expected: "",
+		},
+		{
 			name:     "empty finding returns empty",
 			finding:  model.Finding{},
 			expected: "",

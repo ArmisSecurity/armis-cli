@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -202,11 +203,17 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 			// Add help URI (link to CVE/CWE documentation)
 			rule.HelpURI = generateHelpURI(finding)
 
-			// Add help with markdown support
-			if finding.LongDescriptionMarkdown != "" {
+			// Add help with markdown support (consistent with FullDescription behavior)
+			if finding.LongDescriptionMarkdown != "" || finding.Description != "" {
+				helpText := finding.Description
+				if helpText == "" {
+					helpText = finding.LongDescriptionMarkdown
+				}
 				rule.Help = &sarifHelp{
-					Text:     finding.Description,
-					Markdown: finding.LongDescriptionMarkdown,
+					Text: helpText,
+				}
+				if finding.LongDescriptionMarkdown != "" {
+					rule.Help.Markdown = finding.LongDescriptionMarkdown
 				}
 			}
 
@@ -368,7 +375,11 @@ func generateHelpURI(finding model.Finding) string {
 		} else {
 			cweNum = cweID
 		}
-		return "https://cwe.mitre.org/data/definitions/" + cweNum + ".html"
+		// Validate CWE number is numeric before generating URL
+		if _, err := strconv.Atoi(cweNum); err == nil {
+			return "https://cwe.mitre.org/data/definitions/" + cweNum + ".html"
+		}
+		// Fall through to URL fallback if CWE number is invalid
 	}
 	if len(finding.URLs) > 0 {
 		return finding.URLs[0]

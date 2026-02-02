@@ -720,18 +720,14 @@ func cleanDescription(desc string) string {
 // generateFindingTitle creates a descriptive title for SARIF output.
 // Priority: SCA with CVE > OWASP category title > Secret type > Description > Category.
 func generateFindingTitle(finding *model.Finding) string {
-	// SCA findings - prioritize CVE + package info
+	const maxTitleLen = 80
+	const ellipsis = "..."
+
+	// SCA findings - prioritize CVE information
 	if finding.Type == model.FindingTypeSCA && len(finding.CVEs) > 0 {
 		title := finding.CVEs[0]
 		if len(finding.CVEs) > 1 {
 			title += fmt.Sprintf(" (+%d more)", len(finding.CVEs)-1)
-		}
-		if finding.Package != "" {
-			pkgInfo := finding.Package
-			if finding.Version != "" {
-				pkgInfo += "@" + finding.Version
-			}
-			title += " in " + pkgInfo
 		}
 		return title
 	}
@@ -753,12 +749,18 @@ func generateFindingTitle(finding *model.Finding) string {
 	// Fallback - use first sentence of description
 	if finding.Description != "" {
 		firstLine := strings.Split(finding.Description, "\n")[0]
-		// Truncate at first period if it's a sentence, within the first 80 characters
-		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= 80 {
+
+		// Truncate at first sentence boundary within limit
+		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= maxTitleLen {
 			firstLine = firstLine[:idx]
+		} else if len(firstLine) <= maxTitleLen && strings.HasSuffix(firstLine, ".") {
+			// Handle single-sentence descriptions ending with period (no trailing space)
+			firstLine = firstLine[:len(firstLine)-1]
 		}
-		if len(firstLine) > 80 {
-			firstLine = firstLine[:77] + "..."
+
+		// Hard truncate if still too long
+		if len(firstLine) > maxTitleLen {
+			firstLine = firstLine[:maxTitleLen-len(ellipsis)] + ellipsis
 		}
 		return firstLine
 	}
