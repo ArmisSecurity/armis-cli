@@ -192,8 +192,8 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 	}
 
 	var data struct {
-		CustomerID string `json:"customer_id"`
-		Exp        int64  `json:"exp"`
+		CustomerID string  `json:"customer_id"`
+		Exp        float64 `json:"exp"` // float64 to handle servers that return fractional timestamps
 	}
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse JWT payload: %w", err)
@@ -206,8 +206,11 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 		return nil, fmt.Errorf("exp claim missing from JWT")
 	}
 
+	// Convert float64 to Unix timestamp (truncate sub-second precision)
+	expSec := int64(data.Exp)
+
 	return &jwtClaims{
 		CustomerID: data.CustomerID,
-		ExpiresAt:  time.Unix(data.Exp, 0),
+		ExpiresAt:  time.Unix(expSec, 0),
 	}, nil
 }

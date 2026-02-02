@@ -32,6 +32,23 @@ func createMockJWT(customerID string, exp int64) string {
 	return header + "." + payload + "." + signature
 }
 
+// createMockJWTWithFloatExp creates a mock JWT with a floating-point exp claim.
+// Some auth servers return fractional timestamps (e.g., 1769951069.169681).
+func createMockJWTWithFloatExp(customerID string, exp float64) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	claims := map[string]interface{}{
+		"customer_id": customerID,
+		"exp":         exp,
+	}
+	claimsJSON, _ := json.Marshal(claims)
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	signature := base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
+
+	return header + "." + payload + "." + signature
+}
+
 func TestNewAuthProvider_LegacyAuth(t *testing.T) {
 	t.Run("succeeds with token and tenant ID", func(t *testing.T) {
 		config := AuthConfig{
@@ -354,6 +371,26 @@ func TestParseJWTClaims(t *testing.T) {
 		}
 
 		expectedTime := time.Unix(1700000000, 0)
+		if !result.ExpiresAt.Equal(expectedTime) {
+			t.Errorf("Expected exp %v, got %v", expectedTime, result.ExpiresAt)
+		}
+	})
+
+	t.Run("valid JWT with floating-point exp", func(t *testing.T) {
+		// Some auth servers return fractional timestamps like 1769951069.169681
+		token := createMockJWTWithFloatExp("cust-456", 1769951069.169681)
+
+		result, err := parseJWTClaims(token)
+		if err != nil {
+			t.Fatalf("parseJWTClaims failed: %v", err)
+		}
+
+		if result.CustomerID != "cust-456" {
+			t.Errorf("Expected customer_id 'cust-456', got %q", result.CustomerID)
+		}
+
+		// The fractional part should be truncated
+		expectedTime := time.Unix(1769951069, 0)
 		if !result.ExpiresAt.Equal(expectedTime) {
 			t.Errorf("Expected exp %v, got %v", expectedTime, result.ExpiresAt)
 		}
