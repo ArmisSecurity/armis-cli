@@ -103,8 +103,8 @@ func TestGroupFindingsBySeverity(t *testing.T) {
 
 func TestGroupFindingsByFile(t *testing.T) {
 	findings := []model.Finding{
-		{ID: "1", File: "main.go", Title: "Issue 1"},
-		{ID: "2", File: "main.go", Title: "Issue 2"},
+		{ID: "1", File: testFileMainGo, Title: "Issue 1"},
+		{ID: "2", File: testFileMainGo, Title: "Issue 2"},
 		{ID: "3", File: "util.go", Title: "Issue 3"},
 		{ID: "4", File: "", Title: "No file"},
 	}
@@ -117,9 +117,9 @@ func TestGroupFindingsByFile(t *testing.T) {
 
 	for _, group := range groups {
 		switch group.Key {
-		case "main.go":
+		case testFileMainGo:
 			if len(group.Findings) != 2 {
-				t.Errorf("Expected 2 findings in main.go, got %d", len(group.Findings))
+				t.Errorf("Expected 2 findings in %s, got %d", testFileMainGo, len(group.Findings))
 			}
 		case "util.go":
 			if len(group.Findings) != 1 {
@@ -349,7 +349,7 @@ func main() {
 func TestFormatCodeSnippet(t *testing.T) {
 	t.Run("formats snippet with line numbers", func(t *testing.T) {
 		finding := model.Finding{
-			File:             "main.go",
+			File:             testFileMainGo,
 			CodeSnippet:      "package main\n\nfunc main() {}",
 			SnippetStartLine: 1,
 			StartLine:        3,
