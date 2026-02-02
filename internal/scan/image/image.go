@@ -181,6 +181,14 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 }
 
 func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {
+	// Defense-in-depth: validate image name even though callers should have validated.
+	// This prevents command injection even if this method is called from a new code path.
+	normalised, err := validateImageName(imageName)
+	if err != nil {
+		return fmt.Errorf("invalid image name: %w", err)
+	}
+	imageName = normalised
+
 	dockerCmd := getDockerCommand()
 	if err := validateDockerCommand(dockerCmd); err != nil {
 		return err
