@@ -98,8 +98,8 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("authentication failed (status %d): %s",
-			resp.StatusCode, strings.TrimSpace(string(body)))
+		// Don't include raw response body in error to prevent potential info leakage
+		return "", fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
 	}
 
 	var authResp authResponse

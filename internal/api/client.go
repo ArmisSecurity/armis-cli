@@ -233,11 +233,10 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	authHeader, err := c.authProvider.GetAuthorizationHeader(uploadCtx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get authorization header: %w", err)
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(uploadCtx, req); err != nil {
+		return "", err
 	}
-	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.uploadHTTPClient.Do(req)
@@ -274,11 +273,10 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(ctx, req); err != nil {
+		return nil, err
 	}
-	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -358,11 +356,10 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(ctx, req); err != nil {
+		return nil, err
 	}
-	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -424,11 +421,10 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	authHeader, err := c.authProvider.GetAuthorizationHeader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authorization header: %w", err)
+	// Use setAuthHeader to ensure credentials are only sent over HTTPS
+	if err := c.setAuthHeader(ctx, req); err != nil {
+		return nil, err
 	}
-	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
