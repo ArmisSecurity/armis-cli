@@ -8,6 +8,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+const testFileMainGo = "main.go"
+
 func TestSARIFFormatter_Format(t *testing.T) {
 	formatter := &SARIFFormatter{}
 
@@ -21,7 +23,7 @@ func TestSARIFFormatter_Format(t *testing.T) {
 				Severity:    model.SeverityHigh,
 				Title:       "SQL Injection",
 				Description: "Potential SQL injection vulnerability",
-				File:        "main.go",
+				File:        testFileMainGo,
 				StartLine:   42,
 				StartColumn: 10,
 			},
@@ -108,7 +110,7 @@ func TestSARIFFormatter_Format(t *testing.T) {
 	if len(result1.Locations) != 1 {
 		t.Fatalf("Expected 1 location, got %d", len(result1.Locations))
 	}
-	if result1.Locations[0].PhysicalLocation.ArtifactLocation.URI != "main.go" {
+	if result1.Locations[0].PhysicalLocation.ArtifactLocation.URI != testFileMainGo {
 		t.Errorf("File mismatch: got %s", result1.Locations[0].PhysicalLocation.ArtifactLocation.URI)
 	}
 
