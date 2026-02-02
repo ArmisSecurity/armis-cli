@@ -35,26 +35,29 @@ const (
 
 // Finding represents a single security finding from a scan.
 type Finding struct {
-	ID               string             `json:"id"`
-	Type             FindingType        `json:"type"`
-	Severity         Severity           `json:"severity"`
-	Title            string             `json:"title"`
-	Description      string             `json:"description"`
-	File             string             `json:"file,omitempty"`
-	StartLine        int                `json:"start_line,omitempty"`
-	EndLine          int                `json:"end_line,omitempty"`
-	StartColumn      int                `json:"start_column,omitempty"`
-	EndColumn        int                `json:"end_column,omitempty"`
-	CodeSnippet      string             `json:"code_snippet,omitempty"`
-	SnippetStartLine int                `json:"snippet_start_line,omitempty"`
-	CVEs             []string           `json:"cves,omitempty"`
-	CWEs             []string           `json:"cwes,omitempty"`
-	FindingCategory  string             `json:"finding_category,omitempty"`
-	Package          string             `json:"package,omitempty"`
-	Version          string             `json:"version,omitempty"`
-	FixVersion       string             `json:"fix_version,omitempty"`
-	Fix              *Fix               `json:"fix,omitempty"`
-	Validation       *FindingValidation `json:"validation,omitempty"`
+	ID                      string             `json:"id"`
+	Type                    FindingType        `json:"type"`
+	Severity                Severity           `json:"severity"`
+	Title                   string             `json:"title"`
+	Description             string             `json:"description"`
+	File                    string             `json:"file,omitempty"`
+	StartLine               int                `json:"start_line,omitempty"`
+	EndLine                 int                `json:"end_line,omitempty"`
+	StartColumn             int                `json:"start_column,omitempty"`
+	EndColumn               int                `json:"end_column,omitempty"`
+	CodeSnippet             string             `json:"code_snippet,omitempty"`
+	SnippetStartLine        int                `json:"snippet_start_line,omitempty"`
+	CVEs                    []string           `json:"cves,omitempty"`
+	CWEs                    []string           `json:"cwes,omitempty"`
+	FindingCategory         string             `json:"finding_category,omitempty"`
+	Package                 string             `json:"package,omitempty"`
+	Version                 string             `json:"version,omitempty"`
+	FixVersion              string             `json:"fix_version,omitempty"`
+	Fix                     *Fix               `json:"fix,omitempty"`
+	Validation              *FindingValidation `json:"validation,omitempty"`
+	OWASPCategories         []OWASPCategory    `json:"owasp_categories,omitempty"`
+	LongDescriptionMarkdown string             `json:"long_description_markdown,omitempty"`
+	URLs                    []string           `json:"urls,omitempty"`
 }
 
 // ScanResult represents the complete result of a security scan.

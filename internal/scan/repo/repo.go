@@ -598,11 +598,14 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		finding := model.Finding{
-			ID:          nf.NormalizedTask.FindingID,
-			Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
-			Description: nf.NormalizedRemediation.Description,
-			CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
-			CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+			ID:                      nf.NormalizedTask.FindingID,
+			Severity:                mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Description:             nf.NormalizedRemediation.Description,
+			CVEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
+			CWEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+			OWASPCategories:         nf.NormalizedRemediation.VulnerabilityTypeMetadata.OWASPCategories,
+			LongDescriptionMarkdown: nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown,
+			URLs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.URLs,
 		}
 
 		if finding.Description == "" {
@@ -668,7 +671,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
 		}
 
-		finding.Title = finding.Description
+		finding.Title = generateFindingTitle(&finding)
 
 		findings = append(findings, finding)
 	}
@@ -712,6 +715,62 @@ func cleanDescription(desc string) string {
 	}
 
 	return strings.Join(cleaned, " ")
+}
+
+// generateFindingTitle creates a descriptive title for SARIF output.
+// Priority: SCA with CVE > OWASP category title > Secret type > Description > Category.
+func generateFindingTitle(finding *model.Finding) string {
+	const maxTitleLen = 80
+	const ellipsis = "..."
+
+	// SCA findings - prioritize CVE information
+	if finding.Type == model.FindingTypeSCA && len(finding.CVEs) > 0 {
+		title := finding.CVEs[0]
+		if len(finding.CVEs) > 1 {
+			title += fmt.Sprintf(" (+%d more)", len(finding.CVEs)-1)
+		}
+		return title
+	}
+
+	// Use OWASP category title if available (from API response)
+	if len(finding.OWASPCategories) > 0 && finding.OWASPCategories[0].Title != "" {
+		title := finding.OWASPCategories[0].Title
+		if len(finding.CWEs) > 0 {
+			title += fmt.Sprintf(" (%s)", finding.CWEs[0])
+		}
+		return title
+	}
+
+	// Secrets - indicate secret type
+	if finding.Type == model.FindingTypeSecret {
+		return "Exposed Secret"
+	}
+
+	// Fallback - use first sentence of description
+	if finding.Description != "" {
+		firstLine := strings.Split(finding.Description, "\n")[0]
+
+		// Truncate at first sentence boundary within limit
+		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= maxTitleLen {
+			firstLine = firstLine[:idx]
+		} else if len(firstLine) <= maxTitleLen && strings.HasSuffix(firstLine, ".") {
+			// Handle single-sentence descriptions ending with period (no trailing space)
+			firstLine = firstLine[:len(firstLine)-1]
+		}
+
+		// Hard truncate if still too long
+		if len(firstLine) > maxTitleLen {
+			firstLine = firstLine[:maxTitleLen-len(ellipsis)] + ellipsis
+		}
+		return firstLine
+	}
+
+	// Last resort - formatted category
+	if finding.FindingCategory != "" {
+		return util.FormatCategory(finding.FindingCategory)
+	}
+
+	return "Security Finding"
 }
 
 func isEmptyFinding(nf model.NormalizedFinding) bool {
