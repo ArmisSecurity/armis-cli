@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/ArmisSecurity/armis-cli/blob/main/docs/assets/logo-light.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/ArmisSecurity/armis-cli/blob/main/docs/assets/logo-dark.svg">
-  <img alt="Armis AppSec Logo" src="https://github.com/ArmisSecurity/armis-cli/blob/main/docs/assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-light.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-dark.svg">
+  <img alt="Armis AppSec Logo" src="docs/assets/logo-dark.svg">
 </picture>
 
 # Armis CLI
