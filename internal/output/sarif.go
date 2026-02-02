@@ -407,10 +407,11 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 			}
 
 			if filePath != "" {
-				// Sanitize file path for security
+				// Sanitize file path for security - skip if sanitization fails
 				sanitizedPath, err := util.SanitizePath(filePath)
 				if err != nil {
-					sanitizedPath = filePath
+					// Don't include potentially malicious paths in output
+					continue
 				}
 
 				artifactChange := sarifArtifactChange{
@@ -450,10 +451,11 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 	// ProposedFixes take priority as they provide more structured fix information.
 	if len(fixes) == 0 && len(finding.Fix.PatchFiles) > 0 {
 		for filePath, patchContent := range finding.Fix.PatchFiles {
-			// Sanitize file path for security
+			// Sanitize file path for security - skip if sanitization fails
 			sanitizedPath, err := util.SanitizePath(filePath)
 			if err != nil {
-				sanitizedPath = filePath
+				// Don't include potentially malicious paths in output
+				continue
 			}
 
 			fix := sarifFix{
