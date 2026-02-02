@@ -205,9 +205,10 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 
 			// Add help with markdown support (consistent with FullDescription behavior)
 			if finding.LongDescriptionMarkdown != "" || finding.Description != "" {
-				helpText := finding.Description
+				// Use same priority as FullDescription: prefer LongDescriptionMarkdown
+				helpText := finding.LongDescriptionMarkdown
 				if helpText == "" {
-					helpText = finding.LongDescriptionMarkdown
+					helpText = finding.Description
 				}
 				rule.Help = &sarifHelp{
 					Text: helpText,
@@ -473,8 +474,8 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 				InsertedContent: &sarifArtifactContent{Text: patchContent},
 			}
 
-			// Only set DeletedRegion if line numbers are valid (SARIF uses 1-based lines)
-			if finding.StartLine > 0 || finding.EndLine > 0 {
+			// Only set DeletedRegion if both line numbers are valid (SARIF uses 1-based lines)
+			if finding.StartLine > 0 && finding.EndLine > 0 {
 				replacement.DeletedRegion = sarifRegion{
 					StartLine: finding.StartLine,
 					EndLine:   finding.EndLine,
