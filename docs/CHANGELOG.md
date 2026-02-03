@@ -21,6 +21,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.7] - 2026-02-02
+
+### Added
+
+- SARIF standard `fixes` array for actionable fix suggestions with `ProposedFixes` and `PatchFiles` support
+- Enhanced SARIF rule information with `fullDescription`, `helpUri`, and `help` fields
+- Improved finding title generation (priority: CVE+package for SCA > OWASP category > secret type > description)
+
+### Changed
+
+- Separated spinner cleanup from result messages for cleaner progress output
+- Only include `Help.Markdown` when it differs from `Help.Text` to avoid redundancy
+- Added `stripMarkdown()` utility for SARIF `Help.Text` field per SARIF 2.1.0 spec
+- Updated `anchore/sbom-action` from 0.21.1 to 0.22.1
+- Updated `tj-actions/changed-files` from 46 to 47
+- Updated `actions/checkout` from 4 to 6
+
+### Fixed
+
+- CWE URL validation (validate numeric before generating URL, fallback for invalid CWEs)
+- SARIF line number validation (prevent invalid `DeletedRegion` with StartLine/EndLine = 0)
+- Description truncation edge cases (period handling at position 80, trailing periods)
+
+### Security
+
+- Path traversal protection: skip paths when `util.SanitizePath` fails instead of falling back to original
+- Command injection prevention: defense-in-depth image name validation in `exportImage`
+
+---
+
 ## [1.0.6] - 2025-02-01
 
 ### Added
@@ -92,6 +122,7 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/ArmisSecurity/armis-cli/releases/tag/v1.0.5
