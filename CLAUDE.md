@@ -10,10 +10,14 @@ Armis CLI is an enterprise-grade security scanning tool written in Go that integ
 
 ```bash
 make build          # Build binary to bin/armis-cli
+make install        # Install binary to /usr/local/bin (or PREFIX)
 make test           # Run all tests with verbose output
 make lint           # Run golangci-lint (must be installed)
 make clean          # Remove build artifacts
 make release        # Build for all platforms (linux/darwin/windows, amd64/arm64)
+make scan           # Run security scan on this repository
+make tools          # Install dev tools (gotestsum)
+make help           # Show all available targets
 ```
 
 Run a single test:
@@ -29,8 +33,8 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 - `cmd/armis-cli/main.go` - Entry point, sets version info and calls `cmd.Execute()`
 - `internal/cmd/` - Cobra command definitions
-  - `root.go` - Root command with global flags (token, format, fail-on, tenant-id, debug)
-  - `scan.go` - Parent scan command with shared flags (include-tests, scan-timeout, group-by)
+  - `root.go` - Root command with global flags (token, format, fail-on, tenant-id, debug, dev, no-progress, exit-code, page-limit)
+  - `scan.go` - Parent scan command with shared flags (include-tests, scan-timeout, upload-timeout, group-by, include-files, include-non-exploitable, sbom, vex)
   - `scan_repo.go` - Repository scanning subcommand
   - `scan_image.go` - Container image scanning subcommand
 
