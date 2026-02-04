@@ -110,12 +110,26 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	ew.write("Status:      %s\n", result.Status)
 	ew.write("\n")
 
-	// 3. Brief status line for immediate orientation
-	if err := renderBriefStatus(w, result); err != nil {
-		return err
+	// 3. Brief status line for immediate orientation (skip if full summary at top)
+	if !opts.SummaryTop {
+		if err := renderBriefStatus(w, result); err != nil {
+			return err
+		}
 	}
 
-	// 4. Findings section
+	// 4. Summary at top if requested
+	if opts.SummaryTop {
+		ew.write("\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("  SUMMARY\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("\n")
+		if err := renderSummaryDashboard(w, result); err != nil {
+			return err
+		}
+	}
+
+	// 5. Findings section
 	if len(result.Findings) > 0 {
 		ew.write("\n")
 		ew.write("───────────────────────────────────────────────────────────────\n")
@@ -133,15 +147,17 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 		}
 	}
 
-	// 6. Full detailed summary dashboard at the end
-	ew.write("───────────────────────────────────────────────────────────────\n")
-	ew.write("  SUMMARY\n")
-	ew.write("───────────────────────────────────────────────────────────────\n")
-	ew.write("\n")
-	if err := renderSummaryDashboard(w, result); err != nil {
-		return err
+	// 6. Full detailed summary dashboard at the end (skip if already shown at top)
+	if !opts.SummaryTop {
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("  SUMMARY\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("\n")
+		if err := renderSummaryDashboard(w, result); err != nil {
+			return err
+		}
+		ew.write("\n")
 	}
-	ew.write("\n")
 
 	ew.write("═══════════════════════════════════════════════════════════════\n")
 	ew.write("\n")

@@ -15,6 +15,7 @@ var (
 	generateVEX           bool
 	sbomOutput            string
 	vexOutput             string
+	summaryTop            bool
 )
 
 var scanCmd = &cobra.Command{
@@ -34,6 +35,7 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&generateVEX, "vex", false, "Generate Vulnerability Exploitability eXchange (VEX) document")
 	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
+	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}
