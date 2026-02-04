@@ -105,6 +105,65 @@ func TestNewAuthProvider_LegacyAuth(t *testing.T) {
 			t.Errorf("Expected authentication error, got: %v", err)
 		}
 	})
+
+	t.Run("fails with only client_id provided", func(t *testing.T) {
+		config := AuthConfig{
+			ClientID: "test-client",
+			// ClientSecret missing
+		}
+
+		_, err := NewAuthProvider(config)
+		if err == nil {
+			t.Error("Expected error for partial JWT credentials")
+		}
+		if !strings.Contains(err.Error(), "both --client-id and --client-secret must be provided") {
+			t.Errorf("Expected partial credentials error, got: %v", err)
+		}
+	})
+
+	t.Run("fails with only client_secret provided", func(t *testing.T) {
+		config := AuthConfig{
+			ClientSecret: "test-secret",
+			// ClientID missing
+		}
+
+		_, err := NewAuthProvider(config)
+		if err == nil {
+			t.Error("Expected error for partial JWT credentials")
+		}
+		if !strings.Contains(err.Error(), "both --client-id and --client-secret must be provided") {
+			t.Errorf("Expected partial credentials error, got: %v", err)
+		}
+	})
+
+	t.Run("GetRawToken returns raw token for Basic auth", func(t *testing.T) {
+		config := AuthConfig{
+			Token:    "my-raw-token",
+			TenantID: "tenant-123",
+		}
+
+		p, err := NewAuthProvider(config)
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		rawToken, err := p.GetRawToken(context.Background())
+		if err != nil {
+			t.Fatalf("GetRawToken failed: %v", err)
+		}
+		if rawToken != "my-raw-token" {
+			t.Errorf("Expected raw token 'my-raw-token', got %q", rawToken)
+		}
+
+		// Verify GetAuthorizationHeader includes prefix while GetRawToken doesn't
+		header, _ := p.GetAuthorizationHeader(context.Background())
+		if header == rawToken {
+			t.Error("Expected GetAuthorizationHeader to include 'Basic ' prefix")
+		}
+		if header != "Basic my-raw-token" {
+			t.Errorf("Expected 'Basic my-raw-token', got %q", header)
+		}
+	})
 }
 
 func TestNewAuthProvider_JWTAuth(t *testing.T) {
@@ -154,6 +213,15 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		}
 		if tid != "tenant-from-jwt" {
 			t.Errorf("Expected 'tenant-from-jwt', got %q", tid)
+		}
+
+		// Also verify GetRawToken returns the same JWT
+		rawToken, err := p.GetRawToken(context.Background())
+		if err != nil {
+			t.Fatalf("GetRawToken failed: %v", err)
+		}
+		if rawToken != mockJWT {
+			t.Errorf("GetRawToken: expected %q, got %q", mockJWT, rawToken)
 		}
 	})
 

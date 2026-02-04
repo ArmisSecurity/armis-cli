@@ -108,7 +108,8 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if authResp.Error != "" {
-		return "", fmt.Errorf("authentication error: %s", authResp.Error)
+		// Don't include raw error content to prevent potential sensitive info leakage
+		return "", fmt.Errorf("authentication failed: server returned an error")
 	}
 
 	if authResp.Token == "" {

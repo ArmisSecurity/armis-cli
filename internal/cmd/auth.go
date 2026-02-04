@@ -48,12 +48,12 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	token, err := provider.GetAuthorizationHeader(ctx)
+	token, err := provider.GetRawToken(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get token: %w", err)
 	}
 
-	// Print only the token (no newline prefix, just the token)
+	// Print the raw token without any prefix (useful for piping to other tools)
 	fmt.Println(token)
 	return nil
 }

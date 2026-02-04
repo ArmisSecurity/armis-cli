@@ -51,6 +51,14 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 		config: config,
 	}
 
+	// Validate that client credentials are either both provided or both empty
+	// to prevent silent fallback to Basic auth when JWT is partially configured
+	hasClientID := config.ClientID != ""
+	hasClientSecret := config.ClientSecret != ""
+	if hasClientID != hasClientSecret {
+		return nil, fmt.Errorf("both --client-id and --client-secret must be provided for JWT authentication")
+	}
+
 	// Determine auth mode: JWT credentials take priority
 	if config.ClientID != "" && config.ClientSecret != "" {
 		// JWT auth
@@ -120,6 +128,24 @@ func (p *AuthProvider) GetTenantID(ctx context.Context) (string, error) {
 // IsLegacy returns true if using legacy Basic auth.
 func (p *AuthProvider) IsLegacy() bool {
 	return p.isLegacy
+}
+
+// GetRawToken returns the raw JWT token (for JWT auth) or the raw token (for Basic auth).
+// This is useful for displaying tokens to users or passing to external tools.
+// Unlike GetAuthorizationHeader, this never includes prefixes like "Basic ".
+func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
+	if p.isLegacy {
+		return p.config.Token, nil
+	}
+
+	// Refresh JWT if needed
+	if err := p.refreshIfNeeded(ctx); err != nil {
+		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.credentials.Token, nil
 }
 
 // exchangeCredentials exchanges client credentials for a JWT token.
