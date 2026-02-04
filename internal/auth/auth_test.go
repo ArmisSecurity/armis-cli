@@ -535,7 +535,7 @@ func TestIsLegacy(t *testing.T) {
 
 func TestNewAuthClient(t *testing.T) {
 	t.Run("succeeds with valid HTTPS endpoint", func(t *testing.T) {
-		client, err := NewAuthClient("https://auth.example.com")
+		client, err := NewAuthClient("https://auth.example.com", false)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -545,7 +545,7 @@ func TestNewAuthClient(t *testing.T) {
 	})
 
 	t.Run("succeeds with localhost HTTP", func(t *testing.T) {
-		client, err := NewAuthClient("http://localhost:8080")
+		client, err := NewAuthClient("http://localhost:8080", false)
 		if err != nil {
 			t.Errorf("Unexpected error for localhost: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestNewAuthClient(t *testing.T) {
 	})
 
 	t.Run("succeeds with 127.0.0.1 HTTP", func(t *testing.T) {
-		client, err := NewAuthClient("http://127.0.0.1:8080")
+		client, err := NewAuthClient("http://127.0.0.1:8080", false)
 		if err != nil {
 			t.Errorf("Unexpected error for 127.0.0.1: %v", err)
 		}
@@ -565,7 +565,7 @@ func TestNewAuthClient(t *testing.T) {
 	})
 
 	t.Run("fails with non-localhost HTTP", func(t *testing.T) {
-		_, err := NewAuthClient("http://auth.example.com")
+		_, err := NewAuthClient("http://auth.example.com", false)
 		if err == nil {
 			t.Error("Expected error for non-localhost HTTP")
 		}
@@ -575,7 +575,7 @@ func TestNewAuthClient(t *testing.T) {
 	})
 
 	t.Run("fails with empty endpoint", func(t *testing.T) {
-		_, err := NewAuthClient("")
+		_, err := NewAuthClient("", false)
 		if err == nil {
 			t.Error("Expected error for empty endpoint")
 		}
@@ -585,7 +585,7 @@ func TestNewAuthClient(t *testing.T) {
 	})
 
 	t.Run("fails with invalid URL", func(t *testing.T) {
-		_, err := NewAuthClient("://invalid")
+		_, err := NewAuthClient("://invalid", false)
 		if err == nil {
 			t.Error("Expected error for invalid URL")
 		}
@@ -667,7 +667,7 @@ func TestAuthProvider_ContextCancellation(t *testing.T) {
 	defer slowServer.Close()
 
 	// Create an auth client directly for the test
-	authClient, err := NewAuthClient(slowServer.URL)
+	authClient, err := NewAuthClient(slowServer.URL, false)
 	if err != nil {
 		t.Fatalf("NewAuthClient failed: %v", err)
 	}

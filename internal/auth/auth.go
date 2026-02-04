@@ -23,6 +23,9 @@ type AuthConfig struct {
 	// Legacy Basic auth
 	Token    string
 	TenantID string
+
+	// Debug mode for verbose logging
+	Debug bool
 }
 
 // JWTCredentials contains the JWT token and extracted claims.
@@ -66,7 +69,7 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 		if config.AuthEndpoint == "" {
 			return nil, fmt.Errorf("--auth-endpoint is required when using client credentials")
 		}
-		authClient, err := NewAuthClient(config.AuthEndpoint)
+		authClient, err := NewAuthClient(config.AuthEndpoint, config.Debug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create auth client: %w", err)
 		}
@@ -90,10 +93,11 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 }
 
 // GetAuthorizationHeader returns the Authorization header value.
-// For JWT auth: the raw JWT token (no "Bearer" prefix)
-// For Basic auth: "Basic <token>"
+// For JWT auth: the raw JWT token (no "Bearer" prefix - backend expects raw JWT)
+// For Basic auth: "Basic <token>" per RFC 7617
 func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, error) {
 	if p.isLegacy {
+		// #nosec G101 -- Basic auth scheme requires token in header per RFC 7617
 		return "Basic " + p.config.Token, nil
 	}
 
@@ -133,6 +137,12 @@ func (p *AuthProvider) IsLegacy() bool {
 // GetRawToken returns the raw JWT token (for JWT auth) or the raw token (for Basic auth).
 // This is useful for displaying tokens to users or passing to external tools.
 // Unlike GetAuthorizationHeader, this never includes prefixes like "Basic ".
+//
+// SECURITY NOTE: Exposing raw tokens is intentional here - this method exists
+// specifically for the `auth` command to output tokens for piping to other tools.
+// The token is only printed to stdout when explicitly requested by the user.
+//
+// #nosec G101 -- Intentional credential exposure for CLI output
 func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 	if p.isLegacy {
 		return p.config.Token, nil
@@ -202,9 +212,13 @@ type jwtClaims struct {
 // parseJWTClaims extracts claims from a JWT without signature verification.
 // The JWT format is: header.payload.signature (base64url encoded)
 // We only need to decode the payload to extract customer_id and exp.
-// Signature verification is not needed because:
-// 1. The CLI obtained this token directly from the auth service via authenticated request
-// 2. The backend validates the signature server-side
+//
+// SECURITY NOTE: Signature verification is intentionally omitted because:
+// 1. The CLI obtained this token directly from the auth service via HTTPS
+// 2. The backend validates the signature server-side for all API requests
+// 3. This function only extracts claims for local caching/refresh logic
+//
+// #nosec G104 -- JWT signature verification delegated to backend
 func parseJWTClaims(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

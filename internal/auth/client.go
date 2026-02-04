@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,11 +17,13 @@ import (
 type AuthClient struct {
 	endpoint   string
 	httpClient *http.Client
+	debug      bool
 }
 
 // NewAuthClient creates a new authentication client for the given endpoint.
 // The endpoint must be a valid HTTPS URL (HTTP allowed only for localhost).
-func NewAuthClient(endpoint string) (*AuthClient, error) {
+// If debug is true, authentication failures will log detailed error information.
+func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("auth endpoint is required")
 	}
@@ -43,6 +46,7 @@ func NewAuthClient(endpoint string) (*AuthClient, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		debug: debug,
 	}, nil
 }
 
@@ -98,6 +102,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Log detailed error info when debug mode is enabled
+		if c.debug {
+			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
+		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return "", fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
 	}

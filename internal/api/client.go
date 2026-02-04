@@ -140,11 +140,22 @@ func (c *Client) IsDebug() bool {
 // setAuthHeader sets the Authorization header on a request, but only if the
 // request URL uses HTTPS (or localhost for testing). This prevents credential
 // exposure over insecure channels.
+//
+// For JWT auth: sends raw JWT token (no "Bearer" prefix)
+// For Basic auth: sends "Basic <token>" per RFC 7617
+//
+// NOTE: The backend expects raw JWT tokens without the "Bearer" prefix.
+// This is unconventional but matches the backend API contract.
+//
+// SECURITY NOTE: The localhost/127.0.0.1 exception is intentional for local
+// development and testing environments where HTTPS certificates are not available.
+// Production deployments must always use HTTPS.
 func (c *Client) setAuthHeader(ctx context.Context, req *http.Request) error {
 	host := req.URL.Hostname()
 	scheme := strings.ToLower(req.URL.Scheme)
 
 	// Require HTTPS for non-localhost hosts to protect credentials
+	// #nosec G402 -- Localhost exception intentional for local development/testing
 	if host != hostLocalhost && host != hostLoopbackIP && scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
 	}

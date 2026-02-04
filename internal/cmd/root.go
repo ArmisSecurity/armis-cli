@@ -123,6 +123,7 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		AuthEndpoint: authEndpoint,
 		Token:        token,
 		TenantID:     tenantID,
+		Debug:        debug,
 	})
 }
 
