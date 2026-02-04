@@ -17,9 +17,10 @@ var (
 
 // FormatOptions contains options for formatting scan results.
 type FormatOptions struct {
-	GroupBy  string
-	RepoPath string
-	Debug    bool
+	GroupBy    string
+	RepoPath   string
+	Debug      bool
+	SummaryTop bool
 }
 
 // Formatter is the interface for formatting scan results in different output formats.

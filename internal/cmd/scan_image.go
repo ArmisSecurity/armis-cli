@@ -95,9 +95,10 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		opts := output.FormatOptions{
-			GroupBy:  groupBy,
-			RepoPath: "",
-			Debug:    debug,
+			GroupBy:    groupBy,
+			RepoPath:   "",
+			Debug:      debug,
+			SummaryTop: summaryTop,
 		}
 
 		if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {

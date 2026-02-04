@@ -21,6 +21,10 @@ import (
 const (
 	groupBySeverity = "severity"
 	noCWELabel      = "No CWE"
+
+	// Resource limits for snippet loading to prevent memory exhaustion (CWE-770)
+	maxLineLength  = 10 * 1024  // 10KB max per line
+	maxSnippetSize = 100 * 1024 // 100KB max total snippet size
 )
 
 type errWriter struct {
@@ -110,12 +114,26 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	ew.write("Status:      %s\n", result.Status)
 	ew.write("\n")
 
-	// 3. Brief status line for immediate orientation
-	if err := renderBriefStatus(w, result); err != nil {
-		return err
+	// 3. Brief status line for immediate orientation (skip if full summary at top)
+	if !opts.SummaryTop {
+		if err := renderBriefStatus(w, result); err != nil {
+			return err
+		}
 	}
 
-	// 4. Findings section
+	// 4. Summary at top if requested
+	if opts.SummaryTop {
+		ew.write("\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("  SUMMARY\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("\n")
+		if err := renderSummaryDashboard(w, result); err != nil {
+			return err
+		}
+	}
+
+	// 5. Findings section
 	if len(result.Findings) > 0 {
 		ew.write("\n")
 		ew.write("───────────────────────────────────────────────────────────────\n")
@@ -133,15 +151,17 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 		}
 	}
 
-	// 6. Full detailed summary dashboard at the end
-	ew.write("───────────────────────────────────────────────────────────────\n")
-	ew.write("  SUMMARY\n")
-	ew.write("───────────────────────────────────────────────────────────────\n")
-	ew.write("\n")
-	if err := renderSummaryDashboard(w, result); err != nil {
-		return err
+	// 6. Full detailed summary dashboard at the end (skip if already shown at top)
+	if !opts.SummaryTop {
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("  SUMMARY\n")
+		ew.write("───────────────────────────────────────────────────────────────\n")
+		ew.write("\n")
+		if err := renderSummaryDashboard(w, result); err != nil {
+			return err
+		}
+		ew.write("\n")
 	}
-	ew.write("\n")
 
 	ew.write("═══════════════════════════════════════════════════════════════\n")
 	ew.write("\n")
@@ -305,7 +325,11 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 	contextEnd := end + 4
 
 	scanner := bufio.NewScanner(f)
+	// Set a bounded buffer to prevent memory exhaustion from extremely long lines
+	scanner.Buffer(make([]byte, 4096), maxLineLength)
+
 	var buf []string
+	var totalSize int
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -315,10 +339,34 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 		if lineNum > contextEnd {
 			break
 		}
-		buf = append(buf, scanner.Text())
+		line := scanner.Text()
+
+		// Truncate line if it exceeds max length (shouldn't happen with bounded scanner,
+		// but provides defense in depth)
+		if len(line) > maxLineLength {
+			line = line[:maxLineLength] + "... (truncated)"
+		}
+
+		// Check total size limit to prevent memory exhaustion
+		totalSize += len(line) + 1 // +1 for newline
+		if totalSize > maxSnippetSize {
+			buf = append(buf, "... (snippet truncated due to size)")
+			break
+		}
+
+		buf = append(buf, line)
 	}
 	if err := scanner.Err(); err != nil {
-		return "", 0, fmt.Errorf("scan file: %w", err)
+		// Handle bufio.ErrTooLong gracefully - the scanner hit its buffer limit
+		if err == bufio.ErrTooLong {
+			if len(buf) > 0 {
+				buf = append(buf, "... (line too long, truncated)")
+			} else {
+				return "", 0, fmt.Errorf("file contains lines exceeding size limit")
+			}
+		} else {
+			return "", 0, fmt.Errorf("scan file: %w", err)
+		}
 	}
 	if len(buf) == 0 {
 		return "", 0, fmt.Errorf("no lines read")
