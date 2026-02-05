@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	// maxResponseSize limits auth response body to prevent memory exhaustion attacks
+	maxResponseSize = 1 << 20 // 1MB
+)
+
 // AuthClient handles authentication with an external auth service.
 type AuthClient struct {
 	endpoint   string
@@ -89,8 +94,6 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
-	// Limit response size to 1MB to prevent memory exhaustion attacks
-	const maxResponseSize = 1 << 20 // 1MB
 	limitedReader := io.LimitReader(resp.Body, maxResponseSize)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {

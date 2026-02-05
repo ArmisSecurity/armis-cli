@@ -84,21 +84,20 @@ func TestRunAuth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original values
+			// Save and restore original values (t.Cleanup runs even on panic)
 			origClientID := clientID
 			origClientSecret := clientSecret
 			origAuthEndpoint := authEndpoint
 			origToken := token
 			origTenantID := tenantID
 
-			// Restore after test
-			defer func() {
+			t.Cleanup(func() {
 				clientID = origClientID
 				clientSecret = origClientSecret
 				authEndpoint = origAuthEndpoint
 				token = origToken
 				tenantID = origTenantID
-			}()
+			})
 
 			// Clear legacy auth vars to ensure JWT path is taken
 			token = ""
@@ -163,20 +162,20 @@ func TestRunAuth(t *testing.T) {
 }
 
 func TestRunAuth_InvalidEndpoint(t *testing.T) {
-	// Save original values
+	// Save and restore original values (t.Cleanup runs even on panic)
 	origClientID := clientID
 	origClientSecret := clientSecret
 	origAuthEndpoint := authEndpoint
 	origToken := token
 	origTenantID := tenantID
 
-	defer func() {
+	t.Cleanup(func() {
 		clientID = origClientID
 		clientSecret = origClientSecret
 		authEndpoint = origAuthEndpoint
 		token = origToken
 		tenantID = origTenantID
-	}()
+	})
 
 	// Clear legacy auth vars
 	token = ""

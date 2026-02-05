@@ -44,8 +44,13 @@ jobs:
     uses: ./.github/workflows/reusable-security-scan.yml
     with:
       scan-type: repo
-      # PRs: Block on CRITICAL only (HIGH severity CWE-522 findings on auth code
-      # are expected behavior for CLI tools handling OAuth credentials)
+      # PRs: Block on CRITICAL only
+      # HIGH severity exclusion rationale:
+      # - CWE-522 (Insufficiently Protected Credentials): Expected for CLI auth code
+      #   that intentionally handles OAuth client secrets and JWT tokens. The CLI must
+      #   read these from environment/flags and pass them to the auth service.
+      # - These are false positives for security scanning tools in the context of
+      #   authentication CLI implementations.
       # Push to main: Don't fail (code already merged, just visibility)
       fail-on: ${{ github.event_name == 'pull_request' && 'CRITICAL' || '' }}
       include-files: ${{ needs.get-changed-files.outputs.files }}

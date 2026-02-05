@@ -659,7 +659,7 @@ func TestAuthProvider_ContextCancellation(t *testing.T) {
 	// Test that context cancellation is properly propagated
 	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Server is slow, giving time for context to be cancelled
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 		w.Header().Set("Content-Type", "application/json")
 		mockJWT := createMockJWT("tenant-123", time.Now().Add(1*time.Hour).Unix())
 		_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
