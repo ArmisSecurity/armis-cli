@@ -34,6 +34,25 @@ Integrate Armis security scanning into your CI/CD pipeline to automatically dete
 
 Add this to `.github/workflows/security-scan.yml`:
 
+**Using JWT Authentication (Recommended):**
+
+```yaml
+name: Security Scan
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    secrets:
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
+      auth-endpoint: ${{ secrets.ARMIS_AUTH_ENDPOINT }}
+```
+
+**Using Basic Authentication:**
+
 ```yaml
 name: Security Scan
 on:
@@ -61,10 +80,80 @@ That's it! This will:
 # Install
 curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
 
-# Scan
+# Option A: JWT Authentication (Recommended)
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+export ARMIS_AUTH_ENDPOINT="https://auth.armis.com"
+armis-cli scan repo . --format sarif --fail-on CRITICAL
+
+# Option B: Basic Authentication
 export ARMIS_API_TOKEN="your-token"
 armis-cli scan repo . --tenant-id your-tenant --format sarif --fail-on CRITICAL
 ```
+
+---
+
+## Authentication Methods
+
+The Armis CLI supports two authentication methods. Choose the one that best fits your organization's security requirements.
+
+### JWT Authentication (Recommended)
+
+JWT authentication uses OAuth 2.0 client credentials flow. This is the recommended method because:
+
+- **Automatic token refresh**: Tokens are automatically refreshed before expiry
+- **No tenant ID required**: Tenant information is extracted from the JWT `customer_id` claim
+- **Short-lived tokens**: Tokens have limited validity, reducing exposure if compromised
+- **Service account ready**: Ideal for CI/CD pipelines with dedicated service accounts
+
+**Required credentials:**
+
+| Credential | Environment Variable | CLI Flag | Description |
+|------------|---------------------|----------|-------------|
+| Client ID | `ARMIS_CLIENT_ID` | `--client-id` | OAuth client identifier |
+| Client Secret | `ARMIS_CLIENT_SECRET` | `--client-secret` | OAuth client secret |
+| Auth Endpoint | `ARMIS_AUTH_ENDPOINT` | `--auth-endpoint` | Authentication service URL |
+
+**Example:**
+
+```bash
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+export ARMIS_AUTH_ENDPOINT="https://auth.armis.com"
+
+# No --tenant-id needed - extracted from JWT
+armis-cli scan repo .
+```
+
+### Basic Authentication
+
+Basic authentication uses static API tokens. Use this method if:
+
+- Your organization hasn't migrated to JWT authentication yet
+- You need backward compatibility with existing integrations
+
+**Required credentials:**
+
+| Credential | Environment Variable | CLI Flag | Description |
+|------------|---------------------|----------|-------------|
+| API Token | `ARMIS_API_TOKEN` | `--token` | Static API token |
+| Tenant ID | `ARMIS_TENANT_ID` | `--tenant-id` | Tenant identifier (required) |
+
+**Example:**
+
+```bash
+export ARMIS_API_TOKEN="your-api-token"
+
+armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID"
+```
+
+### Authentication Priority
+
+When both JWT and Basic credentials are configured, **JWT authentication takes precedence**:
+
+1. If `--client-id` and `--client-secret` are set → Use JWT authentication
+2. Otherwise, if `--token` is set → Use Basic authentication
+3. If neither → Error with guidance on required credentials
 
 ---
 
@@ -120,9 +209,19 @@ jobs:
 
 #### Required Secrets
 
+**For JWT Authentication (Recommended):**
+
 | Secret | Description |
 |--------|-------------|
-| `api-token` | Armis API token for authentication |
+| `client-id` | OAuth client ID for JWT authentication |
+| `client-secret` | OAuth client secret for JWT authentication |
+| `auth-endpoint` | Authentication service endpoint URL |
+
+**For Basic Authentication:**
+
+| Secret | Description |
+|--------|-------------|
+| `api-token` | Armis API token for Basic authentication |
 | `tenant-id` | Tenant identifier for Armis Cloud |
 
 #### Required Permissions
@@ -472,6 +571,8 @@ For images built in a previous job or CI step:
 
 ### GitLab CI
 
+**Using JWT Authentication (Recommended):**
+
 ```yaml
 stages:
   - security
@@ -486,17 +587,71 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
+    - armis-cli scan repo . --format json --fail-on CRITICAL
+  variables:
+    ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
+    ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
+    ARMIS_AUTH_ENDPOINT: $ARMIS_AUTH_ENDPOINT
+```
+
+**Using Basic Authentication:**
+
+```yaml
+security-scan:
+  stage: security
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+  script:
     - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
   variables:
     ARMIS_API_TOKEN: $ARMIS_API_TOKEN
     ARMIS_TENANT_ID: $ARMIS_TENANT_ID
 ```
 
-Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [protected CI/CD variables](https://docs.gitlab.com/ee/ci/variables/#protected-cicd-variables).
+Configure credentials as [protected CI/CD variables](https://docs.gitlab.com/ee/ci/variables/#protected-cicd-variables).
 
 ---
 
 ### Jenkins
+
+**Using JWT Authentication (Recommended):**
+
+```groovy
+pipeline {
+    agent any
+
+    environment {
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
+        ARMIS_AUTH_ENDPOINT = credentials('armis-auth-endpoint')
+    }
+
+    stages {
+        stage('Security Scan') {
+            steps {
+                sh '''
+                    curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+                    armis-cli scan repo . \
+                        --format junit \
+                        --fail-on HIGH,CRITICAL \
+                        > scan-results.xml
+                '''
+                junit 'scan-results.xml'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'scan-results.xml', allowEmptyArchive: true
+        }
+    }
+}
+```
+
+**Using Basic Authentication:**
 
 ```groovy
 pipeline {
@@ -522,12 +677,6 @@ pipeline {
             }
         }
     }
-
-    post {
-        always {
-            archiveArtifacts artifacts: 'scan-results.xml', allowEmptyArchive: true
-        }
-    }
 }
 ```
 
@@ -537,6 +686,8 @@ Configure credentials using [Jenkins Credentials](https://www.jenkins.io/doc/boo
 
 ### Azure DevOps
 
+**Using JWT Authentication (Recommended):**
+
 ```yaml
 trigger:
   - main
@@ -545,7 +696,42 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  - group: armis-credentials  # Contains ARMIS_API_TOKEN and ARMIS_TENANT_ID
+  - group: armis-jwt-credentials  # Contains ARMIS_CLIENT_ID, ARMIS_CLIENT_SECRET, ARMIS_AUTH_ENDPOINT
+
+steps:
+  - script: |
+      curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+    displayName: 'Install Armis CLI'
+
+  - script: |
+      armis-cli scan repo . \
+        --format junit \
+        --fail-on HIGH,CRITICAL \
+        > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    displayName: 'Run Security Scan'
+    env:
+      ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+      ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
+      ARMIS_AUTH_ENDPOINT: $(ARMIS_AUTH_ENDPOINT)
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/scan-results.xml'
+    condition: always()
+```
+
+**Using Basic Authentication:**
+
+```yaml
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: armis-basic-credentials  # Contains ARMIS_API_TOKEN and ARMIS_TENANT_ID
 
 steps:
   - script: |
@@ -575,6 +761,38 @@ Configure secrets using [Variable Groups](https://learn.microsoft.com/en-us/azur
 
 ### CircleCI
 
+**Using JWT Authentication (Recommended):**
+
+```yaml
+version: 2.1
+
+jobs:
+  security-scan:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Install Armis CLI
+          command: |
+            curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+      - run:
+          name: Run Security Scan
+          command: |
+            armis-cli scan repo . \
+              --format json \
+              --fail-on HIGH,CRITICAL
+
+workflows:
+  version: 2
+  security:
+    jobs:
+      - security-scan:
+          context: armis-jwt-credentials  # Contains ARMIS_CLIENT_ID, ARMIS_CLIENT_SECRET, ARMIS_AUTH_ENDPOINT
+```
+
+**Using Basic Authentication:**
+
 ```yaml
 version: 2.1
 
@@ -601,7 +819,7 @@ workflows:
   security:
     jobs:
       - security-scan:
-          context: armis-credentials
+          context: armis-basic-credentials  # Contains ARMIS_API_TOKEN, ARMIS_TENANT_ID
 ```
 
 Configure secrets using [Contexts](https://circleci.com/docs/contexts/).
@@ -609,6 +827,8 @@ Configure secrets using [Contexts](https://circleci.com/docs/contexts/).
 ---
 
 ### Bitbucket Pipelines
+
+**Using JWT Authentication (Recommended):**
 
 ```yaml
 pipelines:
@@ -620,10 +840,27 @@ pipelines:
           script:
             - apk add --no-cache curl bash
             - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-            - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
+            - armis-cli scan repo . --format json --fail-on CRITICAL
 
   branches:
     main:
+      - step:
+          name: Security Scan
+          image: alpine:latest
+          script:
+            - apk add --no-cache curl bash
+            - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+            - armis-cli scan repo . --format json --fail-on CRITICAL
+```
+
+Configure `ARMIS_CLIENT_ID`, `ARMIS_CLIENT_SECRET`, and `ARMIS_AUTH_ENDPOINT` as secured variables.
+
+**Using Basic Authentication:**
+
+```yaml
+pipelines:
+  pull-requests:
+    '**':
       - step:
           name: Security Scan
           image: alpine:latest
@@ -652,17 +889,38 @@ Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variabl
 
 ### Authentication Errors
 
+#### "authentication required: provide --client-id, --client-secret, and --auth-endpoint for JWT auth, or --token for Basic auth"
+
+- No valid authentication credentials were provided
+- For JWT auth: Set all three (`ARMIS_CLIENT_ID`, `ARMIS_CLIENT_SECRET`, `ARMIS_AUTH_ENDPOINT`)
+- For Basic auth: Set `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID`
+
+#### "--auth-endpoint is required when using client credentials"
+
+- When using JWT auth (`--client-id`, `--client-secret`), you must also provide `--auth-endpoint`
+- Set the `ARMIS_AUTH_ENDPOINT` environment variable or secret
+
+#### "tenant ID required with Basic auth"
+
+- When using Basic auth (`--token`), you must also provide `--tenant-id`
+- Set the `ARMIS_TENANT_ID` environment variable or secret
+
+#### "invalid credentials"
+
+- JWT authentication failed - verify client ID and secret are correct
+- Check that the auth endpoint URL is accessible from your CI environment
+
 #### "API token not set"
 
-- Ensure `ARMIS_API_TOKEN` is configured as a secret
+- For Basic auth: Ensure `ARMIS_API_TOKEN` is configured as a secret
 - Check that the secret is accessible to the workflow/job
 - Verify the secret name matches exactly (case-sensitive)
 
 #### "Invalid token" or "Unauthorized"
 
 - Verify the token is valid and not expired
-- Check that the tenant ID matches the token's tenant
-- Ensure the token has sufficient permissions
+- For Basic auth: Check that the tenant ID matches the token's tenant
+- Ensure the token/credentials have sufficient permissions
 
 ### Timeout Issues
 
@@ -700,10 +958,20 @@ The reusable workflow's "Check for Failures" step differentiates between:
 
 ### Secret Management
 
-- **Never commit tokens** to version control
+- **Never commit credentials** to version control
 - Use **organization-level secrets** when possible for centralized management
-- **Rotate tokens** periodically
-- Use **environment-specific tokens** for production vs development
+- Use **environment-specific credentials** for production vs development
+
+**JWT Authentication:**
+
+- Store `client-id`, `client-secret`, and `auth-endpoint` as separate secrets
+- Client secrets are sensitive - treat them like passwords
+- Rotate client secrets on a regular schedule
+
+**Basic Authentication:**
+
+- Rotate API tokens periodically (more frequently than JWT client secrets)
+- Consider migrating to JWT for improved security
 
 ### Permissions
 

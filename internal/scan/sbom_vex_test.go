@@ -43,7 +43,7 @@ func TestSBOMVEXOptions(t *testing.T) {
 
 func TestNewSBOMVEXDownloader(t *testing.T) {
 	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-	client, err := api.NewClient("https://api.example.com", "token123", false, 0, api.WithHTTPClient(httpClient))
+	client, err := api.NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient))
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		serverURL = server.URL
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -151,7 +151,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		serverURL = server.URL
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -209,7 +209,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		serverURL = server.URL
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -239,7 +239,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -262,7 +262,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -281,7 +281,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 
 	t.Run("rejects path traversal in artifact name", func(t *testing.T) {
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient("https://api.example.com", "token123", false, 0, api.WithHTTPClient(httpClient))
+		client, err := api.NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -335,7 +335,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		serverURL = server.URL
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := api.NewClient(server.URL, "token123", false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}

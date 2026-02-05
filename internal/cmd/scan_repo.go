@@ -18,15 +18,15 @@ var scanRepoCmd = &cobra.Command{
 	Short: "Scan a local repository",
 	Long:  `Scan a local repository for security vulnerabilities, secrets, and license risks.`,
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
 
-		token, err := getToken()
+		authProvider, err := getAuthProvider()
 		if err != nil {
 			return err
 		}
 
-		tid, err := getTenantID()
+		tid, err := authProvider.GetTenantID(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -42,7 +42,7 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		client, err := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}

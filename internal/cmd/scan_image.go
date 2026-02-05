@@ -23,17 +23,17 @@ var scanImageCmd = &cobra.Command{
 	Short: "Scan a container image",
 	Long:  `Scan a local or remote container image for security vulnerabilities.`,
 	Args:  cobra.MaximumNArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if tarballPath == "" && len(args) == 0 {
 			return fmt.Errorf("either provide an image name or use --tarball flag")
 		}
 
-		token, err := getToken()
+		authProvider, err := getAuthProvider()
 		if err != nil {
 			return err
 		}
 
-		tid, err := getTenantID()
+		tid, err := authProvider.GetTenantID(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -49,7 +49,7 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		client, err := api.NewClient(baseURL, token, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}

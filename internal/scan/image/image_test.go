@@ -575,7 +575,7 @@ func TestScanTarball(t *testing.T) {
 
 		// Create API client pointing to mock server
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -606,7 +606,7 @@ func TestScanTarball(t *testing.T) {
 
 	t.Run("fails for non-existent tarball", func(t *testing.T) {
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient("https://localhost", "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient("https://localhost", testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -643,7 +643,7 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -686,7 +686,7 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -721,7 +721,7 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -750,7 +750,7 @@ func TestScanTarball(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, "token123", false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -816,7 +816,7 @@ func TestConvertNormalizedFindingsDebugMode(t *testing.T) {
 func TestScanTarballEdgeCases(t *testing.T) {
 	t.Run("tarball file does not exist", func(t *testing.T) {
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, _ := api.NewClient("https://example.com", "token", false, time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, _ := api.NewClient("https://example.com", testutil.NewTestAuthProvider("token"), false, time.Minute, api.WithHTTPClient(httpClient))
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false)
 
 		_, err := scanner.ScanTarball(context.Background(), "/nonexistent/path/image.tar")
@@ -829,7 +829,7 @@ func TestScanTarballEdgeCases(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, _ := api.NewClient("https://example.com", "token", false, time.Minute, api.WithHTTPClient(httpClient))
+		apiClient, _ := api.NewClient("https://example.com", testutil.NewTestAuthProvider("token"), false, time.Minute, api.WithHTTPClient(httpClient))
 		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false)
 
 		_, err := scanner.ScanTarball(context.Background(), tmpDir)
