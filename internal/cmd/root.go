@@ -2,10 +2,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -15,15 +20,17 @@ const (
 )
 
 var (
-	token      string
-	useDev     bool
-	format     string
-	noProgress bool
-	failOn     []string
-	exitCode   int
-	tenantID   string
-	pageLimit  int
-	debug      bool
+	token         string
+	useDev        bool
+	format        string
+	noProgress    bool
+	failOn        []string
+	exitCode      int
+	tenantID      string
+	pageLimit     int
+	debug         bool
+	noUpdateCheck bool
+	colorFlag     string
 
 	// JWT authentication
 	clientID     string
@@ -33,14 +40,45 @@ var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
+
+	// updateResultCh receives version check results from background goroutine.
+	updateResultCh <-chan *update.CheckResult
 )
 
 var rootCmd = &cobra.Command{
-	Use:          "armis-cli",
-	Short:        "Armis Security Scanner CLI",
-	Long:         `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
-	Version:      version,
-	SilenceUsage: true,
+	Use:           "armis-cli",
+	Short:         "Armis Security Scanner CLI",
+	Long:          `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
+	Version:       version,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Initialize colors based on --color flag
+		mode := cli.ColorMode(colorFlag)
+		switch mode {
+		case cli.ColorModeAuto, cli.ColorModeAlways, cli.ColorModeNever:
+			// valid
+		default:
+			return fmt.Errorf("invalid --color value %q: must be auto, always, or never", colorFlag)
+		}
+		cli.InitColors(mode)
+		output.SyncColors()
+
+		// Skip update check if:
+		// - explicitly disabled via flag or env var
+		// - running in CI
+		// - version is "dev" (development build)
+		// - running meta-commands
+		if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
+			progress.IsCI() || version == "dev" ||
+			cmd.Name() == "help" || cmd.Name() == "__complete" {
+			return nil
+		}
+
+		checker := update.NewChecker(version)
+		updateResultCh = checker.CheckInBackground(context.Background())
+		return nil
+	},
 }
 
 // SetVersion sets the version information for the CLI.
@@ -74,6 +112,27 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code to return when build fails")
 	rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
+	rootCmd.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false, "Disable automatic update checking (env: ARMIS_NO_UPDATE_CHECK)")
+	rootCmd.PersistentFlags().StringVar(&colorFlag, "color", "auto", "Control colored output: auto, always, never")
+}
+
+// PrintUpdateNotification prints a version update notification if one is available.
+// This should be called before any os.Exit() call to ensure the notification is displayed.
+func PrintUpdateNotification() {
+	if updateResultCh == nil {
+		return
+	}
+
+	// Non-blocking read: only show if result is already available
+	select {
+	case result, ok := <-updateResultCh:
+		if ok && result != nil {
+			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion)
+			fmt.Fprint(os.Stderr, msg)
+		}
+	default:
+		// Check hasn't completed yet -- silently skip
+	}
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

@@ -1,6 +1,7 @@
 package image
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -306,6 +307,32 @@ func TestFormatElapsed(t *testing.T) {
 			result := formatElapsed(tt.duration)
 			if result != tt.expected {
 				t.Errorf("formatElapsed(%v) = %q, want %q", tt.duration, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatScanStatus(t *testing.T) {
+	// Status values from ArtifactScanStatus enum in Project-Moose API
+	tests := []struct {
+		name     string
+		status   string
+		contains string
+	}{
+		{name: "initiated status", status: "INITIATED", contains: "initiated"},
+		{name: "in_progress status", status: "IN_PROGRESS", contains: "image"},
+		{name: "completed status", status: "COMPLETED", contains: "completed"},
+		{name: "failed status", status: "FAILED", contains: "error"},
+		{name: "stopped status", status: "STOPPED", contains: "stopped"},
+		{name: "lowercase handling", status: "in_progress", contains: "image"},
+		{name: "unknown status", status: "UNKNOWN_NEW_STATUS", contains: "UNKNOWN_NEW_STATUS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatScanStatus(tt.status)
+			if !strings.Contains(strings.ToLower(result), strings.ToLower(tt.contains)) {
+				t.Errorf("formatScanStatus(%q) = %q, expected to contain %q", tt.status, result, tt.contains)
 			}
 		})
 	}

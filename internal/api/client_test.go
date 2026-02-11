@@ -934,7 +934,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err != nil {
 			t.Fatalf("WaitForIngest failed: %v", err)
@@ -969,7 +969,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err == nil {
 			t.Fatal("Expected error for FAILED status")
@@ -1000,7 +1000,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err != nil {
 			t.Fatalf("WaitForIngest failed: %v", err)
@@ -1030,7 +1030,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 50*time.Millisecond)
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 50*time.Millisecond, nil)
 
 		if err == nil {
 			t.Fatal("Expected timeout error")
@@ -1067,7 +1067,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			cancel()
 		}()
 
-		_, err = client.WaitForIngest(ctx, "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		_, err = client.WaitForIngest(ctx, "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err == nil {
 			t.Fatal("Expected context cancellation error")
@@ -1088,7 +1088,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err == nil {
 			t.Fatal("Expected error for empty status data")
@@ -1109,7 +1109,7 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 100*time.Millisecond)
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 100*time.Millisecond, nil)
 
 		if err == nil {
 			t.Fatal("Expected error for failed status check")
@@ -1136,13 +1136,61 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second)
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
 		if err != nil {
 			t.Fatalf("WaitForIngest failed: %v", err)
 		}
 		if result == nil {
 			t.Fatal("Expected non-nil result")
+		}
+	})
+
+	t.Run("invokes status callback on each poll", func(t *testing.T) {
+		callCount := 0
+		var receivedStatuses []string
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			callCount++
+			var status string
+			switch {
+			case callCount <= 1:
+				status = "QUEUED"
+			case callCount <= 2:
+				status = "PROCESSING"
+			default:
+				status = testStatusCompleted
+			}
+			response := model.IngestStatusResponse{
+				Data: []model.IngestStatusData{
+					{ScanID: "scan-123", ScanStatus: status, TenantID: "tenant-456"},
+				},
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123",
+			10*time.Millisecond, 5*time.Second,
+			func(status model.IngestStatusData) {
+				receivedStatuses = append(receivedStatuses, status.ScanStatus)
+			})
+
+		if err != nil {
+			t.Fatalf("WaitForIngest failed: %v", err)
+		}
+		if result.ScanStatus != testStatusCompleted {
+			t.Errorf("Expected status %s, got %s", testStatusCompleted, result.ScanStatus)
+		}
+		if len(receivedStatuses) < 3 {
+			t.Errorf("Expected at least 3 callback invocations, got %d", len(receivedStatuses))
+		}
+		if len(receivedStatuses) > 0 && receivedStatuses[0] != "QUEUED" {
+			t.Errorf("Expected first status QUEUED, got %s", receivedStatuses[0])
 		}
 	})
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 )
 
 // NewSignalContext creates a context that is cancelled when SIGINT or SIGTERM
@@ -21,7 +23,8 @@ func NewSignalContext() (context.Context, context.CancelFunc) {
 func handleScanError(ctx context.Context, err error) error {
 	_ = ctx // unused but kept for API consistency
 	if errors.Is(err, context.Canceled) {
-		fmt.Fprintln(os.Stderr, "\nScan cancelled")
+		fmt.Fprintln(os.Stderr, "") // newline before warning
+		cli.PrintWarning("Scan cancelled")
 	}
 	return fmt.Errorf("scan failed: %w", err)
 }

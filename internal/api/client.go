@@ -179,6 +179,10 @@ type IngestOptions struct {
 	GenerateVEX  bool
 }
 
+// StatusCallback is called on each poll with the current scan status.
+// It allows callers to react to status changes (e.g., updating a spinner).
+type StatusCallback func(status model.IngestStatusData)
+
 // StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
 	// Validate upload size for defense-in-depth
@@ -309,7 +313,8 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 }
 
 // WaitForIngest polls until the ingestion is complete or times out.
-func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
+// If onStatus is non-nil, it is called on each poll with the current status.
+func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration, onStatus StatusCallback) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
 	}
@@ -338,6 +343,11 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 			}
 
 			status := statusResp.Data[0]
+
+			if onStatus != nil {
+				onStatus(status)
+			}
+
 			statusUpper := strings.ToUpper(status.ScanStatus)
 
 			if statusUpper == "COMPLETED" || statusUpper == "FAILED" {

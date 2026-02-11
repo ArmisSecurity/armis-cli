@@ -22,7 +22,11 @@ var scanImageCmd = &cobra.Command{
 	Use:   "image [image-name]",
 	Short: "Scan a container image",
 	Long:  `Scan a local or remote container image for security vulnerabilities.`,
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  $ armis-cli scan image nginx:latest
+  $ armis-cli scan image myapp:v1.0 --format json
+  $ armis-cli scan image --tarball ./image.tar
+  $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if tarballPath == "" && len(args) == 0 {
 			return fmt.Errorf("either provide an image name or use --tarball flag")
@@ -105,6 +109,7 @@ var scanImageCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
+		PrintUpdateNotification()
 		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},

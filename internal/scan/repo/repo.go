@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -106,7 +107,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		// Targeted file scanning mode - scan only specified files
 		existing, warnings := s.includeFiles.ValidateExistence()
 		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			cli.PrintWarning(w)
 		}
 
 		if len(existing) == 0 {
@@ -195,7 +196,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	analysisSpinner.Start()
 	defer analysisSpinner.Stop()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
+		func(status model.IngestStatusData) {
+			analysisSpinner.Update(formatScanStatus(status.ScanStatus))
+		})
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
 	if err != nil {
@@ -220,7 +224,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 		if err := downloader.Download(ctx, scanID, filepath.Base(absPath)); err != nil {
 			// Log warning but don't fail the scan
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			cli.PrintWarningf("%v", err)
 		}
 	}
 
@@ -270,7 +274,7 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 		// Skip symlinks to avoid security risks (symlinks pointing outside repo)
 		// and potential issues (broken symlinks, loops)
 		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			cli.PrintWarningf("skipping symlink %s", relPath)
 			return nil
 		}
 
@@ -347,14 +351,14 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 
 		// Defense-in-depth: verify path is within repo root
 		if !isPathContained(repoRoot, absPath) {
-			fmt.Fprintf(os.Stderr, "Warning: skipping path outside repository: %s\n", relPath)
+			cli.PrintWarningf("skipping path outside repository: %s", relPath)
 			continue
 		}
 
 		info, err := os.Stat(absPath)
 		if err != nil {
 			// Skip files that don't exist (may have been deleted)
-			fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", relPath, err)
+			cli.PrintWarningf("skipping %s: %v", relPath, err)
 			continue
 		}
 
@@ -365,7 +369,7 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 
 		// Skip symlinks for security
 		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			cli.PrintWarningf("skipping symlink %s", relPath)
 			continue
 		}
 
@@ -809,4 +813,23 @@ func formatElapsed(d time.Duration) string {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+// formatScanStatus returns a human-readable message for the current scan phase.
+// Status values from ArtifactScanStatus enum in Project-Moose API.
+func formatScanStatus(scanStatus string) string {
+	switch strings.ToUpper(scanStatus) {
+	case "INITIATED":
+		return "Scan initiated, preparing analysis..."
+	case "IN_PROGRESS":
+		return "Analyzing code for vulnerabilities..."
+	case "COMPLETED":
+		return "Scan completed, preparing results..."
+	case "FAILED":
+		return "Scan encountered an error"
+	case "STOPPED":
+		return "Scan was stopped"
+	default:
+		return fmt.Sprintf("Scanning... [%s]", strings.ToUpper(scanStatus))
+	}
 }

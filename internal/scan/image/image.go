@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -144,11 +145,14 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	uploadSpinner.Stop()
 	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Waiting for scan to complete...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Scanning image for vulnerabilities...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
+		func(status model.IngestStatusData) {
+			spinner.Update(formatScanStatus(status.ScanStatus))
+		})
 	elapsed := spinner.GetElapsed()
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
@@ -172,7 +176,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 		if err := downloader.Download(ctx, scanID, artifactName); err != nil {
 			// Log warning but don't fail the scan
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			cli.PrintWarningf("%v", err)
 		}
 	}
 
@@ -468,4 +472,23 @@ func formatElapsed(d time.Duration) string {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+// formatScanStatus returns a human-readable message for the current scan phase.
+// Status values from ArtifactScanStatus enum in Project-Moose API.
+func formatScanStatus(scanStatus string) string {
+	switch strings.ToUpper(scanStatus) {
+	case "INITIATED":
+		return "Scan initiated, preparing analysis..."
+	case "IN_PROGRESS":
+		return "Scanning image for vulnerabilities..."
+	case "COMPLETED":
+		return "Scan completed, preparing results..."
+	case "FAILED":
+		return "Scan encountered an error"
+	case "STOPPED":
+		return "Scan was stopped"
+	default:
+		return fmt.Sprintf("Scanning... [%s]", strings.ToUpper(scanStatus))
+	}
 }

@@ -551,6 +551,32 @@ func TestFormatElapsed(t *testing.T) {
 	}
 }
 
+func TestFormatScanStatus(t *testing.T) {
+	// Status values from ArtifactScanStatus enum in Project-Moose API
+	tests := []struct {
+		name     string
+		status   string
+		contains string
+	}{
+		{name: "initiated status", status: "INITIATED", contains: "initiated"},
+		{name: "in_progress status", status: "IN_PROGRESS", contains: "Analyzing"},
+		{name: "completed status", status: "COMPLETED", contains: "completed"},
+		{name: "failed status", status: "FAILED", contains: "error"},
+		{name: "stopped status", status: "STOPPED", contains: "stopped"},
+		{name: "lowercase handling", status: "in_progress", contains: "Analyzing"},
+		{name: "unknown status", status: "UNKNOWN_NEW_STATUS", contains: "UNKNOWN_NEW_STATUS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatScanStatus(tt.status)
+			if !strings.Contains(strings.ToLower(result), strings.ToLower(tt.contains)) {
+				t.Errorf("formatScanStatus(%q) = %q, expected to contain %q", tt.status, result, tt.contains)
+			}
+		})
+	}
+}
+
 // mockFileInfo implements os.FileInfo for testing
 type mockFileInfo struct {
 	name  string

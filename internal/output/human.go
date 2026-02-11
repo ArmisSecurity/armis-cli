@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/mattn/go-runewidth"
@@ -216,11 +217,27 @@ var (
 	colorUnderline = "\033[4m" //nolint:unused // reserved for future formatting options
 )
 
-func init() {
-	// Support NO_COLOR standard (https://no-color.org/) and dumb terminals
-	if os.Getenv("NO_COLOR") != "" || strings.Contains(strings.ToLower(os.Getenv("TERM")), "dumb") {
+// SyncColors synchronizes the output package's color variables with the
+// centralized color state from internal/cli. Must be called after cli.InitColors().
+func SyncColors() {
+	if cli.ColorsEnabled() {
+		enableColors()
+	} else {
 		disableColors()
 	}
+}
+
+func enableColors() {
+	colorReset = "\033[0m"
+	colorRed = "\033[31m"
+	colorGreen = "\033[32m"
+	colorOrange = "\033[33m"
+	colorYellow = "\033[93m"
+	colorBlue = "\033[34m"
+	colorGray = "\033[90m"
+	colorBgRed = "\033[101m"
+	colorBold = "\033[1m"
+	colorUnderline = "\033[4m"
 }
 
 func disableColors() {
