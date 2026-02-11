@@ -92,7 +92,7 @@ jobs:
           cache: true
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.22.1
+        uses: anchore/sbom-action/download-syft@v0.22.2
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
