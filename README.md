@@ -216,20 +216,43 @@ cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 
 ### Set up authentication
 
+#### Option 1: JWT Authentication (Recommended)
+
+JWT authentication uses client credentials and automatically extracts tenant information from the token.
+
 ```bash
-export ARMIS_API_TOKEN="your-api-token-here"
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+export ARMIS_AUTH_ENDPOINT="https://auth.armis.com"
+```
+
+#### Option 2: Basic Authentication
+
+Basic authentication uses a static API token and requires an explicit tenant ID.
+
+```bash
+export ARMIS_API_TOKEN="your-api-token"
+export ARMIS_TENANT_ID="your-tenant-id"
 ```
 
 ### Scan a repository
 
 ```bash
+# With JWT auth (no --tenant-id needed)
 armis-cli scan repo ./my-project
+
+# With Basic auth
+armis-cli scan repo ./my-project --tenant-id my-tenant
 ```
 
 ### Scan a container image
 
 ```bash
+# With JWT auth
 armis-cli scan image nginx:latest
+
+# With Basic auth
+armis-cli scan image nginx:latest --tenant-id my-tenant
 ```
 
 ---
@@ -238,9 +261,24 @@ armis-cli scan image nginx:latest
 
 ### Global Flags
 
+#### Authentication Flags
+
 ```text
---token string          API token for authentication (or use ARMIS_API_TOKEN env var)
---api-url string        Armis Cloud API base URL (default: https://api.armis.cloud/v1)
+# JWT Authentication (Recommended)
+--client-id string      Client ID for JWT authentication (env: ARMIS_CLIENT_ID)
+--client-secret string  Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)
+--auth-endpoint string  Authentication service endpoint URL (env: ARMIS_AUTH_ENDPOINT)
+
+# Basic Authentication
+--token string          API token for Basic authentication (env: ARMIS_API_TOKEN)
+--tenant-id string      Tenant identifier (env: ARMIS_TENANT_ID) - required with Basic auth
+```
+
+> **Note:** When using JWT authentication, the tenant ID is automatically extracted from the JWT token. The `--tenant-id` flag is only required with Basic authentication. When both methods are configured, JWT takes precedence.
+
+#### General Flags
+
+```text
 --format string         Output format: human, json, sarif, junit (default: human)
 --no-progress           Disable progress indicators
 --fail-on strings       Fail build on severity levels (default: [CRITICAL])
@@ -249,6 +287,8 @@ armis-cli scan image nginx:latest
 --vex                   Generate Vulnerability Exploitability eXchange document
 --sbom-output string    Custom output path for SBOM (default: .armis/<artifact>-sbom.json)
 --vex-output string     Custom output path for VEX (default: .armis/<artifact>-vex.json)
+--page-limit int        Results page size for pagination (default: 500, range: 1-1000)
+--debug                 Enable debug mode for detailed API responses
 ```
 
 ### Scan Repository
@@ -545,9 +585,24 @@ pipelines:
 
 ## Environment Variables
 
-- `ARMIS_API_TOKEN` - API token for authentication
-- `ARMIS_API_URL` - Custom API base URL
-- `ARMIS_FORMAT` - Default output format
+**Authentication (choose one method):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_CLIENT_ID` | Client ID for JWT authentication |
+| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
+| `ARMIS_AUTH_ENDPOINT` | Authentication service endpoint URL |
+| `ARMIS_API_TOKEN` | API token for Basic authentication |
+| `ARMIS_TENANT_ID` | Tenant identifier (required for Basic auth only) |
+
+**General:**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_FORMAT` | Default output format |
+| `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
+
+> **Authentication Priority:** If both JWT credentials (`ARMIS_CLIENT_ID`, `ARMIS_CLIENT_SECRET`) and Basic auth (`ARMIS_API_TOKEN`) are configured, JWT authentication takes precedence.
 
 ---
 
@@ -556,7 +611,11 @@ pipelines:
 - **Size Limits**: Enforced to prevent resource exhaustion
   - Repositories: 2GB
   - Container Images: 5GB
-- **Authentication**: API tokens are never logged or exposed
+- **Authentication Security**:
+  - JWT tokens are automatically refreshed 5 minutes before expiry
+  - Client secrets should be stored securely and never committed to version control
+  - Basic auth tokens are long-lived and should be rotated periodically
+  - Credentials are never logged or exposed in output
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
 - **CI Detection**: Progress bars automatically disabled in CI environments

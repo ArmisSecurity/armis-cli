@@ -288,10 +288,22 @@ armis-cli scan repo . \
 
 ### Environment Variables
 
-- `ARMIS_API_TOKEN` - API authentication token
-- `ARMIS_TENANT_ID` - Tenant identifier
-- `ARMIS_FORMAT` - Default output format
-- `ARMIS_PAGE_LIMIT` - Results pagination size
+**Authentication (choose one method):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_CLIENT_ID` | Client ID for JWT authentication |
+| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
+| `ARMIS_AUTH_ENDPOINT` | Authentication service endpoint URL |
+| `ARMIS_API_TOKEN` | API token for Basic authentication |
+| `ARMIS_TENANT_ID` | Tenant identifier (required for Basic auth only) |
+
+**General:**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_FORMAT` | Default output format |
+| `ARMIS_PAGE_LIMIT` | Results pagination size |
 
 ### Default Behavior
 
