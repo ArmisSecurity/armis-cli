@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -21,6 +22,10 @@ func main() {
 	// The actual --color flag value will override this in PersistentPreRunE.
 	cli.InitColors(cli.ColorModeAuto)
 	if err := cmd.Execute(); err != nil {
+		// Handle user cancellation (Ctrl+C) cleanly without printing error
+		if errors.Is(err, cmd.ErrScanCancelled) {
+			os.Exit(cmd.ExitCodeCancelled)
+		}
 		cli.PrintError(err.Error())
 		os.Exit(1)
 	}

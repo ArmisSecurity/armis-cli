@@ -69,10 +69,13 @@ func TestHandleScanError(t *testing.T) {
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy stderr output: %v", err)
 		}
+		if err := r.Close(); err != nil {
+			t.Fatalf("failed to close pipe reader: %v", err)
+		}
 		return buf.String()
 	}
 
-	t.Run("prints cancellation message when error contains context.Canceled", func(t *testing.T) {
+	t.Run("returns ErrScanCancelled for context.Canceled", func(t *testing.T) {
 		ctx := context.Background()
 		cancelErr := fmt.Errorf("operation failed: %w", context.Canceled)
 
@@ -85,12 +88,8 @@ func TestHandleScanError(t *testing.T) {
 			t.Errorf("expected stderr to contain 'Scan cancelled', got: %q", output)
 		}
 
-		if !errors.Is(resultErr, context.Canceled) {
-			t.Errorf("expected wrapped error to contain context.Canceled")
-		}
-
-		if !strings.Contains(resultErr.Error(), "scan failed") {
-			t.Errorf("expected error message to contain 'scan failed', got: %q", resultErr.Error())
+		if !errors.Is(resultErr, ErrScanCancelled) {
+			t.Errorf("expected ErrScanCancelled, got: %v", resultErr)
 		}
 	})
 
