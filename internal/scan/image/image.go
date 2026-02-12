@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -144,18 +145,21 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	uploadSpinner.Stop()
 	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Waiting for scan to complete...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Scanning image for vulnerabilities...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
+		func(status model.IngestStatusData) {
+			spinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning image for vulnerabilities..."))
+		})
 	elapsed := spinner.GetElapsed()
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", scan.FormatElapsed(elapsed))
 
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
@@ -172,7 +176,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 		if err := downloader.Download(ctx, scanID, artifactName); err != nil {
 			// Log warning but don't fail the scan
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			cli.PrintWarningf("%v", err)
 		}
 	}
 
@@ -313,7 +317,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		finding := model.Finding{
 			ID:          nf.NormalizedTask.FindingID,
-			Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Severity:    scan.MapSeverity(nf.NormalizedRemediation.ToolSeverity),
 			Description: nf.NormalizedRemediation.Description,
 			CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
 			CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
@@ -443,29 +447,4 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
 
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
-}
-
-func mapSeverity(toolSeverity string) model.Severity {
-	switch strings.ToUpper(toolSeverity) {
-	case "CRITICAL":
-		return model.SeverityCritical
-	case "HIGH":
-		return model.SeverityHigh
-	case "MEDIUM":
-		return model.SeverityMedium
-	case "LOW":
-		return model.SeverityLow
-	default:
-		return model.SeverityInfo
-	}
-}
-
-func formatElapsed(d time.Duration) string {
-	d = d.Round(time.Second)
-	minutes := int(d.Minutes())
-	seconds := int(d.Seconds()) % 60
-	if minutes > 0 {
-		return fmt.Sprintf("%dm %ds", minutes, seconds)
-	}
-	return fmt.Sprintf("%ds", seconds)
 }

@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
@@ -319,7 +319,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			// Sanitize file path to prevent path traversal in SARIF output
 			sanitizedFile, err := util.SanitizePath(finding.File)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not sanitize file path for finding %s: %v\n", finding.ID, err)
+				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err)
 				// Use finding ID to ensure unique placeholder paths in SARIF output
 				sanitizedFile = fmt.Sprintf("unknown-%s", finding.ID)
 			}

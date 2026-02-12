@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
@@ -289,5 +290,93 @@ func TestExitIfNeeded_StdoutSyncError(t *testing.T) {
 	}
 	if !bytes.Contains(stderrBuf.Bytes(), []byte("sync failed")) {
 		t.Errorf("stderr output should contain error message, got: %s", stderrOutput)
+	}
+}
+
+// TestSyncColors_Enabled verifies that SyncColors enables color codes when cli colors are enabled.
+func TestSyncColors_Enabled(t *testing.T) {
+	// Ensure colors start disabled
+	disableColors()
+
+	// Enable colors via cli package
+	cli.InitColors(cli.ColorModeAlways)
+
+	// Sync should enable output package colors
+	SyncColors()
+
+	// Verify color codes are set
+	if colorRed != "\033[31m" {
+		t.Errorf("expected colorRed to be '\\033[31m', got %q", colorRed)
+	}
+	if colorReset != "\033[0m" {
+		t.Errorf("expected colorReset to be '\\033[0m', got %q", colorReset)
+	}
+	if colorBold != "\033[1m" {
+		t.Errorf("expected colorBold to be '\\033[1m', got %q", colorBold)
+	}
+}
+
+// TestSyncColors_Disabled verifies that SyncColors disables color codes when cli colors are disabled.
+func TestSyncColors_Disabled(t *testing.T) {
+	// Ensure colors start enabled
+	enableColors()
+
+	// Disable colors via cli package
+	cli.InitColors(cli.ColorModeNever)
+
+	// Sync should disable output package colors
+	SyncColors()
+
+	// Verify color codes are empty
+	if colorRed != "" {
+		t.Errorf("expected colorRed to be empty, got %q", colorRed)
+	}
+	if colorReset != "" {
+		t.Errorf("expected colorReset to be empty, got %q", colorReset)
+	}
+	if colorBold != "" {
+		t.Errorf("expected colorBold to be empty, got %q", colorBold)
+	}
+}
+
+// TestEnableColors verifies that enableColors sets all color codes to their ANSI values.
+func TestEnableColors(t *testing.T) {
+	// Start with colors disabled
+	disableColors()
+
+	// Enable colors
+	enableColors()
+
+	// Check all color codes
+	expectedColors := map[string]string{
+		"colorReset":     "\033[0m",
+		"colorRed":       "\033[31m",
+		"colorGreen":     "\033[32m",
+		"colorOrange":    "\033[33m",
+		"colorYellow":    "\033[93m",
+		"colorBlue":      "\033[34m",
+		"colorGray":      "\033[90m",
+		"colorBgRed":     "\033[101m",
+		"colorBold":      "\033[1m",
+		"colorUnderline": "\033[4m",
+	}
+
+	actualColors := map[string]string{
+		"colorReset":     colorReset,
+		"colorRed":       colorRed,
+		"colorGreen":     colorGreen,
+		"colorOrange":    colorOrange,
+		"colorYellow":    colorYellow,
+		"colorBlue":      colorBlue,
+		"colorGray":      colorGray,
+		"colorBgRed":     colorBgRed,
+		"colorBold":      colorBold,
+		"colorUnderline": colorUnderline,
+	}
+
+	for name, expected := range expectedColors {
+		if actual := actualColors[name]; actual != expected {
+			t.Errorf("%s: expected %q, got %q", name, expected, actual)
+		}
 	}
 }

@@ -179,6 +179,10 @@ type IngestOptions struct {
 	GenerateVEX  bool
 }
 
+// StatusCallback is called on each poll with the current scan status.
+// It allows callers to react to status changes (e.g., updating a spinner).
+type StatusCallback func(status model.IngestStatusData)
+
 // StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
 	// Validate upload size for defense-in-depth
@@ -264,8 +268,12 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.IngestUploadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -296,12 +304,16 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("get status failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.IngestStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -309,7 +321,8 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 }
 
 // WaitForIngest polls until the ingestion is complete or times out.
-func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration) (*model.IngestStatusData, error) {
+// If onStatus is non-nil, it is called on each poll with the current status.
+func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration, onStatus StatusCallback) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
 	}
@@ -338,6 +351,11 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 			}
 
 			status := statusResp.Data[0]
+
+			if onStatus != nil {
+				onStatus(status)
+			}
+
 			statusUpper := strings.ToUpper(status.ScanStatus)
 
 			if statusUpper == "COMPLETED" || statusUpper == "FAILED" {
@@ -379,11 +397,11 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -444,12 +462,16 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("get scan failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.ScanResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

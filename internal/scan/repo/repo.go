@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -106,7 +107,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		// Targeted file scanning mode - scan only specified files
 		existing, warnings := s.includeFiles.ValidateExistence()
 		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			cli.PrintWarning(w)
 		}
 
 		if len(existing) == 0 {
@@ -195,14 +196,17 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	analysisSpinner.Start()
 	defer analysisSpinner.Stop()
 
-	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout)
+	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
+		func(status model.IngestStatusData) {
+			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Analyzing code for vulnerabilities..."))
+		})
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Analysis completed in %s\n\n", formatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "Analysis completed in %s\n\n", scan.FormatElapsed(elapsed))
 
 	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Fetching scan results...", s.noProgress)
 	fetchSpinner.Start()
@@ -220,7 +224,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 		if err := downloader.Download(ctx, scanID, filepath.Base(absPath)); err != nil {
 			// Log warning but don't fail the scan
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			cli.PrintWarningf("%v", err)
 		}
 	}
 
@@ -270,7 +274,7 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 		// Skip symlinks to avoid security risks (symlinks pointing outside repo)
 		// and potential issues (broken symlinks, loops)
 		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			cli.PrintWarningf("skipping symlink %s", relPath)
 			return nil
 		}
 
@@ -347,14 +351,14 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 
 		// Defense-in-depth: verify path is within repo root
 		if !isPathContained(repoRoot, absPath) {
-			fmt.Fprintf(os.Stderr, "Warning: skipping path outside repository: %s\n", relPath)
+			cli.PrintWarningf("skipping path outside repository: %s", relPath)
 			continue
 		}
 
 		info, err := os.Stat(absPath)
 		if err != nil {
 			// Skip files that don't exist (may have been deleted)
-			fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", relPath, err)
+			cli.PrintWarningf("skipping %s: %v", relPath, err)
 			continue
 		}
 
@@ -365,7 +369,7 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 
 		// Skip symlinks for security
 		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Fprintf(os.Stderr, "Warning: skipping symlink %s\n", relPath)
+			cli.PrintWarningf("skipping symlink %s", relPath)
 			continue
 		}
 
@@ -599,7 +603,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		finding := model.Finding{
 			ID:                      nf.NormalizedTask.FindingID,
-			Severity:                mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Severity:                scan.MapSeverity(nf.NormalizedRemediation.ToolSeverity),
 			Description:             nf.NormalizedRemediation.Description,
 			CVEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
 			CWEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
@@ -784,29 +788,4 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
 
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
-}
-
-func mapSeverity(toolSeverity string) model.Severity {
-	switch strings.ToUpper(toolSeverity) {
-	case "CRITICAL":
-		return model.SeverityCritical
-	case "HIGH":
-		return model.SeverityHigh
-	case "MEDIUM":
-		return model.SeverityMedium
-	case "LOW":
-		return model.SeverityLow
-	default:
-		return model.SeverityInfo
-	}
-}
-
-func formatElapsed(d time.Duration) string {
-	d = d.Round(time.Second)
-	minutes := int(d.Minutes())
-	seconds := int(d.Seconds()) % 60
-	if minutes > 0 {
-		return fmt.Sprintf("%dm %ds", minutes, seconds)
-	}
-	return fmt.Sprintf("%ds", seconds)
 }

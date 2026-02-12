@@ -17,7 +17,11 @@ var scanRepoCmd = &cobra.Command{
 	Use:   "repo [path]",
 	Short: "Scan a local repository",
 	Long:  `Scan a local repository for security vulnerabilities, secrets, and license risks.`,
-	Args:  cobra.ExactArgs(1),
+	Example: `  $ armis-cli scan repo .
+  $ armis-cli scan repo . --format json
+  $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
+  $ armis-cli scan repo . --sbom --sbom-output sbom.json`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
 
@@ -100,6 +104,7 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
+		PrintUpdateNotification()
 		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},

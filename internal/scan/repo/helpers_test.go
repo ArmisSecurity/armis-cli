@@ -123,33 +123,7 @@ func TestIsTestFile(t *testing.T) {
 	}
 }
 
-func TestMapSeverity(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected model.Severity
-	}{
-		{"CRITICAL", model.SeverityCritical},
-		{"critical", model.SeverityCritical},
-		{"HIGH", model.SeverityHigh},
-		{"high", model.SeverityHigh},
-		{"MEDIUM", model.SeverityMedium},
-		{"medium", model.SeverityMedium},
-		{"LOW", model.SeverityLow},
-		{"low", model.SeverityLow},
-		{"INFO", model.SeverityInfo},
-		{"UNKNOWN", model.SeverityInfo},
-		{"", model.SeverityInfo},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := mapSeverity(tt.input)
-			if result != tt.expected {
-				t.Errorf("mapSeverity(%q) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
+// Note: mapSeverity is now in the shared scan package and tested in internal/scan/status_test.go
 
 func TestCleanDescription(t *testing.T) {
 	tests := []struct {

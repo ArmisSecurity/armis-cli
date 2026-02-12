@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
@@ -70,10 +71,10 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 				outputPath = filepath.Join(".armis", sanitizedName+"-sbom.json")
 			}
 			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM"); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				cli.PrintWarningf("%v", err)
 			}
 		} else {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: SBOM was requested but not available in results\n")
+			cli.PrintWarning("SBOM was requested but not available in results")
 		}
 	}
 
@@ -86,10 +87,10 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 				outputPath = filepath.Join(".armis", sanitizedName+"-vex.json")
 			}
 			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX"); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				cli.PrintWarningf("%v", err)
 			}
 		} else {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: VEX was requested but not available in results\n")
+			cli.PrintWarning("VEX was requested but not available in results")
 		}
 	}
 

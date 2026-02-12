@@ -1,4 +1,6 @@
 bin/
+dist/
+completions/
 .DS_Store
 *.log
 nohup.out

@@ -6,6 +6,11 @@ before:
   hooks:
     - go mod tidy
     - go mod download
+    - mkdir -p completions
+    - sh -c "go run ./cmd/armis-cli completion bash > completions/armis-cli.bash"
+    - sh -c "go run ./cmd/armis-cli completion zsh > completions/_armis-cli"
+    - sh -c "go run ./cmd/armis-cli completion fish > completions/armis-cli.fish"
+    - sh -c "go run ./cmd/armis-cli completion powershell > completions/armis-cli.ps1"
 
 builds:
   - id: armis-cli
@@ -42,6 +47,7 @@ archives:
       - LICENSE*
       - README.md
       - docs/**/*
+      - completions/*
 
 checksum:
   name_template: "armis-cli-checksums.txt"
@@ -89,29 +95,29 @@ release:
   mode: replace
   header: |
     ## Armis CLI {{ .Tag }}
-    
+
     Enterprise-grade CLI tool for static application security scanning.
-    
+
     ### Installation
-    
+
     **Quick Install Script:**
     ```bash
     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
     ```
-    
+
     **Windows (PowerShell):**
     ```powershell
     irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
     ```
-    
+
     **Go Install:**
     ```bash
     go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
     ```
-    
+
     **Manual Download:**
     Download the appropriate binary for your platform below.
-    
+
     ### Verification
     All binaries are signed with cosign. To verify:
     ```bash
@@ -123,9 +129,9 @@ release:
     ```
   footer: |
     ---
-    
+
     **Full Changelog**: https://github.com/ArmisSecurity/armis-cli/compare/{{ .PreviousTag }}...{{ .Tag }}
-    
+
     For issues or questions, visit: https://github.com/ArmisSecurity/armis-cli/issues
 
 snapshot:
