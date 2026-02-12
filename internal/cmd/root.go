@@ -68,10 +68,12 @@ var rootCmd = &cobra.Command{
 		// - explicitly disabled via flag or env var
 		// - running in CI
 		// - version is "dev" (development build)
-		// - running meta-commands
+		// - running meta-commands (help, completion, shell completion)
+		isCompletionCmd := cmd.Name() == "completion" ||
+			(cmd.Parent() != nil && cmd.Parent().Name() == "completion")
 		if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
 			progress.IsCI() || version == "dev" ||
-			cmd.Name() == "help" || cmd.Name() == "__complete" {
+			cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd {
 			return nil
 		}
 

@@ -300,7 +300,7 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("get status failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -389,11 +389,11 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -454,7 +454,7 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 		return nil, fmt.Errorf("get scan failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

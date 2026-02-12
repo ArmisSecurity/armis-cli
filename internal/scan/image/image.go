@@ -151,7 +151,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			spinner.Update(formatScanStatus(status.ScanStatus))
+			spinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning image for vulnerabilities..."))
 		})
 	elapsed := spinner.GetElapsed()
 	if err != nil {
@@ -159,7 +159,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", formatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", scan.FormatElapsed(elapsed))
 
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
@@ -317,7 +317,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		finding := model.Finding{
 			ID:          nf.NormalizedTask.FindingID,
-			Severity:    mapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Severity:    scan.MapSeverity(nf.NormalizedRemediation.ToolSeverity),
 			Description: nf.NormalizedRemediation.Description,
 			CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
 			CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
@@ -447,48 +447,4 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
 
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
-}
-
-func mapSeverity(toolSeverity string) model.Severity {
-	switch strings.ToUpper(toolSeverity) {
-	case "CRITICAL":
-		return model.SeverityCritical
-	case "HIGH":
-		return model.SeverityHigh
-	case "MEDIUM":
-		return model.SeverityMedium
-	case "LOW":
-		return model.SeverityLow
-	default:
-		return model.SeverityInfo
-	}
-}
-
-func formatElapsed(d time.Duration) string {
-	d = d.Round(time.Second)
-	minutes := int(d.Minutes())
-	seconds := int(d.Seconds()) % 60
-	if minutes > 0 {
-		return fmt.Sprintf("%dm %ds", minutes, seconds)
-	}
-	return fmt.Sprintf("%ds", seconds)
-}
-
-// formatScanStatus returns a human-readable message for the current scan phase.
-// Status values from ArtifactScanStatus enum in Project-Moose API.
-func formatScanStatus(scanStatus string) string {
-	switch strings.ToUpper(scanStatus) {
-	case "INITIATED":
-		return "Scan initiated, preparing analysis..."
-	case "IN_PROGRESS":
-		return "Scanning image for vulnerabilities..."
-	case "COMPLETED":
-		return "Scan completed, preparing results..."
-	case "FAILED":
-		return "Scan encountered an error"
-	case "STOPPED":
-		return "Scan was stopped"
-	default:
-		return fmt.Sprintf("Scanning... [%s]", strings.ToUpper(scanStatus))
-	}
 }

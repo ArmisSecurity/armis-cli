@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,31 +103,18 @@ func TestFormatNotification(t *testing.T) {
 	}
 
 	// Check that it contains the version numbers
-	if !contains(result, "v1.1.0") {
+	if !strings.Contains(result, "v1.1.0") {
 		t.Errorf("notification should contain latest version, got: %s", result)
 	}
-	if !contains(result, "v1.0.0") {
+	if !strings.Contains(result, "v1.0.0") {
 		t.Errorf("notification should contain current version, got: %s", result)
 	}
 
 	// Check with v prefix
 	result = FormatNotification("v1.0.0", "v1.1.0")
-	if !contains(result, "v1.1.0") {
+	if !strings.Contains(result, "v1.1.0") {
 		t.Errorf("notification should normalize version, got: %s", result)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestChecker_FetchLatestVersion(t *testing.T) {

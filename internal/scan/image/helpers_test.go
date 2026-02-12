@@ -1,40 +1,14 @@
 package image
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
-func TestMapSeverity(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected model.Severity
-	}{
-		{"CRITICAL", model.SeverityCritical},
-		{"critical", model.SeverityCritical},
-		{"HIGH", model.SeverityHigh},
-		{"high", model.SeverityHigh},
-		{"MEDIUM", model.SeverityMedium},
-		{"medium", model.SeverityMedium},
-		{"LOW", model.SeverityLow},
-		{"low", model.SeverityLow},
-		{"INFO", model.SeverityInfo},
-		{"UNKNOWN", model.SeverityInfo},
-		{"", model.SeverityInfo},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := mapSeverity(tt.input)
-			if result != tt.expected {
-				t.Errorf("mapSeverity(%q) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
+// Note: mapSeverity, formatElapsed, and formatScanStatus are now in the shared
+// scan package and tested in internal/scan/status_test.go
 
 func TestCleanDescription(t *testing.T) {
 	tests := []struct {
@@ -259,80 +233,6 @@ func TestIsEmptyFinding(t *testing.T) {
 			result := isEmptyFinding(tt.finding)
 			if result != tt.expected {
 				t.Errorf("isEmptyFinding() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestFormatElapsed(t *testing.T) {
-	tests := []struct {
-		name     string
-		duration time.Duration
-		expected string
-	}{
-		{
-			name:     "zero duration",
-			duration: 0,
-			expected: "0s",
-		},
-		{
-			name:     "seconds only",
-			duration: 45 * time.Second,
-			expected: "45s",
-		},
-		{
-			name:     "one minute",
-			duration: 60 * time.Second,
-			expected: "1m 0s",
-		},
-		{
-			name:     "minutes and seconds",
-			duration: 125 * time.Second,
-			expected: "2m 5s",
-		},
-		{
-			name:     "many minutes",
-			duration: 10*time.Minute + 30*time.Second,
-			expected: "10m 30s",
-		},
-		{
-			name:     "rounds to nearest second",
-			duration: 45*time.Second + 600*time.Millisecond,
-			expected: "46s",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatElapsed(tt.duration)
-			if result != tt.expected {
-				t.Errorf("formatElapsed(%v) = %q, want %q", tt.duration, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestFormatScanStatus(t *testing.T) {
-	// Status values from ArtifactScanStatus enum in Project-Moose API
-	tests := []struct {
-		name     string
-		status   string
-		contains string
-	}{
-		{name: "initiated status", status: "INITIATED", contains: "initiated"},
-		{name: "in_progress status", status: "IN_PROGRESS", contains: "image"},
-		{name: "completed status", status: "COMPLETED", contains: "completed"},
-		{name: "failed status", status: "FAILED", contains: "error"},
-		{name: "stopped status", status: "STOPPED", contains: "stopped"},
-		{name: "lowercase handling", status: "in_progress", contains: "image"},
-		{name: "unknown status", status: "UNKNOWN_NEW_STATUS", contains: "UNKNOWN_NEW_STATUS"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatScanStatus(tt.status)
-			if !strings.Contains(strings.ToLower(result), strings.ToLower(tt.contains)) {
-				t.Errorf("formatScanStatus(%q) = %q, expected to contain %q", tt.status, result, tt.contains)
 			}
 		})
 	}

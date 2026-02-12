@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 const (
@@ -115,6 +117,11 @@ func (c *Checker) check(ctx context.Context) *CheckResult {
 		return nil // silently fail
 	}
 
+	// Don't cache empty tags - retry on next check
+	if latest == "" {
+		return nil
+	}
+
 	// Write to cache (best-effort)
 	c.writeCache(&cacheFile{
 		LatestVersion: latest,
@@ -168,7 +175,12 @@ func (c *Checker) fetchLatestVersion(ctx context.Context) (string, error) {
 // getCacheFilePath returns the path to the cache file.
 func (c *Checker) getCacheFilePath() string {
 	if c.cacheDir != "" {
-		return filepath.Join(c.cacheDir, cacheFileName)
+		// Validate cacheDir to prevent path traversal (CWE-73)
+		sanitized, err := util.SanitizePath(c.cacheDir)
+		if err != nil {
+			return "" // invalid cacheDir, disable caching
+		}
+		return filepath.Join(sanitized, cacheFileName)
 	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
@@ -178,13 +190,13 @@ func (c *Checker) getCacheFilePath() string {
 }
 
 // readCache attempts to read a cached check result.
-// Returns nil if cache is missing, corrupt, or expired.
+// Returns nil if cache is missing or corrupt.
 func (c *Checker) readCache() *cacheFile {
 	path := c.getCacheFilePath()
 	if path == "" {
 		return nil
 	}
-	// #nosec G304 -- path is constructed from os.UserCacheDir(), not user input
+	// #nosec G304 -- path is constructed from os.UserCacheDir() or validated test cacheDir
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil

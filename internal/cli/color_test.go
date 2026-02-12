@@ -66,6 +66,9 @@ func captureStderr(t *testing.T, fn func()) string {
 	if _, err := buf.ReadFrom(r); err != nil {
 		t.Errorf("failed to read from pipe: %v", err)
 	}
+	if err := r.Close(); err != nil {
+		t.Errorf("failed to close pipe reader: %v", err)
+	}
 	os.Stderr = oldStderr
 	return buf.String()
 }
