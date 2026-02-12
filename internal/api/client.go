@@ -268,8 +268,12 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.IngestUploadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -304,8 +308,12 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 		return nil, fmt.Errorf("get status failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.IngestStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -458,8 +466,12 @@ func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanR
 		return nil, fmt.Errorf("get scan failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 	var result model.ScanResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

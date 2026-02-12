@@ -196,8 +196,12 @@ func (c *Checker) readCache() *cacheFile {
 	if path == "" {
 		return nil
 	}
-	// #nosec G304 -- path is constructed from os.UserCacheDir() or validated test cacheDir
-	data, err := os.ReadFile(path)
+	// Validate the final path before reading to prevent path traversal (CWE-73)
+	sanitizedPath, err := util.SanitizePath(path)
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(sanitizedPath) //nolint:gosec // path validated by SanitizePath
 	if err != nil {
 		return nil
 	}
@@ -215,7 +219,12 @@ func (c *Checker) writeCache(result *cacheFile) {
 	if path == "" {
 		return
 	}
-	dir := filepath.Dir(path)
+	// Validate the final path before writing to prevent path traversal (CWE-73)
+	sanitizedPath, err := util.SanitizePath(path)
+	if err != nil {
+		return
+	}
+	dir := filepath.Dir(sanitizedPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
@@ -223,7 +232,7 @@ func (c *Checker) writeCache(result *cacheFile) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0o600)
+	_ = os.WriteFile(sanitizedPath, data, 0o600) //nolint:gosec // path validated by SanitizePath
 }
 
 // IsNewer returns true if latest is a newer version than current.
