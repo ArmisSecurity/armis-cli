@@ -43,6 +43,9 @@ var (
 	colorDiffAddBg    = lipgloss.AdaptiveColor{Light: "#dcfce7", Dark: "#0f2918"} // green-50 / dark green
 	colorDiffRemoveBg = lipgloss.AdaptiveColor{Light: "#fee2e2", Dark: "#2a1215"} // red-100 / dark red
 
+	// Vulnerability highlight background - subtle amber tint like diff backgrounds
+	colorVulnBg = lipgloss.AdaptiveColor{Light: "#fef3c7", Dark: "#422006"} // amber-100 / amber-950
+
 	// UI colors - inverted for light/dark themes
 	colorBorder = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#374151"} // gray-300 / gray-700
 	colorDim    = lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#6B7280"} // gray-600 / gray-500
@@ -82,6 +85,7 @@ type Styles struct {
 	// Vulnerability highlighting styles
 	VulnHighlight       lipgloss.Style // Full-line highlight for vulnerable code
 	VulnColumnHighlight lipgloss.Style // Column-specific highlight within a line
+	VulnLineBg          lipgloss.Style // Background highlight for vulnerable code lines (syntax highlighting)
 	ProposedLineNumber  lipgloss.Style // Line numbers in proposed fix snippets
 
 	// Status indicators
@@ -200,6 +204,8 @@ func DefaultStyles() *Styles {
 			Bold(true), // Simple bold for full-line highlight
 		VulnColumnHighlight: lipgloss.NewStyle().
 			Bold(true), // Bold for column-specific highlight
+		VulnLineBg: lipgloss.NewStyle().
+			Background(colorVulnBg), // Subtle amber background for vulnerable lines
 		ProposedLineNumber: lipgloss.NewStyle().
 			Foreground(colorDim),
 
@@ -291,6 +297,7 @@ func NoColorStyles() *Styles {
 
 		VulnHighlight:       plain,
 		VulnColumnHighlight: plain,
+		VulnLineBg:          plain,
 		ProposedLineNumber:  plain,
 
 		SuccessText: plain,

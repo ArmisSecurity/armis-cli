@@ -32,7 +32,6 @@ const (
 
 // Package-level compiled regex patterns (performance optimization)
 var (
-	ansiPattern         = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	numberedListPattern = regexp.MustCompile(`\s*(\d+)[.\)]\s+`)
 	diffHunkPattern     = regexp.MustCompile(`@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 )
@@ -478,45 +477,66 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 }
 
 // formatCodeSnippetWithFrame formats a code snippet with a simple header (no box border)
+// Uses syntax highlighting for code readability with background highlighting for vulnerable lines.
 func formatCodeSnippetWithFrame(finding model.Finding) string {
 	s := GetStyles()
-	lines := strings.Split(finding.CodeSnippet, "\n")
+	plainLines := strings.Split(finding.CodeSnippet, "\n")
 
 	snippetStart := 1
 	if finding.SnippetStartLine > 0 {
 		snippetStart = finding.SnippetStartLine
 	}
 
+	// Skip syntax highlighting for redacted snippets (contain secrets)
+	isRedacted := strings.Contains(finding.CodeSnippet, "redacted")
+
+	// Get syntax-highlighted lines (skip for redacted content)
+	var highlightedLines []string
+	if isRedacted {
+		highlightedLines = plainLines
+	} else {
+		highlightedLines = HighlightCode(finding.CodeSnippet, finding.File)
+	}
+
 	// Max code line width for truncation
 	maxCodeWidth := TerminalWidth() - 15
 
 	var codeLines []string
-	for i, line := range lines {
+	for i := range plainLines {
 		actualLine := snippetStart + i
 		isVulnerable := finding.StartLine > 0 && finding.EndLine > 0 &&
 			actualLine >= finding.StartLine && actualLine <= finding.EndLine
 
 		// Format line number
-		lineNumStyle := s.CodeLineNumber
-		lineNum := lineNumStyle.Render(fmt.Sprintf("%4d", actualLine))
+		lineNum := s.CodeLineNumber.Render(fmt.Sprintf("%4d", actualLine))
 
-		// Truncate long lines to prevent overflow
-		truncatedLine := truncateCodeLine(line, maxCodeWidth)
+		// Get highlighted line (with bounds check)
+		var highlightedLine string
+		if i < len(highlightedLines) {
+			highlightedLine = highlightedLines[i]
+		} else {
+			highlightedLine = plainLines[i]
+		}
+
+		// Get the plain text for width calculation and truncation
+		plainLine := plainLines[i]
+		if runewidth.StringWidth(plainLine) > maxCodeWidth {
+			plainLine = truncatePlainLine(plainLine, maxCodeWidth)
+			// Re-highlight the truncated line
+			highlightedLine = HighlightLine(plainLine, finding.File)
+		}
 
 		// Format the code line
 		var codeLine string
 		if isVulnerable {
-			// Highlight vulnerable lines
-			if finding.StartColumn > 0 && finding.EndColumn > 0 {
-				codeLine = highlightColumns(truncatedLine, finding.StartColumn, finding.EndColumn, actualLine, finding.StartLine, finding.EndLine)
-			} else {
-				codeLine = s.CodeHighlight.Render(truncatedLine)
-			}
+			// Apply syntax highlighting with persistent background color
+			// Uses HighlightLineWithBackground to handle Chroma's ANSI resets
+			codeLine = HighlightLineWithBackground(plainLine, finding.File, colorVulnBg)
 			// Add arrow indicator for vulnerable lines (colored by severity)
 			arrowStyle := s.GetSeverityText(finding.Severity)
 			codeLines = append(codeLines, fmt.Sprintf("%s %s  %s", arrowStyle.Render(IconPointer), lineNum, codeLine))
 		} else {
-			codeLine = truncatedLine
+			codeLine = highlightedLine
 			codeLines = append(codeLines, fmt.Sprintf("  %s  %s", lineNum, codeLine))
 		}
 	}
@@ -538,31 +558,17 @@ func formatCodeSnippetWithFrame(finding model.Finding) string {
 	return result.String()
 }
 
-// stripAnsi removes ANSI escape codes from a string for width calculation
-func stripAnsi(s string) string {
-	return ansiPattern.ReplaceAllString(s, "")
-}
-
-// truncateCodeLine truncates a line if it exceeds maxWidth, adding ellipsis
-func truncateCodeLine(line string, maxWidth int) string {
-	// Strip ANSI for accurate width calculation
-	plainLine := stripAnsi(line)
-	if runewidth.StringWidth(plainLine) <= maxWidth {
-		return line
-	}
-
-	// Truncate the plain line and add ellipsis
-	truncated := ""
+// truncatePlainLine truncates plain text to maxWidth with ellipsis
+func truncatePlainLine(line string, maxWidth int) string {
 	width := 0
-	for _, r := range plainLine {
+	for i, r := range line {
 		rw := runewidth.RuneWidth(r)
 		if width+rw+3 > maxWidth { // +3 for "..."
-			break
+			return line[:i] + "..."
 		}
-		truncated += string(r)
 		width += rw
 	}
-	return truncated + "..."
+	return line
 }
 
 func highlightColumns(line string, startCol, endCol, currentLine, startLine, endLine int) string {
@@ -1138,6 +1144,7 @@ func formatFixSection(fix *model.Fix) string {
 }
 
 // formatProposedSnippet formats a single code snippet for the proposed fix.
+// Uses syntax highlighting for code readability.
 func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	s := GetStyles()
 	var sb strings.Builder
@@ -1150,13 +1157,14 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	}
 	sb.WriteString("\n")
 
-	// Display the code content with indentation
-	lines := strings.Split(snippet.Content, "\n")
+	// Get syntax-highlighted lines
+	highlightedLines := HighlightCode(snippet.Content, snippet.FilePath)
+
 	startLine := 1
 	if snippet.StartLine != nil {
 		startLine = *snippet.StartLine
 	}
-	for i, line := range lines {
+	for i, line := range highlightedLines {
 		lineNum := s.ProposedLineNumber.Render(fmt.Sprintf("%4d", startLine+i))
 		sb.WriteString(fmt.Sprintf("  %s  %s\n", lineNum, line))
 	}
@@ -1342,59 +1350,90 @@ func isWordChar(r rune) bool {
 }
 
 // formatDiffWithColorsStyled formats a unified diff with enhanced visual styling.
-// Features: background colors, line numbers, gutter styling, inline change highlighting.
+// Features: background colors, line numbers, gutter styling, inline change highlighting, syntax highlighting.
 func formatDiffWithColorsStyled(patch string) string {
 	s := GetStyles()
 	lines := parseDiffLines(patch)
 	termWidth := TerminalWidth()
 
+	// Extract filename from diff header for syntax highlighting
+	filename := extractDiffFilename(patch)
+
 	var sb strings.Builder
 
 	// Track remove lines for inline highlighting with subsequent add lines
 	var pendingRemoves []DiffLine
+	// Track if we just saw a hunk header (to skip leading empty lines)
+	afterHunk := false
 
 	for _, line := range lines {
 		switch line.Type {
 		case DiffLineHunk:
 			// Flush any pending removes
 			for _, r := range pendingRemoves {
-				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
 			}
 			pendingRemoves = nil
 			sb.WriteString(formatDiffHunkLine(line, s))
+			afterHunk = true
 
 		case DiffLineRemove:
+			afterHunk = false
 			// Collect removes to potentially pair with subsequent adds
 			pendingRemoves = append(pendingRemoves, line)
 
 		case DiffLineAdd:
+			afterHunk = false
 			// Check if we can pair with a pending remove for inline highlighting
 			if len(pendingRemoves) > 0 {
 				removeLine := pendingRemoves[0]
 				pendingRemoves = pendingRemoves[1:]
 				oldSpans, newSpans := findInlineChanges(removeLine.Content, line.Content)
-				sb.WriteString(formatDiffRemoveLine(removeLine, s, oldSpans, termWidth))
-				sb.WriteString(formatDiffAddLine(line, s, newSpans, termWidth))
+				sb.WriteString(formatDiffRemoveLine(removeLine, s, oldSpans, termWidth, filename))
+				sb.WriteString(formatDiffAddLine(line, s, newSpans, termWidth, filename))
 			} else {
-				sb.WriteString(formatDiffAddLine(line, s, nil, termWidth))
+				sb.WriteString(formatDiffAddLine(line, s, nil, termWidth, filename))
 			}
 
 		case DiffLineContext:
+			// Skip leading empty context lines right after hunk header
+			if afterHunk && strings.TrimSpace(line.Content) == "" {
+				continue
+			}
+			afterHunk = false
 			// Flush pending removes first
 			for _, r := range pendingRemoves {
-				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
 			}
 			pendingRemoves = nil
-			sb.WriteString(formatDiffContextLine(line, s, termWidth))
+			sb.WriteString(formatDiffContextLine(line, s, termWidth, filename))
 		}
 	}
 
 	// Flush any remaining removes
 	for _, r := range pendingRemoves {
-		sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+		sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
 	}
 
 	return sb.String()
+}
+
+// extractDiffFilename extracts the filename from unified diff header lines.
+// Looks for "+++ b/path/to/file" or "+++ path/to/file" patterns.
+func extractDiffFilename(patch string) string {
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "+++ ") {
+			path := strings.TrimPrefix(line, "+++ ")
+			// Handle "b/path" format (git diff)
+			path = strings.TrimPrefix(path, "b/")
+			// Handle "/dev/null" for new files
+			if path == "/dev/null" {
+				continue
+			}
+			return path
+		}
+	}
+	return ""
 }
 
 // formatDiffHunkLine formats a hunk header line (@@ ... @@)
@@ -1402,15 +1441,18 @@ func formatDiffHunkLine(line DiffLine, s *Styles) string {
 	return "  " + s.DiffHunk.Render(line.Content) + "\n"
 }
 
-// formatDiffContextLine formats a context line with line numbers (no gutter, matches code snippets)
-func formatDiffContextLine(line DiffLine, s *Styles, termWidth int) string {
+// formatDiffContextLine formats a context line with line numbers and syntax highlighting
+func formatDiffContextLine(line DiffLine, s *Styles, termWidth int, filename string) string {
 	lineNum := fmt.Sprintf("%3d", line.NewNum)
 	content := truncateDiffLine(line.Content, termWidth-10)
-	return fmt.Sprintf("  %s   %s\n", s.DiffLineNumber.Render(lineNum), content)
+	// Apply syntax highlighting to context lines
+	highlighted := HighlightLine(content, filename)
+	return fmt.Sprintf("  %s   %s\n", s.DiffLineNumber.Render(lineNum), highlighted)
 }
 
 // formatDiffRemoveLine formats a removed line with background color and optional inline highlights
-func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int) string {
+func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int, filename string) string {
+	_ = filename // Reserved for future syntax highlighting of diff lines
 	lineNum := fmt.Sprintf("%3d", line.OldNum)
 	marker := s.DiffRemove.Render("-")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
@@ -1427,7 +1469,8 @@ func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, ter
 }
 
 // formatDiffAddLine formats an added line with background color and optional inline highlights
-func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int) string {
+func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int, filename string) string {
+	_ = filename // Reserved for future syntax highlighting of diff lines
 	lineNum := fmt.Sprintf("%3d", line.NewNum)
 	marker := s.DiffAdd.Render("+")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
