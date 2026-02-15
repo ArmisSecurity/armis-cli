@@ -1297,6 +1297,10 @@ type DiffRenderOp struct {
 // diffContextLines is the number of context lines to show around changes (like git diff -U3)
 const diffContextLines = 3
 
+// maxHunkOutputLines is the hard cap on lines shown per hunk. If after context limiting
+// the result still exceeds this (e.g., due to scattered changes), it will be truncated.
+const maxHunkOutputLines = 25
+
 // limitHunkContext reduces context lines around changes, keeping only N lines
 // before and after actual changes. Returns filtered lines with ellipsis markers
 // where context was omitted. This makes large diffs more readable.
@@ -1351,6 +1355,25 @@ func limitHunkContext(lines []DiffLine, contextLines int) []DiffLine {
 			result = append(result, line)
 			lastKept = i
 		}
+	}
+
+	// Apply hard cap on output lines to handle scattered changes
+	if len(result) > maxHunkOutputLines {
+		keepHead := 15 // Keep first 15 lines (beginning of changes)
+		keepTail := 8  // Keep last 8 lines (end of changes)
+		omitted := len(result) - keepHead - keepTail
+
+		truncated := make([]DiffLine, 0, keepHead+1+keepTail)
+		truncated = append(truncated, result[:keepHead]...)
+		truncated = append(truncated, DiffLine{
+			Type:    DiffLineContext,
+			Content: fmt.Sprintf("⋮ %d lines omitted (large diff)", omitted),
+			Raw:     "",
+			OldNum:  -1,
+			NewNum:  -1,
+		})
+		truncated = append(truncated, result[len(result)-keepTail:]...)
+		result = truncated
 	}
 
 	return result
