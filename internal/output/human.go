@@ -1583,16 +1583,35 @@ func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, ter
 	marker := s.DiffRemove.Render("-")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
 	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Measure visual width before applying ANSI codes from highlights
+	contentWidth := termWidth - 10
+	visualWidth := runewidth.StringWidth(content)
+	if truncated {
+		visualWidth++ // Account for ellipsis that will be added
+	}
 	// Adjust highlight spans if content was truncated
 	adjustedHighlights := adjustHighlightSpans(highlights, len(content))
-	content = applyInlineHighlights(content, adjustedHighlights, s.DiffRemoveHighlight, s.DiffRemoveLine)
-	if truncated {
-		content += "…"
+	// Apply inline highlights - this styles all portions (highlighted and non-highlighted)
+	if len(adjustedHighlights) > 0 {
+		content = applyInlineHighlights(content, adjustedHighlights, s.DiffRemoveHighlight, s.DiffRemoveLine)
+		if truncated {
+			content += s.DiffRemoveLine.Render("…")
+		}
+		// Add styled padding to fill line width
+		if visualWidth < contentWidth {
+			content += s.DiffRemoveLine.Render(strings.Repeat(" ", contentWidth-visualWidth))
+		}
+	} else {
+		// No highlights - style the entire content at once
+		if truncated {
+			content += "…"
+		}
+		if visualWidth < contentWidth {
+			content += strings.Repeat(" ", contentWidth-visualWidth)
+		}
+		content = s.DiffRemoveLine.Render(content)
 	}
-	// Apply background to the entire content area (use Width to extend background to full line)
-	contentWidth := termWidth - 10
-	styledContent := s.DiffRemoveLine.Width(contentWidth).Render(content)
-	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
+	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, content)
 }
 
 // formatDiffAddLine formats an added line with background color and optional inline highlights
@@ -1602,19 +1621,39 @@ func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWi
 	marker := s.DiffAdd.Render("+")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
 	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Measure visual width before applying ANSI codes from highlights
+	contentWidth := termWidth - 10
+	visualWidth := runewidth.StringWidth(content)
+	if truncated {
+		visualWidth++ // Account for ellipsis that will be added
+	}
 	// Adjust highlight spans if content was truncated
 	adjustedHighlights := adjustHighlightSpans(highlights, len(content))
-	content = applyInlineHighlights(content, adjustedHighlights, s.DiffAddHighlight, s.DiffAddLine)
-	if truncated {
-		content += "…"
+	// Apply inline highlights - this styles all portions (highlighted and non-highlighted)
+	if len(adjustedHighlights) > 0 {
+		content = applyInlineHighlights(content, adjustedHighlights, s.DiffAddHighlight, s.DiffAddLine)
+		if truncated {
+			content += s.DiffAddLine.Render("…")
+		}
+		// Add styled padding to fill line width
+		if visualWidth < contentWidth {
+			content += s.DiffAddLine.Render(strings.Repeat(" ", contentWidth-visualWidth))
+		}
+	} else {
+		// No highlights - style the entire content at once
+		if truncated {
+			content += "…"
+		}
+		if visualWidth < contentWidth {
+			content += strings.Repeat(" ", contentWidth-visualWidth)
+		}
+		content = s.DiffAddLine.Render(content)
 	}
-	// Apply background to the entire content area (use Width to extend background to full line)
-	contentWidth := termWidth - 10
-	styledContent := s.DiffAddLine.Width(contentWidth).Render(content)
-	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
+	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, content)
 }
 
-// applyInlineHighlights applies highlight styling to specific spans within a line
+// applyInlineHighlights applies highlight styling to specific spans within a line.
+// Non-highlighted portions are styled with baseStyle to maintain consistent background.
 func applyInlineHighlights(content string, spans []ChangeSpan, highlightStyle, baseStyle lipgloss.Style) string {
 	if len(spans) == 0 {
 		return content
@@ -1637,19 +1676,20 @@ func applyInlineHighlights(content string, spans []ChangeSpan, highlightStyle, b
 			continue
 		}
 
-		// Add unhighlighted portion
+		// Add unhighlighted portion with base style (maintains background color)
 		if lastEnd < start {
-			result.WriteString(content[lastEnd:start])
+			result.WriteString(baseStyle.Render(content[lastEnd:start]))
 		}
 
-		// Add highlighted portion
-		result.WriteString(highlightStyle.Render(content[start:end]))
+		// Add highlighted portion (bold + foreground, inherits background from base)
+		highlightWithBg := highlightStyle.Background(baseStyle.GetBackground())
+		result.WriteString(highlightWithBg.Render(content[start:end]))
 		lastEnd = end
 	}
 
-	// Add remaining content
+	// Add remaining content with base style
 	if lastEnd < len(content) {
-		result.WriteString(content[lastEnd:])
+		result.WriteString(baseStyle.Render(content[lastEnd:]))
 	}
 
 	return result.String()
