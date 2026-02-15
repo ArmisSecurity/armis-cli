@@ -102,6 +102,10 @@ func disableColors() {
 	mutedStyle = lipgloss.NewStyle()
 }
 
+// maxJSONParseSize limits the size of JSON payloads parsed from error messages
+// to prevent excessive memory allocation from maliciously large inputs.
+const maxJSONParseSize = 4096 // 4KB - more than enough for API error details
+
 // parseErrorMessage extracts a human-readable reason from an error string.
 // It looks for JSON {"detail":"..."} payloads common in API error responses.
 // Returns (reason, context) where reason is the primary message and context
@@ -110,6 +114,10 @@ func parseErrorMessage(msg string) (reason, context string) {
 	// Try to find and extract JSON detail from the end of the message
 	if idx := strings.LastIndex(msg, "{"); idx >= 0 {
 		jsonPart := msg[idx:]
+		// Limit JSON size to prevent DoS via large payloads
+		if len(jsonPart) > maxJSONParseSize {
+			return msg, ""
+		}
 		var parsed struct {
 			Detail string `json:"detail"`
 		}

@@ -1300,6 +1300,18 @@ func findInlineChanges(oldLine, newLine string) (oldSpans, newSpans []ChangeSpan
 	oldTokens := tokenizeLine(oldLine)
 	newTokens := tokenizeLine(newLine)
 
+	// If either line has too many tokens, skip LCS and mark entire lines as changed
+	// to prevent excessive memory allocation (O(m*n) space for DP table)
+	if len(oldTokens) > maxLCSTokens || len(newTokens) > maxLCSTokens {
+		if len(oldLine) > 0 {
+			oldSpans = []ChangeSpan{{Start: 0, End: len(oldLine)}}
+		}
+		if len(newLine) > 0 {
+			newSpans = []ChangeSpan{{Start: 0, End: len(newLine)}}
+		}
+		return
+	}
+
 	// Compute LCS to find matching tokens
 	lcs := computeLCS(oldTokens, newTokens)
 
@@ -1346,12 +1358,24 @@ func findInlineChanges(oldLine, newLine string) (oldSpans, newSpans []ChangeSpan
 	return
 }
 
+// maxLCSTokens limits the number of tokens for LCS computation.
+// Beyond this, we fall back to marking entire lines as changed to prevent
+// excessive memory allocation (O(m*n) space) for very long lines.
+const maxLCSTokens = 500
+
 // computeLCS computes the Longest Common Subsequence of two string slices.
 // Returns the subsequence elements (not indices).
+// Returns nil if inputs exceed maxLCSTokens to prevent memory exhaustion.
 func computeLCS(a, b []string) []string {
 	m, n := len(a), len(b)
 	if m == 0 || n == 0 {
 		return nil
+	}
+
+	// Prevent excessive memory allocation for very long lines
+	// DP table would be O(m*n) which can be huge for long lines
+	if m > maxLCSTokens || n > maxLCSTokens {
+		return nil // Caller will fall back to simpler comparison
 	}
 
 	// Build DP table

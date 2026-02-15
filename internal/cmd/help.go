@@ -34,7 +34,11 @@ func SetupHelp(cmd *cobra.Command) {
 		// Restore original output and write styled content
 		c.SetOut(originalOut)
 		styled := styleHelpOutput(buf.String())
-		_, _ = io.WriteString(originalOut, styled)
+		if _, err := io.WriteString(originalOut, styled); err != nil {
+			// Help output write failed - nothing we can do except proceed
+			// (stderr may also be unavailable if stdout failed)
+			return
+		}
 	})
 }
 
