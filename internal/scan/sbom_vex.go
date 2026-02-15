@@ -9,6 +9,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
@@ -131,6 +132,9 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		return fmt.Errorf("failed to write %s to %s: %w", docType, outputPath, err)
 	}
 
-	_, _ = fmt.Fprintf(os.Stderr, "%s saved to: %s\n", docType, outputPath)
+	styles := output.GetStyles()
+	_, _ = fmt.Fprintf(os.Stderr, "%s %s\n",
+		styles.SuccessText.Render(fmt.Sprintf("%s saved to:", docType)),
+		styles.Bold.Render(outputPath))
 	return nil
 }

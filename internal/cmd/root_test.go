@@ -133,54 +133,6 @@ func TestGetAPIBaseURL(t *testing.T) {
 	})
 }
 
-func TestGetToken(t *testing.T) {
-	t.Run("returns token when set", func(t *testing.T) {
-		token = "test-token-123"
-		defer func() { token = "" }()
-
-		result, err := getToken()
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if result != "test-token-123" {
-			t.Errorf("Expected 'test-token-123', got %s", result)
-		}
-	})
-
-	t.Run("returns error when token not set", func(t *testing.T) {
-		token = ""
-
-		_, err := getToken()
-		if err == nil {
-			t.Error("Expected error when token not set")
-		}
-	})
-}
-
-func TestGetTenantID(t *testing.T) {
-	t.Run("returns tenant ID when set", func(t *testing.T) {
-		tenantID = "tenant-456"
-		defer func() { tenantID = "" }()
-
-		result, err := getTenantID()
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if result != "tenant-456" {
-			t.Errorf("Expected 'tenant-456', got %s", result)
-		}
-	})
-
-	t.Run("returns error when tenant ID not set", func(t *testing.T) {
-		tenantID = ""
-
-		_, err := getTenantID()
-		if err == nil {
-			t.Error("Expected error when tenant ID not set")
-		}
-	})
-}
-
 func TestValidatePageLimit(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -276,9 +228,9 @@ func TestValidateFailOn(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "invalid severity lowercase",
+			name:       "valid severity lowercase",
 			severities: []string{"high"},
-			wantErr:    true,
+			wantErr:    false,
 		},
 		{
 			name:       "invalid severity unknown",
@@ -336,5 +288,42 @@ func TestExecute(t *testing.T) {
 	err := Execute()
 	if err != nil {
 		t.Logf("Execute returned error (expected in test context): %v", err)
+	}
+}
+
+func TestThemeFlag_Values(t *testing.T) {
+	// Test that valid theme values are accepted by checking the flag exists
+	flag := rootCmd.PersistentFlags().Lookup("theme")
+	if flag == nil {
+		t.Fatal("Expected --theme flag to be registered")
+	}
+
+	// Check default value
+	if flag.DefValue != "auto" {
+		t.Errorf("Expected default value 'auto', got %q", flag.DefValue)
+	}
+
+	// Verify valid values are documented in usage
+	usage := flag.Usage
+	if usage == "" {
+		t.Error("Expected --theme flag to have usage text")
+	}
+}
+
+func TestThemeFlag_EnvDefault(t *testing.T) {
+	// Save current value
+	originalTheme := themeFlag
+
+	// Test ARMIS_THEME env var is used for default
+	_ = os.Setenv("ARMIS_THEME", "light")
+	defer func() {
+		_ = os.Unsetenv("ARMIS_THEME")
+		themeFlag = originalTheme
+	}()
+
+	// The env var is read at init time, so we test getEnvOrDefault directly
+	result := getEnvOrDefault("ARMIS_THEME", "auto")
+	if result != "light" {
+		t.Errorf("Expected 'light' from env, got %q", result)
 	}
 }

@@ -96,7 +96,8 @@ func TestParseVersion(t *testing.T) {
 }
 
 func TestFormatNotification(t *testing.T) {
-	result := FormatNotification("1.0.0", "1.1.0")
+	testIcon := "📦"
+	result := FormatNotification("1.0.0", "1.1.0", testIcon)
 
 	if result == "" {
 		t.Error("FormatNotification returned empty string")
@@ -109,9 +110,13 @@ func TestFormatNotification(t *testing.T) {
 	if !strings.Contains(result, "v1.0.0") {
 		t.Errorf("notification should contain current version, got: %s", result)
 	}
+	// Check that it contains the icon
+	if !strings.Contains(result, testIcon) {
+		t.Errorf("notification should contain icon, got: %s", result)
+	}
 
 	// Check with v prefix
-	result = FormatNotification("v1.0.0", "v1.1.0")
+	result = FormatNotification("v1.0.0", "v1.1.0", testIcon)
 	if !strings.Contains(result, "v1.1.0") {
 		t.Errorf("notification should normalize version, got: %s", result)
 	}

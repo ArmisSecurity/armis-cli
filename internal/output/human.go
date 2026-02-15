@@ -3,19 +3,21 @@ package output
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -27,6 +29,187 @@ const (
 	maxLineLength  = 10 * 1024  // 10KB max per line
 	maxSnippetSize = 100 * 1024 // 100KB max total snippet size
 )
+
+// Package-level compiled regex patterns (performance optimization)
+var (
+	ansiPattern         = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	numberedListPattern = regexp.MustCompile(`\s*(\d+)[.\)]\s+`)
+	diffHunkPattern     = regexp.MustCompile(`@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
+)
+
+// severityRanks defines the sort order for severities (lower = more severe)
+var severityRanks = map[model.Severity]int{
+	model.SeverityCritical: 0,
+	model.SeverityHigh:     1,
+	model.SeverityMedium:   2,
+	model.SeverityLow:      3,
+	model.SeverityInfo:     4,
+}
+
+// wrapText wraps text at the specified width, preserving existing newlines.
+// Each line is prefixed with indent, and continuation lines get the same indent.
+func wrapText(text string, width int, indent string) string {
+	if width <= 0 {
+		width = DefaultWrapWidth
+	}
+
+	var result strings.Builder
+	paragraphs := strings.Split(text, "\n")
+
+	for i, paragraph := range paragraphs {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		if strings.TrimSpace(paragraph) == "" {
+			result.WriteString(indent)
+			continue
+		}
+		result.WriteString(wrapLine(paragraph, width, indent))
+	}
+	return result.String()
+}
+
+// wrapLine wraps a single line of text at word boundaries.
+func wrapLine(line string, width int, indent string) string {
+	effectiveWidth := width - len(indent)
+	if effectiveWidth <= 10 {
+		effectiveWidth = 60 // minimum reasonable width
+	}
+
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return indent
+	}
+
+	var result strings.Builder
+	result.WriteString(indent)
+	lineLen := 0
+
+	for i, word := range words {
+		wordLen := len(word)
+
+		if i == 0 {
+			result.WriteString(word)
+			lineLen = wordLen
+		} else if lineLen+1+wordLen <= effectiveWidth {
+			result.WriteString(" ")
+			result.WriteString(word)
+			lineLen += 1 + wordLen
+		} else {
+			result.WriteString("\n")
+			result.WriteString(indent)
+			result.WriteString(word)
+			lineLen = wordLen
+		}
+	}
+	return result.String()
+}
+
+// formatRecommendations formats a recommendations string that may contain
+// inline numbered items (e.g., "1. xxx 2. xxx") into a properly formatted list.
+func formatRecommendations(text string, baseIndent string) string {
+	if text == "" {
+		return ""
+	}
+
+	// Check if the text contains numbered patterns
+	matches := numberedListPattern.FindAllStringIndex(text, -1)
+	if len(matches) <= 1 {
+		// No numbered list detected, or just one item - wrap normally
+		return wrapText(text, DefaultWrapWidth, baseIndent)
+	}
+
+	// Split the text by numbered patterns
+	var items []string
+	var numbers []string
+	var preamble string // Text before the first numbered item
+	lastEnd := 0
+
+	for _, match := range matches {
+		if match[0] > lastEnd {
+			// There's text before this match
+			if len(items) > 0 {
+				// Belongs to the previous item
+				items[len(items)-1] += strings.TrimSpace(text[lastEnd:match[0]])
+			} else {
+				// Text before the first numbered item - store as preamble
+				preamble = strings.TrimSpace(text[lastEnd:match[0]])
+			}
+		}
+		// Extract the number
+		numMatch := numberedListPattern.FindStringSubmatch(text[match[0]:match[1]])
+		if len(numMatch) > 1 {
+			numbers = append(numbers, numMatch[1])
+		}
+		items = append(items, "")
+		lastEnd = match[1]
+	}
+
+	// Add remaining text to the last item
+	if lastEnd < len(text) && len(items) > 0 {
+		items[len(items)-1] = strings.TrimSpace(text[lastEnd:])
+	}
+
+	// Format output
+	var result strings.Builder
+
+	// Output preamble if present
+	if preamble != "" {
+		result.WriteString(wrapText(preamble, DefaultWrapWidth, baseIndent))
+		result.WriteString("\n")
+	}
+
+	// Format each numbered item with proper indentation
+	for i, item := range items {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		if i < len(numbers) {
+			num := numbers[i]
+			prefix := baseIndent + num + ". "
+			// Continuation lines get extra indent to align past the number
+			continuationIndent := baseIndent + strings.Repeat(" ", len(num)+2)
+			result.WriteString(wrapTextWithFirstLinePrefix(item, DefaultWrapWidth, prefix, continuationIndent))
+		}
+	}
+	return result.String()
+}
+
+// wrapTextWithFirstLinePrefix wraps text where the first line has a different
+// prefix than continuation lines (useful for numbered lists).
+func wrapTextWithFirstLinePrefix(text string, width int, firstPrefix string, contPrefix string) string {
+	if width <= 0 {
+		width = DefaultWrapWidth
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return firstPrefix
+	}
+
+	var result strings.Builder
+	result.WriteString(firstPrefix)
+	lineLen := len(firstPrefix)
+
+	for i, word := range words {
+		wordLen := len(word)
+
+		if i == 0 {
+			result.WriteString(word)
+			lineLen += wordLen
+		} else if lineLen+1+wordLen <= width {
+			result.WriteString(" ")
+			result.WriteString(word)
+			lineLen += 1 + wordLen
+		} else {
+			result.WriteString("\n")
+			result.WriteString(contPrefix)
+			result.WriteString(word)
+			lineLen = len(contPrefix) + wordLen
+		}
+	}
+	return result.String()
+}
 
 type errWriter struct {
 	w   io.Writer
@@ -68,15 +251,14 @@ func (iw *indentWriter) Write(p []byte) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		if iw.atBOL {
-			n, err := iw.w.Write([]byte(iw.prefix))
+			_, err := iw.w.Write([]byte(iw.prefix))
 			if err != nil {
 				return written, err
 			}
-			_ = n
 			iw.atBOL = false
 		}
 
-		idx := strings.IndexByte(string(p), '\n')
+		idx := bytes.IndexByte(p, '\n')
 		if idx == -1 {
 			n, err := iw.w.Write(p)
 			written += n
@@ -102,17 +284,16 @@ func (f *HumanFormatter) Format(result *model.ScanResult, w io.Writer) error {
 // FormatWithOptions formats the scan result in human-readable format with custom options.
 func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
 	ew := &errWriter{w: w}
+	s := GetStyles()
+	width := TerminalWidth()
 
-	// 1. Header banner
-	ew.write("\n")
-	ew.write("═══════════════════════════════════════════════════════════════\n")
-	ew.write("  ARMIS SECURITY SCAN RESULTS\n")
-	ew.write("═══════════════════════════════════════════════════════════════\n")
-	ew.write("\n")
+	// 1. Header banner (bold text, no box)
+	ew.write("%s\n", s.HeaderBanner.Render("ARMIS SECURITY SCAN RESULTS"))
 
-	// 2. Scan ID & Status
-	ew.write("Scan ID:     %s\n", result.ScanID)
-	ew.write("Status:      %s\n", result.Status)
+	// 2. Scan ID & Status with styled labels and values
+	labelStyle := s.MutedText
+	ew.write("%s  %s\n", labelStyle.Render("Scan ID:"), s.ScanID.Render(result.ScanID))
+	ew.write("%s  %s\n", labelStyle.Render("Status:"), s.StatusComplete.Render(result.Status))
 	ew.write("\n")
 
 	// 3. Brief status line for immediate orientation (skip if full summary at top)
@@ -125,10 +306,6 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	// 4. Summary at top if requested
 	if opts.SummaryTop {
 		ew.write("\n")
-		ew.write("───────────────────────────────────────────────────────────────\n")
-		ew.write("  SUMMARY\n")
-		ew.write("───────────────────────────────────────────────────────────────\n")
-		ew.write("\n")
 		if err := renderSummaryDashboard(w, result); err != nil {
 			return err
 		}
@@ -137,10 +314,15 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	// 5. Findings section
 	if len(result.Findings) > 0 {
 		ew.write("\n")
-		ew.write("───────────────────────────────────────────────────────────────\n")
-		ew.write("  FINDINGS\n")
-		ew.write("───────────────────────────────────────────────────────────────\n")
-		ew.write("\n")
+		sectionStyle := s.SectionTitle.
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(colorBorder).
+			BorderBottom(true).
+			BorderTop(false).
+			BorderLeft(false).
+			BorderRight(false).
+			Width(width)
+		ew.write("%s\n", sectionStyle.Render("FINDINGS"))
 
 		// 5. Individual findings
 		if opts.GroupBy != "" && opts.GroupBy != "none" {
@@ -154,9 +336,6 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 
 	// 6. Full detailed summary dashboard at the end (skip if already shown at top)
 	if !opts.SummaryTop {
-		ew.write("───────────────────────────────────────────────────────────────\n")
-		ew.write("  SUMMARY\n")
-		ew.write("───────────────────────────────────────────────────────────────\n")
 		ew.write("\n")
 		if err := renderSummaryDashboard(w, result); err != nil {
 			return err
@@ -164,119 +343,25 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 		ew.write("\n")
 	}
 
-	ew.write("═══════════════════════════════════════════════════════════════\n")
+	// Footer (simple thin line)
+	ew.write("%s\n", s.FooterSeparator.Render(strings.Repeat("─", width)))
 	ew.write("\n")
 
 	return ew.err
 }
 
-func getSeverityIcon(severity model.Severity) string {
-	switch severity {
-	case model.SeverityCritical:
-		return "🔴"
-	case model.SeverityHigh:
-		return "🟠"
-	case model.SeverityMedium:
-		return "🟡"
-	case model.SeverityLow:
-		return "🔵"
-	case model.SeverityInfo:
-		return "⚪"
-	default:
-		return "•"
-	}
-}
-
-func getSeverityColor(severity model.Severity) string {
-	switch severity {
-	case model.SeverityCritical:
-		return colorRed
-	case model.SeverityHigh:
-		return colorOrange
-	case model.SeverityMedium:
-		return colorYellow
-	case model.SeverityLow:
-		return colorBlue
-	case model.SeverityInfo:
-		return colorGray
-	default:
-		return ""
-	}
-}
-
-var (
-	colorReset     = "\033[0m"
-	colorRed       = "\033[31m"
-	colorGreen     = "\033[32m"
-	colorOrange    = "\033[33m"
-	colorYellow    = "\033[93m"
-	colorBlue      = "\033[34m"
-	colorGray      = "\033[90m"
-	colorBgRed     = "\033[101m"
-	colorBold      = "\033[1m"
-	colorUnderline = "\033[4m" //nolint:unused // reserved for future formatting options
-)
-
-// SyncColors synchronizes the output package's color variables with the
+// SyncColors synchronizes the output package's styles with the
 // centralized color state from internal/cli. Must be called after cli.InitColors().
 func SyncColors() {
-	if cli.ColorsEnabled() {
-		enableColors()
-	} else {
-		disableColors()
-	}
-}
-
-func enableColors() {
-	colorReset = "\033[0m"
-	colorRed = "\033[31m"
-	colorGreen = "\033[32m"
-	colorOrange = "\033[33m"
-	colorYellow = "\033[93m"
-	colorBlue = "\033[34m"
-	colorGray = "\033[90m"
-	colorBgRed = "\033[101m"
-	colorBold = "\033[1m"
-	colorUnderline = "\033[4m"
-}
-
-func disableColors() {
-	colorReset = ""
-	colorRed = ""
-	colorGreen = ""
-	colorOrange = ""
-	colorYellow = ""
-	colorBlue = ""
-	colorGray = ""
-	colorBgRed = ""
-	colorBold = ""
-	colorUnderline = ""
+	SyncStylesWithColorMode()
 }
 
 func sortFindingsBySeverity(findings []model.Finding) []model.Finding {
 	sorted := make([]model.Finding, len(findings))
 	copy(sorted, findings)
 
-	severityRank := map[model.Severity]int{
-		model.SeverityCritical: 0,
-		model.SeverityHigh:     1,
-		model.SeverityMedium:   2,
-		model.SeverityLow:      3,
-		model.SeverityInfo:     4,
-	}
-
 	sort.Slice(sorted, func(i, j int) bool {
-		rankI, okI := severityRank[sorted[i].Severity]
-		rankJ, okJ := severityRank[sorted[j].Severity]
-
-		if !okI {
-			rankI = 999
-		}
-		if !okJ {
-			rankJ = 999
-		}
-
-		return rankI < rankJ
+		return severityRank(sorted[i].Severity) < severityRank(sorted[j].Severity)
 	})
 
 	return sorted
@@ -392,47 +477,103 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 	return strings.Join(buf, "\n"), contextStart, nil
 }
 
-func formatCodeSnippet(finding model.Finding) string {
-	lang := detectLanguage(finding.File)
-
+// formatCodeSnippetWithFrame formats a code snippet with a simple header (no box border)
+func formatCodeSnippetWithFrame(finding model.Finding) string {
+	s := GetStyles()
 	lines := strings.Split(finding.CodeSnippet, "\n")
-	var formatted []string
-	formatted = append(formatted, "```"+lang)
 
 	snippetStart := 1
 	if finding.SnippetStartLine > 0 {
 		snippetStart = finding.SnippetStartLine
 	}
 
+	// Max code line width for truncation
+	maxCodeWidth := TerminalWidth() - 15
+
+	var codeLines []string
 	for i, line := range lines {
 		actualLine := snippetStart + i
-		lineNumStr := fmt.Sprintf("%4d  ", actualLine)
+		isVulnerable := finding.StartLine > 0 && finding.EndLine > 0 &&
+			actualLine >= finding.StartLine && actualLine <= finding.EndLine
 
-		if finding.StartLine > 0 && finding.EndLine > 0 {
-			if actualLine >= finding.StartLine && actualLine <= finding.EndLine {
-				if finding.StartColumn > 0 && finding.EndColumn > 0 {
-					highlighted := highlightColumns(line, finding.StartColumn, finding.EndColumn, actualLine, finding.StartLine, finding.EndLine)
-					formatted = append(formatted, lineNumStr+highlighted)
-				} else {
-					formatted = append(formatted, lineNumStr+colorBgRed+colorBold+line+colorReset)
-				}
+		// Format line number
+		lineNumStyle := s.CodeLineNumber
+		lineNum := lineNumStyle.Render(fmt.Sprintf("%4d", actualLine))
+
+		// Truncate long lines to prevent overflow
+		truncatedLine := truncateCodeLine(line, maxCodeWidth)
+
+		// Format the code line
+		var codeLine string
+		if isVulnerable {
+			// Highlight vulnerable lines
+			if finding.StartColumn > 0 && finding.EndColumn > 0 {
+				codeLine = highlightColumns(truncatedLine, finding.StartColumn, finding.EndColumn, actualLine, finding.StartLine, finding.EndLine)
 			} else {
-				formatted = append(formatted, lineNumStr+line)
+				codeLine = s.CodeHighlight.Render(truncatedLine)
 			}
+			// Add arrow indicator for vulnerable lines (colored by severity)
+			arrowStyle := s.GetSeverityText(finding.Severity)
+			codeLines = append(codeLines, fmt.Sprintf("%s %s  %s", arrowStyle.Render(IconPointer), lineNum, codeLine))
 		} else {
-			formatted = append(formatted, lineNumStr+line)
+			codeLine = truncatedLine
+			codeLines = append(codeLines, fmt.Sprintf("  %s  %s", lineNum, codeLine))
 		}
 	}
 
-	formatted = append(formatted, "```")
+	// Build file location header
+	var result strings.Builder
+	if finding.File != "" {
+		location := finding.File
+		if finding.StartLine > 0 {
+			location = fmt.Sprintf("%s:%d", location, finding.StartLine)
+		}
+		result.WriteString(s.MutedText.Render(location) + "\n")
+	}
 
-	return strings.Join(formatted, "\n")
+	for _, line := range codeLines {
+		result.WriteString(line + "\n")
+	}
+
+	return result.String()
+}
+
+// stripAnsi removes ANSI escape codes from a string for width calculation
+func stripAnsi(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
+}
+
+// truncateCodeLine truncates a line if it exceeds maxWidth, adding ellipsis
+func truncateCodeLine(line string, maxWidth int) string {
+	// Strip ANSI for accurate width calculation
+	plainLine := stripAnsi(line)
+	if runewidth.StringWidth(plainLine) <= maxWidth {
+		return line
+	}
+
+	// Truncate the plain line and add ellipsis
+	truncated := ""
+	width := 0
+	for _, r := range plainLine {
+		rw := runewidth.RuneWidth(r)
+		if width+rw+3 > maxWidth { // +3 for "..."
+			break
+		}
+		truncated += string(r)
+		width += rw
+	}
+	return truncated + "..."
 }
 
 func highlightColumns(line string, startCol, endCol, currentLine, startLine, endLine int) string {
+	s := GetStyles()
+	highlight := func(text string) string {
+		return s.VulnColumnHighlight.Render(text)
+	}
+
 	if currentLine == startLine && currentLine == endLine {
 		if startCol > len(line) {
-			return colorBgRed + colorBold + line + colorReset
+			return highlight(line)
 		}
 		before := line[:startCol-1]
 		if endCol > len(line) {
@@ -443,14 +584,14 @@ func highlightColumns(line string, startCol, endCol, currentLine, startLine, end
 		if endCol < len(line) {
 			after = line[endCol:]
 		}
-		return before + colorBgRed + colorBold + highlighted + colorReset + after
+		return before + highlight(highlighted) + after
 	} else if currentLine == startLine {
 		if startCol > len(line) {
-			return colorBgRed + colorBold + line + colorReset
+			return highlight(line)
 		}
 		before := line[:startCol-1]
 		highlighted := line[startCol-1:]
-		return before + colorBgRed + colorBold + highlighted + colorReset
+		return before + highlight(highlighted)
 	} else if currentLine == endLine {
 		if endCol > len(line) {
 			endCol = len(line)
@@ -460,307 +601,9 @@ func highlightColumns(line string, startCol, endCol, currentLine, startLine, end
 		if endCol < len(line) {
 			after = line[endCol:]
 		}
-		return colorBgRed + colorBold + highlighted + colorReset + after
+		return highlight(highlighted) + after
 	}
-	return colorBgRed + colorBold + line + colorReset
-}
-
-func detectLanguage(filename string) string {
-	if filename == "" {
-		return ""
-	}
-
-	ext := strings.ToLower(filepath.Ext(filename))
-	langMap := map[string]string{
-		".abap":        "abap",
-		".adb":         "ada",
-		".ads":         "ada",
-		".ada":         "ada",
-		".agda":        "agda",
-		".als":         "alloy",
-		".apib":        "apiblueprint",
-		".apl":         "apl",
-		".applescript": "applescript",
-		".scpt":        "applescript",
-		".arc":         "arc",
-		".ino":         "arduino",
-		".as":          "actionscript",
-		".asciidoc":    "asciidoc",
-		".adoc":        "asciidoc",
-		".asc":         "asciidoc",
-		".ash":         "ash",
-		".asm":         "assembly",
-		".s":           "assembly",
-		".nasm":        "assembly",
-		".au3":         "autoit",
-		".awk":         "awk",
-		".bal":         "ballerina",
-		".bat":         "batch",
-		".cmd":         "batch",
-		".befunge":     "befunge",
-		".bib":         "bibtex",
-		".bison":       "bison",
-		".blade":       "blade",
-		".bf":          "brainfuck",
-		".b":           "brainfuck",
-		".brs":         "brightscript",
-		".c":           "c",
-		".h":           "c",
-		".cats":        "c",
-		".idc":         "c",
-		".w":           "c",
-		".cs":          "csharp",
-		".csx":         "csharp",
-		".cpp":         "cpp",
-		".cc":          "cpp",
-		".cxx":         "cpp",
-		".hpp":         "cpp",
-		".hh":          "cpp",
-		".hxx":         "cpp",
-		".c++":         "cpp",
-		".h++":         "cpp",
-		".cmake":       "cmake",
-		".cbl":         "cobol",
-		".cob":         "cobol",
-		".cpy":         "cobol",
-		".coffee":      "coffeescript",
-		".cfm":         "coldfusion",
-		".cfc":         "coldfusion",
-		".lisp":        "commonlisp",
-		".lsp":         "commonlisp",
-		".cl":          "commonlisp",
-		".coq":         "coq",
-		".cr":          "crystal",
-		".css":         "css",
-		".cu":          "cuda",
-		".cuh":         "cuda",
-		".d":           "d",
-		".di":          "d",
-		".dart":        "dart",
-		".diff":        "diff",
-		".patch":       "diff",
-		".dockerfile":  "dockerfile",
-		".dot":         "dot",
-		".gv":          "dot",
-		".dylan":       "dylan",
-		".e":           "eiffel",
-		".ex":          "elixir",
-		".exs":         "elixir",
-		".elm":         "elm",
-		".el":          "elisp",
-		".emacs":       "elisp",
-		".erl":         "erlang",
-		".hrl":         "erlang",
-		".fs":          "fsharp",
-		".fsi":         "fsharp",
-		".fsx":         "fsharp",
-		".factor":      "factor",
-		".fy":          "fancy",
-		".purs":        "purescript",
-		".f":           "fortran",
-		".f90":         "fortran",
-		".f95":         "fortran",
-		".for":         "fortran",
-		".fth":         "forth",
-		".4th":         "forth",
-		".ftl":         "freemarker",
-		".g4":          "antlr",
-		".gd":          "gdscript",
-		".glsl":        "glsl",
-		".vert":        "glsl",
-		".frag":        "glsl",
-		".geo":         "glsl",
-		".gml":         "gml",
-		".go":          "go",
-		".gql":         "graphql",
-		".graphql":     "graphql",
-		".groovy":      "groovy",
-		".gvy":         "groovy",
-		".gy":          "groovy",
-		".gsh":         "groovy",
-		".hack":        "hack",
-		".haml":        "haml",
-		".handlebars":  "handlebars",
-		".hbs":         "handlebars",
-		".hs":          "haskell",
-		".lhs":         "haskell",
-		".hx":          "haxe",
-		".hxsl":        "haxe",
-		".hlsl":        "hlsl",
-		".html":        "html",
-		".htm":         "html",
-		".http":        "http",
-		".hy":          "hy",
-		".pro":         "idris",
-		".idr":         "idris",
-		".ni":          "inform7",
-		".i7x":         "inform7",
-		".iss":         "innosetup",
-		".io":          "io",
-		".ik":          "ioke",
-		".java":        "java",
-		".js":          "javascript",
-		".mjs":         "javascript",
-		".cjs":         "javascript",
-		".jsx":         "jsx",
-		".json":        "json",
-		".json5":       "json5",
-		".jsonnet":     "jsonnet",
-		".jl":          "julia",
-		".kt":          "kotlin",
-		".kts":         "kotlin",
-		".lean":        "lean",
-		".hlean":       "lean",
-		".less":        "less",
-		".ly":          "lilypond",
-		".ily":         "lilypond",
-		".lol":         "lolcode",
-		".lua":         "lua",
-		".m":           "objectivec",
-		".mm":          "objectivec",
-		".mk":          "makefile",
-		".mak":         "makefile",
-		".md":          "markdown",
-		".markdown":    "markdown",
-		".mkd":         "markdown",
-		".max":         "maxscript",
-		".ms":          "maxscript",
-		".mel":         "mel",
-		".moo":         "moocode",
-		".n":           "nemerle",
-		".nim":         "nim",
-		".nix":         "nix",
-		".nu":          "nushell",
-		".ml":          "ocaml",
-		".mli":         "ocaml",
-		".objdump":     "objdump",
-		".odin":        "odin",
-		".p":           "openscad",
-		".scad":        "openscad",
-		".ox":          "ox",
-		".oxh":         "ox",
-		".ozf":         "oz",
-		".oz":          "oz",
-		".pwn":         "pawn",
-		".inc":         "pawn",
-		".peg":         "peg",
-		".pl":          "perl",
-		".pm":          "perl",
-		".t":           "perl",
-		".php":         "php",
-		".phtml":       "php",
-		".php3":        "php",
-		".php4":        "php",
-		".php5":        "php",
-		".phps":        "php",
-		".pig":         "pig",
-		".pike":        "pike",
-		".pmod":        "pike",
-		".pogo":        "pogoscript",
-		".pony":        "pony",
-		".ps1":         "powershell",
-		".psm1":        "powershell",
-		".psd1":        "powershell",
-		".prolog":      "prolog",
-		".proto":       "protobuf",
-		".pp":          "puppet",
-		".py":          "python",
-		".pyw":         "python",
-		".pyx":         "python",
-		".pxd":         "python",
-		".pxi":         "python",
-		".q":           "q",
-		".qml":         "qml",
-		".r":           "r",
-		".R":           "r",
-		".rkt":         "racket",
-		".rktl":        "racket",
-		".raku":        "raku",
-		".rakumod":     "raku",
-		".re":          "reason",
-		".rei":         "reason",
-		".red":         "red",
-		".reds":        "red",
-		".rst":         "restructuredtext",
-		".rest":        "restructuredtext",
-		".rexx":        "rexx",
-		".ring":        "ring",
-		".robot":       "robotframework",
-		".rb":          "ruby",
-		".rbw":         "ruby",
-		".rake":        "ruby",
-		".rs":          "rust",
-		".sas":         "sas",
-		".sass":        "sass",
-		".scala":       "scala",
-		".sc":          "scala",
-		".scm":         "scheme",
-		".ss":          "scheme",
-		".scss":        "scss",
-		".sh":          "bash",
-		".bash":        "bash",
-		".zsh":         "bash",
-		".ksh":         "bash",
-		".csh":         "bash",
-		".fish":        "fish",
-		".sml":         "sml",
-		".sol":         "solidity",
-		".rq":          "sparql",
-		".sparql":      "sparql",
-		".sql":         "sql",
-		".stan":        "stan",
-		".do":          "stata",
-		".ado":         "stata",
-		".styl":        "stylus",
-		".sv":          "systemverilog",
-		".svh":         "systemverilog",
-		".swift":       "swift",
-		".tcl":         "tcl",
-		".tex":         "latex",
-		".textile":     "textile",
-		".thrift":      "thrift",
-		".toml":        "toml",
-		".ts":          "typescript",
-		".tsx":         "tsx",
-		".ttl":         "turtle",
-		".twig":        "twig",
-		".txt":         "text",
-		".vala":        "vala",
-		".vapi":        "vala",
-		".v":           "verilog",
-		".vh":          "verilog",
-		".vhdl":        "vhdl",
-		".vhd":         "vhdl",
-		".vim":         "vim",
-		".vue":         "vue",
-		".wast":        "webassembly",
-		".wat":         "webassembly",
-		".wgsl":        "wgsl",
-		".x10":         "x10",
-		".xc":          "xc",
-		".xml":         "xml",
-		".xsl":         "xml",
-		".xsd":         "xml",
-		".xpath":       "xpath",
-		".xq":          "xquery",
-		".xquery":      "xquery",
-		".xslt":        "xslt",
-		".xtend":       "xtend",
-		".yaml":        "yaml",
-		".yml":         "yaml",
-		".yang":        "yang",
-		".zig":         "zig",
-		".clj":         "clojure",
-		".cljs":        "clojure",
-		".cljc":        "clojure",
-		".edn":         "clojure",
-	}
-
-	if lang, ok := langMap[ext]; ok {
-		return lang
-	}
-
-	return ""
+	return highlight(line)
 }
 
 func scanDuration(result *model.ScanResult) string {
@@ -807,16 +650,18 @@ func pluralize(word string, count int) string {
 // Example output: "Found 5 issues: 2 critical, 1 high, 2 medium"
 func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	ew := &errWriter{w: w}
+	s := GetStyles()
 
 	total := result.Summary.Total
 
 	// Handle edge case: no findings
 	if total == 0 {
-		ew.write("✅ No security issues found.\n")
+		successStyle := s.SuccessText
+		ew.write("%s %s\n", IconSuccess, successStyle.Render("No issues found"))
 		return ew.err
 	}
 
-	// Build severity breakdown string
+	// Build severity breakdown string with styled counts
 	severities := []model.Severity{
 		model.SeverityCritical,
 		model.SeverityHigh,
@@ -829,44 +674,47 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	for _, sev := range severities {
 		count := result.Summary.BySeverity[sev]
 		if count > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", count, strings.ToLower(string(sev))))
+			sevStyle := s.GetSeverityText(sev)
+			parts = append(parts, sevStyle.Render(fmt.Sprintf("%d %s", count, strings.ToLower(string(sev)))))
 		}
 	}
 
-	// Format: "Found N issues: X critical, Y high, Z medium"
-	ew.write("⚠️  Found %d %s: %s\n", total, pluralize("issue", total), strings.Join(parts, ", "))
+	// Format: "N issues  ·  X critical, Y high, Z medium"
+	ew.write("%s  %s  %s\n",
+		s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total))),
+		s.MutedText.Render("·"),
+		strings.Join(parts, s.MutedText.Render(", ")))
 
 	return ew.err
 }
 
 func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	ew := &errWriter{w: w}
-	width := 45
+	s := GetStyles()
+	width := TerminalWidth()
 
-	ew.write("┌%s┐\n", strings.Repeat("─", width-2))
+	// Build the summary content
+	var content strings.Builder
 
-	headerLine := "│ 📊 SCAN SUMMARY"
-	headerPadding := width - runewidth.StringWidth(headerLine) - 1
-	ew.write("%s%s│\n", headerLine, strings.Repeat(" ", headerPadding))
+	// Header - clean, no emoji
+	content.WriteString("SCAN COMPLETE\n")
 
-	ew.write("├%s┤\n", strings.Repeat("─", width-2))
+	// Total findings - simple and prominent
+	content.WriteString(fmt.Sprintf("%d findings", result.Summary.Total))
 
-	totalLine := fmt.Sprintf("│ Total: %d", result.Summary.Total)
-	totalPadding := width - runewidth.StringWidth(totalLine) - 1
-	ew.write("%s%s│\n", totalLine, strings.Repeat(" ", totalPadding))
-
+	// Duration if available (inline)
 	if duration := scanDuration(result); duration != "" {
-		durationLine := fmt.Sprintf("│ Duration: %s", duration)
-		durationPadding := width - runewidth.StringWidth(durationLine) - 1
-		ew.write("%s%s│\n", durationLine, strings.Repeat(" ", durationPadding))
+		content.WriteString(fmt.Sprintf("  •  %s", duration))
 	}
+	content.WriteString("\n")
 
+	// Filtered count if any
 	if result.Summary.FilteredNonExploitable > 0 {
-		filteredLine := fmt.Sprintf("│ Filtered (Non-Exploitable): %d", result.Summary.FilteredNonExploitable)
-		filteredPadding := width - runewidth.StringWidth(filteredLine) - 1
-		ew.write("%s%s│\n", filteredLine, strings.Repeat(" ", filteredPadding))
+		filtered := s.MutedText.Render(fmt.Sprintf("(%d filtered as non-exploitable)", result.Summary.FilteredNonExploitable))
+		content.WriteString(filtered + "\n")
 	}
 
+	// Severity breakdown - minimal inline format with colored dots
 	severities := []model.Severity{
 		model.SeverityCritical,
 		model.SeverityHigh,
@@ -875,30 +723,19 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 		model.SeverityInfo,
 	}
 
-	hasFindings := false
-	for _, sev := range severities {
-		if result.Summary.BySeverity[sev] > 0 {
-			hasFindings = true
-			break
-		}
-	}
-
-	if hasFindings {
-		ew.write("│%s│\n", strings.Repeat(" ", width-2))
-	}
-
+	var sevParts []string
 	for _, sev := range severities {
 		count := result.Summary.BySeverity[sev]
-		if count > 0 {
-			icon := getSeverityIcon(sev)
-			line := fmt.Sprintf("│ %s  %s: %d", icon, sev, count)
-			padding := width - runewidth.StringWidth(line) - 1
-			ew.write("%s%s│\n", line, strings.Repeat(" ", padding))
-		}
+		sevStyle := s.GetSeverityText(sev)
+		dot := sevStyle.Render(SeverityDot)
+		label := strings.ToLower(string(sev))
+		sevParts = append(sevParts, fmt.Sprintf("%s %d %s", dot, count, label))
 	}
+	content.WriteString(strings.Join(sevParts, "  ") + "\n")
 
+	// Category breakdown - inline
 	if len(result.Summary.ByCategory) > 0 {
-		ew.write("│%s│\n", strings.Repeat(" ", width-2))
+		content.WriteString("\n")
 
 		type categoryCount struct {
 			category string
@@ -917,73 +754,86 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 			return categories[i].category < categories[j].category
 		})
 
+		var catParts []string
 		for _, cc := range categories {
-			line := fmt.Sprintf("│ %s: %d", cc.category, cc.count)
-			padding := width - runewidth.StringWidth(line) - 1
-			ew.write("%s%s│\n", line, strings.Repeat(" ", padding))
+			catParts = append(catParts, fmt.Sprintf("%s (%d)", util.FormatCategory(cc.category), cc.count))
 		}
+		catLabel := s.MutedText.Render("Categories:")
+		content.WriteString(fmt.Sprintf("%s %s\n", catLabel, strings.Join(catParts, ", ")))
 	}
 
-	ew.write("└%s┘\n", strings.Repeat("─", width-2))
+	// Render the summary box using predefined style
+	ew.write("%s\n", s.SummaryBox.Width(width).Render(content.String()))
 	return ew.err
 }
 
 func renderFindings(w io.Writer, findings []model.Finding, opts FormatOptions) {
+	s := GetStyles()
+	total := len(findings)
+	width := TerminalWidth()
 	for i, finding := range findings {
+		// Add breathing room before each finding separator (except first)
 		if i > 0 {
-			_, _ = fmt.Fprintf(w, "\n")
+			_, _ = fmt.Fprintf(w, "\n") // One blank line before separator
 		}
+
+		// Finding separator line with counter: ─── FINDING 1 of 6 ───
+		header := fmt.Sprintf(" FINDING %d of %d ", i+1, total)
+		headerLen := len(header)
+		leftPad := (width - headerLen) / 2
+		rightPad := width - headerLen - leftPad
+		if leftPad < 3 {
+			leftPad = 3
+		}
+		if rightPad < 3 {
+			rightPad = 3
+		}
+		separator := strings.Repeat("─", leftPad) + header + strings.Repeat("─", rightPad)
+		_, _ = fmt.Fprintf(w, "%s\n\n", s.FindingHeader.Render(separator)) // One blank line after separator
 
 		renderFinding(w, finding, opts)
-
-		if i < len(findings)-1 {
-			_, _ = fmt.Fprintf(w, "\n───────────────────────────────────────────────────────────────\n")
-		}
 	}
 	_, _ = fmt.Fprintf(w, "\n")
 }
 
 func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
-	color := getSeverityColor(finding.Severity)
-	icon := getSeverityIcon(finding.Severity)
+	s := GetStyles()
 
-	_, _ = fmt.Fprintf(w, "%s %s%s%s\n", icon, color, finding.Severity, colorReset)
-	_, _ = fmt.Fprintf(w, "\n")
-	_, _ = fmt.Fprintf(w, "%s\n", finding.Title)
-	_, _ = fmt.Fprintf(w, "\n")
+	// Severity (bold colored text) + Title on same line
+	sevStyle := s.GetSeverityText(finding.Severity)
+	dot := sevStyle.Render(SeverityDot)
+	displayTitle := getHumanDisplayTitle(finding)
+	_, _ = fmt.Fprintf(w, "%s %s  %s\n", dot, sevStyle.Render(string(finding.Severity)), s.Bold.Render(displayTitle))
 
+	// Build compact metadata line: category · CWE/CVE (file location moved to code block header)
+	var metaParts []string
+
+	// Category first (what type of issue)
 	if finding.FindingCategory != "" {
-		_, _ = fmt.Fprintf(w, "Category:    %s\n", finding.FindingCategory)
+		metaParts = append(metaParts, util.FormatCategory(finding.FindingCategory))
 	}
 
-	if len(finding.CVEs) > 0 {
-		_, _ = fmt.Fprintf(w, "CVE:         %s\n", strings.Join(finding.CVEs, ", "))
-	}
-
+	// CWE/CVE identifiers
 	if len(finding.CWEs) > 0 {
-		_, _ = fmt.Fprintf(w, "CWE:         %s\n", strings.Join(finding.CWEs, ", "))
+		metaParts = append(metaParts, finding.CWEs[0]) // Show first CWE
+	}
+	if len(finding.CVEs) > 0 {
+		metaParts = append(metaParts, finding.CVEs[0]) // Show first CVE
 	}
 
-	if finding.File != "" {
-		location := finding.File
-		if finding.StartLine > 0 {
-			if finding.EndLine > 0 && finding.EndLine != finding.StartLine {
-				location = fmt.Sprintf("%s:%d-%d", location, finding.StartLine, finding.EndLine)
-			} else {
-				location = fmt.Sprintf("%s:%d", location, finding.StartLine)
-			}
-			if finding.StartColumn > 0 {
-				location = fmt.Sprintf("%s:%d", location, finding.StartColumn)
-			}
-		}
-		_, _ = fmt.Fprintf(w, "Location:    %s\n", location)
+	// Print compact metadata line
+	if len(metaParts) > 0 {
+		sep := s.MutedText.Render(" · ")
+		_, _ = fmt.Fprintf(w, "%s\n", strings.Join(metaParts, sep))
+	}
 
-		if opts.RepoPath != "" && finding.StartLine > 0 {
-			if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine, opts.Debug); blameInfo != nil {
-				maskedEmail := maskEmail(blameInfo.Email)
-				_, _ = fmt.Fprintf(w, "Git Blame:   %s <%s> (%s, %s)\n",
-					blameInfo.Author, maskedEmail, blameInfo.Date, blameInfo.CommitSHA[:7])
-			}
+	// Git blame on separate line if available
+	labelStyle := s.MutedText
+	if finding.File != "" && opts.RepoPath != "" && finding.StartLine > 0 {
+		if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine, opts.Debug); blameInfo != nil {
+			maskedEmail := maskEmail(blameInfo.Email)
+			_, _ = fmt.Fprintf(w, "%s %s <%s> (%s, %s)\n",
+				labelStyle.Render("Blame:"), blameInfo.Author, maskedEmail, blameInfo.Date, blameInfo.CommitSHA[:7])
 		}
 	}
 
@@ -994,9 +844,10 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		}
 	}
 
+	// Code snippet with framed box
 	if finding.CodeSnippet != "" {
-		_, _ = fmt.Fprintf(w, "\nCode:\n")
-		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippet(finding))
+		_, _ = fmt.Fprintf(w, "\n")
+		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippetWithFrame(finding))
 	}
 
 	// Display proposed fix if available
@@ -1011,14 +862,17 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 }
 
 func renderGroupedFindings(w io.Writer, groups []FindingGroup, opts FormatOptions) {
+	s := GetStyles()
+	width := TerminalWidth()
 	for i, group := range groups {
 		if i > 0 {
 			_, _ = fmt.Fprintf(w, "\n")
 		}
 
-		header := fmt.Sprintf("📁 %s (%d findings)", group.Label, len(group.Findings))
-		_, _ = fmt.Fprintf(w, "%s\n", header)
-		_, _ = fmt.Fprintf(w, "%s\n\n", strings.Repeat("─", len(header)))
+		// Styled group header using centralized style
+		headerStyle := s.HeaderBox.Width(width)
+		header := fmt.Sprintf("%s (%d %s)", group.Label, len(group.Findings), pluralize("finding", len(group.Findings)))
+		_, _ = fmt.Fprintf(w, "%s\n\n", headerStyle.Render(header))
 
 		for j, finding := range group.Findings {
 			if j > 0 {
@@ -1057,14 +911,16 @@ func groupFindings(findings []model.Finding, groupBy string) []FindingGroup {
 		groupMap[key] = append(groupMap[key], finding)
 	}
 
+	styles := GetStyles()
 	var groups []FindingGroup
 	for key, findings := range groupMap {
 		label := key
 		if groupBy == "cwe" && key != "No CWE" {
 			label = fmt.Sprintf("CWE: %s", key)
 		} else if groupBy == "severity" {
-			icon := getSeverityIcon(model.Severity(key))
-			label = fmt.Sprintf("%s %s", icon, key)
+			sev := model.Severity(key)
+			styledDot := styles.GetSeverityText(sev).Render(SeverityDot)
+			label = fmt.Sprintf("%s %s", styledDot, key)
 		} else if groupBy == "file" {
 			label = fmt.Sprintf("File: %s", key)
 		}
@@ -1087,14 +943,7 @@ func groupFindings(findings []model.Finding, groupBy string) []FindingGroup {
 }
 
 func severityRank(sev model.Severity) int {
-	ranks := map[model.Severity]int{
-		model.SeverityCritical: 0,
-		model.SeverityHigh:     1,
-		model.SeverityMedium:   2,
-		model.SeverityLow:      3,
-		model.SeverityInfo:     4,
-	}
-	if rank, ok := ranks[sev]; ok {
+	if rank, ok := severityRanks[sev]; ok {
 		return rank
 	}
 	return 999
@@ -1110,7 +959,7 @@ func isGitRepo(repoPath string) bool {
 func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 	if !isGitRepo(repoPath) {
 		if debug {
-			fmt.Printf("DEBUG: git blame skipped - %s is not a git repository\n", repoPath)
+			fmt.Fprintf(os.Stderr, "DEBUG: git blame skipped - %s is not a git repository\n", repoPath)
 		}
 		return nil
 	}
@@ -1118,13 +967,13 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 	filePath, err := util.SafeJoinPath(repoPath, file)
 	if err != nil {
 		if debug {
-			fmt.Printf("DEBUG: git blame skipped - invalid file path %q: %v\n", file, err)
+			fmt.Fprintf(os.Stderr, "DEBUG: git blame skipped - invalid file path %q: %v\n", file, err)
 		}
 		return nil
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		if debug {
-			fmt.Printf("DEBUG: git blame skipped - file does not exist: %s\n", filePath)
+			fmt.Fprintf(os.Stderr, "DEBUG: git blame skipped - file does not exist: %s\n", filePath)
 		}
 		return nil
 	}
@@ -1136,7 +985,7 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 	output, err := cmd.Output()
 	if err != nil {
 		if debug {
-			fmt.Printf("DEBUG: git blame failed for %s:%d - %v\n", file, line, err)
+			fmt.Fprintf(os.Stderr, "DEBUG: git blame failed for %s:%d - %v\n", file, line, err)
 		}
 		return nil
 	}
@@ -1211,52 +1060,78 @@ func getTopLevelDomain(domain string) string {
 	return domain
 }
 
+// getHumanDisplayTitle returns a concise title for human output.
+// For OWASP-based titles, extracts just the category (e.g., "Injection" instead of
+// "Injection (CWE-89: Improper Neutralization...)").
+// CWE/CVE details are shown separately in the metadata line.
+func getHumanDisplayTitle(finding model.Finding) string {
+	title := finding.Title
+
+	// If title contains parenthesized CWE info, extract just the prefix
+	// Pattern: "Category Name (CWE-XXX: ...)" → "Category Name"
+	if idx := strings.Index(title, " (CWE-"); idx > 0 {
+		return strings.TrimSpace(title[:idx])
+	}
+
+	return title
+}
+
 // formatFixSection formats the proposed fix section for display.
 func formatFixSection(fix *model.Fix) string {
 	if fix == nil {
 		return ""
 	}
 
+	s := GetStyles()
 	var sb strings.Builder
 
 	// Display fix status header
 	sb.WriteString("\n")
 	if fix.IsValid {
-		sb.WriteString(colorGreen + "✓ Proposed Fix Available" + colorReset + "\n")
+		sb.WriteString(s.SuccessText.Render(fmt.Sprintf("%s Validated Fix", IconSuccess)) + "\n")
 	} else {
-		sb.WriteString(colorYellow + "⚠ Proposed Fix (Unvalidated)" + colorReset + "\n")
+		sb.WriteString(s.MutedText.Render("Proposed Fix") + "\n")
 	}
 
-	// Display explanation
+	// Display explanation with text wrapping
 	if fix.Explanation != "" {
-		sb.WriteString("\nExplanation:\n")
-		sb.WriteString("  " + fix.Explanation + "\n")
+		labelStyle := s.SubsectionTitle
+		sb.WriteString("\n" + labelStyle.Render("Explanation:") + "\n")
+		sb.WriteString(wrapText(fix.Explanation, DefaultWrapWidth, "  "))
+		sb.WriteString("\n")
 	}
 
-	// Display recommendations
+	// Display recommendations as formatted list
 	if fix.Recommendations != "" {
-		sb.WriteString("\nRecommendations:\n")
-		sb.WriteString("  " + fix.Recommendations + "\n")
+		labelStyle := s.SubsectionTitle
+		sb.WriteString("\n" + labelStyle.Render("Recommendations:") + "\n")
+		sb.WriteString(formatRecommendations(fix.Recommendations, "  "))
+		sb.WriteString("\n")
 	}
 
-	// Display proposed fixes (code snippets)
-	if len(fix.ProposedFixes) > 0 {
-		sb.WriteString("\nProposed Code Changes:\n")
+	// Display patch (unified diff) if available - preferred over proposed code snippets
+	hasPatch := fix.Patch != nil && *fix.Patch != ""
+	if hasPatch {
+		sb.WriteString("\n")
+		sb.WriteString(formatDiffWithColorsStyled(*fix.Patch))
+	}
+
+	// Display proposed fixes (code snippets) only if no patch is available
+	// The diff is more concise and informative when present
+	if len(fix.ProposedFixes) > 0 && !hasPatch {
+		labelStyle := s.SubsectionTitle
+		sb.WriteString("\n" + labelStyle.Render("Proposed Code Changes:") + "\n")
 		for _, snippet := range fix.ProposedFixes {
 			sb.WriteString(formatProposedSnippet(snippet))
 		}
 	}
 
-	// Display patch if available
-	if fix.Patch != nil && *fix.Patch != "" {
-		sb.WriteString("\nUnified Diff:\n")
-		sb.WriteString(formatDiffWithColors(*fix.Patch))
-	}
-
-	// Display feedback if available
+	// Display feedback if available with text wrapping
 	if fix.Feedback != "" {
-		sb.WriteString("\nFeedback:\n")
-		sb.WriteString("  " + fix.Feedback + "\n")
+		labelStyle := s.SubsectionTitle
+		sb.WriteString("\n" + labelStyle.Render("Feedback:") + "\n")
+		sb.WriteString(wrapText(fix.Feedback, DefaultWrapWidth, "  "))
+		sb.WriteString("\n")
 	}
 
 	return sb.String()
@@ -1264,6 +1139,7 @@ func formatFixSection(fix *model.Fix) string {
 
 // formatProposedSnippet formats a single code snippet for the proposed fix.
 func formatProposedSnippet(snippet model.CodeSnippetFix) string {
+	s := GetStyles()
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("  File: %s", snippet.FilePath))
@@ -1281,63 +1157,428 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 		startLine = *snippet.StartLine
 	}
 	for i, line := range lines {
-		sb.WriteString(fmt.Sprintf("  %s%4d%s  %s\n", colorGray, startLine+i, colorReset, line))
+		lineNum := s.ProposedLineNumber.Render(fmt.Sprintf("%4d", startLine+i))
+		sb.WriteString(fmt.Sprintf("  %s  %s\n", lineNum, line))
 	}
 
 	return sb.String()
 }
 
-// formatDiffWithColors formats a unified diff with colored output.
-func formatDiffWithColors(patch string) string {
-	var sb strings.Builder
+// DiffLineType represents the type of a line in a unified diff
+type DiffLineType int
+
+const (
+	DiffLineContext DiffLineType = iota // Context line (no +/-)
+	DiffLineAdd                         // Added line (+)
+	DiffLineRemove                      // Removed line (-)
+	DiffLineHunk                        // Hunk header (@@ ... @@)
+)
+
+// DiffLine represents a parsed line from a unified diff
+type DiffLine struct {
+	Type    DiffLineType
+	Content string // Line content without the +/- prefix
+	Raw     string // Original line including prefix
+	OldNum  int    // Line number in old file (0 if not applicable)
+	NewNum  int    // Line number in new file (0 if not applicable)
+}
+
+// ChangeSpan represents a range of characters that differ between two lines
+type ChangeSpan struct {
+	Start int
+	End   int
+}
+
+// parseDiffHunk extracts line numbers from a hunk header like "@@ -31,6 +31,8 @@"
+func parseDiffHunk(line string) (oldStart, oldCount, newStart, newCount int) {
+	matches := diffHunkPattern.FindStringSubmatch(line)
+	if len(matches) < 4 {
+		return 1, 1, 1, 1 // Fallback
+	}
+
+	oldStart, _ = strconv.Atoi(matches[1])
+	if matches[2] != "" {
+		oldCount, _ = strconv.Atoi(matches[2])
+	} else {
+		oldCount = 1
+	}
+	newStart, _ = strconv.Atoi(matches[3])
+	if len(matches) > 4 && matches[4] != "" {
+		newCount, _ = strconv.Atoi(matches[4])
+	} else {
+		newCount = 1
+	}
+	return
+}
+
+// parseDiffLines parses a unified diff patch into structured DiffLine entries
+func parseDiffLines(patch string) []DiffLine {
+	var result []DiffLine
 	lines := strings.Split(patch, "\n")
 
+	var oldLineNum, newLineNum int
+
 	for _, line := range lines {
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			sb.WriteString(colorGreen + "  " + line + colorReset + "\n")
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			sb.WriteString(colorRed + "  " + line + colorReset + "\n")
-		} else if strings.HasPrefix(line, "@@") {
-			sb.WriteString(colorBlue + "  " + line + colorReset + "\n")
-		} else {
-			sb.WriteString("  " + line + "\n")
+		// Skip file headers
+		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "@@") {
+			oldStart, _, newStart, _ := parseDiffHunk(line)
+			oldLineNum = oldStart
+			newLineNum = newStart
+			result = append(result, DiffLine{
+				Type:    DiffLineHunk,
+				Content: line,
+				Raw:     line,
+			})
+		} else if strings.HasPrefix(line, "+") {
+			result = append(result, DiffLine{
+				Type:    DiffLineAdd,
+				Content: line[1:], // Strip the + prefix
+				Raw:     line,
+				NewNum:  newLineNum,
+			})
+			newLineNum++
+		} else if strings.HasPrefix(line, "-") {
+			result = append(result, DiffLine{
+				Type:    DiffLineRemove,
+				Content: line[1:], // Strip the - prefix
+				Raw:     line,
+				OldNum:  oldLineNum,
+			})
+			oldLineNum++
+		} else if line != "" { // Context line (preserve empty lines within diff)
+			// Context lines in unified diff start with a space - strip it like +/- prefixes
+			content := line
+			if strings.HasPrefix(line, " ") {
+				content = line[1:]
+			}
+			result = append(result, DiffLine{
+				Type:    DiffLineContext,
+				Content: content,
+				Raw:     line,
+				OldNum:  oldLineNum,
+				NewNum:  newLineNum,
+			})
+			oldLineNum++
+			newLineNum++
+		} else if len(result) > 0 { // Empty line within diff content
+			result = append(result, DiffLine{
+				Type:    DiffLineContext,
+				Content: "",
+				Raw:     "",
+				OldNum:  oldLineNum,
+				NewNum:  newLineNum,
+			})
+			oldLineNum++
+			newLineNum++
 		}
 	}
 
+	return result
+}
+
+// findInlineChanges compares two strings and returns spans of differing characters.
+// Uses a simple word-boundary approach for better highlighting.
+func findInlineChanges(oldLine, newLine string) (oldSpans, newSpans []ChangeSpan) {
+	// Tokenize both lines by word boundaries
+	oldWords := tokenizeLine(oldLine)
+	newWords := tokenizeLine(newLine)
+
+	// Find differing tokens
+	oldPos, newPos := 0, 0
+	for i := 0; i < len(oldWords) || i < len(newWords); i++ {
+		var oldWord, newWord string
+		if i < len(oldWords) {
+			oldWord = oldWords[i]
+		}
+		if i < len(newWords) {
+			newWord = newWords[i]
+		}
+
+		if oldWord != newWord {
+			if oldWord != "" {
+				oldSpans = append(oldSpans, ChangeSpan{Start: oldPos, End: oldPos + len(oldWord)})
+			}
+			if newWord != "" {
+				newSpans = append(newSpans, ChangeSpan{Start: newPos, End: newPos + len(newWord)})
+			}
+		}
+
+		oldPos += len(oldWord)
+		newPos += len(newWord)
+	}
+
+	return
+}
+
+// tokenizeLine splits a line into word-like tokens preserving positions
+func tokenizeLine(s string) []string {
+	var tokens []string
+	var current strings.Builder
+
+	for _, r := range s {
+		if isWordChar(r) {
+			current.WriteRune(r)
+		} else {
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			tokens = append(tokens, string(r))
+		}
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens
+}
+
+// isWordChar returns true if the rune is part of a word
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+}
+
+// formatDiffWithColorsStyled formats a unified diff with enhanced visual styling.
+// Features: background colors, line numbers, gutter styling, inline change highlighting.
+func formatDiffWithColorsStyled(patch string) string {
+	s := GetStyles()
+	lines := parseDiffLines(patch)
+	termWidth := TerminalWidth()
+
+	var sb strings.Builder
+
+	// Track remove lines for inline highlighting with subsequent add lines
+	var pendingRemoves []DiffLine
+
+	for _, line := range lines {
+		switch line.Type {
+		case DiffLineHunk:
+			// Flush any pending removes
+			for _, r := range pendingRemoves {
+				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+			}
+			pendingRemoves = nil
+			sb.WriteString(formatDiffHunkLine(line, s))
+
+		case DiffLineRemove:
+			// Collect removes to potentially pair with subsequent adds
+			pendingRemoves = append(pendingRemoves, line)
+
+		case DiffLineAdd:
+			// Check if we can pair with a pending remove for inline highlighting
+			if len(pendingRemoves) > 0 {
+				removeLine := pendingRemoves[0]
+				pendingRemoves = pendingRemoves[1:]
+				oldSpans, newSpans := findInlineChanges(removeLine.Content, line.Content)
+				sb.WriteString(formatDiffRemoveLine(removeLine, s, oldSpans, termWidth))
+				sb.WriteString(formatDiffAddLine(line, s, newSpans, termWidth))
+			} else {
+				sb.WriteString(formatDiffAddLine(line, s, nil, termWidth))
+			}
+
+		case DiffLineContext:
+			// Flush pending removes first
+			for _, r := range pendingRemoves {
+				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+			}
+			pendingRemoves = nil
+			sb.WriteString(formatDiffContextLine(line, s, termWidth))
+		}
+	}
+
+	// Flush any remaining removes
+	for _, r := range pendingRemoves {
+		sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth))
+	}
+
 	return sb.String()
 }
 
+// formatDiffHunkLine formats a hunk header line (@@ ... @@)
+func formatDiffHunkLine(line DiffLine, s *Styles) string {
+	return "  " + s.DiffHunk.Render(line.Content) + "\n"
+}
+
+// formatDiffContextLine formats a context line with line numbers (no gutter, matches code snippets)
+func formatDiffContextLine(line DiffLine, s *Styles, termWidth int) string {
+	lineNum := fmt.Sprintf("%3d", line.NewNum)
+	content := truncateDiffLine(line.Content, termWidth-10)
+	return fmt.Sprintf("  %s   %s\n", s.DiffLineNumber.Render(lineNum), content)
+}
+
+// formatDiffRemoveLine formats a removed line with background color and optional inline highlights
+func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int) string {
+	lineNum := fmt.Sprintf("%3d", line.OldNum)
+	marker := s.DiffRemove.Render("-")
+	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
+	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Adjust highlight spans if content was truncated
+	adjustedHighlights := adjustHighlightSpans(highlights, len(content))
+	content = applyInlineHighlights(content, adjustedHighlights, s.DiffRemoveHighlight, s.DiffRemoveLine)
+	if truncated {
+		content += "…"
+	}
+	// Apply background to the entire content area
+	styledContent := s.DiffRemoveLine.Render(content)
+	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
+}
+
+// formatDiffAddLine formats an added line with background color and optional inline highlights
+func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWidth int) string {
+	lineNum := fmt.Sprintf("%3d", line.NewNum)
+	marker := s.DiffAdd.Render("+")
+	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
+	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Adjust highlight spans if content was truncated
+	adjustedHighlights := adjustHighlightSpans(highlights, len(content))
+	content = applyInlineHighlights(content, adjustedHighlights, s.DiffAddHighlight, s.DiffAddLine)
+	if truncated {
+		content += "…"
+	}
+	// Apply background to the entire content area
+	styledContent := s.DiffAddLine.Render(content)
+	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
+}
+
+// applyInlineHighlights applies highlight styling to specific spans within a line
+func applyInlineHighlights(content string, spans []ChangeSpan, highlightStyle, baseStyle lipgloss.Style) string {
+	if len(spans) == 0 {
+		return content
+	}
+
+	var result strings.Builder
+	lastEnd := 0
+
+	for _, span := range spans {
+		// Clamp span to content bounds
+		start := span.Start
+		end := span.End
+		if start < 0 {
+			start = 0
+		}
+		if end > len(content) {
+			end = len(content)
+		}
+		if start >= end || start >= len(content) {
+			continue
+		}
+
+		// Add unhighlighted portion
+		if lastEnd < start {
+			result.WriteString(content[lastEnd:start])
+		}
+
+		// Add highlighted portion
+		result.WriteString(highlightStyle.Render(content[start:end]))
+		lastEnd = end
+	}
+
+	// Add remaining content
+	if lastEnd < len(content) {
+		result.WriteString(content[lastEnd:])
+	}
+
+	return result.String()
+}
+
+// truncateDiffLine truncates a line to fit within the given width
+func truncateDiffLine(line string, maxWidth int) string {
+	truncated, _ := truncateDiffLineWithFlag(line, maxWidth)
+	return truncated
+}
+
+// truncateDiffLineWithFlag truncates a line and returns whether truncation occurred.
+// This allows callers to add ellipsis after applying styling (to avoid ANSI corruption).
+func truncateDiffLineWithFlag(line string, maxWidth int) (string, bool) {
+	if maxWidth <= 0 {
+		return line, false
+	}
+	width := runewidth.StringWidth(line)
+	if width <= maxWidth {
+		return line, false
+	}
+	// Truncate without ellipsis - caller will add it after styling
+	return runewidth.Truncate(line, maxWidth-1, ""), true
+}
+
+// adjustHighlightSpans clamps highlight spans to fit within the given content length.
+// Spans that extend beyond maxLen are truncated; spans entirely beyond are removed.
+func adjustHighlightSpans(spans []ChangeSpan, maxLen int) []ChangeSpan {
+	if len(spans) == 0 || maxLen <= 0 {
+		return spans
+	}
+	var result []ChangeSpan
+	for _, span := range spans {
+		if span.Start >= maxLen {
+			continue // Span is entirely beyond truncated content
+		}
+		adjusted := ChangeSpan{Start: span.Start, End: span.End}
+		if adjusted.End > maxLen {
+			adjusted.End = maxLen
+		}
+		if adjusted.Start < adjusted.End {
+			result = append(result, adjusted)
+		}
+	}
+	return result
+}
+
 // formatValidationSection formats the finding validation section for display.
+// Uses a compact single-line summary format for quick scanning.
 func formatValidationSection(validation *model.FindingValidation) string {
 	if validation == nil {
 		return ""
 	}
 
+	s := GetStyles()
 	var sb strings.Builder
-	sb.WriteString("\nValidation:\n")
 
-	// Confidence
-	sb.WriteString(fmt.Sprintf("  Confidence:     %d%%\n", validation.Confidence))
+	labelStyle := s.SubsectionTitle
+	sb.WriteString("\n" + labelStyle.Render("Validation:") + "\n")
 
-	// Validated severity (if different)
+	// Build compact summary line: "  ✓ 100% confidence | HIGH | REACHABLE | Exposure: 6 (externally accessible)"
+	var parts []string
+
+	// Confidence with styled indicator
+	confidenceIcon := GetConfidenceIcon(validation.Confidence)
+	var confidenceStyle lipgloss.Style
+	if validation.Confidence >= 80 {
+		confidenceStyle = s.SuccessText
+	} else if validation.Confidence >= 50 {
+		confidenceStyle = s.WarningText
+	} else {
+		confidenceStyle = s.MutedText
+	}
+	parts = append(parts, confidenceStyle.Render(fmt.Sprintf("%s %d%% confidence", confidenceIcon, validation.Confidence)))
+
+	// AI Severity (if present)
 	if validation.ValidatedSeverity != nil {
-		sb.WriteString(fmt.Sprintf("  AI Severity:    %s\n", *validation.ValidatedSeverity))
+		parts = append(parts, s.Bold.Render(*validation.ValidatedSeverity))
 	}
 
-	// Taint propagation
+	// Reachability
 	if validation.TaintPropagation != "" {
-		sb.WriteString(fmt.Sprintf("  Reachability:   %s\n", validation.TaintPropagation))
+		parts = append(parts, string(validation.TaintPropagation))
 	}
 
 	// Exposure level
 	if validation.Exposure != nil {
 		exposureDesc := getExposureDescription(*validation.Exposure)
-		sb.WriteString(fmt.Sprintf("  Exposure:       %d (%s)\n", *validation.Exposure, exposureDesc))
+		parts = append(parts, fmt.Sprintf("Exposure: %d (%s)", *validation.Exposure, exposureDesc))
 	}
 
-	// Explanation
+	sb.WriteString("  ")
+	sb.WriteString(strings.Join(parts, " │ "))
+	sb.WriteString("\n")
+
+	// Analysis explanation as wrapped paragraph below the summary
 	if validation.Explanation != "" {
-		sb.WriteString(fmt.Sprintf("  Analysis:       %s\n", validation.Explanation))
+		sb.WriteString("\n")
+		sb.WriteString(wrapText(validation.Explanation, DefaultWrapWidth, "  "))
+		sb.WriteString("\n")
 	}
 
 	return sb.String()

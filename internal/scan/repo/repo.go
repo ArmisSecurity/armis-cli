@@ -16,6 +16,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -147,7 +148,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
 	}
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Creating a compressed archive...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
@@ -165,8 +166,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		errChan <- tarFunc()
 	}()
 
-	time.Sleep(500 * time.Millisecond)
-	spinner.Update("Uploading archive to Armis Cloud...")
+	spinner.Update("Uploading to Armis Cloud...")
 
 	ingestOpts := api.IngestOptions{
 		TenantID:     s.tenantID,
@@ -190,15 +190,18 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
+	styles := output.GetStyles()
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan initiated with ID:"),
+		styles.ScanID.Render(scanID))
 
-	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Analyzing code for vulnerabilities...", s.noProgress)
+	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
 	analysisSpinner.Start()
 	defer analysisSpinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Analyzing code for vulnerabilities..."))
+			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning for security issues..."))
 		})
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
@@ -206,9 +209,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Analysis completed in %s\n\n", scan.FormatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan completed in"),
+		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
-	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Fetching scan results...", s.noProgress)
+	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Retrieving results...", s.noProgress)
 	fetchSpinner.Start()
 	defer fetchSpinner.Stop()
 
@@ -532,10 +537,6 @@ func isTestFile(name string) bool {
 		if strings.HasPrefix(name, "test_") && (strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".R")) {
 			return true
 		}
-	}
-
-	if strings.HasSuffix(name, ".t") && !strings.Contains(name, ".") {
-		return true
 	}
 
 	return false

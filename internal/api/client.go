@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -213,7 +214,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	// Add SBOM/VEX generation flags if requested
 	if opts.GenerateSBOM {
 		if c.debug {
-			fmt.Printf("\n=== DEBUG: Sending sbom_generate=true ===\n")
+			fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending sbom_generate=true ===\n")
 		}
 		if err := writer.WriteField("sbom_generate", "true"); err != nil {
 			return "", fmt.Errorf("failed to write sbom_generate field: %w", err)
@@ -221,7 +222,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	}
 	if opts.GenerateVEX {
 		if c.debug {
-			fmt.Printf("\n=== DEBUG: Sending vex_generate=true ===\n")
+			fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending vex_generate=true ===\n")
 		}
 		if err := writer.WriteField("vex_generate", "true"); err != nil {
 			return "", fmt.Errorf("failed to write vex_generate field: %w", err)
@@ -337,7 +338,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 		select {
 		case <-timeoutCtx.Done():
 			if timeoutCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("scan timed out after %v (scan ID: %s)", timeout, scanID)
+				return nil, fmt.Errorf("scan timed out after %v", timeout)
 			}
 			return nil, timeoutCtx.Err()
 		case <-ticker.C:
@@ -407,7 +408,7 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	}
 
 	if c.debug {
-		fmt.Printf("\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
 	}
 
 	var result model.NormalizedResultsResponse
@@ -546,7 +547,7 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 
 	if resp.StatusCode == http.StatusNotFound {
 		if c.debug {
-			fmt.Printf("\n=== DEBUG: FetchArtifactScanResults returned 404 for scan_id=%s ===\n", scanID)
+			fmt.Fprintf(os.Stderr, "\n=== DEBUG: FetchArtifactScanResults returned 404 for scan_id=%s ===\n", scanID)
 		}
 		return nil, nil // Results not yet available
 	}
@@ -558,7 +559,7 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	}
 
 	if c.debug {
-		fmt.Printf("\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
 	}
 
 	if resp.StatusCode != http.StatusOK {

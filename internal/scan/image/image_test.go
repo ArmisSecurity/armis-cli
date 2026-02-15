@@ -403,7 +403,7 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("title is set to formatted FindingCategory when available", func(t *testing.T) {
+	t.Run("title uses description for findings with CVE", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "CODE_VULNERABILITY", []string{"CVE-2023-1234"}, nil),
 		}
@@ -411,21 +411,38 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
-		if findings[0].Title != "Code Vulnerability" {
-			t.Errorf("Title = %q, want %q", findings[0].Title, "Code Vulnerability")
+		// Findings with CVEs have type=Vulnerability (not SCA), so title uses description
+		if findings[0].Title != testSQLInjectionDescription {
+			t.Errorf("Title = %q, want %q", findings[0].Title, testSQLInjectionDescription)
 		}
 	})
 
-	t.Run("title falls back to description when FindingCategory is empty", func(t *testing.T) {
+	t.Run("title falls back to description when no CVE or OWASP", func(t *testing.T) {
 		input := []model.NormalizedFinding{
-			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "", []string{"CVE-2023-1234"}, nil),
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "CODE_VULNERABILITY", nil, nil),
 		}
 		input[0].NormalizedRemediation.Description = testSQLInjectionDescription
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
+		// Without CVE, should use first sentence of description
 		if findings[0].Title != testSQLInjectionDescription {
 			t.Errorf("Title = %q, want %q", findings[0].Title, testSQLInjectionDescription)
+		}
+	})
+
+	t.Run("title falls back to formatted category when no description", func(t *testing.T) {
+		input := []model.NormalizedFinding{
+			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "CODE_VULNERABILITY", nil, nil),
+		}
+		// Clear the default description from helper
+		input[0].NormalizedRemediation.Description = ""
+
+		findings, _ := convertNormalizedFindings(input, false, true)
+
+		// Should fall back to formatted category
+		if findings[0].Title != "Code Vulnerability" {
+			t.Errorf("Title = %q, want %q", findings[0].Title, "Code Vulnerability")
 		}
 	})
 

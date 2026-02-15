@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
@@ -281,18 +282,21 @@ func parseVersion(v string) []int {
 }
 
 // FormatNotification builds the user-facing notification string.
-func FormatNotification(current, latest string) string {
+// The icon parameter should be passed from the caller (e.g., output.IconDependency)
+// to allow proper color mode handling.
+func FormatNotification(current, latest, icon string) string {
+	styles := output.GetStyles()
 	current = strings.TrimPrefix(current, "v")
 	latest = strings.TrimPrefix(latest, "v")
 
 	updateCmd := getUpdateCommand()
 
-	msg := fmt.Sprintf(
-		"\nNote: armis-cli v%s is available (you have v%s)\n",
-		latest, current,
-	)
+	label := styles.WarningText.Render(icon + " Update available:")
+	versions := styles.Bold.Render(fmt.Sprintf("v%s → v%s", current, latest))
+
+	msg := fmt.Sprintf("\n%s %s\n", label, versions)
 	if updateCmd != "" {
-		msg += fmt.Sprintf("      Run '%s' to update\n", updateCmd)
+		msg += fmt.Sprintf("   %s\n", styles.MutedText.Render(updateCmd))
 	}
 	return msg
 }

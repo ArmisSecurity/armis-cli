@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
@@ -152,52 +153,6 @@ func TestHumanFormatter_EmptyFindings(t *testing.T) {
 	}
 }
 
-func TestGetSeverityColor(t *testing.T) {
-	tests := []struct {
-		severity model.Severity
-		expected string
-	}{
-		{model.SeverityCritical, colorRed},
-		{model.SeverityHigh, colorOrange},
-		{model.SeverityMedium, colorYellow},
-		{model.SeverityLow, colorBlue},
-		{model.SeverityInfo, colorGray},
-		{model.Severity("UNKNOWN"), ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.severity), func(t *testing.T) {
-			result := getSeverityColor(tt.severity)
-			if result != tt.expected {
-				t.Errorf("getSeverityColor(%s) = %q, want %q", tt.severity, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGetSeverityIcon(t *testing.T) {
-	tests := []struct {
-		severity model.Severity
-		expected string
-	}{
-		{model.SeverityCritical, "🔴"},
-		{model.SeverityHigh, "🟠"},
-		{model.SeverityMedium, "🟡"},
-		{model.SeverityLow, "🔵"},
-		{model.SeverityInfo, "⚪"},
-		{model.Severity("UNKNOWN"), "•"},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.severity), func(t *testing.T) {
-			result := getSeverityIcon(tt.severity)
-			if result != tt.expected {
-				t.Errorf("getSeverityIcon(%s) = %q, want %q", tt.severity, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestIndentWriter(t *testing.T) {
 	t.Run("writes with prefix", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -251,33 +206,6 @@ func TestIndentWriter(t *testing.T) {
 	})
 }
 
-func TestDetectLanguage(t *testing.T) {
-	tests := []struct {
-		filename string
-		expected string
-	}{
-		{"main.go", "go"},
-		{"script.py", "python"},
-		{"app.js", "javascript"},
-		{"style.css", "css"},
-		{"index.html", "html"},
-		{"config.json", "json"},
-		{"data.xml", "xml"},
-		{"script.sh", "bash"},
-		{"unknown.xyz", ""},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.filename, func(t *testing.T) {
-			result := detectLanguage(tt.filename)
-			if result != tt.expected {
-				t.Errorf("detectLanguage(%s) = %q, want %q", tt.filename, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestSortFindingsBySeverity(t *testing.T) {
 	findings := []model.Finding{
 		{ID: "1", Severity: model.SeverityLow},
@@ -302,91 +230,16 @@ func TestSortFindingsBySeverity(t *testing.T) {
 	}
 }
 
-func TestDisableColors(t *testing.T) {
-	// Save original color values
-	origReset := colorReset
-	origRed := colorRed
-	origOrange := colorOrange
-	origYellow := colorYellow
-	origBlue := colorBlue
-	origGray := colorGray
-	origBgRed := colorBgRed
-	origBold := colorBold
-	origUnderline := colorUnderline
-
-	// Restore colors after test
-	defer func() {
-		colorReset = origReset
-		colorRed = origRed
-		colorOrange = origOrange
-		colorYellow = origYellow
-		colorBlue = origBlue
-		colorGray = origGray
-		colorBgRed = origBgRed
-		colorBold = origBold
-		colorUnderline = origUnderline
-	}()
-
-	// Call disableColors
-	disableColors()
-
-	// Verify all color variables are empty
-	if colorReset != "" {
-		t.Errorf("colorReset should be empty, got %q", colorReset)
-	}
-	if colorRed != "" {
-		t.Errorf("colorRed should be empty, got %q", colorRed)
-	}
-	if colorOrange != "" {
-		t.Errorf("colorOrange should be empty, got %q", colorOrange)
-	}
-	if colorYellow != "" {
-		t.Errorf("colorYellow should be empty, got %q", colorYellow)
-	}
-	if colorBlue != "" {
-		t.Errorf("colorBlue should be empty, got %q", colorBlue)
-	}
-	if colorGray != "" {
-		t.Errorf("colorGray should be empty, got %q", colorGray)
-	}
-	if colorBgRed != "" {
-		t.Errorf("colorBgRed should be empty, got %q", colorBgRed)
-	}
-	if colorBold != "" {
-		t.Errorf("colorBold should be empty, got %q", colorBold)
-	}
-	if colorUnderline != "" {
-		t.Errorf("colorUnderline should be empty, got %q", colorUnderline)
-	}
-}
-
 func TestFormattedOutputWithoutColors(t *testing.T) {
-	// Save original color values
-	origReset := colorReset
-	origRed := colorRed
-	origOrange := colorOrange
-	origYellow := colorYellow
-	origBlue := colorBlue
-	origGray := colorGray
-	origBgRed := colorBgRed
-	origBold := colorBold
-	origUnderline := colorUnderline
+	// Initialize with no colors using cli package
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
 
 	// Restore colors after test
 	defer func() {
-		colorReset = origReset
-		colorRed = origRed
-		colorOrange = origOrange
-		colorYellow = origYellow
-		colorBlue = origBlue
-		colorGray = origGray
-		colorBgRed = origBgRed
-		colorBold = origBold
-		colorUnderline = origUnderline
+		cli.InitColors(cli.ColorModeAlways)
+		SyncColors()
 	}()
-
-	// Disable colors
-	disableColors()
 
 	formatter := &HumanFormatter{}
 	result := &model.ScanResult{
@@ -520,7 +373,7 @@ func TestRenderBriefStatus(t *testing.T) {
 			result: &model.ScanResult{
 				Summary: model.Summary{Total: 0},
 			},
-			contains: []string{"No security issues found"},
+			contains: []string{"No issues found"},
 		},
 		{
 			name: "single finding",
@@ -532,7 +385,7 @@ func TestRenderBriefStatus(t *testing.T) {
 					},
 				},
 			},
-			contains: []string{"Found 1 issue", "1 high"},
+			contains: []string{"1 issue", "1 high"},
 		},
 		{
 			name: "multiple severities",
@@ -546,7 +399,7 @@ func TestRenderBriefStatus(t *testing.T) {
 					},
 				},
 			},
-			contains: []string{"Found 5 issues", "2 critical", "1 high", "2 medium"},
+			contains: []string{"5 issues", "2 critical", "1 high", "2 medium"},
 		},
 		{
 			name: "all severities",
@@ -562,7 +415,7 @@ func TestRenderBriefStatus(t *testing.T) {
 					},
 				},
 			},
-			contains: []string{"Found 10 issues", "1 critical", "2 high", "3 medium", "2 low", "2 info"},
+			contains: []string{"10 issues", "1 critical", "2 high", "3 medium", "2 low", "2 info"},
 		},
 	}
 
@@ -619,7 +472,7 @@ func TestHybridOutputStructure(t *testing.T) {
 	output := buf.String()
 
 	// Verify brief status appears before FINDINGS
-	briefStatusIdx := strings.Index(output, "Found 2 issues")
+	briefStatusIdx := strings.Index(output, "2 issues")
 	findingsIdx := strings.Index(output, "FINDINGS")
 	if briefStatusIdx == -1 {
 		t.Error("Expected brief status line in output")
@@ -631,21 +484,181 @@ func TestHybridOutputStructure(t *testing.T) {
 		t.Error("Brief status should appear before FINDINGS section")
 	}
 
-	// Verify SUMMARY section appears after FINDINGS
-	summaryIdx := strings.Index(output, "  SUMMARY")
-	if summaryIdx == -1 {
-		t.Error("Expected SUMMARY section in output")
+	// Verify summary dashboard appears after FINDINGS
+	// The minimal styled output uses "SCAN COMPLETE" in the summary box
+	dashboardIdx := strings.Index(output, "SCAN COMPLETE")
+	if dashboardIdx == -1 {
+		t.Error("Expected summary dashboard in output")
 	}
-	if summaryIdx < findingsIdx {
-		t.Error("SUMMARY section should appear after FINDINGS section")
+	if dashboardIdx < findingsIdx {
+		t.Error("Summary dashboard should appear after FINDINGS section")
+	}
+}
+
+// TestDiffParsing tests the enhanced diff parsing functionality
+func TestDiffParsing(t *testing.T) {
+	// Ensure no color mode for predictable output
+	cli.InitColors(cli.ColorModeNever)
+	SyncStylesWithColorMode()
+
+	t.Run("parseDiffHunk extracts line numbers", func(t *testing.T) {
+		oldStart, oldCount, newStart, newCount := parseDiffHunk("@@ -31,6 +31,8 @@")
+		if oldStart != 31 || oldCount != 6 || newStart != 31 || newCount != 8 {
+			t.Errorf("Expected (31,6,31,8), got (%d,%d,%d,%d)", oldStart, oldCount, newStart, newCount)
+		}
+
+		// Single line hunk (no count)
+		oldStart, _, newStart, _ = parseDiffHunk("@@ -1 +1 @@")
+		if oldStart != 1 || newStart != 1 {
+			t.Errorf("Expected single line hunk parsing, got (%d,%d)", oldStart, newStart)
+		}
+	})
+
+	t.Run("parseDiffLines creates structured output", func(t *testing.T) {
+		patch := `@@ -51,4 +53,4 @@
+ context line
+-removed line
++added line`
+		lines := parseDiffLines(patch)
+
+		if len(lines) != 4 {
+			t.Fatalf("Expected 4 lines, got %d", len(lines))
+		}
+
+		// Check hunk line
+		if lines[0].Type != DiffLineHunk {
+			t.Error("First line should be hunk header")
+		}
+
+		// Check context line (leading space is stripped to match add/remove line handling)
+		if lines[1].Type != DiffLineContext {
+			t.Error("Second line should be context")
+		}
+		if lines[1].Content != "context line" {
+			t.Errorf("Context content should be 'context line', got %q", lines[1].Content)
+		}
+
+		// Check remove line
+		if lines[2].Type != DiffLineRemove {
+			t.Error("Third line should be remove")
+		}
+		if lines[2].Content != "removed line" {
+			t.Errorf("Remove content should be 'removed line', got %q", lines[2].Content)
+		}
+		if lines[2].OldNum != 52 { // 51 + 1 (after context line)
+			t.Errorf("Remove line number should be 52, got %d", lines[2].OldNum)
+		}
+
+		// Check add line
+		if lines[3].Type != DiffLineAdd {
+			t.Error("Fourth line should be add")
+		}
+		if lines[3].NewNum != 54 { // 53 + 1 (after context line)
+			t.Errorf("Add line number should be 54, got %d", lines[3].NewNum)
+		}
+	})
+
+	t.Run("findInlineChanges detects word differences", func(t *testing.T) {
+		oldLine := "app.run(debug=True)"
+		newLine := "app.run(debug=False)"
+
+		oldSpans, newSpans := findInlineChanges(oldLine, newLine)
+
+		// Should find "True" and "False" as the differing parts
+		if len(oldSpans) == 0 || len(newSpans) == 0 {
+			t.Error("Expected inline changes to be detected")
+		}
+	})
+
+	t.Run("formatDiffWithColorsStyled produces formatted output", func(t *testing.T) {
+		patch := `@@ -1,2 +1,2 @@
+ unchanged
+-old
++new`
+		output := formatDiffWithColorsStyled(patch)
+
+		// Should contain line numbers
+		if !strings.Contains(output, "1") {
+			t.Error("Expected line numbers in output")
+		}
+		// Should contain +/- markers (no gutter - matches code snippet style)
+		if !strings.Contains(output, "+") || !strings.Contains(output, "-") {
+			t.Error("Expected +/- markers in output")
+		}
+	})
+
+	t.Run("empty lines in diff are preserved", func(t *testing.T) {
+		patch := `@@ -1,3 +1,3 @@
+ first
+
+ third`
+		lines := parseDiffLines(patch)
+
+		// Should have 4 lines: hunk + 3 content lines (including empty)
+		if len(lines) != 4 {
+			t.Errorf("Expected 4 lines (preserving empty line), got %d", len(lines))
+		}
+	})
+}
+
+func TestHumanFormatter_LightTheme(t *testing.T) {
+	// Enable colors and force light theme detection
+	cli.InitColors(cli.ColorModeAlways)
+
+	// Import lipgloss to set theme
+	// Note: We can't directly call lipgloss.SetHasDarkBackground here
+	// because it would require importing lipgloss. Instead, we test that
+	// the formatter produces valid output regardless of theme detection.
+
+	// Reset styles to pick up any theme changes
+	SyncStylesWithColorMode()
+	defer func() {
+		// Restore default state
+		cli.InitColors(cli.ColorModeAlways)
+		SyncStylesWithColorMode()
+	}()
+
+	formatter := &HumanFormatter{}
+	result := &model.ScanResult{
+		ScanID: "light-theme-test",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:       "1",
+				Severity: model.SeverityCritical,
+				Title:    "Critical Issue",
+				Type:     model.FindingTypeVulnerability,
+			},
+			{
+				ID:       "2",
+				Severity: model.SeverityMedium,
+				Title:    "Medium Issue",
+				Type:     model.FindingTypeSCA,
+			},
+		},
+		Summary: model.Summary{
+			Total: 2,
+			BySeverity: map[model.Severity]int{
+				model.SeverityCritical: 1,
+				model.SeverityMedium:   1,
+			},
+		},
 	}
 
-	// Verify detailed summary dashboard appears at the end
-	dashboardIdx := strings.Index(output, "📊 SCAN SUMMARY")
-	if dashboardIdx == -1 {
-		t.Error("Expected detailed summary dashboard in output")
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
 	}
-	if dashboardIdx < summaryIdx {
-		t.Error("Detailed summary dashboard should appear after SUMMARY header")
+
+	output := buf.String()
+	if !strings.Contains(output, "ARMIS SECURITY SCAN RESULTS") {
+		t.Error("Expected header in output")
+	}
+	if !strings.Contains(output, "Critical Issue") {
+		t.Error("Expected critical finding in output")
+	}
+	if !strings.Contains(output, "Medium Issue") {
+		t.Error("Expected medium finding in output")
 	}
 }

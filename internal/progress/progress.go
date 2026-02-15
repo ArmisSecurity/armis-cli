@@ -9,7 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 )
 
 const (
@@ -19,6 +22,11 @@ const (
 
 	// spinnerFrameDelay is the delay between animation frames.
 	spinnerFrameDelay = 100 * time.Millisecond
+
+	// ANSI escape sequences for cursor visibility control.
+	// These are standard VT100/xterm sequences supported by all modern terminals.
+	cursorHide = "\033[?25l"
+	cursorShow = "\033[?25h"
 )
 
 // IsCI returns true if running in a CI environment.
@@ -39,6 +47,20 @@ func IsCI() bool {
 		if os.Getenv(envVar) != "" {
 			return true
 		}
+	}
+	return false
+}
+
+// fdWriter is an interface for writers that can provide a file descriptor.
+// *os.File implements this interface.
+type fdWriter interface {
+	Fd() uintptr
+}
+
+// isTerminalWriter reports whether the given writer is connected to a terminal.
+func isTerminalWriter(w io.Writer) bool {
+	if f, ok := w.(fdWriter); ok {
+		return term.IsTerminal(int(f.Fd()))
 	}
 	return false
 }
@@ -188,30 +210,52 @@ func (s *Spinner) Start() {
 		defer close(s.doneChan)
 		defer cancel() // Ensure context is canceled when goroutine exits
 
+		// Hide cursor during spinner animation on real terminals.
+		// Skip for non-TTY writers (pipes, files, test buffers) to avoid garbage output.
+		// Also skip when colors are disabled (--color=never) to avoid ANSI escapes.
+		hideCursor := isTerminalWriter(s.writer) && cli.ColorsEnabled()
+		if hideCursor {
+			_, _ = fmt.Fprint(s.writer, cursorHide)
+			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
+		}
+
 		spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		i := 0
 		ticker := time.NewTicker(spinnerFrameDelay)
 		defer ticker.Stop()
 
+		// clearLine returns the appropriate line-clear sequence based on color mode.
+		// When colors are disabled, use plain carriage return to avoid ANSI escapes.
+		clearLine := func() string {
+			if cli.ColorsEnabled() {
+				return "\r\033[K"
+			}
+			return "\r"
+		}
+
 		for {
 			select {
 			case <-s.stopChan:
 				// Explicit stop requested
-				_, _ = fmt.Fprint(s.writer, "\r\033[K")
+				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ctx.Done():
 				// Context canceled or timeout reached
-				_, _ = fmt.Fprint(s.writer, "\r\033[K")
+				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ticker.C:
 				elapsed := time.Since(startTime)
 				s.mu.RLock()
 				msg := s.message
 				s.mu.RUnlock()
+				styles := output.GetStyles()
+				char := styles.SpinnerChar.Render(spinner[i%len(spinner)])
+				text := styles.SpinnerText.Render(msg)
 				if s.showTimer {
-					_, _ = fmt.Fprintf(s.writer, "\r\033[K%s %s [%s]", spinner[i%len(spinner)], msg, formatDuration(elapsed))
+					timer := styles.SpinnerTimer.Render("[" + formatDuration(elapsed) + "]")
+					_, _ = fmt.Fprintf(s.writer, "%s%s %s %s", clearLine(), char, text, timer)
 				} else {
-					_, _ = fmt.Fprintf(s.writer, "\r\033[K%s %s", spinner[i%len(spinner)], msg)
+					_, _ = fmt.Fprintf(s.writer, "%s%s %s", clearLine(), char, text)
 				}
 				i++
 			}
@@ -254,13 +298,6 @@ func (s *Spinner) Stop() {
 			// Timeout waiting for goroutine - don't block indefinitely
 		}
 	})
-}
-
-// UpdateMessage updates the spinner message.
-func (s *Spinner) UpdateMessage(message string) {
-	s.mu.Lock()
-	s.message = message
-	s.mu.Unlock()
 }
 
 // Update updates the spinner message.
