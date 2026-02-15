@@ -360,21 +360,22 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 			continue
 		}
 
-		info, err := os.Stat(absPath)
+		// Use Lstat to detect symlinks without following them
+		info, err := os.Lstat(absPath)
 		if err != nil {
 			// Skip files that don't exist (may have been deleted)
 			cli.PrintWarningf("skipping %s: %v", relPath, err)
 			continue
 		}
 
-		// Skip directories - we only handle files
-		if info.IsDir() {
+		// Skip symlinks for security (must check before IsDir since symlinks to dirs would pass)
+		if info.Mode()&os.ModeSymlink != 0 {
+			cli.PrintWarningf("skipping symlink %s", relPath)
 			continue
 		}
 
-		// Skip symlinks for security
-		if info.Mode()&os.ModeSymlink != 0 {
-			cli.PrintWarningf("skipping symlink %s", relPath)
+		// Skip directories - we only handle files (checked after symlink to avoid following symlinks to dirs)
+		if info.IsDir() {
 			continue
 		}
 

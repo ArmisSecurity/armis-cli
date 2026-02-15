@@ -79,7 +79,8 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			body, readErr := io.ReadAll(resp.Body)
+			// Limit error body read to 1MB to prevent memory exhaustion from malicious servers
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
 			_ = resp.Body.Close() // #nosec G104 - error not critical in error path
 			bodyStr := string(body)
 			if readErr != nil {
