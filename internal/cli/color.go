@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
@@ -143,6 +144,8 @@ func parseErrorMessage(msg string) (reason, context string) {
 // with the error chain context displayed below in muted style.
 func PrintError(msg string) {
 	reason, context := parseErrorMessage(msg)
+	// Sanitize error details to prevent accidental exposure of secrets (CWE-200)
+	reason = util.MaskSecretInLine(reason)
 	fmt.Fprintf(os.Stderr, "%s %s\n", errorLabelStyle.Render("Error:"), reason)
 	if context != "" {
 		fmt.Fprintf(os.Stderr, "  %s\n", mutedStyle.Render(context))
