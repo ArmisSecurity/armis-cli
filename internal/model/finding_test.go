@@ -197,3 +197,249 @@ func TestNormalizedResultsResponseJSONMarshaling(t *testing.T) {
 		t.Errorf("NextCursor mismatch")
 	}
 }
+
+// TestFinding_ZeroValue verifies that a zero-value Finding marshals without error
+// and omitempty fields are properly omitted from the JSON output.
+func TestFinding_ZeroValue(t *testing.T) {
+	finding := Finding{}
+
+	data, err := json.Marshal(finding)
+	if err != nil {
+		t.Fatalf("Failed to marshal zero-value finding: %v", err)
+	}
+
+	// Verify it unmarshals back correctly
+	var unmarshaled Finding
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal zero-value finding: %v", err)
+	}
+
+	// Check that omitempty fields are not present in JSON
+	var jsonMap map[string]interface{}
+	if err := json.Unmarshal(data, &jsonMap); err != nil {
+		t.Fatalf("Failed to unmarshal to map: %v", err)
+	}
+
+	// Fields with omitempty should be absent when zero
+	optionalFields := []string{"file", "start_line", "end_line", "code_snippet", "cves", "cwes", "package", "version", "fix_version"}
+	for _, field := range optionalFields {
+		if _, exists := jsonMap[field]; exists {
+			t.Errorf("Expected omitempty field %q to be absent in zero-value JSON, but it was present", field)
+		}
+	}
+}
+
+// TestFinding_NilSlices verifies that nil CVEs/CWEs slices are handled correctly
+// and not serialized as JSON null values.
+func TestFinding_NilSlices(t *testing.T) {
+	finding := Finding{
+		ID:       "test-nil-slices",
+		Type:     FindingTypeVulnerability,
+		Severity: SeverityHigh,
+		Title:    "Test Finding",
+		CVEs:     nil, // explicitly nil
+		CWEs:     nil, // explicitly nil
+	}
+
+	data, err := json.Marshal(finding)
+	if err != nil {
+		t.Fatalf("Failed to marshal finding with nil slices: %v", err)
+	}
+
+	// Verify JSON does not contain "cves":null or "cwes":null
+	jsonStr := string(data)
+	if contains(jsonStr, `"cves":null`) {
+		t.Error("Expected nil CVEs to be omitted, not serialized as null")
+	}
+	if contains(jsonStr, `"cwes":null`) {
+		t.Error("Expected nil CWEs to be omitted, not serialized as null")
+	}
+
+	// Verify it unmarshals back correctly
+	var unmarshaled Finding
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// After unmarshal, nil slices should remain nil (not empty slices)
+	// Note: This depends on Go's JSON unmarshaling behavior
+	if unmarshaled.ID != finding.ID {
+		t.Errorf("ID mismatch after unmarshal")
+	}
+}
+
+// TestScanResult_EmptyFindings verifies that empty findings slice is handled correctly.
+func TestScanResult_EmptyFindings(t *testing.T) {
+	t.Run("nil findings", func(t *testing.T) {
+		result := ScanResult{
+			ScanID:   "scan-nil",
+			Status:   "completed",
+			Findings: nil,
+		}
+
+		data, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("Failed to marshal result with nil findings: %v", err)
+		}
+
+		var unmarshaled ScanResult
+		if err := json.Unmarshal(data, &unmarshaled); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if unmarshaled.ScanID != result.ScanID {
+			t.Errorf("ScanID mismatch")
+		}
+	})
+
+	t.Run("empty findings slice", func(t *testing.T) {
+		result := ScanResult{
+			ScanID:   "scan-empty",
+			Status:   "completed",
+			Findings: []Finding{},
+		}
+
+		data, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("Failed to marshal result with empty findings: %v", err)
+		}
+
+		var unmarshaled ScanResult
+		if err := json.Unmarshal(data, &unmarshaled); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if unmarshaled.ScanID != result.ScanID {
+			t.Errorf("ScanID mismatch")
+		}
+		if unmarshaled.Findings == nil {
+			t.Error("Expected empty findings slice, got nil")
+		}
+		if len(unmarshaled.Findings) != 0 {
+			t.Errorf("Expected 0 findings, got %d", len(unmarshaled.Findings))
+		}
+	})
+}
+
+// TestFinding_WithValidation verifies that FindingValidation serializes correctly.
+func TestFinding_WithValidation(t *testing.T) {
+	validatedSeverity := "MEDIUM"
+	exposure := 5
+
+	finding := Finding{
+		ID:       "test-validation",
+		Type:     FindingTypeVulnerability,
+		Severity: SeverityHigh,
+		Title:    "Validated Finding",
+		Validation: &FindingValidation{
+			IsValid:           true,
+			ValidatedSeverity: &validatedSeverity,
+			Confidence:        85,
+			Explanation:       "This is a valid finding",
+			TaintPropagation:  TaintReachable,
+			Exposure:          &exposure,
+		},
+	}
+
+	data, err := json.Marshal(finding)
+	if err != nil {
+		t.Fatalf("Failed to marshal finding with validation: %v", err)
+	}
+
+	var unmarshaled Finding
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	if unmarshaled.Validation == nil {
+		t.Fatal("Expected validation to be present")
+	}
+	if unmarshaled.Validation.IsValid != true {
+		t.Error("IsValid mismatch")
+	}
+	if unmarshaled.Validation.Confidence != 85 {
+		t.Errorf("Confidence mismatch: got %d, want 85", unmarshaled.Validation.Confidence)
+	}
+	if unmarshaled.Validation.TaintPropagation != TaintReachable {
+		t.Errorf("TaintPropagation mismatch: got %s, want %s", unmarshaled.Validation.TaintPropagation, TaintReachable)
+	}
+	if unmarshaled.Validation.ValidatedSeverity == nil || *unmarshaled.Validation.ValidatedSeverity != "MEDIUM" {
+		t.Error("ValidatedSeverity mismatch")
+	}
+	if unmarshaled.Validation.Exposure == nil || *unmarshaled.Validation.Exposure != 5 {
+		t.Error("Exposure mismatch")
+	}
+}
+
+// TestFinding_WithFix verifies that Fix struct with PatchFiles serializes correctly.
+func TestFinding_WithFix(t *testing.T) {
+	patch := "--- a/file.go\n+++ b/file.go\n@@ -1,1 +1,1 @@\n-old\n+new"
+	startLine := 10
+	endLine := 15
+
+	finding := Finding{
+		ID:       "test-fix",
+		Type:     FindingTypeVulnerability,
+		Severity: SeverityCritical,
+		Title:    "Finding with Fix",
+		Fix: &Fix{
+			VulnerableCode: &CodeSnippetFix{
+				FilePath:  "vulnerable.go",
+				StartLine: &startLine,
+				EndLine:   &endLine,
+				Content:   "// vulnerable code",
+			},
+			ProposedFixes: []CodeSnippetFix{
+				{
+					FilePath: "fixed.go",
+					Content:  "// fixed code",
+				},
+			},
+			Patch: &patch,
+			PatchFiles: map[string]string{
+				"file1.go": "patched content 1",
+				"file2.go": "patched content 2",
+			},
+			Explanation:     "Replace vulnerable code with fixed code",
+			Recommendations: "Update to latest version",
+			IsValid:         true,
+			Feedback:        "Fix verified",
+		},
+	}
+
+	data, err := json.Marshal(finding)
+	if err != nil {
+		t.Fatalf("Failed to marshal finding with fix: %v", err)
+	}
+
+	var unmarshaled Finding
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	if unmarshaled.Fix == nil {
+		t.Fatal("Expected fix to be present")
+	}
+	if unmarshaled.Fix.VulnerableCode == nil {
+		t.Error("Expected VulnerableCode to be present")
+	}
+	if len(unmarshaled.Fix.ProposedFixes) != 1 {
+		t.Errorf("Expected 1 proposed fix, got %d", len(unmarshaled.Fix.ProposedFixes))
+	}
+	if len(unmarshaled.Fix.PatchFiles) != 2 {
+		t.Errorf("Expected 2 patch files, got %d", len(unmarshaled.Fix.PatchFiles))
+	}
+	if unmarshaled.Fix.PatchFiles["file1.go"] != "patched content 1" {
+		t.Error("PatchFiles content mismatch")
+	}
+}
+
+// contains is a helper to check if a string contains a substring.
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
