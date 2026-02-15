@@ -491,12 +491,13 @@ func formatCodeSnippetWithFrame(finding model.Finding) string {
 		snippetStart = finding.SnippetStartLine
 	}
 
-	// Skip syntax highlighting for redacted snippets (contain secrets)
-	isRedacted := strings.Contains(finding.CodeSnippet, "redacted")
+	// Skip syntax highlighting for masked snippets (contain asterisk sequences from secret masking)
+	// CLI masking produces patterns like "********[20-40]" - checking for 8+ asterisks catches all masked content
+	isMasked := strings.Contains(finding.CodeSnippet, "********")
 
-	// Get syntax-highlighted lines (skip for redacted content)
+	// Get syntax-highlighted lines (skip for masked content to avoid confusing the highlighter)
 	var highlightedLines []string
-	if isRedacted {
+	if isMasked {
 		highlightedLines = plainLines
 	} else {
 		highlightedLines = HighlightCode(finding.CodeSnippet, finding.File)
@@ -1455,6 +1456,10 @@ func parseDiffLines(patch string) []DiffLine {
 				OldNum:  oldLineNum,
 			})
 			oldLineNum++
+		} else if strings.HasPrefix(line, "\\") {
+			// Diff metadata markers (e.g., "\ No newline at end of file")
+			// Skip without incrementing line numbers - these are not actual file content
+			continue
 		} else if line != "" { // Context line (preserve empty lines within diff)
 			// Context lines in unified diff start with a space - strip it like +/- prefixes
 			content := line

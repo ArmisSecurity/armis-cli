@@ -702,6 +702,50 @@ func TestDiffParsing(t *testing.T) {
 		}
 	})
 
+	t.Run("parseDiffLines skips no newline marker without incrementing line numbers", func(t *testing.T) {
+		// The "\ No newline at end of file" marker should be skipped without
+		// affecting line number tracking
+		patch := `--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,2 @@
+ line1
+-old line2
+\ No newline at end of file
++new line2
+\ No newline at end of file`
+		lines := parseDiffLines(patch)
+
+		// Should have: hunk + context + remove + add = 4 lines (markers skipped)
+		if len(lines) != 4 {
+			t.Errorf("Expected 4 lines (hunk + context + remove + add), got %d", len(lines))
+			for i, line := range lines {
+				t.Logf("Line %d: Type=%d, Content=%q, OldNum=%d, NewNum=%d",
+					i, line.Type, line.Content, line.OldNum, line.NewNum)
+			}
+		}
+
+		// Verify the removed line has correct line number (should be 2, not affected by marker)
+		for _, line := range lines {
+			if line.Type == DiffLineRemove && line.Content == "old line2" {
+				if line.OldNum != 2 {
+					t.Errorf("Expected removed line OldNum=2, got %d", line.OldNum)
+				}
+			}
+			if line.Type == DiffLineAdd && line.Content == "new line2" {
+				if line.NewNum != 2 {
+					t.Errorf("Expected added line NewNum=2, got %d", line.NewNum)
+				}
+			}
+		}
+
+		// Ensure no marker lines were included in the output
+		for _, line := range lines {
+			if strings.Contains(line.Content, "No newline") {
+				t.Errorf("Marker line should not be included: %q", line.Content)
+			}
+		}
+	})
+
 	t.Run("findInlineChanges handles token insertions correctly", func(t *testing.T) {
 		// Bug fix test: LCS-based algorithm should correctly handle insertions
 		// without cascading false positives
