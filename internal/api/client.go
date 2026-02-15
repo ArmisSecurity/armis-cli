@@ -338,7 +338,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 		select {
 		case <-timeoutCtx.Done():
 			if timeoutCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("scan timed out after %v", timeout)
+				return nil, fmt.Errorf("scan %s (tenant %s) timed out after %v", scanID, tenantID, timeout)
 			}
 			return nil, timeoutCtx.Err()
 		case <-ticker.C:

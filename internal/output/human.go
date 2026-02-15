@@ -1334,10 +1334,11 @@ func parseDiffLines(patch string) []DiffLine {
 	seenHunk := false // Track whether we've seen the first @@ hunk header
 
 	for _, line := range lines {
-		// Skip file headers (--- a/file, +++ b/file) that appear BEFORE the first hunk.
+		// Skip all diff preamble lines (diff --git, index, ---/+++, mode changes, etc.)
+		// that appear BEFORE the first @@ hunk header.
 		// After a hunk header, lines starting with --- or +++ are actual diff content
 		// (e.g., a removed SQL comment "-- DROP TABLE" appears as "--- DROP TABLE").
-		if !seenHunk && (strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ")) {
+		if !seenHunk && !strings.HasPrefix(line, "@@") {
 			continue
 		}
 
