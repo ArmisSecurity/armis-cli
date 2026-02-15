@@ -278,13 +278,10 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 
 		// Skip symlinks to avoid security risks (symlinks pointing outside repo)
 		// and potential issues (broken symlinks, loops)
-		// Note: filepath.Walk uses os.Stat which follows symlinks, so we must use
-		// os.Lstat to detect if the path itself is a symlink
-		lstatInfo, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if lstatInfo.Mode()&os.ModeSymlink != 0 {
+		// Note: filepath.Walk provides FileInfo from os.Lstat (it does not follow
+		// symlinks), so we can use info.Mode() to detect if the path itself is a
+		// symlink.
+		if info.Mode()&os.ModeSymlink != 0 {
 			cli.PrintWarningf("skipping symlink %s", relPath)
 			return nil
 		}
@@ -467,12 +464,8 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 		}
 
 		// Skip symlinks for consistency with tarGzDirectory
-		// Use Lstat to detect symlinks (filepath.Walk uses Stat which follows symlinks)
-		lstatInfo, err := os.Lstat(filePath)
-		if err != nil {
-			return err
-		}
-		if lstatInfo.Mode()&os.ModeSymlink != 0 {
+		// filepath.Walk already uses Lstat, so we can check info.Mode() directly
+		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 
