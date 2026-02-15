@@ -539,6 +539,11 @@ func isTestFile(name string) bool {
 		}
 	}
 
+	// Heuristic for Perl test files: `.t` files without an additional dot extension (e.g., `foo.t`).
+	if strings.HasSuffix(name, ".t") && strings.Count(name, ".") == 1 {
+		return true
+	}
+
 	return false
 }
 

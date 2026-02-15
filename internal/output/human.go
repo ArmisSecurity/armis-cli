@@ -28,6 +28,10 @@ const (
 	// Resource limits for snippet loading to prevent memory exhaustion (CWE-770)
 	maxLineLength  = 10 * 1024  // 10KB max per line
 	maxSnippetSize = 100 * 1024 // 100KB max total snippet size
+
+	// Resource limits for diff parsing to prevent memory exhaustion (CWE-770)
+	maxPatchSize  = 100 * 1024 // 100KB max patch size
+	maxPatchLines = 2000       // Maximum lines to parse in a patch
 )
 
 // Package-level compiled regex patterns (performance optimization)
@@ -1222,7 +1226,18 @@ func parseDiffHunk(line string) (oldStart, oldCount, newStart, newCount int) {
 // parseDiffLines parses a unified diff patch into structured DiffLine entries
 func parseDiffLines(patch string) []DiffLine {
 	var result []DiffLine
+
+	// Guard against excessively large patches (CWE-770)
+	if len(patch) > maxPatchSize {
+		patch = patch[:maxPatchSize]
+	}
+
 	lines := strings.Split(patch, "\n")
+
+	// Limit number of lines to prevent memory exhaustion
+	if len(lines) > maxPatchLines {
+		lines = lines[:maxPatchLines]
+	}
 
 	var oldLineNum, newLineNum int
 	seenHunk := false // Track whether we've seen the first @@ hunk header
@@ -1527,6 +1542,11 @@ func formatDiffWithColorsStyled(patch string) string {
 // extractDiffFilename extracts the filename from unified diff header lines.
 // Looks for "+++ b/path/to/file" or "+++ path/to/file" patterns.
 func extractDiffFilename(patch string) string {
+	// Guard against excessively large patches (CWE-770)
+	if len(patch) > maxPatchSize {
+		patch = patch[:maxPatchSize]
+	}
+
 	for _, line := range strings.Split(patch, "\n") {
 		if strings.HasPrefix(line, "+++ ") {
 			path := strings.TrimPrefix(line, "+++ ")
@@ -1569,8 +1589,9 @@ func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, ter
 	if truncated {
 		content += "…"
 	}
-	// Apply background to the entire content area
-	styledContent := s.DiffRemoveLine.Render(content)
+	// Apply background to the entire content area (use Width to extend background to full line)
+	contentWidth := termWidth - 10
+	styledContent := s.DiffRemoveLine.Width(contentWidth).Render(content)
 	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
 }
 
@@ -1587,8 +1608,9 @@ func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWi
 	if truncated {
 		content += "…"
 	}
-	// Apply background to the entire content area
-	styledContent := s.DiffAddLine.Render(content)
+	// Apply background to the entire content area (use Width to extend background to full line)
+	contentWidth := termWidth - 10
+	styledContent := s.DiffAddLine.Width(contentWidth).Render(content)
 	return fmt.Sprintf("  %s %s %s\n", s.DiffLineNumber.Render(lineNum), marker, styledContent)
 }
 
