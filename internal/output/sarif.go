@@ -295,7 +295,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 				Feedback:        finding.Fix.Feedback,
 			}
 			if finding.Fix.Patch != nil {
-				result.Properties.Fix.Patch = *finding.Fix.Patch
+				result.Properties.Fix.Patch = util.MaskSecretInMultiLineString(*finding.Fix.Patch) // Defense-in-depth
 			}
 
 			// Add standard SARIF fixes array for tool consumption
@@ -475,7 +475,9 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 
 				// Set inserted content from proposed fix
 				if proposedFix.Content != "" {
-					replacement.InsertedContent = &sarifArtifactContent{Text: proposedFix.Content}
+					replacement.InsertedContent = &sarifArtifactContent{
+						Text: util.MaskSecretInMultiLineString(proposedFix.Content), // Defense-in-depth
+					}
 				}
 
 				artifactChange.Replacements = append(artifactChange.Replacements, replacement)
@@ -500,7 +502,9 @@ func convertFixToSarif(finding model.Finding) []sarifFix {
 			}
 
 			replacement := sarifReplacement{
-				InsertedContent: &sarifArtifactContent{Text: patchContent},
+				InsertedContent: &sarifArtifactContent{
+					Text: util.MaskSecretInMultiLineString(patchContent), // Defense-in-depth
+				},
 			}
 
 			// Only set DeletedRegion if both line numbers are valid (SARIF uses 1-based lines)
