@@ -1594,6 +1594,9 @@ func formatDiffWithColorsStyled(patch string) string {
 		// Collect render operations for this hunk
 		ops := collectRenderOps(hunk.Lines)
 
+		// Track consecutive empty context lines to collapse runs of empty lines
+		emptyCount := 0
+
 		for _, op := range ops {
 			switch op.Type {
 			case "context":
@@ -1602,9 +1605,21 @@ func formatDiffWithColorsStyled(patch string) string {
 					continue
 				}
 				afterHunk = false
+
+				// Collapse consecutive empty context lines (show at most 1)
+				if strings.TrimSpace(op.Line.Content) == "" {
+					emptyCount++
+					if emptyCount > 1 {
+						continue // Skip additional empty lines
+					}
+				} else {
+					emptyCount = 0 // Reset counter for non-empty lines
+				}
+
 				sb.WriteString(formatDiffContextLine(op.Line, s, termWidth, filename))
 			case "change":
 				afterHunk = false
+				emptyCount = 0 // Reset on actual changes
 				sb.WriteString(renderChangeBlock(op.Block, s, termWidth, filename))
 			}
 		}
