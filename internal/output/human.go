@@ -736,10 +736,12 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	var sevParts []string
 	for _, sev := range severities {
 		count := result.Summary.BySeverity[sev]
-		sevStyle := s.GetSeverityText(sev)
-		dot := sevStyle.Render(SeverityDot)
-		label := strings.ToLower(string(sev))
-		sevParts = append(sevParts, fmt.Sprintf("%s %d %s", dot, count, label))
+		if count > 0 {
+			sevStyle := s.GetSeverityText(sev)
+			dot := sevStyle.Render(SeverityDot)
+			label := strings.ToLower(string(sev))
+			sevParts = append(sevParts, fmt.Sprintf("%s %d %s", dot, count, label))
+		}
 	}
 	content.WriteString(strings.Join(sevParts, "  ") + "\n")
 
@@ -1657,9 +1659,9 @@ func formatDiffHunkLine(line DiffLine, s *Styles, added, removed int) string {
 // formatDiffContextLine formats a context line with line numbers and syntax highlighting
 func formatDiffContextLine(line DiffLine, s *Styles, termWidth int, filename string) string {
 	lineNum := fmt.Sprintf("%3d", line.NewNum)
-	content := truncateDiffLine(line.Content, termWidth-10)
-	// Normalize tabs to spaces for consistent rendering
-	content = strings.ReplaceAll(content, "\t", "    ")
+	// Normalize tabs to spaces before truncation so width calculations match rendered output
+	normalized := strings.ReplaceAll(line.Content, "\t", "    ")
+	content := truncateDiffLine(normalized, termWidth-10)
 	// Apply syntax highlighting to context lines
 	highlighted := HighlightLine(content, filename)
 	return fmt.Sprintf("  %s   %s\n", s.DiffLineNumber.Render(lineNum), highlighted)
