@@ -495,6 +495,45 @@ func TestHybridOutputStructure(t *testing.T) {
 	}
 }
 
+// TestExtractDiffFilename tests filename extraction from diff patches
+func TestExtractDiffFilename(t *testing.T) {
+	tests := []struct {
+		name  string
+		patch string
+		want  string
+	}{
+		{
+			name:  "git diff format",
+			patch: "--- a/path/to/file.py\n+++ b/path/to/file.py\n@@ -1,3 +1,3 @@",
+			want:  "path/to/file.py",
+		},
+		{
+			name:  "plain diff format",
+			patch: "--- path/to/file.py\n+++ path/to/file.py\n@@ -1,3 +1,3 @@",
+			want:  "path/to/file.py",
+		},
+		{
+			name:  "new file",
+			patch: "--- /dev/null\n+++ b/newfile.go\n@@ -0,0 +1,5 @@",
+			want:  "newfile.go",
+		},
+		{
+			name:  "no header",
+			patch: "@@ -1,3 +1,3 @@\n context\n-old\n+new",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractDiffFilename(tt.patch)
+			if got != tt.want {
+				t.Errorf("extractDiffFilename() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestDiffParsing tests the enhanced diff parsing functionality
 func TestDiffParsing(t *testing.T) {
 	// Ensure no color mode for predictable output

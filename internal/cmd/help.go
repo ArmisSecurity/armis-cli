@@ -12,6 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Resource limit for help text processing (defense-in-depth)
+const maxHelpTextSize = 100 * 1024 // 100KB max help text size
+
+// Pre-compiled regex patterns for help text styling.
+// Note: Go's regexp uses RE2 which guarantees linear-time matching
+// and cannot suffer from catastrophic backtracking.
+var (
+	helpCmdPattern       = regexp.MustCompile(`(?m)^(  )([a-z][-a-z0-9]*)(\s{2,})(.*)$`)
+	helpFlagPattern      = regexp.MustCompile(`(--[a-z][-a-z0-9]*)`)
+	helpShortFlagPattern = regexp.MustCompile(`(\s)(-[a-zA-Z])([,\s])`)
+)
+
 // SetupHelp configures styled help output for a command.
 // The help function is inherited by all subcommands, so this only needs
 // to be called on the root command.
@@ -139,13 +151,17 @@ func styleHelpOutput(s string) string {
 		return s
 	}
 
+	// Guard against excessively large input (defense-in-depth)
+	if len(s) > maxHelpTextSize {
+		return s // Return unstyled if too large
+	}
+
 	styles := output.GetStyles()
 
 	// Color command names in "Available Commands:" section
 	// Pattern: "  commandname   Description" (2 spaces, word, 2+ spaces, rest)
-	cmdRe := regexp.MustCompile(`(?m)^(  )([a-z][-a-z0-9]*)(\s{2,})(.*)$`)
-	s = cmdRe.ReplaceAllStringFunc(s, func(match string) string {
-		parts := cmdRe.FindStringSubmatch(match)
+	s = helpCmdPattern.ReplaceAllStringFunc(s, func(match string) string {
+		parts := helpCmdPattern.FindStringSubmatch(match)
 		if len(parts) == 5 {
 			return parts[1] + styles.HelpCommand.Render(parts[2]) + parts[3] + parts[4]
 		}
@@ -153,15 +169,13 @@ func styleHelpOutput(s string) string {
 	})
 
 	// Color long flags: --flag-name
-	flagRe := regexp.MustCompile(`(--[a-z][-a-z0-9]*)`)
-	s = flagRe.ReplaceAllStringFunc(s, func(match string) string {
+	s = helpFlagPattern.ReplaceAllStringFunc(s, func(match string) string {
 		return styles.HelpFlag.Render(match)
 	})
 
 	// Color short flags: -f (when followed by comma or space)
-	shortFlagRe := regexp.MustCompile(`(\s)(-[a-zA-Z])([,\s])`)
-	s = shortFlagRe.ReplaceAllStringFunc(s, func(match string) string {
-		parts := shortFlagRe.FindStringSubmatch(match)
+	s = helpShortFlagPattern.ReplaceAllStringFunc(s, func(match string) string {
+		parts := helpShortFlagPattern.FindStringSubmatch(match)
 		if len(parts) == 4 {
 			return parts[1] + styles.HelpFlag.Render(parts[2]) + parts[3]
 		}
