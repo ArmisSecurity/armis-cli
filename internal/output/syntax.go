@@ -43,6 +43,12 @@ func GetChromaStyle() *chroma.Style {
 // Each line is separately formatted for line-level control.
 // Returns plain lines if colors are disabled or highlighting fails.
 func HighlightCode(code, filename string) []string {
+	// Guard against excessively large input to prevent memory exhaustion (CWE-770)
+	const maxCodeSize = 100 * 1024 // 100KB max
+	if len(code) > maxCodeSize {
+		code = code[:maxCodeSize]
+	}
+
 	style := GetChromaStyle()
 	if style == nil {
 		// No colors - return plain lines

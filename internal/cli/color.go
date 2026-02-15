@@ -148,6 +148,8 @@ func PrintError(msg string) {
 	reason = util.MaskSecretInLine(reason)
 	fmt.Fprintf(os.Stderr, "%s %s\n", errorLabelStyle.Render("Error:"), reason)
 	if context != "" {
+		// Sanitize context to prevent accidental exposure of secrets (CWE-200)
+		context = util.MaskSecretInLine(context)
 		fmt.Fprintf(os.Stderr, "  %s\n", mutedStyle.Render(context))
 	}
 }
