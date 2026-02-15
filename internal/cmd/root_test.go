@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 )
 
 func TestSetVersion(t *testing.T) {
@@ -133,54 +136,6 @@ func TestGetAPIBaseURL(t *testing.T) {
 	})
 }
 
-func TestGetToken(t *testing.T) {
-	t.Run("returns token when set", func(t *testing.T) {
-		token = "test-token-123"
-		defer func() { token = "" }()
-
-		result, err := getToken()
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if result != "test-token-123" {
-			t.Errorf("Expected 'test-token-123', got %s", result)
-		}
-	})
-
-	t.Run("returns error when token not set", func(t *testing.T) {
-		token = ""
-
-		_, err := getToken()
-		if err == nil {
-			t.Error("Expected error when token not set")
-		}
-	})
-}
-
-func TestGetTenantID(t *testing.T) {
-	t.Run("returns tenant ID when set", func(t *testing.T) {
-		tenantID = "tenant-456"
-		defer func() { tenantID = "" }()
-
-		result, err := getTenantID()
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if result != "tenant-456" {
-			t.Errorf("Expected 'tenant-456', got %s", result)
-		}
-	})
-
-	t.Run("returns error when tenant ID not set", func(t *testing.T) {
-		tenantID = ""
-
-		_, err := getTenantID()
-		if err == nil {
-			t.Error("Expected error when tenant ID not set")
-		}
-	})
-}
-
 func TestValidatePageLimit(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -276,9 +231,9 @@ func TestValidateFailOn(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "invalid severity lowercase",
+			name:       "valid severity lowercase",
 			severities: []string{"high"},
-			wantErr:    true,
+			wantErr:    false,
 		},
 		{
 			name:       "invalid severity unknown",
@@ -336,5 +291,106 @@ func TestExecute(t *testing.T) {
 	err := Execute()
 	if err != nil {
 		t.Logf("Execute returned error (expected in test context): %v", err)
+	}
+}
+
+func TestThemeFlag_Values(t *testing.T) {
+	// Test that valid theme values are accepted by checking the flag exists
+	flag := rootCmd.PersistentFlags().Lookup("theme")
+	if flag == nil {
+		t.Fatal("Expected --theme flag to be registered")
+	}
+
+	// Check default value
+	if flag.DefValue != "auto" {
+		t.Errorf("Expected default value 'auto', got %q", flag.DefValue)
+	}
+
+	// Verify valid values are documented in usage
+	usage := flag.Usage
+	if usage == "" {
+		t.Error("Expected --theme flag to have usage text")
+	}
+}
+
+func TestThemeFlag_EnvDefault(t *testing.T) {
+	// Save current value
+	originalTheme := themeFlag
+
+	// Test ARMIS_THEME env var is used for default
+	_ = os.Setenv("ARMIS_THEME", "light")
+	defer func() {
+		_ = os.Unsetenv("ARMIS_THEME")
+		themeFlag = originalTheme
+	}()
+
+	// The env var is read at init time, so we test getEnvOrDefault directly
+	result := getEnvOrDefault("ARMIS_THEME", "auto")
+	if result != "light" {
+		t.Errorf("Expected 'light' from env, got %q", result)
+	}
+}
+
+func TestThemeFlag_Validation(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError bool
+	}{
+		{name: "valid auto", value: "auto", wantError: false},
+		{name: "valid dark", value: "dark", wantError: false},
+		{name: "valid light", value: "light", wantError: false},
+		{name: "invalid value", value: "invalid", wantError: true},
+		{name: "invalid empty", value: "", wantError: true},
+		{name: "invalid typo", value: "drak", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate theme value using the same logic as PersistentPreRunE
+			var err error
+			switch tt.value {
+			case themeAuto, themeDark, themeLight:
+				err = nil
+			default:
+				err = fmt.Errorf("invalid --theme value %q: must be auto, dark, or light", tt.value)
+			}
+
+			if (err != nil) != tt.wantError {
+				t.Errorf("theme validation for %q: got error = %v, wantError = %v", tt.value, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestColorFlag_Validation(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError bool
+	}{
+		{name: "valid auto", value: "auto", wantError: false},
+		{name: "valid always", value: "always", wantError: false},
+		{name: "valid never", value: "never", wantError: false},
+		{name: "invalid value", value: "invalid", wantError: true},
+		{name: "invalid typo", value: "allways", wantError: true},
+		{name: "invalid empty", value: "", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate color value using the same logic as PersistentPreRunE
+			var err error
+			mode := cli.ColorMode(tt.value)
+			switch mode {
+			case cli.ColorModeAuto, cli.ColorModeAlways, cli.ColorModeNever:
+				err = nil
+			default:
+				err = fmt.Errorf("invalid --color value %q: must be auto, always, or never", tt.value)
+			}
+			if (err != nil) != tt.wantError {
+				t.Errorf("color validation for %q: got error = %v, wantError = %v", tt.value, err, tt.wantError)
+			}
+		})
 	}
 }

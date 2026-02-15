@@ -207,7 +207,7 @@ func TestSpinner(t *testing.T) {
 
 	t.Run("update message", func(t *testing.T) {
 		spinner := NewSpinner("initial", true)
-		spinner.UpdateMessage("updated")
+		spinner.Update("updated")
 
 		if spinner.message != "updated" {
 			t.Errorf("Expected message 'updated', got %q", spinner.message)
@@ -256,7 +256,6 @@ func TestSpinner(t *testing.T) {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
 					spinner.Update("message update")
-					spinner.UpdateMessage("message update via UpdateMessage")
 					time.Sleep(10 * time.Millisecond)
 				}
 			}(i)
@@ -567,4 +566,114 @@ func TestSpinnerWithContextDeadline(t *testing.T) {
 
 	// Stop should still work after context deadline
 	spinner.Stop()
+}
+
+func TestIsTerminalWriter(t *testing.T) {
+	t.Run("bytes.Buffer is not a terminal", func(t *testing.T) {
+		var buf bytes.Buffer
+		if isTerminalWriter(&buf) {
+			t.Error("bytes.Buffer should not be detected as terminal")
+		}
+	})
+
+	t.Run("io.Discard is not a terminal", func(t *testing.T) {
+		if isTerminalWriter(io.Discard) {
+			t.Error("io.Discard should not be detected as terminal")
+		}
+	})
+
+	t.Run("os.Stderr has Fd method", func(t *testing.T) {
+		// Just verify it doesn't panic; actual result depends on test environment
+		_ = isTerminalWriter(os.Stderr)
+	})
+
+	t.Run("pipe is not a terminal", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("Failed to create pipe: %v", err)
+		}
+		defer func() { _ = r.Close() }()
+		defer func() { _ = w.Close() }()
+
+		// Pipe has Fd() but is not a terminal
+		if isTerminalWriter(w) {
+			t.Error("Pipe should not be detected as terminal")
+		}
+	})
+}
+
+func TestSpinnerNoCursorSequencesOnNonTTY(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	var buf bytes.Buffer
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(&buf)
+	spinner.Start()
+	time.Sleep(150 * time.Millisecond)
+	spinner.Stop()
+
+	output := buf.String()
+	if bytes.Contains([]byte(output), []byte("\033[?25l")) {
+		t.Error("cursor hide sequence should not be written to non-TTY writer")
+	}
+	if bytes.Contains([]byte(output), []byte("\033[?25h")) {
+		t.Error("cursor show sequence should not be written to non-TTY writer")
+	}
+}
+
+func TestSpinnerNoCursorSequencesOnPipe(t *testing.T) {
+	// Ensure we're not in CI mode
+	ciEnvVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL"}
+	originalEnv := make(map[string]string)
+	for _, key := range ciEnvVars {
+		if val, exists := os.LookupEnv(key); exists {
+			originalEnv[key] = val
+		}
+		_ = os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for _, key := range ciEnvVars {
+			_ = os.Unsetenv(key)
+		}
+		for key, val := range originalEnv {
+			_ = os.Setenv(key, val)
+		}
+	})
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	spinner := NewSpinner("test", false)
+	spinner.SetWriter(w)
+	spinner.Start()
+	time.Sleep(150 * time.Millisecond)
+	spinner.Stop()
+	_ = w.Close()
+
+	output, _ := io.ReadAll(r)
+	if bytes.Contains(output, []byte("\033[?25l")) {
+		t.Error("cursor hide sequence should not be written to pipe")
+	}
+	if bytes.Contains(output, []byte("\033[?25h")) {
+		t.Error("cursor show sequence should not be written to pipe")
+	}
 }

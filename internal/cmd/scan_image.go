@@ -14,9 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	tarballPath string
-)
+var tarballPath string
 
 var scanImageCmd = &cobra.Command{
 	Use:   "image [image-name]",
@@ -29,7 +27,7 @@ var scanImageCmd = &cobra.Command{
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if tarballPath == "" && len(args) == 0 {
-			return fmt.Errorf("either provide an image name or use --tarball flag")
+			return fmt.Errorf("missing target: specify an image name or use --tarball")
 		}
 
 		authProvider, err := getAuthProvider()

@@ -111,5 +111,6 @@ var scanRepoCmd = &cobra.Command{
 }
 
 func init() {
+	scanRepoCmd.Flags().StringSliceVar(&includeFiles, "include-files", nil, "Comma-separated list of file paths to include in scan (relative to repository root)")
 	scanCmd.AddCommand(scanRepoCmd)
 }

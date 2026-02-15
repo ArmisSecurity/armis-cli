@@ -16,6 +16,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -147,7 +148,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
 	}
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Creating a compressed archive...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
@@ -165,8 +166,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		errChan <- tarFunc()
 	}()
 
-	time.Sleep(500 * time.Millisecond)
-	spinner.Update("Uploading archive to Armis Cloud...")
+	spinner.Update("Uploading to Armis Cloud...")
 
 	ingestOpts := api.IngestOptions{
 		TenantID:     s.tenantID,
@@ -190,15 +190,18 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
+	styles := output.GetStyles()
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan initiated with ID:"),
+		styles.ScanID.Render(scanID))
 
-	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Analyzing code for vulnerabilities...", s.noProgress)
+	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
 	analysisSpinner.Start()
 	defer analysisSpinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Analyzing code for vulnerabilities..."))
+			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning for security issues..."))
 		})
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
@@ -206,9 +209,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to wait for scan: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Analysis completed in %s\n\n", scan.FormatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan completed in"),
+		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
-	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Fetching scan results...", s.noProgress)
+	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Retrieving results...", s.noProgress)
 	fetchSpinner.Start()
 	defer fetchSpinner.Stop()
 
@@ -534,7 +539,8 @@ func isTestFile(name string) bool {
 		}
 	}
 
-	if strings.HasSuffix(name, ".t") && !strings.Contains(name, ".") {
+	// Heuristic for Perl test files: `.t` files without an additional dot extension (e.g., `foo.t`).
+	if strings.HasSuffix(name, ".t") && strings.Count(name, ".") == 1 {
 		return true
 	}
 
@@ -722,59 +728,9 @@ func cleanDescription(desc string) string {
 }
 
 // generateFindingTitle creates a descriptive title for SARIF output.
-// Priority: SCA with CVE > OWASP category title > Secret type > Description > Category.
+// Delegates to the shared implementation in the scan package.
 func generateFindingTitle(finding *model.Finding) string {
-	const maxTitleLen = 80
-	const ellipsis = "..."
-
-	// SCA findings - prioritize CVE information
-	if finding.Type == model.FindingTypeSCA && len(finding.CVEs) > 0 {
-		title := finding.CVEs[0]
-		if len(finding.CVEs) > 1 {
-			title += fmt.Sprintf(" (+%d more)", len(finding.CVEs)-1)
-		}
-		return title
-	}
-
-	// Use OWASP category title if available (from API response)
-	if len(finding.OWASPCategories) > 0 && finding.OWASPCategories[0].Title != "" {
-		title := finding.OWASPCategories[0].Title
-		if len(finding.CWEs) > 0 {
-			title += fmt.Sprintf(" (%s)", finding.CWEs[0])
-		}
-		return title
-	}
-
-	// Secrets - indicate secret type
-	if finding.Type == model.FindingTypeSecret {
-		return "Exposed Secret"
-	}
-
-	// Fallback - use first sentence of description
-	if finding.Description != "" {
-		firstLine := strings.Split(finding.Description, "\n")[0]
-
-		// Truncate at first sentence boundary within limit
-		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= maxTitleLen {
-			firstLine = firstLine[:idx]
-		} else if len(firstLine) <= maxTitleLen && strings.HasSuffix(firstLine, ".") {
-			// Handle single-sentence descriptions ending with period (no trailing space)
-			firstLine = firstLine[:len(firstLine)-1]
-		}
-
-		// Hard truncate if still too long
-		if len(firstLine) > maxTitleLen {
-			firstLine = firstLine[:maxTitleLen-len(ellipsis)] + ellipsis
-		}
-		return firstLine
-	}
-
-	// Last resort - formatted category
-	if finding.FindingCategory != "" {
-		return util.FormatCategory(finding.FindingCategory)
-	}
-
-	return "Security Finding"
+	return scan.GenerateFindingTitle(finding)
 }
 
 func isEmptyFinding(nf model.NormalizedFinding) bool {

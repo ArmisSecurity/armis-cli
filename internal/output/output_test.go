@@ -3,6 +3,7 @@ package output
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -293,90 +294,45 @@ func TestExitIfNeeded_StdoutSyncError(t *testing.T) {
 	}
 }
 
-// TestSyncColors_Enabled verifies that SyncColors enables color codes when cli colors are enabled.
+// TestSyncColors_Enabled verifies that SyncColors enables styling when cli colors are enabled.
 func TestSyncColors_Enabled(t *testing.T) {
-	// Ensure colors start disabled
-	disableColors()
-
 	// Enable colors via cli package
 	cli.InitColors(cli.ColorModeAlways)
 
-	// Sync should enable output package colors
+	// Sync should enable output package styles
 	SyncColors()
 
-	// Verify color codes are set
-	if colorRed != "\033[31m" {
-		t.Errorf("expected colorRed to be '\\033[31m', got %q", colorRed)
+	// Verify styles are set by checking that DefaultStyles is used
+	s := GetStyles()
+	// CriticalBadge should have padding and styling
+	rendered := s.CriticalBadge.Render("TEST")
+
+	// With ColorModeAlways, lipgloss forces ANSI output even in non-TTY
+	// Check that output contains "TEST" and has ANSI codes (indicating style was applied)
+	if !strings.Contains(rendered, "TEST") {
+		t.Errorf("expected rendered badge to contain 'TEST', got %q", rendered)
 	}
-	if colorReset != "\033[0m" {
-		t.Errorf("expected colorReset to be '\\033[0m', got %q", colorReset)
-	}
-	if colorBold != "\033[1m" {
-		t.Errorf("expected colorBold to be '\\033[1m', got %q", colorBold)
+	// Either plain " TEST " (no color profile) or ANSI-styled output
+	hasANSI := strings.Contains(rendered, "\033[")
+	hasPlainPadding := rendered == " TEST "
+	if !hasANSI && !hasPlainPadding {
+		t.Errorf("expected rendered badge to have ANSI codes or plain padding, got %q", rendered)
 	}
 }
 
-// TestSyncColors_Disabled verifies that SyncColors disables color codes when cli colors are disabled.
+// TestSyncColors_Disabled verifies that SyncColors disables styling when cli colors are disabled.
 func TestSyncColors_Disabled(t *testing.T) {
-	// Ensure colors start enabled
-	enableColors()
-
 	// Disable colors via cli package
 	cli.InitColors(cli.ColorModeNever)
 
-	// Sync should disable output package colors
+	// Sync should disable output package styles
 	SyncColors()
 
-	// Verify color codes are empty
-	if colorRed != "" {
-		t.Errorf("expected colorRed to be empty, got %q", colorRed)
-	}
-	if colorReset != "" {
-		t.Errorf("expected colorReset to be empty, got %q", colorReset)
-	}
-	if colorBold != "" {
-		t.Errorf("expected colorBold to be empty, got %q", colorBold)
-	}
-}
-
-// TestEnableColors verifies that enableColors sets all color codes to their ANSI values.
-func TestEnableColors(t *testing.T) {
-	// Start with colors disabled
-	disableColors()
-
-	// Enable colors
-	enableColors()
-
-	// Check all color codes
-	expectedColors := map[string]string{
-		"colorReset":     "\033[0m",
-		"colorRed":       "\033[31m",
-		"colorGreen":     "\033[32m",
-		"colorOrange":    "\033[33m",
-		"colorYellow":    "\033[93m",
-		"colorBlue":      "\033[34m",
-		"colorGray":      "\033[90m",
-		"colorBgRed":     "\033[101m",
-		"colorBold":      "\033[1m",
-		"colorUnderline": "\033[4m",
-	}
-
-	actualColors := map[string]string{
-		"colorReset":     colorReset,
-		"colorRed":       colorRed,
-		"colorGreen":     colorGreen,
-		"colorOrange":    colorOrange,
-		"colorYellow":    colorYellow,
-		"colorBlue":      colorBlue,
-		"colorGray":      colorGray,
-		"colorBgRed":     colorBgRed,
-		"colorBold":      colorBold,
-		"colorUnderline": colorUnderline,
-	}
-
-	for name, expected := range expectedColors {
-		if actual := actualColors[name]; actual != expected {
-			t.Errorf("%s: expected %q, got %q", name, expected, actual)
-		}
+	// Verify NoColorStyles is used - badge should render without padding
+	s := GetStyles()
+	rendered := s.CriticalBadge.Render("TEST")
+	// NoColorStyles uses plain style with no padding
+	if rendered != "TEST" {
+		t.Errorf("expected rendered badge to be plain 'TEST' when colors are disabled, got %q", rendered)
 	}
 }

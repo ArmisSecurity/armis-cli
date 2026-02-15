@@ -21,6 +21,14 @@ This command is useful for:
 Requires --client-id, --client-secret, and --auth-endpoint flags or
 their corresponding environment variables (ARMIS_CLIENT_ID,
 ARMIS_CLIENT_SECRET, ARMIS_AUTH_ENDPOINT).`,
+	Example: `  # Obtain JWT token using flags
+  armis-cli auth --client-id MY_ID --client-secret MY_SECRET --auth-endpoint https://auth.example.com
+
+  # Obtain token using environment variables
+  export ARMIS_CLIENT_ID=MY_ID
+  export ARMIS_CLIENT_SECRET=MY_SECRET
+  export ARMIS_AUTH_ENDPOINT=https://auth.example.com
+  armis-cli auth`,
 	RunE: runAuth,
 }
 

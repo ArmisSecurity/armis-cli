@@ -14,6 +14,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -74,7 +75,7 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	imageName = normalised
 
 	if !isDockerAvailable() {
-		return nil, fmt.Errorf("docker is not available. Please install Docker or Podman")
+		return nil, fmt.Errorf("container runtime not found: install Docker or Podman")
 	}
 
 	tmpFile, err := os.CreateTemp("", "armis-image-*.tar")
@@ -89,7 +90,8 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 		_ = os.Remove(tmpFileName)
 	}()
 
-	fmt.Printf("Exporting image: %s\n", imageName)
+	styles := output.GetStyles()
+	fmt.Fprintf(os.Stderr, "%s %s...\n", styles.MutedText.Render("Exporting image"), styles.Bold.Render(imageName))
 	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
@@ -121,7 +123,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 	defer file.Close() //nolint:errcheck // file opened for reading
 
-	uploadSpinner := progress.NewSpinnerWithContext(ctx, "Uploading image...", s.noProgress)
+	uploadSpinner := progress.NewSpinnerWithContext(ctx, "Uploading to Armis Cloud...", s.noProgress)
 	uploadSpinner.Start()
 	defer uploadSpinner.Stop()
 
@@ -143,15 +145,18 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	uploadSpinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan initiated with ID: %s\n\n", scanID)
+	styles := output.GetStyles()
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan initiated with ID:"),
+		styles.ScanID.Render(scanID))
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Scanning image for vulnerabilities...", s.noProgress)
+	spinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			spinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning image for vulnerabilities..."))
+			spinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning for security issues..."))
 		})
 	elapsed := spinner.GetElapsed()
 	if err != nil {
@@ -159,7 +164,9 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "Scan completed in %s. Fetching results...\n", scan.FormatElapsed(elapsed))
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		styles.MutedText.Render("Scan completed in"),
+		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
 	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
 	if err != nil {
@@ -316,11 +323,14 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 		}
 
 		finding := model.Finding{
-			ID:          nf.NormalizedTask.FindingID,
-			Severity:    scan.MapSeverity(nf.NormalizedRemediation.ToolSeverity),
-			Description: nf.NormalizedRemediation.Description,
-			CVEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
-			CWEs:        nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+			ID:                      nf.NormalizedTask.FindingID,
+			Severity:                scan.MapSeverity(nf.NormalizedRemediation.ToolSeverity),
+			Description:             nf.NormalizedRemediation.Description,
+			CVEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CVEs,
+			CWEs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.CWEs,
+			OWASPCategories:         nf.NormalizedRemediation.VulnerabilityTypeMetadata.OWASPCategories,
+			LongDescriptionMarkdown: nf.NormalizedRemediation.VulnerabilityTypeMetadata.LongDescriptionMarkdown,
+			URLs:                    nf.NormalizedRemediation.VulnerabilityTypeMetadata.URLs,
 		}
 
 		if finding.Description == "" {
@@ -386,11 +396,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
 		}
 
-		if finding.FindingCategory != "" {
-			finding.Title = util.FormatCategory(finding.FindingCategory)
-		} else {
-			finding.Title = finding.Description
-		}
+		finding.Title = generateFindingTitle(&finding)
 
 		findings = append(findings, finding)
 	}
@@ -447,4 +453,10 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 	hasCategory := nf.NormalizedRemediation.FindingCategory != nil
 
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
+}
+
+// generateFindingTitle creates a descriptive title for SARIF output.
+// Delegates to the shared implementation in the scan package.
+func generateFindingTitle(finding *model.Finding) string {
+	return scan.GenerateFindingTitle(finding)
 }

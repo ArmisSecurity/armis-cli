@@ -111,6 +111,21 @@ func TestIsTestFile(t *testing.T) {
 			filename: "main.py",
 			expected: false,
 		},
+		{
+			name:     "perl test file simple",
+			filename: "test.t",
+			expected: true,
+		},
+		{
+			name:     "perl test file with name",
+			filename: "auth.t",
+			expected: true,
+		},
+		{
+			name:     "multi-extension file ending in .t",
+			filename: "foo.bar.t",
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -5,18 +5,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/update"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
 const (
 	devBaseURL        = "https://moose-dev.armis.com"
 	productionBaseURL = "https://moose.armis.com"
+
+	// Theme values for terminal background detection
+	themeAuto  = "auto"
+	themeDark  = "dark"
+	themeLight = "light"
 )
 
 var (
@@ -31,6 +38,7 @@ var (
 	debug         bool
 	noUpdateCheck bool
 	colorFlag     string
+	themeFlag     string
 
 	// JWT authentication
 	clientID     string
@@ -46,9 +54,20 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "armis-cli",
-	Short:         "Armis Security Scanner CLI",
-	Long:          `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
+	Use:   "armis-cli",
+	Short: "Armis Security Scanner CLI",
+	Long:  `Enterprise-grade CLI for static application security scanning integrated with Armis Cloud.`,
+	Example: `  # Scan current directory for vulnerabilities
+  armis-cli scan repo .
+
+  # Scan with JSON output
+  armis-cli scan repo . -f json
+
+  # Scan container image
+  armis-cli scan image nginx:latest
+
+  # Scan with specific failure threshold
+  armis-cli scan repo . --fail-on HIGH,CRITICAL`,
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -62,6 +81,19 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("invalid --color value %q: must be auto, always, or never", colorFlag)
 		}
 		cli.InitColors(mode)
+
+		// Apply theme override for terminal background detection
+		switch themeFlag {
+		case themeAuto:
+			// Let lipgloss auto-detect terminal background
+		case themeDark:
+			lipgloss.SetHasDarkBackground(true)
+		case themeLight:
+			lipgloss.SetHasDarkBackground(false)
+		default:
+			return fmt.Errorf("invalid --theme value %q: must be auto, dark, or light", themeFlag)
+		}
+
 		output.SyncColors()
 
 		// Skip update check if:
@@ -97,8 +129,12 @@ func Execute() error {
 }
 
 func init() {
+	// Set up styled help output on root command
+	// The help function is inherited by all subcommands added later
+	SetupHelp(rootCmd)
+
 	// Legacy Basic authentication
-	rootCmd.PersistentFlags().StringVar(&token, "token", os.Getenv("ARMIS_API_TOKEN"), "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", os.Getenv("ARMIS_API_TOKEN"), "API token for Basic authentication (env: ARMIS_API_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 
 	// JWT authentication
@@ -108,14 +144,15 @@ func init() {
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
-	rootCmd.PersistentFlags().StringVar(&format, "format", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
-	rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Disable progress indicators and spinners")
-	rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Fail build on severity levels (comma-separated): INFO, LOW, MEDIUM, HIGH, CRITICAL")
-	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code to return when build fails")
+	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
+	rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
+	rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
+	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
 	rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
 	rootCmd.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false, "Disable automatic update checking (env: ARMIS_NO_UPDATE_CHECK)")
 	rootCmd.PersistentFlags().StringVar(&colorFlag, "color", "auto", "Control colored output: auto, always, never")
+	rootCmd.PersistentFlags().StringVar(&themeFlag, "theme", getEnvOrDefault("ARMIS_THEME", themeAuto), "Terminal background theme: auto, dark, light (env: ARMIS_THEME)")
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.
@@ -129,7 +166,7 @@ func PrintUpdateNotification() {
 	select {
 	case result, ok := <-updateResultCh:
 		if ok && result != nil {
-			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion)
+			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
 			fmt.Fprint(os.Stderr, msg)
 		}
 	default:
@@ -159,20 +196,6 @@ func getAPIBaseURL() string {
 		return devBaseURL
 	}
 	return productionBaseURL
-}
-
-func getToken() (string, error) {
-	if token == "" {
-		return "", fmt.Errorf("API token required: use --token flag or ARMIS_API_TOKEN environment variable")
-	}
-	return token, nil
-}
-
-func getTenantID() (string, error) {
-	if tenantID == "" {
-		return "", fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
-	}
-	return tenantID, nil
 }
 
 // getAuthProvider creates an AuthProvider based on the provided credentials.
@@ -211,10 +234,14 @@ func validateFailOn(severities []string) error {
 		validSet[s] = true
 	}
 
-	for _, sev := range severities {
-		if !validSet[sev] {
+	for i, sev := range severities {
+		// Normalize to uppercase for case-insensitive matching
+		upper := strings.ToUpper(sev)
+		if !validSet[upper] {
 			return fmt.Errorf("invalid severity level %q: must be one of %v", sev, validSeverities)
 		}
+		// Update the slice with normalized value
+		severities[i] = upper
 	}
 	return nil
 }

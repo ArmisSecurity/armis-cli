@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"os"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func TestInitColors_Never(t *testing.T) {
@@ -11,8 +14,13 @@ func TestInitColors_Never(t *testing.T) {
 	if ColorsEnabled() {
 		t.Error("expected colors to be disabled with ColorModeNever")
 	}
-	if colorRed != "" || colorYellow != "" || colorBold != "" || colorReset != "" {
-		t.Error("expected all color codes to be empty strings")
+	if ColorsForced() {
+		t.Error("expected ColorsForced() to be false with ColorModeNever")
+	}
+	// Verify error label style renders without ANSI codes
+	rendered := errorLabelStyle.Render("test")
+	if bytes.Contains([]byte(rendered), []byte("\033[")) {
+		t.Error("expected no ANSI codes when colors disabled")
 	}
 }
 
@@ -24,8 +32,12 @@ func TestInitColors_Always(t *testing.T) {
 	if !ColorsEnabled() {
 		t.Error("expected colors to be enabled with ColorModeAlways even when NO_COLOR is set")
 	}
-	if colorRed == "" {
-		t.Error("expected colorRed to have ANSI code")
+	if !ColorsForced() {
+		t.Error("expected ColorsForced() to be true with ColorModeAlways")
+	}
+	// Verify error label style has colors (lipgloss styles contain color info)
+	if errorLabelStyle.GetForeground() == nil {
+		t.Error("expected errorLabelStyle to have foreground color set")
 	}
 }
 
@@ -35,6 +47,9 @@ func TestInitColors_Auto_NoColor(t *testing.T) {
 	InitColors(ColorModeAuto)
 	if ColorsEnabled() {
 		t.Error("expected colors to be disabled when NO_COLOR is set in auto mode")
+	}
+	if ColorsForced() {
+		t.Error("expected ColorsForced() to be false with ColorModeAuto")
 	}
 }
 
@@ -74,6 +89,8 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestPrintError_WithColors(t *testing.T) {
+	// Force ANSI color profile for test (lipgloss auto-detects pipe as no-color)
+	lipgloss.SetColorProfile(termenv.ANSI256)
 	InitColors(ColorModeAlways)
 
 	output := captureStderr(t, func() {
@@ -128,5 +145,95 @@ func TestPrintWarningf(t *testing.T) {
 
 	if output != "Warning: file test.txt not found\n" {
 		t.Errorf("expected formatted warning, got: %q", output)
+	}
+}
+
+func TestParseErrorMessage(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedReason  string
+		expectedContext string
+	}{
+		{
+			name:            "API error with JSON detail",
+			input:           `scan failed: failed to upload repository: upload failed after 674ms (tar size=1.6KiB, status=401 Unauthorized): {"detail":"Invalid authentication token"}`,
+			expectedReason:  "Invalid authentication token",
+			expectedContext: "scan failed: failed to upload repository: upload failed after 674ms (tar size=1.6KiB, status=401 Unauthorized)",
+		},
+		{
+			name:            "API error with different detail",
+			input:           `scan failed: failed to upload repository: upload failed after 500ms (tar size=2.0MiB, status=404 Not Found): {"detail":"Tenant not found"}`,
+			expectedReason:  "Tenant not found",
+			expectedContext: "scan failed: failed to upload repository: upload failed after 500ms (tar size=2.0MiB, status=404 Not Found)",
+		},
+		{
+			name:            "plain error without JSON",
+			input:           "API token required: use --token flag or ARMIS_API_TOKEN environment variable",
+			expectedReason:  "API token required: use --token flag or ARMIS_API_TOKEN environment variable",
+			expectedContext: "",
+		},
+		{
+			name:            "error with context canceled",
+			input:           "scan failed: context canceled",
+			expectedReason:  "scan failed: context canceled",
+			expectedContext: "",
+		},
+		{
+			name:            "JSON without detail key",
+			input:           `scan failed: upload failed: {"error":"something went wrong"}`,
+			expectedReason:  `scan failed: upload failed: {"error":"something went wrong"}`,
+			expectedContext: "",
+		},
+		{
+			name:            "JSON with empty detail",
+			input:           `scan failed: {"detail":""}`,
+			expectedReason:  `scan failed: {"detail":""}`,
+			expectedContext: "",
+		},
+		{
+			name:            "malformed JSON",
+			input:           `scan failed: {"detail":"unclosed`,
+			expectedReason:  `scan failed: {"detail":"unclosed`,
+			expectedContext: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, context := parseErrorMessage(tt.input)
+			if reason != tt.expectedReason {
+				t.Errorf("reason mismatch:\n  got:  %q\n  want: %q", reason, tt.expectedReason)
+			}
+			if context != tt.expectedContext {
+				t.Errorf("context mismatch:\n  got:  %q\n  want: %q", context, tt.expectedContext)
+			}
+		})
+	}
+}
+
+func TestPrintError_WithJSONDetail(t *testing.T) {
+	InitColors(ColorModeNever)
+
+	output := captureStderr(t, func() {
+		PrintError(`scan failed: upload failed: {"detail":"Invalid token"}`)
+	})
+
+	expected := "Error: Invalid token\n  scan failed: upload failed\n"
+	if output != expected {
+		t.Errorf("expected:\n%q\ngot:\n%q", expected, output)
+	}
+}
+
+func TestPrintError_PlainMessage(t *testing.T) {
+	InitColors(ColorModeNever)
+
+	output := captureStderr(t, func() {
+		PrintError("simple error message")
+	})
+
+	expected := "Error: simple error message\n"
+	if output != expected {
+		t.Errorf("expected:\n%q\ngot:\n%q", expected, output)
 	}
 }
