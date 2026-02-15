@@ -599,6 +599,127 @@ func TestDiffParsing(t *testing.T) {
 			t.Errorf("Expected 4 lines (preserving empty line), got %d", len(lines))
 		}
 	})
+
+	t.Run("parseDiffLines preserves removed lines starting with double dash", func(t *testing.T) {
+		// Bug fix test: Lines starting with "---" after a hunk header are diff content,
+		// not file headers. E.g., a SQL comment "-- DROP TABLE" removed appears as "--- DROP TABLE"
+		patch := `--- a/schema.sql
++++ b/schema.sql
+@@ -1,3 +1,2 @@
+ CREATE TABLE users;
+--- DROP TABLE legacy;
+ INSERT INTO users VALUES (1);`
+		lines := parseDiffLines(patch)
+
+		// Should have: hunk + context + removed + context = 4 lines
+		// The "--- DROP TABLE legacy;" should be parsed as DiffLineRemove, not skipped
+		if len(lines) != 4 {
+			t.Fatalf("Expected 4 lines, got %d", len(lines))
+		}
+
+		// Find the removed line
+		var foundRemove bool
+		for _, line := range lines {
+			if line.Type == DiffLineRemove {
+				foundRemove = true
+				if line.Content != "-- DROP TABLE legacy;" {
+					t.Errorf("Expected removed content '-- DROP TABLE legacy;', got %q", line.Content)
+				}
+			}
+		}
+		if !foundRemove {
+			t.Error("Expected to find a DiffLineRemove for the SQL comment line")
+		}
+	})
+
+	t.Run("parseDiffLines preserves added lines starting with double plus", func(t *testing.T) {
+		// Similar test for +++ content lines
+		patch := `--- a/config.yaml
++++ b/config.yaml
+@@ -1,2 +1,3 @@
+ key: value
++++ additional_section
+ more: data`
+		lines := parseDiffLines(patch)
+
+		// Should have: hunk + context + added + context = 4 lines
+		var foundAdd bool
+		for _, line := range lines {
+			if line.Type == DiffLineAdd {
+				foundAdd = true
+				if line.Content != "++ additional_section" {
+					t.Errorf("Expected added content '++ additional_section', got %q", line.Content)
+				}
+			}
+		}
+		if !foundAdd {
+			t.Error("Expected to find a DiffLineAdd for the ++ line")
+		}
+	})
+
+	t.Run("findInlineChanges handles token insertions correctly", func(t *testing.T) {
+		// Bug fix test: LCS-based algorithm should correctly handle insertions
+		// without cascading false positives
+		oldLine := "a b c"
+		newLine := "a x b c"
+
+		oldSpans, newSpans := findInlineChanges(oldLine, newLine)
+
+		// Old line should have no changes (nothing was removed)
+		if len(oldSpans) != 0 {
+			t.Errorf("Expected 0 old spans for pure insertion, got %d: %v", len(oldSpans), oldSpans)
+		}
+
+		// New line should have exactly one span for the inserted "x "
+		if len(newSpans) != 2 {
+			// Should find "x" and the space as separate tokens
+			t.Errorf("Expected 2 new spans for 'x' and ' ' insertion, got %d: %v", len(newSpans), newSpans)
+		}
+	})
+
+	t.Run("findInlineChanges handles token deletions correctly", func(t *testing.T) {
+		// Reverse of insertion test
+		oldLine := "a x b c"
+		newLine := "a b c"
+
+		oldSpans, newSpans := findInlineChanges(oldLine, newLine)
+
+		// Old line should mark the deleted "x "
+		if len(oldSpans) != 2 {
+			t.Errorf("Expected 2 old spans for 'x' and ' ' deletion, got %d: %v", len(oldSpans), oldSpans)
+		}
+
+		// New line should have no changes
+		if len(newSpans) != 0 {
+			t.Errorf("Expected 0 new spans for pure deletion, got %d: %v", len(newSpans), newSpans)
+		}
+	})
+
+	t.Run("findInlineChanges handles substitutions correctly", func(t *testing.T) {
+		oldLine := "value = True"
+		newLine := "value = False"
+
+		oldSpans, newSpans := findInlineChanges(oldLine, newLine)
+
+		// Should find exactly "True" -> "False" substitution
+		if len(oldSpans) != 1 || len(newSpans) != 1 {
+			t.Errorf("Expected 1 span each for substitution, got old=%d new=%d", len(oldSpans), len(newSpans))
+		}
+
+		// Verify the span positions are correct
+		if len(oldSpans) == 1 {
+			// "True" starts at position 8 in "value = True"
+			if oldSpans[0].Start != 8 || oldSpans[0].End != 12 {
+				t.Errorf("Expected old span [8,12] for 'True', got [%d,%d]", oldSpans[0].Start, oldSpans[0].End)
+			}
+		}
+		if len(newSpans) == 1 {
+			// "False" starts at position 8 in "value = False"
+			if newSpans[0].Start != 8 || newSpans[0].End != 13 {
+				t.Errorf("Expected new span [8,13] for 'False', got [%d,%d]", newSpans[0].Start, newSpans[0].End)
+			}
+		}
+	})
 }
 
 func TestHumanFormatter_LightTheme(t *testing.T) {

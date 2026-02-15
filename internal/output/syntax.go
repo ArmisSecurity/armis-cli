@@ -115,7 +115,8 @@ func HighlightLineWithBackground(line, filename string, bgColor lipgloss.Adaptiv
 }
 
 // getBackgroundANSI returns the ANSI escape code for a background color.
-// Returns empty string if color cannot be parsed.
+// Adapts to terminal color capability (TrueColor, ANSI256, or basic).
+// Returns empty string if color cannot be parsed or terminal doesn't support colors.
 func getBackgroundANSI(color lipgloss.AdaptiveColor) string {
 	// Resolve color based on theme
 	c := color.Dark
@@ -123,12 +124,40 @@ func getBackgroundANSI(color lipgloss.AdaptiveColor) string {
 		c = color.Light
 	}
 
-	// Parse hex color and convert to ANSI 48;2;R;G;B format (TrueColor)
+	// Parse hex color
 	r, g, b, ok := parseHexColor(c)
 	if !ok {
 		return ""
 	}
-	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+
+	// Adapt to terminal color capability (consistent with getTerminalFormatter)
+	profile := lipgloss.ColorProfile()
+	switch profile {
+	case termenv.TrueColor:
+		// 24-bit color: 48;2;R;G;B
+		return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+	case termenv.ANSI256:
+		// Convert to nearest 256-color palette index
+		idx := rgbToANSI256(r, g, b)
+		return fmt.Sprintf("\x1b[48;5;%dm", idx)
+	default:
+		// Basic 16-color terminals: use nearest standard color
+		// For vulnerability highlighting background, use red (41) as fallback
+		return "\x1b[41m"
+	}
+}
+
+// rgbToANSI256 converts RGB values to the nearest ANSI 256-color palette index.
+// Uses the 6x6x6 color cube (indices 16-231) for best color matching.
+func rgbToANSI256(r, g, b uint8) uint8 {
+	// Convert to 6-level values (0-5) for the 6x6x6 color cube.
+	// Math: (0-255) * 5 / 255 = 0-5, always fits in uint8.
+	r6 := (int(r) * 5) / 255 //nolint:gosec // Result is always 0-5
+	g6 := (int(g) * 5) / 255 //nolint:gosec // Result is always 0-5
+	b6 := (int(b) * 5) / 255 //nolint:gosec // Result is always 0-5
+
+	// Color cube index: 16 + 36*r + 6*g + b (max: 16 + 180 + 30 + 5 = 231)
+	return uint8(16 + 36*r6 + 6*g6 + b6) //nolint:gosec // Result is always 16-231
 }
 
 // parseHexColor parses a hex color string like "#RRGGBB" or "RRGGBB".

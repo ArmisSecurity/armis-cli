@@ -1225,14 +1225,18 @@ func parseDiffLines(patch string) []DiffLine {
 	lines := strings.Split(patch, "\n")
 
 	var oldLineNum, newLineNum int
+	seenHunk := false // Track whether we've seen the first @@ hunk header
 
 	for _, line := range lines {
-		// Skip file headers
-		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+		// Skip file headers (--- a/file, +++ b/file) that appear BEFORE the first hunk.
+		// After a hunk header, lines starting with --- or +++ are actual diff content
+		// (e.g., a removed SQL comment "-- DROP TABLE" appears as "--- DROP TABLE").
+		if !seenHunk && (strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ")) {
 			continue
 		}
 
 		if strings.HasPrefix(line, "@@") {
+			seenHunk = true
 			oldStart, _, newStart, _ := parseDiffHunk(line)
 			oldLineNum = oldStart
 			newLineNum = newStart
@@ -1289,37 +1293,115 @@ func parseDiffLines(patch string) []DiffLine {
 }
 
 // findInlineChanges compares two strings and returns spans of differing characters.
-// Uses a simple word-boundary approach for better highlighting.
+// Uses LCS (Longest Common Subsequence) on tokens for accurate change detection,
+// properly handling insertions and deletions without cascading false positives.
 func findInlineChanges(oldLine, newLine string) (oldSpans, newSpans []ChangeSpan) {
 	// Tokenize both lines by word boundaries
-	oldWords := tokenizeLine(oldLine)
-	newWords := tokenizeLine(newLine)
+	oldTokens := tokenizeLine(oldLine)
+	newTokens := tokenizeLine(newLine)
 
-	// Find differing tokens
-	oldPos, newPos := 0, 0
-	for i := 0; i < len(oldWords) || i < len(newWords); i++ {
-		var oldWord, newWord string
-		if i < len(oldWords) {
-			oldWord = oldWords[i]
-		}
-		if i < len(newWords) {
-			newWord = newWords[i]
-		}
+	// Compute LCS to find matching tokens
+	lcs := computeLCS(oldTokens, newTokens)
 
-		if oldWord != newWord {
-			if oldWord != "" {
-				oldSpans = append(oldSpans, ChangeSpan{Start: oldPos, End: oldPos + len(oldWord)})
+	// Build position maps: token index -> byte position
+	oldPositions := buildTokenPositions(oldTokens)
+	newPositions := buildTokenPositions(newTokens)
+
+	// Walk through both token lists, using LCS to identify matches
+	oldIdx, newIdx, lcsIdx := 0, 0, 0
+
+	for oldIdx < len(oldTokens) || newIdx < len(newTokens) {
+		// Check if current tokens match the next LCS element
+		oldMatchesLCS := lcsIdx < len(lcs) && oldIdx < len(oldTokens) && oldTokens[oldIdx] == lcs[lcsIdx]
+		newMatchesLCS := lcsIdx < len(lcs) && newIdx < len(newTokens) && newTokens[newIdx] == lcs[lcsIdx]
+
+		if oldMatchesLCS && newMatchesLCS {
+			// Both match LCS - this token is unchanged, advance all pointers
+			oldIdx++
+			newIdx++
+			lcsIdx++
+		} else if !oldMatchesLCS && oldIdx < len(oldTokens) {
+			// Old token not in LCS - it was removed
+			start := oldPositions[oldIdx]
+			end := start + len(oldTokens[oldIdx])
+			oldSpans = append(oldSpans, ChangeSpan{Start: start, End: end})
+			oldIdx++
+		} else if !newMatchesLCS && newIdx < len(newTokens) {
+			// New token not in LCS - it was added
+			start := newPositions[newIdx]
+			end := start + len(newTokens[newIdx])
+			newSpans = append(newSpans, ChangeSpan{Start: start, End: end})
+			newIdx++
+		} else {
+			// Safety: advance if stuck (shouldn't happen with correct LCS)
+			if oldIdx < len(oldTokens) {
+				oldIdx++
 			}
-			if newWord != "" {
-				newSpans = append(newSpans, ChangeSpan{Start: newPos, End: newPos + len(newWord)})
+			if newIdx < len(newTokens) {
+				newIdx++
 			}
 		}
-
-		oldPos += len(oldWord)
-		newPos += len(newWord)
 	}
 
 	return
+}
+
+// computeLCS computes the Longest Common Subsequence of two string slices.
+// Returns the subsequence elements (not indices).
+func computeLCS(a, b []string) []string {
+	m, n := len(a), len(b)
+	if m == 0 || n == 0 {
+		return nil
+	}
+
+	// Build DP table
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if a[i-1] == b[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else {
+				dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+			}
+		}
+	}
+
+	// Backtrack to find LCS
+	lcs := make([]string, 0, dp[m][n])
+	i, j := m, n
+	for i > 0 && j > 0 {
+		if a[i-1] == b[j-1] {
+			lcs = append(lcs, a[i-1])
+			i--
+			j--
+		} else if dp[i-1][j] > dp[i][j-1] {
+			i--
+		} else {
+			j--
+		}
+	}
+
+	// Reverse to get correct order
+	for left, right := 0, len(lcs)-1; left < right; left, right = left+1, right-1 {
+		lcs[left], lcs[right] = lcs[right], lcs[left]
+	}
+
+	return lcs
+}
+
+// buildTokenPositions returns a slice mapping token index to byte position in the original string.
+func buildTokenPositions(tokens []string) []int {
+	positions := make([]int, len(tokens))
+	pos := 0
+	for i, token := range tokens {
+		positions[i] = pos
+		pos += len(token)
+	}
+	return positions
 }
 
 // tokenizeLine splits a line into word-like tokens preserving positions

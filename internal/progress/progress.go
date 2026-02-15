@@ -224,13 +224,12 @@ func (s *Spinner) Start() {
 		ticker := time.NewTicker(spinnerFrameDelay)
 		defer ticker.Stop()
 
-		// clearLine returns the appropriate line-clear sequence based on color mode.
-		// When colors are disabled, use plain carriage return to avoid ANSI escapes.
+		// clearLine returns the line-clear sequence.
+		// Always use \r\033[K (carriage return + erase to EOL) to prevent
+		// trailing characters when messages shrink. The \033[K (CSI K) sequence
+		// is cursor control, not color, and works on all VT100-compatible terminals.
 		clearLine := func() string {
-			if cli.ColorsEnabled() {
-				return "\r\033[K"
-			}
-			return "\r"
+			return "\r\033[K"
 		}
 
 		for {
