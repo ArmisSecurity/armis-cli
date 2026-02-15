@@ -1294,6 +1294,68 @@ type DiffRenderOp struct {
 	Block ChangeBlock // For change blocks
 }
 
+// diffContextLines is the number of context lines to show around changes (like git diff -U3)
+const diffContextLines = 3
+
+// limitHunkContext reduces context lines around changes, keeping only N lines
+// before and after actual changes. Returns filtered lines with ellipsis markers
+// where context was omitted. This makes large diffs more readable.
+func limitHunkContext(lines []DiffLine, contextLines int) []DiffLine {
+	if len(lines) == 0 || contextLines < 0 {
+		return lines
+	}
+
+	// Find all change positions (add/remove lines)
+	changePositions := make(map[int]bool)
+	for i, line := range lines {
+		if line.Type == DiffLineAdd || line.Type == DiffLineRemove {
+			changePositions[i] = true
+		}
+	}
+
+	if len(changePositions) == 0 {
+		return lines // No changes, return as-is
+	}
+
+	// Mark which lines to keep (within contextLines of a change)
+	keep := make([]bool, len(lines))
+	for pos := range changePositions {
+		// Keep the change itself
+		keep[pos] = true
+		// Keep N lines before
+		for i := 1; i <= contextLines && pos-i >= 0; i++ {
+			keep[pos-i] = true
+		}
+		// Keep N lines after
+		for i := 1; i <= contextLines && pos+i < len(lines); i++ {
+			keep[pos+i] = true
+		}
+	}
+
+	// Build result, inserting ellipsis markers for gaps
+	var result []DiffLine
+	lastKept := -1
+	for i, line := range lines {
+		if keep[i] {
+			// Insert ellipsis if there's a gap
+			if lastKept >= 0 && i-lastKept > 1 {
+				omitted := i - lastKept - 1
+				result = append(result, DiffLine{
+					Type:    DiffLineContext,
+					Content: fmt.Sprintf("⋮ %d lines omitted", omitted),
+					Raw:     "",
+					OldNum:  -1, // Special marker for ellipsis
+					NewNum:  -1,
+				})
+			}
+			result = append(result, line)
+			lastKept = i
+		}
+	}
+
+	return result
+}
+
 // parseDiffHunk extracts line numbers from a hunk header like "@@ -31,6 +31,8 @@"
 func parseDiffHunk(line string) (oldStart, oldCount, newStart, newCount int) {
 	matches := diffHunkPattern.FindStringSubmatch(line)
@@ -1591,8 +1653,11 @@ func formatDiffWithColorsStyled(patch string) string {
 		sb.WriteString(formatDiffHunkLine(hunk.Header, s, hunk.Added, hunk.Removed))
 		afterHunk = true
 
+		// Limit context to N lines around changes for readability
+		limitedLines := limitHunkContext(hunk.Lines, diffContextLines)
+
 		// Collect render operations for this hunk
-		ops := collectRenderOps(hunk.Lines)
+		ops := collectRenderOps(limitedLines)
 
 		// Track consecutive empty context lines to collapse runs of empty lines
 		emptyCount := 0
@@ -1600,6 +1665,14 @@ func formatDiffWithColorsStyled(patch string) string {
 		for _, op := range ops {
 			switch op.Type {
 			case "context":
+				// Handle ellipsis marker (omitted lines indicator)
+				if op.Line.OldNum == -1 && op.Line.NewNum == -1 {
+					sb.WriteString(fmt.Sprintf("  %s\n", s.MutedText.Render(op.Line.Content)))
+					afterHunk = false
+					emptyCount = 0
+					continue
+				}
+
 				// Skip leading empty context lines right after hunk header
 				if afterHunk && strings.TrimSpace(op.Line.Content) == "" {
 					continue
