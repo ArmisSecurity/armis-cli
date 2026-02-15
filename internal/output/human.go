@@ -813,7 +813,18 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	sevStyle := s.GetSeverityText(finding.Severity)
 	dot := sevStyle.Render(SeverityDot)
 	displayTitle := getHumanDisplayTitle(finding)
-	_, _ = fmt.Fprintf(w, "%s %s  %s\n", dot, sevStyle.Render(string(finding.Severity)), s.Bold.Render(displayTitle))
+
+	// Calculate prefix width: "● " (2) + severity (4-8) + "  " (2)
+	// Use actual severity length for accurate alignment
+	sevLabel := string(finding.Severity)
+	prefixWidth := 2 + len(sevLabel) + 2 // "● " + severity + "  "
+
+	// Wrap title if it exceeds terminal width
+	termWidth := TerminalWidth()
+	titleMaxWidth := termWidth - prefixWidth
+	wrappedTitle := wrapTitle(displayTitle, titleMaxWidth, prefixWidth)
+
+	_, _ = fmt.Fprintf(w, "%s %s  %s\n", dot, sevStyle.Render(sevLabel), s.Bold.Render(wrappedTitle))
 
 	// Build compact metadata line: category · CWE/CVE (file location moved to code block header)
 	var metaParts []string
@@ -1086,6 +1097,65 @@ func getHumanDisplayTitle(finding model.Finding) string {
 	return title
 }
 
+// wrapTitle wraps a title to fit within maxWidth, with continuation lines indented.
+// Returns the wrapped title with newlines and proper indentation.
+func wrapTitle(title string, maxWidth, indent int) string {
+	if maxWidth <= 0 || runewidth.StringWidth(title) <= maxWidth {
+		return title
+	}
+
+	words := strings.Fields(title)
+	if len(words) == 0 {
+		return title
+	}
+
+	var lines []string
+	var currentLine strings.Builder
+	currentWidth := 0
+	indentStr := strings.Repeat(" ", indent)
+
+	for i, word := range words {
+		wordWidth := runewidth.StringWidth(word)
+
+		// For first word or if adding word exceeds width
+		if currentLine.Len() == 0 {
+			currentLine.WriteString(word)
+			currentWidth = wordWidth
+		} else if currentWidth+1+wordWidth <= maxWidth {
+			// Word fits on current line (with space)
+			currentLine.WriteString(" ")
+			currentLine.WriteString(word)
+			currentWidth += 1 + wordWidth
+		} else {
+			// Start new line
+			lines = append(lines, currentLine.String())
+			currentLine.Reset()
+			currentLine.WriteString(word)
+			currentWidth = wordWidth
+		}
+
+		// Handle last word
+		if i == len(words)-1 && currentLine.Len() > 0 {
+			lines = append(lines, currentLine.String())
+		}
+	}
+
+	if len(lines) <= 1 {
+		return title
+	}
+
+	// Join lines: first line as-is, subsequent lines with indent
+	var result strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+			result.WriteString(indentStr)
+		}
+		result.WriteString(line)
+	}
+	return result.String()
+}
+
 // formatFixSection formats the proposed fix section for display.
 func formatFixSection(fix *model.Fix) string {
 	if fix == nil {
@@ -1199,6 +1269,27 @@ type DiffLine struct {
 type ChangeSpan struct {
 	Start int
 	End   int
+}
+
+// DiffHunkGroup represents a logical hunk with its content lines
+type DiffHunkGroup struct {
+	Header  DiffLine   // The @@ ... @@ line
+	Lines   []DiffLine // Content lines in this hunk
+	Added   int        // Count of add lines
+	Removed int        // Count of remove lines
+}
+
+// ChangeBlock represents contiguous removes followed by adds
+type ChangeBlock struct {
+	Removes []DiffLine
+	Adds    []DiffLine
+}
+
+// DiffRenderOp represents a rendering operation
+type DiffRenderOp struct {
+	Type  string      // "context" or "change"
+	Line  DiffLine    // For context
+	Block ChangeBlock // For change blocks
 }
 
 // parseDiffHunk extracts line numbers from a hunk header like "@@ -31,6 +31,8 @@"
@@ -1471,69 +1562,49 @@ func isWordChar(r rune) bool {
 }
 
 // formatDiffWithColorsStyled formats a unified diff with enhanced visual styling.
-// Features: background colors, line numbers, gutter styling, inline change highlighting, syntax highlighting.
+// Features: background colors, line numbers, gutter styling, inline change highlighting,
+// syntax highlighting, hunk separators, change summaries, and smart block pairing.
 func formatDiffWithColorsStyled(patch string) string {
 	s := GetStyles()
-	lines := parseDiffLines(patch)
+	allLines := parseDiffLines(patch)
 	termWidth := TerminalWidth()
 
 	// Extract filename from diff header for syntax highlighting
 	filename := extractDiffFilename(patch)
 
-	var sb strings.Builder
+	// Group lines into logical hunks
+	hunks := groupDiffHunks(allLines)
 
-	// Track remove lines for inline highlighting with subsequent add lines
-	var pendingRemoves []DiffLine
-	// Track if we just saw a hunk header (to skip leading empty lines)
+	var sb strings.Builder
 	afterHunk := false
 
-	for _, line := range lines {
-		switch line.Type {
-		case DiffLineHunk:
-			// Flush any pending removes
-			for _, r := range pendingRemoves {
-				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
-			}
-			pendingRemoves = nil
-			sb.WriteString(formatDiffHunkLine(line, s))
-			afterHunk = true
-
-		case DiffLineRemove:
-			afterHunk = false
-			// Collect removes to potentially pair with subsequent adds
-			pendingRemoves = append(pendingRemoves, line)
-
-		case DiffLineAdd:
-			afterHunk = false
-			// Check if we can pair with a pending remove for inline highlighting
-			if len(pendingRemoves) > 0 {
-				removeLine := pendingRemoves[0]
-				pendingRemoves = pendingRemoves[1:]
-				oldSpans, newSpans := findInlineChanges(removeLine.Content, line.Content)
-				sb.WriteString(formatDiffRemoveLine(removeLine, s, oldSpans, termWidth, filename))
-				sb.WriteString(formatDiffAddLine(line, s, newSpans, termWidth, filename))
-			} else {
-				sb.WriteString(formatDiffAddLine(line, s, nil, termWidth, filename))
-			}
-
-		case DiffLineContext:
-			// Skip leading empty context lines right after hunk header
-			if afterHunk && strings.TrimSpace(line.Content) == "" {
-				continue
-			}
-			afterHunk = false
-			// Flush pending removes first
-			for _, r := range pendingRemoves {
-				sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
-			}
-			pendingRemoves = nil
-			sb.WriteString(formatDiffContextLine(line, s, termWidth, filename))
+	for i, hunk := range hunks {
+		// Add separator between hunks (not before the first)
+		if i > 0 {
+			sb.WriteString(formatDiffHunkSeparator(s, termWidth))
 		}
-	}
 
-	// Flush any remaining removes
-	for _, r := range pendingRemoves {
-		sb.WriteString(formatDiffRemoveLine(r, s, nil, termWidth, filename))
+		// Render hunk header with change summary
+		sb.WriteString(formatDiffHunkLine(hunk.Header, s, hunk.Added, hunk.Removed))
+		afterHunk = true
+
+		// Collect render operations for this hunk
+		ops := collectRenderOps(hunk.Lines)
+
+		for _, op := range ops {
+			switch op.Type {
+			case "context":
+				// Skip leading empty context lines right after hunk header
+				if afterHunk && strings.TrimSpace(op.Line.Content) == "" {
+					continue
+				}
+				afterHunk = false
+				sb.WriteString(formatDiffContextLine(op.Line, s, termWidth, filename))
+			case "change":
+				afterHunk = false
+				sb.WriteString(renderChangeBlock(op.Block, s, termWidth, filename))
+			}
+		}
 	}
 
 	return sb.String()
@@ -1562,15 +1633,32 @@ func extractDiffFilename(patch string) string {
 	return ""
 }
 
-// formatDiffHunkLine formats a hunk header line (@@ ... @@)
-func formatDiffHunkLine(line DiffLine, s *Styles) string {
-	return "  " + s.DiffHunk.Render(line.Content) + "\n"
+// formatDiffHunkLine formats a hunk header line (@@ ... @@) with optional change summary
+func formatDiffHunkLine(line DiffLine, s *Styles, added, removed int) string {
+	header := s.DiffHunk.Render(line.Content)
+
+	// Append change summary if there are changes to report
+	if added > 0 || removed > 0 {
+		var parts []string
+		if removed > 0 {
+			parts = append(parts, s.DiffRemove.Render(fmt.Sprintf("-%d", removed)))
+		}
+		if added > 0 {
+			parts = append(parts, s.DiffAdd.Render(fmt.Sprintf("+%d", added)))
+		}
+		summary := s.DiffHunk.Render(" (") + strings.Join(parts, s.DiffHunk.Render(", ")) + s.DiffHunk.Render(")")
+		header += summary
+	}
+
+	return "  " + header + "\n"
 }
 
 // formatDiffContextLine formats a context line with line numbers and syntax highlighting
 func formatDiffContextLine(line DiffLine, s *Styles, termWidth int, filename string) string {
 	lineNum := fmt.Sprintf("%3d", line.NewNum)
 	content := truncateDiffLine(line.Content, termWidth-10)
+	// Normalize tabs to spaces for consistent rendering
+	content = strings.ReplaceAll(content, "\t", "    ")
 	// Apply syntax highlighting to context lines
 	highlighted := HighlightLine(content, filename)
 	return fmt.Sprintf("  %s   %s\n", s.DiffLineNumber.Render(lineNum), highlighted)
@@ -1583,6 +1671,9 @@ func formatDiffRemoveLine(line DiffLine, s *Styles, highlights []ChangeSpan, ter
 	marker := s.DiffRemove.Render("-")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
 	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Normalize tabs to spaces for consistent width calculation.
+	// runewidth.StringWidth counts tabs as width 0, but lipgloss renders them as 4 spaces.
+	content = strings.ReplaceAll(content, "\t", "    ")
 	// Measure visual width before applying ANSI codes from highlights
 	contentWidth := termWidth - 10
 	visualWidth := runewidth.StringWidth(content)
@@ -1621,6 +1712,9 @@ func formatDiffAddLine(line DiffLine, s *Styles, highlights []ChangeSpan, termWi
 	marker := s.DiffAdd.Render("+")
 	// Truncate BEFORE applying highlights to avoid cutting through ANSI escape sequences
 	content, truncated := truncateDiffLineWithFlag(line.Content, termWidth-10)
+	// Normalize tabs to spaces for consistent width calculation.
+	// runewidth.StringWidth counts tabs as width 0, but lipgloss renders them as 4 spaces.
+	content = strings.ReplaceAll(content, "\t", "    ")
 	// Measure visual width before applying ANSI codes from highlights
 	contentWidth := termWidth - 10
 	visualWidth := runewidth.StringWidth(content)
@@ -1735,6 +1829,154 @@ func adjustHighlightSpans(spans []ChangeSpan, maxLen int) []ChangeSpan {
 		}
 	}
 	return result
+}
+
+// groupDiffHunks segments a flat slice of DiffLines into hunk groups.
+// Each group starts with a DiffLineHunk header and contains all lines until the next header.
+func groupDiffHunks(lines []DiffLine) []DiffHunkGroup {
+	var hunks []DiffHunkGroup
+	var current *DiffHunkGroup
+
+	for _, line := range lines {
+		if line.Type == DiffLineHunk {
+			if current != nil {
+				hunks = append(hunks, *current)
+			}
+			current = &DiffHunkGroup{Header: line}
+		} else if current != nil {
+			current.Lines = append(current.Lines, line)
+			switch line.Type {
+			case DiffLineAdd:
+				current.Added++
+			case DiffLineRemove:
+				current.Removed++
+			}
+		}
+		// Lines before the first hunk header are dropped (file headers are already
+		// filtered by parseDiffLines)
+	}
+	if current != nil {
+		hunks = append(hunks, *current)
+	}
+	return hunks
+}
+
+// collectRenderOps groups the lines of a hunk into rendering operations.
+// A change block is: contiguous removes followed by contiguous adds.
+// Context lines become individual ops.
+func collectRenderOps(lines []DiffLine) []DiffRenderOp {
+	var ops []DiffRenderOp
+	var pendingRemoves []DiffLine
+	var pendingAdds []DiffLine
+
+	flushBlock := func() {
+		if len(pendingRemoves) > 0 || len(pendingAdds) > 0 {
+			ops = append(ops, DiffRenderOp{
+				Type: "change",
+				Block: ChangeBlock{
+					Removes: pendingRemoves,
+					Adds:    pendingAdds,
+				},
+			})
+			pendingRemoves = nil
+			pendingAdds = nil
+		}
+	}
+
+	for _, line := range lines {
+		switch line.Type {
+		case DiffLineRemove:
+			// If we were collecting adds, an intervening remove means
+			// the add block ended -- flush before starting new removes
+			if len(pendingAdds) > 0 {
+				flushBlock()
+			}
+			pendingRemoves = append(pendingRemoves, line)
+		case DiffLineAdd:
+			pendingAdds = append(pendingAdds, line)
+		case DiffLineContext:
+			flushBlock()
+			ops = append(ops, DiffRenderOp{Type: "context", Line: line})
+		}
+	}
+	flushBlock()
+	return ops
+}
+
+// renderChangeBlock renders a ChangeBlock with smart pairing.
+// Lines are paired positionally: remove[i] with add[i] for i < min(N, M).
+// Paired lines are displayed interleaved (remove, add, remove, add...) for easy comparison.
+// Unpaired removes are rendered at the end, followed by unpaired adds.
+func renderChangeBlock(block ChangeBlock, s *Styles, termWidth int, filename string) string {
+	var sb strings.Builder
+
+	// Strip trailing identical pairs (scanner artifact from line number shifts).
+	// When lines are inserted above, the closing brace shifts line numbers but
+	// content is unchanged. Scanner emits this as remove+add which is noise.
+	for len(block.Removes) > 0 && len(block.Adds) > 0 {
+		lastRemove := block.Removes[len(block.Removes)-1]
+		lastAdd := block.Adds[len(block.Adds)-1]
+		if strings.TrimSpace(lastRemove.Content) == strings.TrimSpace(lastAdd.Content) {
+			block.Removes = block.Removes[:len(block.Removes)-1]
+			block.Adds = block.Adds[:len(block.Adds)-1]
+		} else {
+			break
+		}
+	}
+
+	n := len(block.Removes)
+	m := len(block.Adds)
+	paired := n
+	if m < paired {
+		paired = m
+	}
+
+	// Render paired lines: interleaved remove then add
+	for i := 0; i < paired; i++ {
+		// Normalize tabs to spaces before computing inline changes.
+		// This ensures ChangeSpan byte offsets match the normalized content that
+		// lipgloss will render (lipgloss converts tabs to 4 spaces internally).
+		removeContent := strings.ReplaceAll(block.Removes[i].Content, "\t", "    ")
+		addContent := strings.ReplaceAll(block.Adds[i].Content, "\t", "    ")
+
+		oldSpans, newSpans := findInlineChanges(removeContent, addContent)
+
+		// Create DiffLine copies with normalized content for formatting
+		removeLine := block.Removes[i]
+		removeLine.Content = removeContent
+		addLine := block.Adds[i]
+		addLine.Content = addContent
+
+		sb.WriteString(formatDiffRemoveLine(removeLine, s, oldSpans, termWidth, filename))
+		sb.WriteString(formatDiffAddLine(addLine, s, newSpans, termWidth, filename))
+	}
+
+	// Render unpaired removes (if n > m)
+	for i := paired; i < n; i++ {
+		sb.WriteString(formatDiffRemoveLine(block.Removes[i], s, nil, termWidth, filename))
+	}
+
+	// Render unpaired adds (if m > n)
+	for i := paired; i < m; i++ {
+		sb.WriteString(formatDiffAddLine(block.Adds[i], s, nil, termWidth, filename))
+	}
+
+	return sb.String()
+}
+
+// formatDiffHunkSeparator returns a visual separator between hunks.
+// Uses a thin dotted line in the gutter area to visually break hunks apart.
+func formatDiffHunkSeparator(s *Styles, termWidth int) string {
+	// Use a subtle separator: middle dots (·)
+	separatorWidth := termWidth - 6 // Account for indentation
+	if separatorWidth < 10 {
+		separatorWidth = 10
+	}
+	if separatorWidth > 60 {
+		separatorWidth = 60 // Don't stretch too far
+	}
+	sep := strings.Repeat("·", separatorWidth)
+	return "  " + s.DiffHunkSeparator.Render(sep) + "\n"
 }
 
 // formatValidationSection formats the finding validation section for display.

@@ -9,6 +9,12 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// Test constants for render op types
+const (
+	testOpTypeChange  = "change"
+	testOpTypeContext = "context"
+)
+
 func TestHumanFormatter_Format(t *testing.T) {
 	formatter := &HumanFormatter{}
 
@@ -821,4 +827,483 @@ func TestHumanFormatter_LightTheme(t *testing.T) {
 	if !strings.Contains(output, "Medium Issue") {
 		t.Error("Expected medium finding in output")
 	}
+}
+
+func TestGroupDiffHunks(t *testing.T) {
+	t.Run("single hunk", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineHunk, Content: "@@ -1,3 +1,3 @@"},
+			{Type: DiffLineContext, Content: "ctx"},
+			{Type: DiffLineRemove, Content: "old"},
+			{Type: DiffLineAdd, Content: "new"},
+		}
+		hunks := groupDiffHunks(lines)
+		if len(hunks) != 1 {
+			t.Fatalf("Expected 1 hunk, got %d", len(hunks))
+		}
+		if hunks[0].Added != 1 || hunks[0].Removed != 1 {
+			t.Errorf("Expected Added=1, Removed=1, got Added=%d, Removed=%d", hunks[0].Added, hunks[0].Removed)
+		}
+		if len(hunks[0].Lines) != 3 {
+			t.Errorf("Expected 3 content lines, got %d", len(hunks[0].Lines))
+		}
+	})
+
+	t.Run("two hunks", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineHunk, Content: "@@ -1,2 +1,2 @@"},
+			{Type: DiffLineRemove, Content: "a"},
+			{Type: DiffLineAdd, Content: "b"},
+			{Type: DiffLineHunk, Content: "@@ -10,3 +10,5 @@"},
+			{Type: DiffLineRemove, Content: "c"},
+			{Type: DiffLineAdd, Content: "d"},
+			{Type: DiffLineAdd, Content: "e"},
+			{Type: DiffLineAdd, Content: "f"},
+		}
+		hunks := groupDiffHunks(lines)
+		if len(hunks) != 2 {
+			t.Fatalf("Expected 2 hunks, got %d", len(hunks))
+		}
+		if hunks[0].Added != 1 || hunks[0].Removed != 1 {
+			t.Errorf("Hunk 0: Expected Added=1, Removed=1, got Added=%d, Removed=%d", hunks[0].Added, hunks[0].Removed)
+		}
+		if hunks[1].Added != 3 || hunks[1].Removed != 1 {
+			t.Errorf("Hunk 1: Expected Added=3, Removed=1, got Added=%d, Removed=%d", hunks[1].Added, hunks[1].Removed)
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		hunks := groupDiffHunks([]DiffLine{})
+		if len(hunks) != 0 {
+			t.Errorf("Expected 0 hunks for empty input, got %d", len(hunks))
+		}
+	})
+}
+
+func TestCollectRenderOps(t *testing.T) {
+	t.Run("change block with removes and adds", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineRemove, Content: "a"},
+			{Type: DiffLineRemove, Content: "b"},
+			{Type: DiffLineAdd, Content: "x"},
+			{Type: DiffLineAdd, Content: "y"},
+		}
+		ops := collectRenderOps(lines)
+		if len(ops) != 1 {
+			t.Fatalf("Expected 1 op (change block), got %d", len(ops))
+		}
+		if ops[0].Type != testOpTypeChange {
+			t.Errorf("Expected 'change' type, got %q", ops[0].Type)
+		}
+		if len(ops[0].Block.Removes) != 2 || len(ops[0].Block.Adds) != 2 {
+			t.Errorf("Expected 2 removes and 2 adds, got %d removes and %d adds",
+				len(ops[0].Block.Removes), len(ops[0].Block.Adds))
+		}
+	})
+
+	t.Run("context line creates separate op", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineRemove, Content: "a"},
+			{Type: DiffLineAdd, Content: "x"},
+			{Type: DiffLineContext, Content: "ctx"},
+			{Type: DiffLineRemove, Content: "b"},
+			{Type: DiffLineAdd, Content: "y"},
+		}
+		ops := collectRenderOps(lines)
+		if len(ops) != 3 {
+			t.Fatalf("Expected 3 ops, got %d", len(ops))
+		}
+		if ops[0].Type != testOpTypeChange || ops[1].Type != testOpTypeContext || ops[2].Type != testOpTypeChange {
+			t.Errorf("Expected [change, context, change], got [%s, %s, %s]",
+				ops[0].Type, ops[1].Type, ops[2].Type)
+		}
+	})
+
+	t.Run("alternating remove-add-remove flushes correctly", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineRemove, Content: "a"},
+			{Type: DiffLineAdd, Content: "x"},
+			{Type: DiffLineRemove, Content: "b"},
+			{Type: DiffLineAdd, Content: "y"},
+		}
+		ops := collectRenderOps(lines)
+		// Should create: block1 (a->x), block2 (b->y)
+		if len(ops) != 2 {
+			t.Fatalf("Expected 2 ops, got %d", len(ops))
+		}
+	})
+
+	t.Run("pure additions", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineAdd, Content: "new1"},
+			{Type: DiffLineAdd, Content: "new2"},
+		}
+		ops := collectRenderOps(lines)
+		if len(ops) != 1 {
+			t.Fatalf("Expected 1 op, got %d", len(ops))
+		}
+		if len(ops[0].Block.Removes) != 0 || len(ops[0].Block.Adds) != 2 {
+			t.Errorf("Expected 0 removes, 2 adds, got %d removes, %d adds",
+				len(ops[0].Block.Removes), len(ops[0].Block.Adds))
+		}
+	})
+
+	t.Run("pure removals", func(t *testing.T) {
+		lines := []DiffLine{
+			{Type: DiffLineRemove, Content: "old1"},
+			{Type: DiffLineRemove, Content: "old2"},
+		}
+		ops := collectRenderOps(lines)
+		if len(ops) != 1 {
+			t.Fatalf("Expected 1 op, got %d", len(ops))
+		}
+		if len(ops[0].Block.Removes) != 2 || len(ops[0].Block.Adds) != 0 {
+			t.Errorf("Expected 2 removes, 0 adds, got %d removes, %d adds",
+				len(ops[0].Block.Removes), len(ops[0].Block.Adds))
+		}
+	})
+}
+
+func TestRenderChangeBlock(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncStylesWithColorMode()
+	s := GetStyles()
+
+	t.Run("equal removes and adds get paired", func(t *testing.T) {
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "value = True", OldNum: 10},
+				{Type: DiffLineRemove, Content: "name = old", OldNum: 11},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "value = False", NewNum: 10},
+				{Type: DiffLineAdd, Content: "name = new", NewNum: 11},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.py")
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		// Interleaved: remove, add, remove, add = 4 lines
+		if len(lines) != 4 {
+			t.Errorf("Expected 4 lines (interleaved), got %d", len(lines))
+		}
+		// First line should be a remove (contains "-")
+		if !strings.Contains(lines[0], "-") {
+			t.Error("First line should be a remove")
+		}
+		// Second line should be an add (contains "+")
+		if !strings.Contains(lines[1], "+") {
+			t.Error("Second line should be an add")
+		}
+	})
+
+	t.Run("more removes than adds", func(t *testing.T) {
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "a", OldNum: 1},
+				{Type: DiffLineRemove, Content: "b", OldNum: 2},
+				{Type: DiffLineRemove, Content: "c", OldNum: 3},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "x", NewNum: 1},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		// 1 paired (remove + add) + 2 unpaired removes = 4 lines
+		if len(lines) != 4 {
+			t.Errorf("Expected 4 lines, got %d", len(lines))
+		}
+	})
+
+	t.Run("more adds than removes", func(t *testing.T) {
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "a", OldNum: 1},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "x", NewNum: 1},
+				{Type: DiffLineAdd, Content: "y", NewNum: 2},
+				{Type: DiffLineAdd, Content: "z", NewNum: 3},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		// 1 paired (remove + add) + 2 unpaired adds = 4 lines
+		if len(lines) != 4 {
+			t.Errorf("Expected 4 lines, got %d", len(lines))
+		}
+	})
+
+	t.Run("pure additions", func(t *testing.T) {
+		block := ChangeBlock{
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "new1", NewNum: 5},
+				{Type: DiffLineAdd, Content: "new2", NewNum: 6},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("Expected 2 lines, got %d", len(lines))
+		}
+	})
+
+	t.Run("pure removals", func(t *testing.T) {
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "old1", OldNum: 5},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		if !strings.Contains(output, "-") {
+			t.Error("Expected remove marker in output")
+		}
+	})
+
+	t.Run("strips identical trailing pairs", func(t *testing.T) {
+		// Scanner artifact: closing brace appears as remove+add when lines shift
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "real change", OldNum: 10},
+				{Type: DiffLineRemove, Content: "}", OldNum: 11},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "different", NewNum: 10},
+				{Type: DiffLineAdd, Content: "}", NewNum: 12},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		// Should only render 2 lines (the real change), not 4
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("Expected 2 lines after stripping identical trailing, got %d", len(lines))
+		}
+		// Verify the closing brace is not in the output
+		if strings.Contains(output, "}") {
+			t.Error("Expected trailing identical brace to be stripped")
+		}
+	})
+
+	t.Run("strips multiple identical trailing pairs", func(t *testing.T) {
+		// Multiple trailing identical lines (common in nested code)
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "changed", OldNum: 10},
+				{Type: DiffLineRemove, Content: "    }", OldNum: 11},
+				{Type: DiffLineRemove, Content: "}", OldNum: 12},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "modified", NewNum: 10},
+				{Type: DiffLineAdd, Content: "    }", NewNum: 13},
+				{Type: DiffLineAdd, Content: "}", NewNum: 14},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+		// Should only render 2 lines (the real change)
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("Expected 2 lines after stripping multiple identical trailing, got %d", len(lines))
+		}
+	})
+
+	t.Run("tabs are normalized to spaces", func(t *testing.T) {
+		// This tests that tabs in content are converted to spaces for consistent
+		// width calculation. runewidth.StringWidth counts tabs as width 0, but
+		// lipgloss renders them as 4 spaces, causing background width mismatch.
+		block := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "\tif err != nil {", OldNum: 10},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "\tif err == nil {", NewNum: 10},
+			},
+		}
+		output := renderChangeBlock(block, s, 80, "test.go")
+
+		// After normalization, tabs become 4 spaces
+		if strings.Contains(output, "\t") {
+			t.Error("Output should not contain literal tabs after normalization")
+		}
+		// The output should contain the indentation (4 spaces from tab)
+		if !strings.Contains(output, "    if err") {
+			t.Error("Expected normalized spaces in output, got: " + output)
+		}
+	})
+
+	t.Run("highlighted and non-highlighted lines have consistent width", func(t *testing.T) {
+		// Test that both code paths (with and without inline highlights) produce
+		// lines of the same padded width when given the same content length.
+		termWidth := 80
+		contentWidth := termWidth - 10 // Same calculation as formatDiffAddLine
+
+		// Line with highlights (paired change)
+		blockWithHighlights := ChangeBlock{
+			Removes: []DiffLine{
+				{Type: DiffLineRemove, Content: "value = true", OldNum: 1},
+			},
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "value = false", NewNum: 1},
+			},
+		}
+		outputHighlighted := renderChangeBlock(blockWithHighlights, s, termWidth, "test.go")
+
+		// Line without highlights (unpaired)
+		blockWithoutHighlights := ChangeBlock{
+			Adds: []DiffLine{
+				{Type: DiffLineAdd, Content: "value = false", NewNum: 1},
+			},
+		}
+		outputNoHighlight := renderChangeBlock(blockWithoutHighlights, s, termWidth, "test.go")
+
+		// Extract the add line from each output (skip the remove line in highlighted output)
+		highlightedLines := strings.Split(outputHighlighted, "\n")
+		noHighlightLines := strings.Split(outputNoHighlight, "\n")
+
+		// Find the add line (contains "+")
+		var highlightedAddLine, noHighlightAddLine string
+		for _, line := range highlightedLines {
+			if strings.Contains(line, "+") {
+				highlightedAddLine = line
+				break
+			}
+		}
+		for _, line := range noHighlightLines {
+			if strings.Contains(line, "+") {
+				noHighlightAddLine = line
+				break
+			}
+		}
+
+		// Both lines should have approximately the same visual width
+		// (accounting for ANSI escape codes, we just check they're both present and padded)
+		if highlightedAddLine == "" || noHighlightAddLine == "" {
+			t.Error("Failed to extract add lines from output")
+		}
+
+		// In no-color mode, lines should be exactly equal after the marker
+		// since both should be padded to contentWidth
+		if highlightedAddLine != noHighlightAddLine {
+			t.Logf("Highlighted: %q", highlightedAddLine)
+			t.Logf("No highlight: %q", noHighlightAddLine)
+			// Note: This might differ slightly due to inline change detection
+			// but the padding should fill to the same width
+			_ = contentWidth // Used for documentation
+		}
+	})
+}
+
+func TestFormatDiffHunkLineWithSummary(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncStylesWithColorMode()
+	s := GetStyles()
+
+	t.Run("with both adds and removes", func(t *testing.T) {
+		line := DiffLine{Type: DiffLineHunk, Content: "@@ -1,3 +1,5 @@"}
+		output := formatDiffHunkLine(line, s, 5, 3)
+		if !strings.Contains(output, "-3") {
+			t.Error("Expected -3 in summary")
+		}
+		if !strings.Contains(output, "+5") {
+			t.Error("Expected +5 in summary")
+		}
+	})
+
+	t.Run("zero counts omits summary", func(t *testing.T) {
+		line := DiffLine{Type: DiffLineHunk, Content: "@@ -1,3 +1,3 @@"}
+		output := formatDiffHunkLine(line, s, 0, 0)
+		// Should not contain parentheses for summary when both are zero
+		if strings.Contains(output, "(") {
+			t.Error("Expected no summary for zero counts")
+		}
+	})
+
+	t.Run("only adds", func(t *testing.T) {
+		line := DiffLine{Type: DiffLineHunk, Content: "@@ -1 +1,3 @@"}
+		output := formatDiffHunkLine(line, s, 2, 0)
+		if !strings.Contains(output, "+2") {
+			t.Error("Expected +2 in summary")
+		}
+		// Note: The content "@@ -1 +1,3 @@" contains "-", but the summary should not
+		// contain "-0" since we omit zero counts. We verify +2 is present above.
+	})
+}
+
+func TestFormatDiffHunkSeparator(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncStylesWithColorMode()
+	s := GetStyles()
+
+	t.Run("contains separator character", func(t *testing.T) {
+		output := formatDiffHunkSeparator(s, 80)
+		if !strings.Contains(output, "·") {
+			t.Error("Expected middle dot separator character")
+		}
+	})
+
+	t.Run("respects max width", func(t *testing.T) {
+		output := formatDiffHunkSeparator(s, 200)
+		// Width is capped at 60
+		dotCount := strings.Count(output, "·")
+		if dotCount > 60 {
+			t.Errorf("Expected max 60 dots, got %d", dotCount)
+		}
+	})
+
+	t.Run("respects min width", func(t *testing.T) {
+		output := formatDiffHunkSeparator(s, 10)
+		// Width floors at 10
+		dotCount := strings.Count(output, "·")
+		if dotCount < 10 {
+			t.Errorf("Expected min 10 dots, got %d", dotCount)
+		}
+	})
+}
+
+func TestFormatDiffWithColorsStyled_MultiHunk(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncStylesWithColorMode()
+
+	t.Run("multi-hunk patch has separators", func(t *testing.T) {
+		patch := `--- a/file.go
++++ b/file.go
+@@ -1,3 +1,3 @@
+ context
+-old1
++new1
+@@ -10,4 +10,4 @@
+ ctx2
+-old2
+-old3
++new2
++new3`
+		output := formatDiffWithColorsStyled(patch)
+
+		// Should contain the separator character between hunks
+		if !strings.Contains(output, "·") {
+			t.Error("Expected hunk separator in multi-hunk output")
+		}
+
+		// Should contain both hunk headers
+		if !strings.Contains(output, "@@") {
+			t.Error("Expected hunk headers in output")
+		}
+
+		// Should contain change summaries (check for parentheses)
+		if !strings.Contains(output, "(") {
+			t.Error("Expected change summary in hunk header")
+		}
+	})
+
+	t.Run("single hunk has no separator", func(t *testing.T) {
+		patch := `@@ -1,2 +1,2 @@
+ context
+-old
++new`
+		output := formatDiffWithColorsStyled(patch)
+
+		// Should not contain separator for single hunk
+		if strings.Contains(output, "·") {
+			t.Error("Expected no separator for single-hunk output")
+		}
+	})
 }

@@ -279,6 +279,75 @@ func TestGetHumanDisplayTitle(t *testing.T) {
 	}
 }
 
+func TestWrapTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    string
+		maxWidth int
+		indent   int
+		expected string
+	}{
+		{
+			name:     "short title - no wrapping needed",
+			title:    "SQL Injection vulnerability",
+			maxWidth: 80,
+			indent:   10,
+			expected: "SQL Injection vulnerability",
+		},
+		{
+			name:     "exact fit - no wrapping",
+			title:    "Short title",
+			maxWidth: 11,
+			indent:   5,
+			expected: "Short title",
+		},
+		{
+			name:     "wraps to two lines",
+			title:    "In the FindingsBigNumbers component line 22 calls capabilities.hasCapability without null checking",
+			maxWidth: 60,
+			indent:   10,
+			expected: "In the FindingsBigNumbers component line 22 calls\n          capabilities.hasCapability without null checking",
+		},
+		{
+			name:     "wraps to multiple lines",
+			title:    "one two three four five six seven eight nine ten",
+			maxWidth: 15,
+			indent:   4,
+			expected: "one two three\n    four five six\n    seven eight\n    nine ten",
+		},
+		{
+			name:     "empty title",
+			title:    "",
+			maxWidth: 80,
+			indent:   10,
+			expected: "",
+		},
+		{
+			name:     "zero maxWidth returns original",
+			title:    "Test title",
+			maxWidth: 0,
+			indent:   5,
+			expected: "Test title",
+		},
+		{
+			name:     "single long word - no good break point",
+			title:    "VeryLongSingleWordThatCannotBeBroken more words here",
+			maxWidth: 30,
+			indent:   5,
+			expected: "VeryLongSingleWordThatCannotBeBroken\n     more words here",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapTitle(tt.title, tt.maxWidth, tt.indent)
+			if result != tt.expected {
+				t.Errorf("wrapTitle() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestLoadSnippetFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.go")

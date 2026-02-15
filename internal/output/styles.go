@@ -104,6 +104,7 @@ type Styles struct {
 	DiffRemoveHighlight lipgloss.Style // Inline change highlight (removed text)
 	DiffLineNumber      lipgloss.Style // Dim gray for line numbers in diff
 	DiffGutter          lipgloss.Style // Style for the │ gutter character
+	DiffHunkSeparator   lipgloss.Style // Style for visual separator between hunks
 
 	// Summary dashboard
 	SummaryBox    lipgloss.Style
@@ -235,6 +236,8 @@ func DefaultStyles() *Styles {
 			Foreground(colorDim),
 		DiffGutter: lipgloss.NewStyle().
 			Foreground(colorBorder),
+		DiffHunkSeparator: lipgloss.NewStyle().
+			Foreground(colorDim),
 
 		// Summary dashboard
 		SummaryBox: lipgloss.NewStyle().
@@ -314,6 +317,7 @@ func NoColorStyles() *Styles {
 		DiffRemoveHighlight: plain,
 		DiffLineNumber:      plain,
 		DiffGutter:          plain,
+		DiffHunkSeparator:   plain,
 
 		SummaryBox:    plain,
 		ProgressFull:  plain,

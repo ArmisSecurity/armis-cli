@@ -458,9 +458,6 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 // generateFindingTitle creates a descriptive title for SARIF output.
 // Priority: SCA with CVE > OWASP category title > Secret type > Description > Category.
 func generateFindingTitle(finding *model.Finding) string {
-	const maxTitleLen = 80
-	const ellipsis = "..."
-
 	// SCA findings - prioritize CVE information
 	if finding.Type == model.FindingTypeSCA && len(finding.CVEs) > 0 {
 		title := finding.CVEs[0]
@@ -484,22 +481,18 @@ func generateFindingTitle(finding *model.Finding) string {
 		return "Exposed Secret"
 	}
 
-	// Fallback - use first sentence of description
+	// Fallback - use first sentence of description (no length limit; human formatter wraps)
 	if finding.Description != "" {
 		firstLine := strings.Split(finding.Description, "\n")[0]
 
-		// Truncate at first sentence boundary within limit
-		if idx := strings.Index(firstLine, ". "); idx > 0 && idx <= maxTitleLen {
+		// Extract first sentence if present (cleaner titles)
+		if idx := strings.Index(firstLine, ". "); idx > 0 {
 			firstLine = firstLine[:idx]
-		} else if len(firstLine) <= maxTitleLen && strings.HasSuffix(firstLine, ".") {
-			// Handle single-sentence descriptions ending with period (no trailing space)
-			firstLine = firstLine[:len(firstLine)-1]
+		} else {
+			// Remove trailing period if present (single-sentence descriptions)
+			firstLine = strings.TrimSuffix(firstLine, ".")
 		}
 
-		// Hard truncate if still too long
-		if len(firstLine) > maxTitleLen {
-			firstLine = firstLine[:maxTitleLen-len(ellipsis)] + ellipsis
-		}
 		return firstLine
 	}
 

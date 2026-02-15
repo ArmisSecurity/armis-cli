@@ -1707,12 +1707,12 @@ func TestGenerateFindingTitle(t *testing.T) {
 			expected: "SQL Injection vulnerability detected",
 		},
 		{
-			name: "description fallback - hard truncation at 77 chars",
+			name: "description fallback - long description preserved (human formatter wraps)",
 			finding: &model.Finding{
 				Type:        model.FindingTypeVulnerability,
 				Description: "This is a very long description that does not contain a period within the first eighty characters so it will be hard truncated",
 			},
-			expected: "This is a very long description that does not contain a period within the fir...",
+			expected: "This is a very long description that does not contain a period within the first eighty characters so it will be hard truncated",
 		},
 		{
 			name: "description fallback - multiline uses first line",
