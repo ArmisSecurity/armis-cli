@@ -17,10 +17,11 @@ var (
 
 // FormatOptions contains options for formatting scan results.
 type FormatOptions struct {
-	GroupBy    string
-	RepoPath   string
-	Debug      bool
-	SummaryTop bool
+	GroupBy          string
+	RepoPath         string
+	Debug            bool
+	SummaryTop       bool
+	FailOnSeverities []string // Severities that count as failures (for JUnit output)
 }
 
 // Formatter is the interface for formatting scan results in different output formats.

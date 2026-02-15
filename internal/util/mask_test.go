@@ -212,3 +212,145 @@ func TestMaskSecretInLine_NoPrefixLeakage(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskSecretInMultiLineString(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantContains   string // substring that should be present
+		wantNotContain string // substring that should NOT be present (the secret)
+	}{
+		{
+			name:           "empty string",
+			input:          "",
+			wantContains:   "",
+			wantNotContain: "",
+		},
+		{
+			name:           "single line with secret",
+			input:          `api_key = "sk_live_abc123xyz789"`,
+			wantContains:   "api_key",
+			wantNotContain: "abc123xyz789",
+		},
+		{
+			name: "multi-line patch with secret",
+			input: `--- a/config.go
++++ b/config.go
+@@ -1,3 +1,3 @@
+-api_key = "sk_live_secret123456789"
++api_key = os.Getenv("API_KEY")`,
+			wantContains:   "os.Getenv",
+			wantNotContain: "secret123456789",
+		},
+		{
+			name: "mixed content - only secrets masked",
+			input: `line 1: regular code
+password = "supersecretpassword123"
+line 3: more code`,
+			wantContains:   "line 3: more code",
+			wantNotContain: "supersecretpassword123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInMultiLineString(tt.input)
+
+			if tt.wantContains != "" && !strings.Contains(result, tt.wantContains) {
+				t.Errorf("MaskSecretInMultiLineString() = %q, want to contain %q", result, tt.wantContains)
+			}
+
+			if tt.wantNotContain != "" && strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInMultiLineString() = %q, should NOT contain secret %q", result, tt.wantNotContain)
+			}
+		})
+	}
+}
+
+func TestMaskSecretInMultiLineString_PreservesLineCount(t *testing.T) {
+	input := "line1\nline2\nline3\nline4"
+	result := util.MaskSecretInMultiLineString(input)
+
+	inputLines := strings.Count(input, "\n") + 1
+	resultLines := strings.Count(result, "\n") + 1
+
+	if inputLines != resultLines {
+		t.Errorf("Line count changed: input has %d lines, result has %d lines", inputLines, resultLines)
+	}
+}
+
+func TestMaskSecretsInStringMap(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          map[string]string
+		wantNil        bool
+		wantNotContain string // secret that should NOT appear in any value
+	}{
+		{
+			name:    "nil map",
+			input:   nil,
+			wantNil: true,
+		},
+		{
+			name:    "empty map",
+			input:   map[string]string{},
+			wantNil: false,
+		},
+		{
+			name: "map with secrets",
+			input: map[string]string{
+				"config.go": `api_key = "sk_live_secret123456789"`,
+				"main.go":   `func main() { fmt.Println("hello") }`,
+			},
+			wantNotContain: "secret123456789",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretsInStringMap(tt.input)
+
+			if tt.wantNil {
+				if result != nil {
+					t.Errorf("MaskSecretsInStringMap() = %v, want nil", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Error("MaskSecretsInStringMap() returned nil, want non-nil")
+				return
+			}
+
+			// Verify all keys are preserved
+			for k := range tt.input {
+				if _, ok := result[k]; !ok {
+					t.Errorf("Key %q missing from result", k)
+				}
+			}
+
+			// Verify secrets are masked in values
+			if tt.wantNotContain != "" {
+				for k, v := range result {
+					if strings.Contains(v, tt.wantNotContain) {
+						t.Errorf("Secret %q found in result[%q] = %q", tt.wantNotContain, k, v)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMaskSecretsInStringMap_DoesNotModifyOriginal(t *testing.T) {
+	original := map[string]string{
+		"config.go": `api_key = "sk_live_secret123456789"`,
+	}
+	originalValue := original["config.go"]
+
+	_ = util.MaskSecretsInStringMap(original)
+
+	// Verify original map was not modified
+	if original["config.go"] != originalValue {
+		t.Error("MaskSecretsInStringMap modified the original map")
+	}
+}

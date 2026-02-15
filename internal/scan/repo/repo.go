@@ -278,6 +278,9 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 
 		// Skip symlinks to avoid security risks (symlinks pointing outside repo)
 		// and potential issues (broken symlinks, loops)
+		// Note: filepath.Walk provides FileInfo from os.Lstat (it does not follow
+		// symlinks), so we can use info.Mode() to detect if the path itself is a
+		// symlink.
 		if info.Mode()&os.ModeSymlink != 0 {
 			cli.PrintWarningf("skipping symlink %s", relPath)
 			return nil
@@ -461,6 +464,7 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 		}
 
 		// Skip symlinks for consistency with tarGzDirectory
+		// filepath.Walk already uses Lstat, so we can check info.Mode() directly
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
@@ -600,6 +604,9 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 				debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines =
 					util.MaskSecretInLines(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines)
 			}
+			if debugCopy.NormalizedTask.ExtraData.Fix != nil {
+				debugCopy.NormalizedTask.ExtraData.Fix = scan.MaskFixSecrets(debugCopy.NormalizedTask.ExtraData.Fix)
+			}
 			rawJSON, err := json.Marshal(debugCopy)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
@@ -680,6 +687,11 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		if loc.HasSecret && finding.CodeSnippet != "" {
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+		}
+
+		// Mask secrets in fix data to prevent leaking secrets through proposed fixes
+		if loc.HasSecret && finding.Fix != nil {
+			finding.Fix = scan.MaskFixSecrets(finding.Fix)
 		}
 
 		finding.Title = generateFindingTitle(&finding)

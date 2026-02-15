@@ -1000,13 +1000,14 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		result, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
+		_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 5*time.Second, nil)
 
-		if err != nil {
-			t.Fatalf("WaitForIngest failed: %v", err)
+		// FAILED status should always return an error, even without LastError
+		if err == nil {
+			t.Fatal("Expected error for FAILED status without error message")
 		}
-		if result.ScanStatus != "FAILED" {
-			t.Errorf("Expected status FAILED, got %s", result.ScanStatus)
+		if !strings.Contains(err.Error(), "scan failed with no error message") {
+			t.Errorf("Expected 'scan failed with no error message' error, got: %v", err)
 		}
 	})
 

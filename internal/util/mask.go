@@ -127,3 +127,30 @@ func MaskSecretInLines(lines []string) []string {
 	}
 	return masked
 }
+
+// MaskSecretInMultiLineString masks secrets in a string that may contain newlines.
+// Each line is processed independently to handle multi-line content like patches.
+func MaskSecretInMultiLineString(s string) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = MaskSecretInLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// MaskSecretsInStringMap masks secrets in all values of a string map.
+// Keys are preserved; values are processed through MaskSecretInMultiLineString.
+// Returns a new map; the original is not modified.
+func MaskSecretsInStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	result := make(map[string]string, len(m))
+	for k, v := range m {
+		result[k] = MaskSecretInMultiLineString(v)
+	}
+	return result
+}

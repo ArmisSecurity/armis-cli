@@ -217,13 +217,13 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
 	}
 
-	pullCmd.Stdout = os.Stdout
+	pullCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
 	pullCmd.Stderr = os.Stderr
 	if err := pullCmd.Run(); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
-	saveCmd.Stdout = os.Stdout
+	saveCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
 	saveCmd.Stderr = os.Stderr
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)
@@ -314,6 +314,9 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 				debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines =
 					util.MaskSecretInLines(debugCopy.NormalizedTask.ExtraData.CodeLocation.CodeSnippetLines)
 			}
+			if debugCopy.NormalizedTask.ExtraData.Fix != nil {
+				debugCopy.NormalizedTask.ExtraData.Fix = scan.MaskFixSecrets(debugCopy.NormalizedTask.ExtraData.Fix)
+			}
 			rawJSON, err := json.Marshal(debugCopy)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
@@ -394,6 +397,11 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 
 		if loc.HasSecret && finding.CodeSnippet != "" {
 			finding.CodeSnippet = util.MaskSecretInLine(finding.CodeSnippet)
+		}
+
+		// Mask secrets in fix data to prevent leaking secrets through proposed fixes
+		if loc.HasSecret && finding.Fix != nil {
+			finding.Fix = scan.MaskFixSecrets(finding.Fix)
 		}
 
 		finding.Title = generateFindingTitle(&finding)

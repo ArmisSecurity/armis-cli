@@ -30,9 +30,10 @@ const MaxDownloadSize = 100 * 1024 * 1024
 // This provides defense-in-depth validation at the API layer.
 const MaxUploadSize = 5 * 1024 * 1024 * 1024
 
-// MaxAPIResponseSize is the maximum allowed size for API JSON responses (1MB).
-// This protects against memory exhaustion from maliciously large API responses.
-const MaxAPIResponseSize = 1 * 1024 * 1024
+// MaxAPIResponseSize is the maximum allowed size for API JSON responses (50MB).
+// This protects against memory exhaustion from maliciously large API responses
+// while allowing legitimate large scan results (which can have many findings).
+const MaxAPIResponseSize = 50 * 1024 * 1024
 
 // URL scheme and host constants for security validation.
 const (
@@ -359,11 +360,15 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 
 			statusUpper := strings.ToUpper(status.ScanStatus)
 
-			if statusUpper == "COMPLETED" || statusUpper == "FAILED" {
+			if statusUpper == "COMPLETED" {
+				return &status, nil
+			}
+
+			if statusUpper == "FAILED" {
 				if status.LastError != nil && *status.LastError != "" {
 					return nil, fmt.Errorf("scan failed: %s", *status.LastError)
 				}
-				return &status, nil
+				return nil, fmt.Errorf("scan failed with no error message (scan_id: %s)", scanID)
 			}
 		}
 	}
@@ -405,6 +410,11 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Detect if response was truncated at the limit
+	if int64(len(bodyBytes)) >= MaxAPIResponseSize {
+		return nil, fmt.Errorf("response too large (exceeded %d MB limit); try reducing --page-limit", MaxAPIResponseSize/(1024*1024))
 	}
 
 	if c.debug {

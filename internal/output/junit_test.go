@@ -126,9 +126,9 @@ func TestCountFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := countFailures(tt.findings)
+			result := countFailuresWithSeverities(tt.findings, defaultFailOnSeverities)
 			if result != tt.expected {
-				t.Errorf("countFailures() = %d, want %d", result, tt.expected)
+				t.Errorf("countFailuresWithSeverities() = %d, want %d", result, tt.expected)
 			}
 		})
 	}
@@ -153,7 +153,7 @@ func TestConvertToJUnitCases(t *testing.T) {
 		},
 	}
 
-	cases := convertToJUnitCases(findings)
+	cases := convertToJUnitCasesWithSeverities(findings, defaultFailOnSeverities)
 
 	if len(cases) != 2 {
 		t.Fatalf("Expected 2 cases, got %d", len(cases))
