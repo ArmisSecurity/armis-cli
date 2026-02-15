@@ -63,6 +63,19 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("invalid --group-by value %q: must be one of %v", groupBy, validGroupBy)
 		}
 
+		// Validate exit-code: must be between 1 and 255 (0 defeats --fail-on, >255 is invalid POSIX)
+		if exitCode < 1 || exitCode > 255 {
+			return fmt.Errorf("invalid --exit-code value %d: must be between 1 and 255", exitCode)
+		}
+
+		// Validate timeout values: must be positive
+		if scanTimeout < 1 {
+			return fmt.Errorf("invalid --scan-timeout value %d: must be at least 1 minute", scanTimeout)
+		}
+		if uploadTimeout < 1 {
+			return fmt.Errorf("invalid --upload-timeout value %d: must be at least 1 minute", uploadTimeout)
+		}
+
 		return nil
 	},
 }

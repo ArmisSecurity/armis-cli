@@ -217,13 +217,13 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
 	}
 
-	pullCmd.Stdout = os.Stdout
+	pullCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
 	pullCmd.Stderr = os.Stderr
 	if err := pullCmd.Run(); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
-	saveCmd.Stdout = os.Stdout
+	saveCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
 	saveCmd.Stderr = os.Stderr
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)

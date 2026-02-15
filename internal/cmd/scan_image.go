@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -28,6 +29,20 @@ var scanImageCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if tarballPath == "" && len(args) == 0 {
 			return fmt.Errorf("missing target: specify an image name or use --tarball")
+		}
+
+		// Validate tarball path exists before making network calls
+		if tarballPath != "" {
+			info, err := os.Stat(tarballPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("tarball does not exist: %s", tarballPath)
+				}
+				return fmt.Errorf("cannot access tarball %s: %w", tarballPath, err)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("tarball path is a directory, not a file: %s", tarballPath)
+			}
 		}
 
 		authProvider, err := getAuthProvider()
@@ -58,6 +73,14 @@ var scanImageCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
+		// Warn if output paths are specified without the corresponding generation flags
+		if sbomOutput != "" && !generateSBOM {
+			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
+		}
+		if vexOutput != "" && !generateVEX {
+			cli.PrintWarning("--vex-output is ignored without --vex flag")
+		}
+
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
@@ -73,6 +96,11 @@ var scanImageCmd = &cobra.Command{
 		defer cancel()
 
 		var result *model.ScanResult
+
+		// Warn if both tarball and image name are provided
+		if tarballPath != "" && len(args) > 0 {
+			cli.PrintWarning("both --tarball and image name provided; using tarball (image name ignored)")
+		}
 
 		if tarballPath != "" {
 			sanitizedPath, pathErr := util.SanitizePath(tarballPath)
@@ -97,10 +125,11 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		opts := output.FormatOptions{
-			GroupBy:    groupBy,
-			RepoPath:   "",
-			Debug:      debug,
-			SummaryTop: summaryTop,
+			GroupBy:          groupBy,
+			RepoPath:         "",
+			Debug:            debug,
+			SummaryTop:       summaryTop,
+			FailOnSeverities: failOnSeverities,
 		}
 
 		if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {

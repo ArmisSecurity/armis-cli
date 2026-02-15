@@ -73,8 +73,10 @@ func wrapText(text string, width int, indent string) string {
 }
 
 // wrapLine wraps a single line of text at word boundaries.
+// Uses runewidth.StringWidth for proper visual width calculation with multi-byte chars.
 func wrapLine(line string, width int, indent string) string {
-	effectiveWidth := width - len(indent)
+	indentWidth := runewidth.StringWidth(indent)
+	effectiveWidth := width - indentWidth
 	if effectiveWidth <= 10 {
 		effectiveWidth = 60 // minimum reasonable width
 	}
@@ -89,7 +91,7 @@ func wrapLine(line string, width int, indent string) string {
 	lineLen := 0
 
 	for i, word := range words {
-		wordLen := len(word)
+		wordLen := runewidth.StringWidth(word)
 
 		if i == 0 {
 			result.WriteString(word)
@@ -582,35 +584,39 @@ func highlightColumns(line string, startCol, endCol, currentLine, startLine, end
 		return s.VulnColumnHighlight.Render(text)
 	}
 
+	// Convert to runes for proper character-level indexing (columns are 1-based character positions)
+	runes := []rune(line)
+	lineLen := len(runes)
+
 	if currentLine == startLine && currentLine == endLine {
-		if startCol > len(line) {
+		if startCol > lineLen {
 			return highlight(line)
 		}
-		before := line[:startCol-1]
-		if endCol > len(line) {
-			endCol = len(line)
+		before := string(runes[:startCol-1])
+		if endCol > lineLen {
+			endCol = lineLen
 		}
-		highlighted := line[startCol-1 : endCol]
+		highlighted := string(runes[startCol-1 : endCol])
 		after := ""
-		if endCol < len(line) {
-			after = line[endCol:]
+		if endCol < lineLen {
+			after = string(runes[endCol:])
 		}
 		return before + highlight(highlighted) + after
 	} else if currentLine == startLine {
-		if startCol > len(line) {
+		if startCol > lineLen {
 			return highlight(line)
 		}
-		before := line[:startCol-1]
-		highlighted := line[startCol-1:]
+		before := string(runes[:startCol-1])
+		highlighted := string(runes[startCol-1:])
 		return before + highlight(highlighted)
 	} else if currentLine == endLine {
-		if endCol > len(line) {
-			endCol = len(line)
+		if endCol > lineLen {
+			endCol = lineLen
 		}
-		highlighted := line[:endCol]
+		highlighted := string(runes[:endCol])
 		after := ""
-		if endCol < len(line) {
-			after = line[endCol:]
+		if endCol < lineLen {
+			after = string(runes[endCol:])
 		}
 		return highlight(highlighted) + after
 	}
@@ -856,8 +862,12 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	if finding.File != "" && opts.RepoPath != "" && finding.StartLine > 0 {
 		if blameInfo := getGitBlame(opts.RepoPath, finding.File, finding.StartLine, opts.Debug); blameInfo != nil {
 			maskedEmail := maskEmail(blameInfo.Email)
+			shortSHA := blameInfo.CommitSHA
+			if len(shortSHA) > 7 {
+				shortSHA = shortSHA[:7]
+			}
 			_, _ = fmt.Fprintf(w, "%s %s <%s> (%s, %s)\n",
-				labelStyle.Render("Blame:"), blameInfo.Author, maskedEmail, blameInfo.Date, blameInfo.CommitSHA[:7])
+				labelStyle.Render("Blame:"), blameInfo.Author, maskedEmail, blameInfo.Date, shortSHA)
 		}
 	}
 

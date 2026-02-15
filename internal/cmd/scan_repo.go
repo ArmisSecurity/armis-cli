@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
@@ -24,6 +25,18 @@ var scanRepoCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
+
+		// Validate path exists and is a directory before making network calls
+		info, err := os.Stat(repoPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("path does not exist: %s", repoPath)
+			}
+			return fmt.Errorf("cannot access path %s: %w", repoPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("path is not a directory: %s", repoPath)
+		}
 
 		authProvider, err := getAuthProvider()
 		if err != nil {
@@ -52,6 +65,14 @@ var scanRepoCmd = &cobra.Command{
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+
+		// Warn if output paths are specified without the corresponding generation flags
+		if sbomOutput != "" && !generateSBOM {
+			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
+		}
+		if vexOutput != "" && !generateVEX {
+			cli.PrintWarning("--vex-output is ignored without --vex flag")
+		}
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {
@@ -94,10 +115,11 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		opts := output.FormatOptions{
-			GroupBy:    groupBy,
-			RepoPath:   repoPath,
-			Debug:      debug,
-			SummaryTop: summaryTop,
+			GroupBy:          groupBy,
+			RepoPath:         repoPath,
+			Debug:            debug,
+			SummaryTop:       summaryTop,
+			FailOnSeverities: failOnSeverities,
 		}
 
 		if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {

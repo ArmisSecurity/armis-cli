@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -39,17 +40,36 @@ type junitFailure struct {
 	Content string `xml:",chardata"`
 }
 
+// defaultFailOnSeverities is used when no FailOnSeverities are specified
+var defaultFailOnSeverities = []string{string(model.SeverityCritical), string(model.SeverityHigh)}
+
 // Format formats the scan result as JUnit XML.
+// Uses default failure severities (CRITICAL, HIGH) for backward compatibility.
 func (f *JUnitFormatter) Format(result *model.ScanResult, w io.Writer) error {
+	return f.formatWithSeverities(result, w, defaultFailOnSeverities)
+}
+
+// FormatWithOptions formats the scan result as JUnit XML with custom options.
+// If FailOnSeverities is specified in options, those severities are used to determine
+// test failures. Otherwise, defaults to CRITICAL and HIGH.
+func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+	severities := opts.FailOnSeverities
+	if len(severities) == 0 {
+		severities = defaultFailOnSeverities
+	}
+	return f.formatWithSeverities(result, w, severities)
+}
+
+func (f *JUnitFormatter) formatWithSeverities(result *model.ScanResult, w io.Writer, failOnSeverities []string) error {
 	suites := junitTestSuites{
 		Suites: []junitTestSuite{
 			{
 				Name:     "Armis Security Scan",
 				Tests:    len(result.Findings),
-				Failures: countFailures(result.Findings),
+				Failures: countFailuresWithSeverities(result.Findings, failOnSeverities),
 				Errors:   0,
 				Time:     "0",
-				Cases:    convertToJUnitCases(result.Findings),
+				Cases:    convertToJUnitCasesWithSeverities(result.Findings, failOnSeverities),
 			},
 		},
 	}
@@ -64,7 +84,18 @@ func (f *JUnitFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	return encoder.Encode(suites)
 }
 
-func convertToJUnitCases(findings []model.Finding) []junitTestCase {
+// isFailureSeverity checks if a severity should be treated as a test failure
+func isFailureSeverity(severity string, failOnSeverities []string) bool {
+	severityUpper := strings.ToUpper(severity)
+	for _, s := range failOnSeverities {
+		if strings.ToUpper(s) == severityUpper {
+			return true
+		}
+	}
+	return false
+}
+
+func convertToJUnitCasesWithSeverities(findings []model.Finding, failOnSeverities []string) []junitTestCase {
 	cases := make([]junitTestCase, 0, len(findings))
 
 	for _, finding := range findings {
@@ -74,7 +105,7 @@ func convertToJUnitCases(findings []model.Finding) []junitTestCase {
 			Time:      "0",
 		}
 
-		if finding.Severity == model.SeverityCritical || finding.Severity == model.SeverityHigh {
+		if isFailureSeverity(string(finding.Severity), failOnSeverities) {
 			location, err := util.SanitizePath(finding.File)
 			if err != nil {
 				location = "unknown"
@@ -96,19 +127,12 @@ func convertToJUnitCases(findings []model.Finding) []junitTestCase {
 	return cases
 }
 
-func countFailures(findings []model.Finding) int {
+func countFailuresWithSeverities(findings []model.Finding, failOnSeverities []string) int {
 	count := 0
 	for _, finding := range findings {
-		if finding.Severity == model.SeverityCritical || finding.Severity == model.SeverityHigh {
+		if isFailureSeverity(string(finding.Severity), failOnSeverities) {
 			count++
 		}
 	}
 	return count
-}
-
-// FormatWithOptions formats the scan result as JUnit XML with custom options.
-// Note: JUnit format does not currently use FormatOptions; options are accepted
-// for interface compatibility but are not applied to the output.
-func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer, _ FormatOptions) error {
-	return f.Format(result, w)
 }
