@@ -14,6 +14,9 @@ func TestInitColors_Never(t *testing.T) {
 	if ColorsEnabled() {
 		t.Error("expected colors to be disabled with ColorModeNever")
 	}
+	if ColorsForced() {
+		t.Error("expected ColorsForced() to be false with ColorModeNever")
+	}
 	// Verify error label style renders without ANSI codes
 	rendered := errorLabelStyle.Render("test")
 	if bytes.Contains([]byte(rendered), []byte("\033[")) {
@@ -29,6 +32,9 @@ func TestInitColors_Always(t *testing.T) {
 	if !ColorsEnabled() {
 		t.Error("expected colors to be enabled with ColorModeAlways even when NO_COLOR is set")
 	}
+	if !ColorsForced() {
+		t.Error("expected ColorsForced() to be true with ColorModeAlways")
+	}
 	// Verify error label style has colors (lipgloss styles contain color info)
 	if errorLabelStyle.GetForeground() == nil {
 		t.Error("expected errorLabelStyle to have foreground color set")
@@ -41,6 +47,9 @@ func TestInitColors_Auto_NoColor(t *testing.T) {
 	InitColors(ColorModeAuto)
 	if ColorsEnabled() {
 		t.Error("expected colors to be disabled when NO_COLOR is set in auto mode")
+	}
+	if ColorsForced() {
+		t.Error("expected ColorsForced() to be false with ColorModeAuto")
 	}
 }
 

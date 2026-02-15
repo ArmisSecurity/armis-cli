@@ -51,6 +51,9 @@ var colorsForced = false
 //  4. TERM=dumb      -> colors OFF
 //  5. --color=auto   -> detect TTY on stderr
 func InitColors(mode ColorMode) {
+	// Reset colorsForced - only ColorModeAlways sets it to true
+	colorsForced = false
+
 	switch mode {
 	case ColorModeAlways:
 		colorsForced = true

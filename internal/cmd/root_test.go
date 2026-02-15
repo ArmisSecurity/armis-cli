@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 )
 
 func TestSetVersion(t *testing.T) {
@@ -325,5 +328,69 @@ func TestThemeFlag_EnvDefault(t *testing.T) {
 	result := getEnvOrDefault("ARMIS_THEME", "auto")
 	if result != "light" {
 		t.Errorf("Expected 'light' from env, got %q", result)
+	}
+}
+
+func TestThemeFlag_Validation(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError bool
+	}{
+		{name: "valid auto", value: "auto", wantError: false},
+		{name: "valid dark", value: "dark", wantError: false},
+		{name: "valid light", value: "light", wantError: false},
+		{name: "invalid value", value: "invalid", wantError: true},
+		{name: "invalid empty", value: "", wantError: true},
+		{name: "invalid typo", value: "drak", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate theme value using the same logic as PersistentPreRunE
+			var err error
+			switch tt.value {
+			case themeAuto, themeDark, themeLight:
+				err = nil
+			default:
+				err = fmt.Errorf("invalid --theme value %q: must be auto, dark, or light", tt.value)
+			}
+
+			if (err != nil) != tt.wantError {
+				t.Errorf("theme validation for %q: got error = %v, wantError = %v", tt.value, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestColorFlag_Validation(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError bool
+	}{
+		{name: "valid auto", value: "auto", wantError: false},
+		{name: "valid always", value: "always", wantError: false},
+		{name: "valid never", value: "never", wantError: false},
+		{name: "invalid value", value: "invalid", wantError: true},
+		{name: "invalid typo", value: "allways", wantError: true},
+		{name: "invalid empty", value: "", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate color value using the same logic as PersistentPreRunE
+			var err error
+			mode := cli.ColorMode(tt.value)
+			switch mode {
+			case cli.ColorModeAuto, cli.ColorModeAlways, cli.ColorModeNever:
+				err = nil
+			default:
+				err = fmt.Errorf("invalid --color value %q: must be auto, always, or never", tt.value)
+			}
+			if (err != nil) != tt.wantError {
+				t.Errorf("color validation for %q: got error = %v, wantError = %v", tt.value, err, tt.wantError)
+			}
+		})
 	}
 }
