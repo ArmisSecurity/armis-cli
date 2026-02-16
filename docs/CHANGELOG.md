@@ -21,6 +21,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-02-16
+
+### Added
+
+- JWT/VIPR token authentication with `--client-id`, `--client-secret`, `--auth-endpoint` flags (or `ARMIS_CLIENT_ID`, `ARMIS_CLIENT_SECRET`, `ARMIS_AUTH_ENDPOINT` env vars)
+- Automatic JWT token refresh (5 minutes before expiry) with tenant ID auto-extraction from token
+- `auth` command for testing authentication and obtaining raw JWT tokens
+- Colored terminal output with `--color` flag (`auto`/`always`/`never`) respecting `NO_COLOR` and TTY detection
+- `--theme` flag (`auto`/`dark`/`light`) for terminal background override with `ARMIS_THEME` env var
+- Background version update checking with 24-hour cache (disable with `--no-update-check` or `ARMIS_NO_UPDATE_CHECK`)
+- `--summary-top` flag to display summary dashboard before findings
+- Lipgloss-based styling with ~50 styles using Tailwind CSS color palette and adaptive light/dark themes
+- Chroma-based syntax highlighting with language auto-detection and vulnerable line highlighting
+- LCS-based inline diff change detection with context limiting (3 lines around changes)
+- Unicode severity indicators with colored styling
+- Styled help output with colored commands and flags
+- Short flag aliases: `-f` for `--format`, `-t` for `--token`
+- `ARMIS_API_URL` environment variable for API base URL override
+
+### Changed
+
+- Case-insensitive `--fail-on` values (e.g., `--fail-on high` now works)
+- JUnit formatter respects `--fail-on` severities instead of hardcoding CRITICAL/HIGH
+- Diff display limited to 25 lines per hunk with "lines omitted" markers
+- Summary dashboard only shows severity levels with findings (count > 0)
+- Clean Ctrl+C handling with exit code 130 (standard Unix SIGINT)
+- `--include-files` flag now repo-only (moved from scan-level)
+- JWT authentication flags hidden from `--help` until backend support available
+
+### Fixed
+
+- **CRITICAL**: FAILED scan status now returns error instead of success
+- **CRITICAL**: Reject `--exit-code 0` (must be 1-255 to work with `--fail-on`)
+- API response limit increased to 50MB for large scan results
+- Docker pull/save output redirected to stderr (prevents JSON/SARIF corruption)
+- CommitSHA bounds check prevents panic on short commit hashes
+- Timeout validation requires >= 1 minute for `--scan-timeout` and `--upload-timeout`
+- Unicode text wrapping uses proper visual width calculation
+- Rune-based column highlighting for multi-byte characters
+- Path/tarball existence validation before network calls
+- Warning when both `--tarball` and image name provided
+- Warning when `--sbom-output`/`--vex-output` specified without `--sbom`/`--vex`
+- SARIF schema URL updated to valid `main` branch location
+- Syntax highlighting skipped for redacted code snippets (prevents colored keywords in redaction messages)
+
+### Security
+
+- Secret masking in SARIF output (patches, proposed fixes, patch files)
+- Secret masking in proposed fixes and debug output
+- Response body limits: 1MB for auth, 50MB for API, 1MB for HTTP errors
+- Snippet loading limits: 10KB per line, 100KB total
+- LCS token limit (500) prevents memory exhaustion
+- Diff size limits: 100KB max, 2000 lines max
+- Highlight code size limit: 100KB
+- JSON parsing limit in error messages: 4KB
+- Symlink detection fix using `os.Lstat` instead of `os.Stat`
+- go-git updated to v5.16.5 (CVE-2026-25934 fix)
+- HTTPS enforcement for authentication endpoints
+
+---
+
 ## [1.0.7] - 2026-02-02
 
 ### Added
@@ -122,7 +183,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.7...v1.1.0
 [1.0.7]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/ArmisSecurity/armis-cli/releases/tag/v1.0.5
