@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
@@ -792,4 +793,69 @@ func TestWrapTextWithFirstLinePrefix(t *testing.T) {
 			t.Errorf("Continuation line should start with '     ', got %q", lines[1])
 		}
 	})
+}
+
+func TestFormatCodeSnippetWithFrame_RedactedSnippet(t *testing.T) {
+	// Enable colors for syntax highlighting to work
+	cli.InitColors(cli.ColorModeAlways)
+	SyncColors()
+	defer func() {
+		cli.InitColors(cli.ColorModeNever)
+		SyncColors()
+	}()
+
+	// Syntax highlighting inserts ANSI codes BETWEEN characters of the code text.
+	// For redacted content, the text should appear as one contiguous block.
+	// Check if the snippet text is broken up by escape sequences.
+	hasSyntaxHighlighting := func(result, snippet string) bool {
+		// If the plain snippet appears contiguously in the result, no syntax highlighting was applied
+		return !strings.Contains(result, snippet)
+	}
+
+	tests := []struct {
+		name          string
+		codeSnippet   string
+		file          string
+		wantHighlight bool
+	}{
+		{
+			name:          "CLI masked content should not be highlighted",
+			codeSnippet:   "password = ********[20-40]",
+			file:          "config.py",
+			wantHighlight: false,
+		},
+		{
+			name:          "backend redaction message should not be highlighted",
+			codeSnippet:   "Code snippet is redacted as it contains secrets.",
+			file:          "sql_injection.py",
+			wantHighlight: false,
+		},
+		{
+			name:          "normal code should be highlighted",
+			codeSnippet:   "password = os.getenv('SECRET')",
+			file:          "config.py",
+			wantHighlight: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finding := model.Finding{
+				File:        tt.file,
+				CodeSnippet: tt.codeSnippet,
+				StartLine:   1,
+				EndLine:     1,
+			}
+
+			result := formatCodeSnippetWithFrame(finding)
+			hasHighlight := hasSyntaxHighlighting(result, tt.codeSnippet)
+
+			if tt.wantHighlight && !hasHighlight {
+				t.Errorf("Expected syntax highlighting for normal code (snippet should be broken up by ANSI codes)")
+			}
+			if !tt.wantHighlight && hasHighlight {
+				t.Errorf("Did not expect syntax highlighting for redacted content, but snippet was broken up")
+			}
+		})
+	}
 }

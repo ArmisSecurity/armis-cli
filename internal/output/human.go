@@ -493,13 +493,15 @@ func formatCodeSnippetWithFrame(finding model.Finding) string {
 		snippetStart = finding.SnippetStartLine
 	}
 
-	// Skip syntax highlighting for masked snippets (contain asterisk sequences from secret masking)
-	// CLI masking produces patterns like "********[20-40]" - checking for 8+ asterisks catches all masked content
-	isMasked := strings.Contains(finding.CodeSnippet, "********")
+	// Skip syntax highlighting for masked/redacted snippets:
+	// - CLI masking produces patterns like "********[20-40]"
+	// - Backend may send redaction messages like "Code snippet is redacted..."
+	isRedacted := strings.Contains(finding.CodeSnippet, "********") ||
+		strings.Contains(finding.CodeSnippet, "Code snippet is redacted")
 
-	// Get syntax-highlighted lines (skip for masked content to avoid confusing the highlighter)
+	// Get syntax-highlighted lines (skip for redacted content to avoid confusing the highlighter)
 	var highlightedLines []string
-	if isMasked {
+	if isRedacted {
 		highlightedLines = plainLines
 	} else {
 		highlightedLines = HighlightCode(finding.CodeSnippet, finding.File)
@@ -529,16 +531,23 @@ func formatCodeSnippetWithFrame(finding model.Finding) string {
 		plainLine := plainLines[i]
 		if runewidth.StringWidth(plainLine) > maxCodeWidth {
 			plainLine = truncatePlainLine(plainLine, maxCodeWidth)
-			// Re-highlight the truncated line
-			highlightedLine = HighlightLine(plainLine, finding.File)
+			// Re-highlight the truncated line (skip for redacted content)
+			if !isRedacted {
+				highlightedLine = HighlightLine(plainLine, finding.File)
+			}
 		}
 
 		// Format the code line
 		var codeLine string
 		if isVulnerable {
-			// Apply syntax highlighting with persistent background color
-			// Uses HighlightLineWithBackground to handle Chroma's ANSI resets
-			codeLine = HighlightLineWithBackground(plainLine, finding.File, colorVulnBg)
+			if isRedacted {
+				// For redacted content, just apply background without syntax highlighting
+				codeLine = s.VulnLineBg.Render(plainLine)
+			} else {
+				// Apply syntax highlighting with persistent background color
+				// Uses HighlightLineWithBackground to handle Chroma's ANSI resets
+				codeLine = HighlightLineWithBackground(plainLine, finding.File, colorVulnBg)
+			}
 			// Add arrow indicator for vulnerable lines (colored by severity)
 			arrowStyle := s.GetSeverityText(finding.Severity)
 			codeLines = append(codeLines, fmt.Sprintf("%s %s  %s", arrowStyle.Render(IconPointer), lineNum, codeLine))
