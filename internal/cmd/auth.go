@@ -33,6 +33,8 @@ ARMIS_CLIENT_SECRET, ARMIS_AUTH_ENDPOINT).`,
 }
 
 func init() {
+	// Hide auth command until backend JWT support is available
+	authCmd.Hidden = true
 	rootCmd.AddCommand(authCmd)
 }
 
