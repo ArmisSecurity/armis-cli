@@ -143,9 +143,18 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&authEndpoint, "auth-endpoint", os.Getenv("ARMIS_AUTH_ENDPOINT"), "Authentication service endpoint URL (env: ARMIS_AUTH_ENDPOINT)")
 
 	// Hide JWT flags until backend support is available
-	_ = rootCmd.PersistentFlags().MarkHidden("client-id")
-	_ = rootCmd.PersistentFlags().MarkHidden("client-secret")
-	_ = rootCmd.PersistentFlags().MarkHidden("auth-endpoint")
+	if err := rootCmd.PersistentFlags().MarkHidden("client-id"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to hide flag 'client-id': %v\n", err)
+		os.Exit(1)
+	}
+	if err := rootCmd.PersistentFlags().MarkHidden("client-secret"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to hide flag 'client-secret': %v\n", err)
+		os.Exit(1)
+	}
+	if err := rootCmd.PersistentFlags().MarkHidden("auth-endpoint"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to hide flag 'auth-endpoint': %v\n", err)
+		os.Exit(1)
+	}
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")

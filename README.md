@@ -224,13 +224,13 @@ export ARMIS_TENANT_ID="your-tenant-id"
 ### Scan a repository
 
 ```bash
-armis-cli scan repo ./my-project --tenant-id my-tenant
+armis-cli scan repo ./my-project
 ```
 
 ### Scan a container image
 
 ```bash
-armis-cli scan image nginx:latest --tenant-id my-tenant
+armis-cli scan image nginx:latest
 ```
 
 ---

@@ -83,10 +83,10 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 		// Legacy Basic auth
 		p.isLegacy = true
 		if config.TenantID == "" {
-			return nil, fmt.Errorf("tenant ID required with Basic auth: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
+			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: provide --client-id, --client-secret, and --auth-endpoint for JWT auth, or --token for Basic auth")
+		return nil, fmt.Errorf("authentication required: use --token flag or ARMIS_API_TOKEN environment variable")
 	}
 
 	return p, nil
