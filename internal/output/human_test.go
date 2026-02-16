@@ -806,55 +806,77 @@ func TestFormatCodeSnippetWithFrame_RedactedSnippet(t *testing.T) {
 
 	// Syntax highlighting inserts ANSI codes BETWEEN characters of the code text.
 	// For redacted content, the text should appear as one contiguous block.
-	// Check if the snippet text is broken up by escape sequences.
-	hasSyntaxHighlighting := func(result, snippet string) bool {
-		// If the plain snippet appears contiguously in the result, no syntax highlighting was applied
+	// Returns true if the snippet text is fragmented by ANSI escape sequences.
+	snippetIsFragmented := func(result, snippet string) bool {
+		// If the plain snippet appears contiguously in the result, it was not fragmented
 		return !strings.Contains(result, snippet)
 	}
 
 	tests := []struct {
-		name          string
-		codeSnippet   string
-		file          string
-		wantHighlight bool
+		name             string
+		codeSnippet      string
+		file             string
+		startLine        int
+		endLine          int
+		snippetStartLine int
+		wantHighlight    bool
 	}{
 		{
-			name:          "CLI masked content should not be highlighted",
-			codeSnippet:   "password = ********[20-40]",
-			file:          "config.py",
-			wantHighlight: false,
+			name:             "CLI masked content should not be highlighted",
+			codeSnippet:      "password = ********[20-40]",
+			file:             "config.py",
+			startLine:        1,
+			endLine:          1,
+			snippetStartLine: 1,
+			wantHighlight:    false,
 		},
 		{
-			name:          "backend redaction message should not be highlighted",
-			codeSnippet:   "Code snippet is redacted as it contains secrets.",
-			file:          "sql_injection.py",
-			wantHighlight: false,
+			name:             "backend redaction message should not be highlighted",
+			codeSnippet:      "Code snippet is redacted as it contains secrets.",
+			file:             "sql_injection.py",
+			startLine:        1,
+			endLine:          1,
+			snippetStartLine: 1,
+			wantHighlight:    false,
 		},
 		{
-			name:          "normal code should be highlighted",
-			codeSnippet:   "password = os.getenv('SECRET')",
-			file:          "config.py",
-			wantHighlight: true,
+			name:             "normal code should be highlighted",
+			codeSnippet:      "password = os.getenv('SECRET')",
+			file:             "config.py",
+			startLine:        1,
+			endLine:          1,
+			snippetStartLine: 1,
+			wantHighlight:    true,
+		},
+		{
+			name:             "non-vulnerable line in snippet should not be highlighted when redacted",
+			codeSnippet:      "password = ********[20-40]",
+			file:             "config.py",
+			startLine:        2,
+			endLine:          2,
+			snippetStartLine: 1,
+			wantHighlight:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			finding := model.Finding{
-				File:        tt.file,
-				CodeSnippet: tt.codeSnippet,
-				StartLine:   1,
-				EndLine:     1,
+				File:             tt.file,
+				CodeSnippet:      tt.codeSnippet,
+				StartLine:        tt.startLine,
+				EndLine:          tt.endLine,
+				SnippetStartLine: tt.snippetStartLine,
 			}
 
 			result := formatCodeSnippetWithFrame(finding)
-			hasHighlight := hasSyntaxHighlighting(result, tt.codeSnippet)
+			isFragmented := snippetIsFragmented(result, tt.codeSnippet)
 
-			if tt.wantHighlight && !hasHighlight {
-				t.Errorf("Expected syntax highlighting for normal code (snippet should be broken up by ANSI codes)")
+			if tt.wantHighlight && !isFragmented {
+				t.Errorf("Expected syntax highlighting for normal code (snippet should be fragmented by ANSI codes)")
 			}
-			if !tt.wantHighlight && hasHighlight {
-				t.Errorf("Did not expect syntax highlighting for redacted content, but snippet was broken up")
+			if !tt.wantHighlight && isFragmented {
+				t.Errorf("Did not expect syntax highlighting for redacted content, but snippet was fragmented")
 			}
 		})
 	}

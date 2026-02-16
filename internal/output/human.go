@@ -495,9 +495,11 @@ func formatCodeSnippetWithFrame(finding model.Finding) string {
 
 	// Skip syntax highlighting for masked/redacted snippets:
 	// - CLI masking produces patterns like "********[20-40]"
-	// - Backend may send redaction messages like "Code snippet is redacted..."
+	// - Backend may send a specific redaction message
+	const backendRedactionMessage = "Code snippet is redacted as it contains secrets."
+	normalizedSnippet := strings.TrimSpace(finding.CodeSnippet)
 	isRedacted := strings.Contains(finding.CodeSnippet, "********") ||
-		strings.Contains(finding.CodeSnippet, "Code snippet is redacted")
+		strings.EqualFold(normalizedSnippet, backendRedactionMessage)
 
 	// Get syntax-highlighted lines (skip for redacted content to avoid confusing the highlighter)
 	var highlightedLines []string
