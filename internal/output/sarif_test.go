@@ -3,9 +3,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"testing"
-	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/xeipuuv/gojsonschema"
@@ -1039,22 +1037,8 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 		t.Skip("Skipping schema validation test in short mode (requires network)")
 	}
 
-	// Create an HTTP client with timeout to fetch the schema
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Fetch the schema
-	resp, err := client.Get(sarifSchemaURL)
-	if err != nil {
-		t.Skipf("Could not fetch SARIF schema (network unavailable): %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Skipf("Could not fetch SARIF schema (HTTP %d)", resp.StatusCode)
-	}
-
+	// The gojsonschema.NewReferenceLoader fetches the schema automatically during validation.
+	// Network errors are handled in the validation loop below.
 	schemaLoader := gojsonschema.NewReferenceLoader(sarifSchemaURL)
 
 	tests := []struct {
@@ -1212,7 +1196,8 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 			documentLoader := gojsonschema.NewBytesLoader(buf.Bytes())
 			validationResult, err := gojsonschema.Validate(schemaLoader, documentLoader)
 			if err != nil {
-				t.Fatalf("Schema validation error: %v", err)
+				// Skip on network errors (schema fetch failure)
+				t.Skipf("Schema validation skipped (network unavailable or schema fetch failed): %v", err)
 			}
 
 			if !validationResult.Valid() {

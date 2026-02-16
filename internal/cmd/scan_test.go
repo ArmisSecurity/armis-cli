@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 const (
@@ -340,7 +342,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for invalid format 'xml'")
 		}
-		if err != nil && !containsSubstring(err.Error(), "invalid --format value") {
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --format value") {
 			t.Errorf("error message should contain 'invalid --format value', got: %v", err)
 		}
 	})
@@ -393,7 +395,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for invalid group-by 'invalid'")
 		}
-		if err != nil && !containsSubstring(err.Error(), "invalid --group-by value") {
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --group-by value") {
 			t.Errorf("error message should contain 'invalid --group-by value', got: %v", err)
 		}
 	})
@@ -408,20 +410,10 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from root PreRunE for invalid color")
 		}
-		if err != nil && !containsSubstring(err.Error(), "invalid --color value") {
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --color value") {
 			t.Errorf("expected error from root PreRunE, got: %v", err)
 		}
 	})
-}
-
-// containsSubstring is a helper to check if a string contains a substring.
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestRootCmd(t *testing.T) {

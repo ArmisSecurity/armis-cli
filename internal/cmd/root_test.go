@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/ArmisSecurity/armis-cli/internal/update"
 )
 
@@ -483,7 +484,7 @@ func TestRootPersistentPreRunE(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for invalid color flag")
 		}
-		if err != nil && !contains(err.Error(), "invalid --color value") {
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --color value") {
 			t.Errorf("error message should contain 'invalid --color value', got: %v", err)
 		}
 	})
@@ -519,7 +520,7 @@ func TestRootPersistentPreRunE(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for invalid theme flag")
 		}
-		if err != nil && !contains(err.Error(), "invalid --theme value") {
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --theme value") {
 			t.Errorf("error message should contain 'invalid --theme value', got: %v", err)
 		}
 	})
@@ -629,18 +630,4 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when no credentials are provided")
 	}
-}
-
-// contains is a helper for checking if a string contains a substring.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

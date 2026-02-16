@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -248,10 +249,10 @@ func TestFinding_NilSlices(t *testing.T) {
 
 	// Verify JSON does not contain "cves":null or "cwes":null
 	jsonStr := string(data)
-	if contains(jsonStr, `"cves":null`) {
+	if strings.Contains(jsonStr, `"cves":null`) {
 		t.Error("Expected nil CVEs to be omitted, not serialized as null")
 	}
-	if contains(jsonStr, `"cwes":null`) {
+	if strings.Contains(jsonStr, `"cwes":null`) {
 		t.Error("Expected nil CWEs to be omitted, not serialized as null")
 	}
 
@@ -432,14 +433,4 @@ func TestFinding_WithFix(t *testing.T) {
 	if unmarshaled.Fix.PatchFiles["file1.go"] != "patched content 1" {
 		t.Error("PatchFiles content mismatch")
 	}
-}
-
-// contains is a helper to check if a string contains a substring.
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

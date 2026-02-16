@@ -33,3 +33,14 @@ func ErrorResponse(w http.ResponseWriter, statusCode int, message string) {
 	w.WriteHeader(statusCode)
 	_, _ = w.Write([]byte(message))
 }
+
+// ContainsSubstring checks if a string contains a substring.
+// This is a shared test helper to avoid duplication across test files.
+func ContainsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
