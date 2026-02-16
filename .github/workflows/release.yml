@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: "1.24"
           cache: true
 
       - name: Go fmt check
@@ -62,7 +62,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: "1.24"
           cache: true
 
       - name: golangci-lint
@@ -117,12 +117,12 @@ jobs:
           # List files for debugging
           echo "Files in dist:"
           ls -la
-          
+
           # Generate hashes only for the binary archives (not checksums or SBOMs)
           echo "Generating hashes..."
           sha256sum armis-cli-*.tar.gz armis-cli-*.zip > hashes-raw.txt 2>&1 || true
           cat hashes-raw.txt
-          
+
           # Base64 encode the hashes
           if [ -s hashes-raw.txt ]; then
             base64 -w0 < hashes-raw.txt > hashes.txt
