@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/xeipuuv/gojsonschema"
 )
 
 const testFileMainGo = "main.go"
@@ -1020,6 +1021,192 @@ func TestSARIFFormatter_HelpTextMarkdownDifferentiation(t *testing.T) {
 				if rule.Help.Markdown != "" {
 					t.Errorf("Expected no Markdown field, got: %q", rule.Help.Markdown)
 				}
+			}
+		})
+	}
+}
+
+// sarifSchemaURL is the official OASIS SARIF 2.1.0 JSON schema.
+const sarifSchemaURL = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
+
+// TestSARIF_SchemaValidation validates SARIF output against the official OASIS SARIF 2.1.0 schema.
+// This ensures GitHub Code Scanning and other SARIF consumers will accept our output.
+func TestSARIF_SchemaValidation(t *testing.T) {
+	// Skip in short mode since this requires network access
+	if testing.Short() {
+		t.Skip("Skipping schema validation test in short mode (requires network)")
+	}
+
+	// The gojsonschema.NewReferenceLoader fetches the schema automatically during validation.
+	// Network errors are handled in the validation loop below.
+	schemaLoader := gojsonschema.NewReferenceLoader(sarifSchemaURL)
+
+	tests := []struct {
+		name     string
+		findings []model.Finding
+	}{
+		{
+			name:     "empty findings",
+			findings: []model.Finding{},
+		},
+		{
+			name: "single vulnerability finding",
+			findings: []model.Finding{
+				{
+					ID:          "VULN-001",
+					Type:        model.FindingTypeVulnerability,
+					Severity:    model.SeverityCritical,
+					Title:       "SQL Injection",
+					Description: "User input is directly concatenated into SQL query",
+					File:        "main.go",
+					StartLine:   42,
+					StartColumn: 10,
+					CVEs:        []string{"CVE-2023-1234"},
+					CWEs:        []string{"CWE-89"},
+				},
+			},
+		},
+		{
+			name: "multiple finding types",
+			findings: []model.Finding{
+				{
+					ID:          "VULN-002",
+					Type:        model.FindingTypeVulnerability,
+					Severity:    model.SeverityHigh,
+					Title:       "XSS Vulnerability",
+					Description: "Unescaped output in HTML template",
+					File:        "template.html",
+					StartLine:   15,
+					CWEs:        []string{"CWE-79"},
+				},
+				{
+					ID:          "SECRET-001",
+					Type:        model.FindingTypeSecret,
+					Severity:    model.SeverityCritical,
+					Title:       "Exposed API Key",
+					Description: "AWS access key found in source code",
+					File:        "config.go",
+					StartLine:   8,
+					CodeSnippet: "aws_key = \"AKIA...\"",
+				},
+				{
+					ID:          "SCA-001",
+					Type:        model.FindingTypeSCA,
+					Severity:    model.SeverityMedium,
+					Title:       "Vulnerable Dependency",
+					Description: "lodash@4.17.15 has known vulnerabilities",
+					Package:     "lodash",
+					Version:     "4.17.15",
+					FixVersion:  "4.17.21",
+					CVEs:        []string{"CVE-2020-8203"},
+				},
+				{
+					ID:          "LICENSE-001",
+					Type:        model.FindingTypeLicense,
+					Severity:    model.SeverityLow,
+					Title:       "GPL License Detected",
+					Description: "Package uses GPL-3.0 license which may conflict with proprietary use",
+					Package:     "some-gpl-package",
+				},
+			},
+		},
+		{
+			name: "finding with fix and validation",
+			findings: []model.Finding{
+				{
+					ID:          "VULN-003",
+					Type:        model.FindingTypeVulnerability,
+					Severity:    model.SeverityCritical,
+					Title:       "Command Injection",
+					Description: "User input passed to shell command",
+					File:        "exec.go",
+					StartLine:   25,
+					EndLine:     27,
+					CWEs:        []string{"CWE-78"},
+					Fix: &model.Fix{
+						IsValid:         true,
+						Explanation:     "Use exec.Command with separate arguments instead of shell execution",
+						Recommendations: "Replace os/exec shell call with argument array",
+						PatchFiles: map[string]string{
+							"exec.go": "cmd := exec.Command(\"ls\", \"-la\", userInput)",
+						},
+					},
+					Validation: &model.FindingValidation{
+						IsValid:           true,
+						Confidence:        95,
+						ValidatedSeverity: ptr("CRITICAL"),
+						TaintPropagation:  model.TaintReachable,
+						Exposure:          ptr(8),
+					},
+				},
+			},
+		},
+		{
+			name: "finding with markdown description",
+			findings: []model.Finding{
+				{
+					ID:                      "VULN-004",
+					Type:                    model.FindingTypeVulnerability,
+					Severity:                model.SeverityMedium,
+					Title:                   "Insecure Hash Function",
+					Description:             "MD5 should not be used for cryptographic purposes",
+					LongDescriptionMarkdown: "# Insecure Hash Function\n\n**MD5** is considered cryptographically broken and should not be used.\n\n## Recommendations\n\n- Use SHA-256 or SHA-3 for cryptographic hashing\n- Use bcrypt or Argon2 for password hashing",
+					File:                    "crypto.go",
+					StartLine:               100,
+					CWEs:                    []string{"CWE-328"},
+				},
+			},
+		},
+		{
+			name: "finding without file location (SCA)",
+			findings: []model.Finding{
+				{
+					ID:          "SCA-002",
+					Type:        model.FindingTypeSCA,
+					Severity:    model.SeverityHigh,
+					Title:       "Critical Vulnerability in Dependency",
+					Description: "axios@0.21.0 has a server-side request forgery vulnerability",
+					Package:     "axios",
+					Version:     "0.21.0",
+					FixVersion:  "0.21.1",
+					CVEs:        []string{"CVE-2020-28168"},
+					URLs:        []string{"https://github.com/axios/axios/security/advisories/GHSA-4w2v-q235-vp99"},
+				},
+			},
+		},
+	}
+
+	formatter := &SARIFFormatter{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &model.ScanResult{
+				ScanID:   "schema-validation-test",
+				Status:   "completed",
+				Findings: tt.findings,
+			}
+
+			var buf bytes.Buffer
+			err := formatter.Format(result, &buf)
+			if err != nil {
+				t.Fatalf("Format failed: %v", err)
+			}
+
+			// Validate against schema
+			documentLoader := gojsonschema.NewBytesLoader(buf.Bytes())
+			validationResult, err := gojsonschema.Validate(schemaLoader, documentLoader)
+			if err != nil {
+				// Skip on network errors (schema fetch failure)
+				t.Skipf("Schema validation skipped (network unavailable or schema fetch failed): %v", err)
+			}
+
+			if !validationResult.Valid() {
+				t.Errorf("SARIF output does not conform to schema:")
+				for _, desc := range validationResult.Errors() {
+					t.Errorf("  - %s", desc)
+				}
+				// Log the actual SARIF output for debugging
+				t.Logf("SARIF output:\n%s", buf.String())
 			}
 		})
 	}

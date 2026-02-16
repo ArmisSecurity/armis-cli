@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
+	"github.com/ArmisSecurity/armis-cli/internal/update"
 )
 
 func TestSetVersion(t *testing.T) {
@@ -132,6 +135,33 @@ func TestGetAPIBaseURL(t *testing.T) {
 		result := getAPIBaseURL()
 		if result != productionBaseURL {
 			t.Errorf("Expected production URL %s, got %s", productionBaseURL, result)
+		}
+	})
+
+	t.Run("returns ARMIS_API_URL override when set", func(t *testing.T) {
+		useDev = false
+		testURL := "http://localhost:8080"
+		_ = os.Setenv("ARMIS_API_URL", testURL)
+		defer func() { _ = os.Unsetenv("ARMIS_API_URL") }()
+
+		result := getAPIBaseURL()
+		if result != testURL {
+			t.Errorf("Expected env override URL %s, got %s", testURL, result)
+		}
+	})
+
+	t.Run("ARMIS_API_URL takes precedence over useDev", func(t *testing.T) {
+		useDev = true
+		testURL := "http://test-server:9090"
+		_ = os.Setenv("ARMIS_API_URL", testURL)
+		defer func() {
+			_ = os.Unsetenv("ARMIS_API_URL")
+			useDev = false
+		}()
+
+		result := getAPIBaseURL()
+		if result != testURL {
+			t.Errorf("Expected env override URL %s, got %s", testURL, result)
 		}
 	})
 }
@@ -302,8 +332,8 @@ func TestThemeFlag_Values(t *testing.T) {
 	}
 
 	// Check default value
-	if flag.DefValue != "auto" {
-		t.Errorf("Expected default value 'auto', got %q", flag.DefValue)
+	if flag.DefValue != themeAuto {
+		t.Errorf("Expected default value %q, got %q", themeAuto, flag.DefValue)
 	}
 
 	// Verify valid values are documented in usage
@@ -392,5 +422,212 @@ func TestColorFlag_Validation(t *testing.T) {
 				t.Errorf("color validation for %q: got error = %v, wantError = %v", tt.value, err, tt.wantError)
 			}
 		})
+	}
+}
+
+// TestRootPersistentPreRunE tests the root command's PersistentPreRunE callback directly.
+func TestRootPersistentPreRunE(t *testing.T) {
+	// Save original values
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalVersion := version
+	originalNoUpdateCheck := noUpdateCheck
+	originalUpdateResultCh := updateResultCh
+
+	t.Cleanup(func() {
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		version = originalVersion
+		noUpdateCheck = originalNoUpdateCheck
+		updateResultCh = originalUpdateResultCh
+	})
+
+	t.Run("valid color auto", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = themeAuto
+		noUpdateCheck = true // Skip update check to simplify test
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid color 'auto', got: %v", err)
+		}
+	})
+
+	t.Run("valid color always", func(t *testing.T) {
+		colorFlag = "always"
+		themeFlag = themeAuto
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid color 'always', got: %v", err)
+		}
+	})
+
+	t.Run("valid color never", func(t *testing.T) {
+		colorFlag = "never"
+		themeFlag = themeAuto
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid color 'never', got: %v", err)
+		}
+	})
+
+	t.Run("invalid color returns error", func(t *testing.T) {
+		colorFlag = testInvalidValue
+		themeFlag = themeAuto
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid color flag")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --color value") {
+			t.Errorf("error message should contain 'invalid --color value', got: %v", err)
+		}
+	})
+
+	t.Run("valid theme dark", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = "dark"
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid theme 'dark', got: %v", err)
+		}
+	})
+
+	t.Run("valid theme light", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = "light"
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid theme 'light', got: %v", err)
+		}
+	})
+
+	t.Run("invalid theme returns error", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = testInvalidValue
+		noUpdateCheck = true
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid theme flag")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --theme value") {
+			t.Errorf("error message should contain 'invalid --theme value', got: %v", err)
+		}
+	})
+
+	t.Run("skips update check in CI", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = themeAuto
+		noUpdateCheck = false
+		version = "1.0.0"
+		updateResultCh = nil
+
+		// Set CI env var
+		_ = os.Setenv("CI", "true")
+		defer func() { _ = os.Unsetenv("CI") }()
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// In CI, updateResultCh should remain nil (no background check started)
+		if updateResultCh != nil {
+			t.Error("expected updateResultCh to remain nil in CI environment")
+		}
+	})
+
+	t.Run("skips update check for dev version", func(t *testing.T) {
+		colorFlag = testColorAuto
+		themeFlag = themeAuto
+		noUpdateCheck = false
+		version = "dev"
+		updateResultCh = nil
+
+		// Ensure CI is not set
+		_ = os.Unsetenv("CI")
+
+		err := rootCmd.PersistentPreRunE(rootCmd, []string{})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// For dev version, updateResultCh should remain nil
+		if updateResultCh != nil {
+			t.Error("expected updateResultCh to remain nil for dev version")
+		}
+	})
+}
+
+// TestPrintUpdateNotification tests the update notification printing.
+func TestPrintUpdateNotification(t *testing.T) {
+	t.Run("nil channel does not panic", func(t *testing.T) {
+		originalUpdateResultCh := updateResultCh
+		defer func() { updateResultCh = originalUpdateResultCh }()
+
+		updateResultCh = nil
+
+		// Should not panic
+		PrintUpdateNotification()
+	})
+
+	t.Run("empty channel does not block", func(t *testing.T) {
+		originalUpdateResultCh := updateResultCh
+		defer func() { updateResultCh = originalUpdateResultCh }()
+
+		// Create an unbuffered channel with no value
+		updateResultCh = make(chan *update.CheckResult)
+
+		// Should return immediately without blocking
+		done := make(chan bool, 1)
+		go func() {
+			PrintUpdateNotification()
+			done <- true
+		}()
+
+		select {
+		case <-done:
+			// Success - function returned
+		case <-time.After(100 * time.Millisecond):
+			t.Error("PrintUpdateNotification blocked on empty channel")
+		}
+	})
+}
+
+// TestGetAuthProvider_NoCredentials tests auth provider creation with no credentials.
+func TestGetAuthProvider_NoCredentials(t *testing.T) {
+	// Save original values
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalAuthEndpoint := authEndpoint
+	originalToken := token
+	originalTenantID := tenantID
+
+	t.Cleanup(func() {
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		authEndpoint = originalAuthEndpoint
+		token = originalToken
+		tenantID = originalTenantID
+	})
+
+	// Clear all auth credentials
+	clientID = ""
+	clientSecret = ""
+	authEndpoint = ""
+	token = ""
+	tenantID = ""
+
+	_, err := getAuthProvider()
+	if err == nil {
+		t.Error("expected error when no credentials are provided")
 	}
 }

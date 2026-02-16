@@ -206,6 +206,10 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 }
 
 func getAPIBaseURL() string {
+	// Allow override via environment variable (useful for testing)
+	if override := os.Getenv("ARMIS_API_URL"); override != "" {
+		return override
+	}
 	if useDev {
 		return devBaseURL
 	}

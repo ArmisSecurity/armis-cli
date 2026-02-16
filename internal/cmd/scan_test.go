@@ -3,11 +3,18 @@ package cmd
 import (
 	"bytes"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 const (
-	testToken    = "test-token"
-	testTenantID = "test-tenant"
+	testToken        = "test-token"
+	testTenantID     = "test-tenant"
+	testColorAuto    = "auto"
+	testColorNever   = "never"
+	testFormatHuman  = "human"
+	testGroupByNone  = "none"
+	testInvalidValue = "invalid"
 )
 
 func TestScanCmd(t *testing.T) {
@@ -261,6 +268,150 @@ func TestScanImageCmd(t *testing.T) {
 		err := scanImageCmd.RunE(scanImageCmd, []string{"alpine:latest"})
 		if err == nil {
 			t.Error("Expected error when page limit is invalid")
+		}
+	})
+}
+
+// TestScanPersistentPreRunE tests the scan command's PersistentPreRunE callback.
+func TestScanPersistentPreRunE(t *testing.T) {
+	// Save original values
+	originalFormat := format
+	originalGroupBy := groupBy
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+
+	t.Cleanup(func() {
+		format = originalFormat
+		groupBy = originalGroupBy
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+	})
+
+	// Set valid root command flags to avoid errors from root PreRunE
+	colorFlag = testColorAuto
+	themeFlag = themeAuto
+	noUpdateCheck = true
+
+	t.Run("valid format human", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid format 'human', got: %v", err)
+		}
+	})
+
+	t.Run("valid format json", func(t *testing.T) {
+		format = "json"
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid format 'json', got: %v", err)
+		}
+	})
+
+	t.Run("valid format sarif", func(t *testing.T) {
+		format = "sarif"
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid format 'sarif', got: %v", err)
+		}
+	})
+
+	t.Run("valid format junit", func(t *testing.T) {
+		format = "junit"
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid format 'junit', got: %v", err)
+		}
+	})
+
+	t.Run("invalid format returns error", func(t *testing.T) {
+		format = "xml"
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid format 'xml'")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --format value") {
+			t.Errorf("error message should contain 'invalid --format value', got: %v", err)
+		}
+	})
+
+	t.Run("valid group-by none", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid group-by 'none', got: %v", err)
+		}
+	})
+
+	t.Run("valid group-by cwe", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = "cwe"
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid group-by 'cwe', got: %v", err)
+		}
+	})
+
+	t.Run("valid group-by severity", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = "severity"
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid group-by 'severity', got: %v", err)
+		}
+	})
+
+	t.Run("valid group-by file", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = "file"
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err != nil {
+			t.Errorf("expected no error for valid group-by 'file', got: %v", err)
+		}
+	})
+
+	t.Run("invalid group-by returns error", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testInvalidValue
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid group-by 'invalid'")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --group-by value") {
+			t.Errorf("error message should contain 'invalid --group-by value', got: %v", err)
+		}
+	})
+
+	t.Run("chains to root PreRunE", func(t *testing.T) {
+		// Test that root's color validation is called
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = "invalid"
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err == nil {
+			t.Error("expected error from root PreRunE for invalid color")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --color value") {
+			t.Errorf("expected error from root PreRunE, got: %v", err)
 		}
 	})
 }
