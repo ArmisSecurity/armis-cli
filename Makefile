@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint scan help tools
+.PHONY: build install clean test lint scan help tools coverage
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
@@ -6,13 +6,15 @@ GO=go
 GOFLAGS=-ldflags="-s -w"
 PREFIX ?= /usr/local
 INSTALL_DIR=$(PREFIX)/bin
+COVERAGE_FILE=coverage.out
 
 help:
 	@echo "Available targets:"
 	@echo "  build      - Build the binary"
 	@echo "  install    - Install the binary to $(INSTALL_DIR)"
 	@echo "  clean      - Remove build artifacts"
-	@echo "  test       - Run tests"
+	@echo "  test       - Run tests with coverage"
+	@echo "  coverage   - Show coverage report"
 	@echo "  lint       - Run linters"
 	@echo "  scan       - Run security scan on this repository"
 	@echo "  release    - Build for multiple platforms"
@@ -32,18 +34,30 @@ install: build
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BUILD_DIR)
+	@rm -f $(COVERAGE_FILE)
 	$(GO) clean
 
 GOTESTSUM := $(shell command -v gotestsum 2>/dev/null || echo "$(shell go env GOPATH)/bin/gotestsum")
 
 test:
-	@echo "Running tests..."
+	@echo "Running tests with coverage..."
 	@if [ -x "$(GOTESTSUM)" ]; then \
-		$(GOTESTSUM) --format testdox -- -v ./...; \
+		$(GOTESTSUM) --format testdox -- -v -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...; \
 	else \
 		echo "gotestsum not found, using go test (run 'make tools' for colored output)"; \
-		$(GO) test -v ./...; \
+		$(GO) test -v -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...; \
 	fi
+	@echo ""
+	@echo "Coverage summary:"
+	@$(GO) tool cover -func=$(COVERAGE_FILE) | grep total | awk '{print "  Total: " $$3}'
+
+coverage:
+	@if [ ! -f $(COVERAGE_FILE) ]; then \
+		echo "No coverage file found. Run 'make test' first."; \
+		exit 1; \
+	fi
+	@echo "Coverage by package:"
+	@$(GO) tool cover -func=$(COVERAGE_FILE)
 
 tools:
 	@echo "Installing dev tools..."
