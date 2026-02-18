@@ -398,7 +398,7 @@ func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
 		},
 		{
 			name:           "Slack webhook URL",
-			input:          `SLACK_WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`,
+			input:          `SLACK_WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`, // #nosec G101
 			wantNotContain: "hooks.slack.com",
 		},
 		{
@@ -781,12 +781,12 @@ func TestMaskSecretInLine_PreservesQuotes(t *testing.T) {
 		},
 		{
 			name:        "GitHub PAT preserves quotes",
-			input:       `token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			input:       `token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
 			wantContain: `= "********`,
 		},
 		{
 			name:        "Slack webhook preserves quotes",
-			input:       `WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`,
+			input:       `WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`, // #nosec G101
 			wantContain: `= "********`,
 		},
 		{
@@ -796,7 +796,7 @@ func TestMaskSecretInLine_PreservesQuotes(t *testing.T) {
 		},
 		{
 			name:        "MongoDB connection string preserves quotes",
-			input:       `conn = "mongodb://admin:password123@db.example.com:27017/mydb"`,
+			input:       `conn = "mongodb://admin:password123@db.example.com:27017/mydb"`, // #nosec G101
 			wantContain: `= "********`,
 		},
 	}

@@ -1280,11 +1280,11 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	s := GetStyles()
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("  File: %s", snippet.FilePath))
+	fmt.Fprintf(&sb, "  File: %s", snippet.FilePath)
 	if snippet.StartLine != nil && snippet.EndLine != nil {
-		sb.WriteString(fmt.Sprintf(" (lines %d-%d)", *snippet.StartLine, *snippet.EndLine))
+		fmt.Fprintf(&sb, " (lines %d-%d)", *snippet.StartLine, *snippet.EndLine)
 	} else if snippet.StartLine != nil {
-		sb.WriteString(fmt.Sprintf(" (line %d)", *snippet.StartLine))
+		fmt.Fprintf(&sb, " (line %d)", *snippet.StartLine)
 	}
 	sb.WriteString("\n")
 
