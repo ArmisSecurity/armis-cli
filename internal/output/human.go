@@ -889,6 +889,12 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		}
 	}
 
+	// Defense-in-depth: always mask secrets in code snippets before display,
+	// even if upstream already masked (masking is idempotent on masked content)
+	if finding.CodeSnippet != "" {
+		finding.CodeSnippet = util.MaskSecretInMultiLineString(finding.CodeSnippet)
+	}
+
 	// Code snippet with framed box
 	if finding.CodeSnippet != "" {
 		_, _ = fmt.Fprintf(w, "\n")
@@ -1180,11 +1186,38 @@ func wrapTitle(title string, maxWidth, indent int) string {
 	return result.String()
 }
 
+// maskFixForDisplay creates a copy of Fix with secrets masked in code fields.
+// This provides defense-in-depth against secret leakage through proposed fixes and patches.
+func maskFixForDisplay(fix *model.Fix) *model.Fix {
+	fixCopy := *fix
+
+	// Mask Patch (unified diff, multi-line)
+	if fixCopy.Patch != nil && *fixCopy.Patch != "" {
+		masked := util.MaskSecretInMultiLineString(*fixCopy.Patch)
+		fixCopy.Patch = &masked
+	}
+
+	// Mask ProposedFixes content
+	if len(fixCopy.ProposedFixes) > 0 {
+		maskedFixes := make([]model.CodeSnippetFix, len(fixCopy.ProposedFixes))
+		for i, pf := range fixCopy.ProposedFixes {
+			maskedFixes[i] = pf
+			maskedFixes[i].Content = util.MaskSecretInMultiLineString(pf.Content)
+		}
+		fixCopy.ProposedFixes = maskedFixes
+	}
+
+	return &fixCopy
+}
+
 // formatFixSection formats the proposed fix section for display.
 func formatFixSection(fix *model.Fix) string {
 	if fix == nil {
 		return ""
 	}
+
+	// Defense-in-depth: mask secrets in code-containing fields before display
+	fix = maskFixForDisplay(fix)
 
 	s := GetStyles()
 	var sb strings.Builder

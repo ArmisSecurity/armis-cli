@@ -881,3 +881,132 @@ func TestFormatCodeSnippetWithFrame_RedactedSnippet(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderFinding_MasksSecrets(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	tests := []struct {
+		name           string
+		codeSnippet    string
+		wantContains   string
+		wantNotContain string
+	}{
+		{
+			name:           "masks AWS key in snippet",
+			codeSnippet:    `aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"`,
+			wantContains:   "********",
+			wantNotContain: "wJalrXUtnFEMI",
+		},
+		{
+			name:           "masks password in snippet",
+			codeSnippet:    `password = "SuperSecretPassword123!"`,
+			wantContains:   "********",
+			wantNotContain: "SuperSecretPassword123!",
+		},
+		{
+			name:         "already masked content preserved",
+			codeSnippet:  `password = ********[20-40]`,
+			wantContains: "********",
+		},
+		{
+			name:         "normal code without secrets unchanged",
+			codeSnippet:  `fmt.Println("hello world")`,
+			wantContains: `fmt.Println("hello world")`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			finding := model.Finding{
+				ID:               "test-1",
+				Severity:         model.SeverityHigh,
+				Title:            "Test Finding",
+				CodeSnippet:      tt.codeSnippet,
+				SnippetStartLine: 1,
+				StartLine:        1,
+				EndLine:          1,
+			}
+			renderFinding(&buf, finding, FormatOptions{})
+			output := buf.String()
+
+			if tt.wantContains != "" && !strings.Contains(output, tt.wantContains) {
+				t.Errorf("expected output to contain %q, got:\n%s", tt.wantContains, output)
+			}
+			if tt.wantNotContain != "" && strings.Contains(output, tt.wantNotContain) {
+				t.Errorf("expected output NOT to contain %q, got:\n%s", tt.wantNotContain, output)
+			}
+		})
+	}
+}
+
+func TestMaskFixForDisplay(t *testing.T) {
+	tests := []struct {
+		name           string
+		fix            *model.Fix
+		wantNotContain string
+		wantContains   string
+	}{
+		{
+			name: "masks patch secrets",
+			fix: &model.Fix{
+				Patch:       ptrString(`- password = "OldSecret123"`),
+				Explanation: "Remove hardcoded password",
+			},
+			wantNotContain: "OldSecret123",
+			wantContains:   "********",
+		},
+		{
+			name: "masks proposed fix content",
+			fix: &model.Fix{
+				ProposedFixes: []model.CodeSnippetFix{
+					{
+						FilePath: "config.go",
+						Content:  `api_key = "sk-1234567890abcdefghij"`,
+					},
+				},
+			},
+			wantNotContain: "sk-1234567890abcdefghij",
+			wantContains:   "********",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			masked := maskFixForDisplay(tt.fix)
+
+			// Check patch
+			if masked.Patch != nil {
+				if tt.wantNotContain != "" && strings.Contains(*masked.Patch, tt.wantNotContain) {
+					t.Errorf("expected masked patch NOT to contain %q", tt.wantNotContain)
+				}
+				if tt.wantContains != "" && !strings.Contains(*masked.Patch, tt.wantContains) {
+					t.Errorf("expected masked patch to contain %q", tt.wantContains)
+				}
+			}
+
+			// Check proposed fixes
+			for _, pf := range masked.ProposedFixes {
+				if tt.wantNotContain != "" && strings.Contains(pf.Content, tt.wantNotContain) {
+					t.Errorf("expected masked proposed fix NOT to contain %q", tt.wantNotContain)
+				}
+				if tt.wantContains != "" && !strings.Contains(pf.Content, tt.wantContains) {
+					t.Errorf("expected masked proposed fix to contain %q", tt.wantContains)
+				}
+			}
+
+			// Verify original is not modified
+			if tt.fix.Patch != nil && strings.Contains(*tt.fix.Patch, "********") {
+				// This would indicate the original was modified
+				if tt.wantNotContain != "" && !strings.Contains(*tt.fix.Patch, tt.wantNotContain) {
+					t.Error("original fix should not be modified")
+				}
+			}
+		})
+	}
+}
+
+func ptrString(s string) *string {
+	return &s
+}
