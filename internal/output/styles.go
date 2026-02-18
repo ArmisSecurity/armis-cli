@@ -412,7 +412,7 @@ const (
 // TerminalWidth detects the current terminal width with fallbacks.
 // Returns BoxWidth if detection fails (non-TTY, pipe, etc.)
 func TerminalWidth() int {
-	w, _, err := term.GetSize(int(os.Stderr.Fd()))
+	w, _, err := term.GetSize(int(os.Stderr.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
 	if err != nil || w <= 0 {
 		return BoxWidth
 	}

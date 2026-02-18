@@ -17,7 +17,7 @@ import (
 type AuthConfig struct {
 	// JWT auth credentials
 	ClientID     string
-	ClientSecret string
+	ClientSecret string //nolint:gosec // G117: This is a config field name, not a secret value
 	AuthEndpoint string // Full URL to the authentication service
 
 	// Legacy Basic auth

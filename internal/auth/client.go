@@ -58,7 +58,7 @@ func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
 // authRequest is the request body for the authenticate endpoint.
 type authRequest struct {
 	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	ClientSecret string `json:"client_secret"` //nolint:gosec // G117: This is a JSON field name for auth request, not a secret value
 }
 
 // authResponse is the response from the authenticate endpoint.
@@ -88,7 +88,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
 		return "", fmt.Errorf("authentication request failed: %w", err)
 	}
@@ -107,7 +107,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	if resp.StatusCode != http.StatusOK {
 		// Log detailed error info when debug mode is enabled
 		if c.debug {
-			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
+			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body)) //nolint:gosec // G705: Debug output to stderr only, not rendered in HTML
 		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return "", fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
