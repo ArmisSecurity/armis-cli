@@ -103,7 +103,7 @@ func MaskSecretInLine(line string) string {
 				return match
 			}
 
-			// For patterns with prefix + value, mask just the value
+			// For patterns with prefix + value (3+ capture groups), mask just the value (submatches[2])
 			if len(submatches) >= 3 {
 				value := submatches[2]
 				// Skip common literals that aren't secrets
@@ -114,8 +114,15 @@ func MaskSecretInLine(line string) string {
 				return strings.Replace(match, value, masked, 1)
 			}
 
-			// For patterns without prefix (like JWT), mask the whole match
-			return maskValue(match)
+			// For patterns with a single capture group (well-known prefixes, JWT, Bearer, etc.),
+			// mask the captured value and replace it in the match to preserve surrounding structure
+			// (quotes, "Bearer " prefix, etc.)
+			value := submatches[1]
+			if commonLiterals[strings.ToLower(value)] {
+				return match
+			}
+			masked := maskValue(value)
+			return strings.Replace(match, value, masked, 1)
 		})
 	}
 

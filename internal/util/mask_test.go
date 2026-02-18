@@ -28,13 +28,13 @@ func TestMaskSecretInLine(t *testing.T) {
 		},
 		{
 			name:           "AWS access key",
-			input:          `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`,
+			input:          `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`, // #nosec G101
 			wantContains:   "AWS_ACCESS_KEY_ID",
 			wantNotContain: "IOSFODNN7",
 		},
 		{
 			name:           "token in config",
-			input:          `auth_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			input:          `auth_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
 			wantContains:   "auth_token",
 			wantNotContain: "xxxxxxxxxxx",
 		},
@@ -64,7 +64,7 @@ func TestMaskSecretInLine(t *testing.T) {
 		},
 		{
 			name:           "secret hex hash",
-			input:          `secret_hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"`,
+			input:          `secret_hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"`, // #nosec G101
 			wantContains:   "secret_hash",
 			wantNotContain: "e5f6a1b2c3d4e5f6a1b2c3d4",
 		},
@@ -179,12 +179,12 @@ func TestMaskSecretInLine_NoPrefixLeakage(t *testing.T) {
 		},
 		{
 			name:              "GitHub token prefix ghp_ must not leak",
-			input:             `auth_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			input:             `auth_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
 			forbiddenPrefixes: []string{"ghp_"},
 		},
 		{
 			name:              "AWS key prefix AKIA must not leak",
-			input:             `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`,
+			input:             `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`, // #nosec G101
 			forbiddenPrefixes: []string{"AKIA"},
 		},
 		{
@@ -368,7 +368,7 @@ func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
 		},
 		{
 			name:           "Google/Firebase API key AIzaSy",
-			input:          `firebase_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`,
+			input:          `firebase_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`, // #nosec G101
 			wantNotContain: "AIzaSyDaGmWKa4JsXZ",
 		},
 		{
@@ -383,7 +383,7 @@ func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
 		},
 		{
 			name:           "Mailgun key-prefix",
-			input:          `MAILGUN_KEY = "key-1234567890abcdefghijklmnopqrstuv"`,
+			input:          `MAILGUN_KEY = "key-1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
 			wantNotContain: "key-1234567890",
 		},
 		{
@@ -398,8 +398,8 @@ func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
 		},
 		{
 			name:           "Slack webhook URL",
-			input:          `SLACK_WEBHOOK = "https://example-slack-webhook.invalid/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`,
-			wantNotContain: "example-slack-webhook",
+			input:          `SLACK_WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`,
+			wantNotContain: "hooks.slack.com",
 		},
 		{
 			name:           "MongoDB connection string",
@@ -408,7 +408,7 @@ func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
 		},
 		{
 			name:           "PostgreSQL connection string",
-			input:          `postgres_conn = "postgresql://dbuser:SuperSecret123@db.example.com:5432/production_db"`,
+			input:          `postgres_conn = "postgresql://dbuser:SuperSecret123@db.example.com:5432/production_db"`, // #nosec G101
 			wantNotContain: "postgresql://dbuser:SuperSecret",
 		},
 		{
@@ -450,7 +450,7 @@ func TestMaskSecretInLine_ServiceSpecificPatterns(t *testing.T) {
 		},
 		{
 			name:           "firebase_api_key",
-			input:          `firebase_api_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`,
+			input:          `firebase_api_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`, // #nosec G101
 			wantNotContain: "AIzaSyDaGmW",
 		},
 		{
@@ -460,12 +460,12 @@ func TestMaskSecretInLine_ServiceSpecificPatterns(t *testing.T) {
 		},
 		{
 			name:           "algolia_api_key",
-			input:          `algolia_api_key = "1234567890abcdefghijklmnopqrstuv"`,
+			input:          `algolia_api_key = "1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
 			wantNotContain: "1234567890abc",
 		},
 		{
 			name:           "datadog_api_key",
-			input:          `datadog_api_key = "1234567890abcdefghijklmnopqrstuv"`,
+			input:          `datadog_api_key = "1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
 			wantNotContain: "1234567890abc",
 		},
 	}
@@ -495,7 +495,7 @@ func TestMaskSecretInLine_DictLiterals(t *testing.T) {
 		},
 		{
 			name:           "JSON-style secret token",
-			input:          `"auth_token": "ghp_1234567890abcdefghijklmnopqrstuvwxyzAB"`,
+			input:          `"auth_token": "ghp_1234567890abcdefghijklmnopqrstuvwxyzAB"`, // #nosec G101
 			wantNotContain: "ghp_1234567890",
 			wantContains:   `"auth_token"`,
 		},
@@ -754,6 +754,58 @@ func TestMaskSecretInLine_BareKeywordDictLiterals(t *testing.T) {
 			}
 			if !strings.Contains(result, "********") {
 				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_PreservesQuotes verifies that well-known prefix patterns
+// preserve surrounding quote structure when masking. This is a regression test
+// for a bug where patterns like ['"]?(sk-...)['"]? replaced the entire match
+// (including quotes) instead of just the captured value.
+func TestMaskSecretInLine_PreservesQuotes(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantContain string // substring that MUST be present (to verify structure)
+	}{
+		{
+			name:        "sk- token preserves double quotes",
+			input:       `api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"`,
+			wantContain: `= "********`,
+		},
+		{
+			name:        "sk- token preserves single quotes",
+			input:       `api_key = 'sk-1234567890abcdefghijklmnopqrstuvwxyz'`,
+			wantContain: `= '********`,
+		},
+		{
+			name:        "GitHub PAT preserves quotes",
+			input:       `token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			wantContain: `= "********`,
+		},
+		{
+			name:        "Slack webhook preserves quotes",
+			input:       `WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`,
+			wantContain: `= "********`,
+		},
+		{
+			name:        "Bearer token preserves quotes and prefix",
+			input:       `"Bearer sk-1234567890abcdefghijklmnopqrstuvwxyz"`,
+			wantContain: `"Bearer ********`,
+		},
+		{
+			name:        "MongoDB connection string preserves quotes",
+			input:       `conn = "mongodb://admin:password123@db.example.com:27017/mydb"`,
+			wantContain: `= "********`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if !strings.Contains(result, tt.wantContain) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q (quotes not preserved)", result, tt.wantContain)
 			}
 		})
 	}

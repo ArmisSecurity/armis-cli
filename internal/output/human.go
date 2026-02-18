@@ -728,11 +728,11 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	content.WriteString("SCAN COMPLETE\n")
 
 	// Total findings - simple and prominent
-	content.WriteString(fmt.Sprintf("%d findings", result.Summary.Total))
+	fmt.Fprintf(&content, "%d findings", result.Summary.Total)
 
 	// Duration if available (inline)
 	if duration := scanDuration(result); duration != "" {
-		content.WriteString(fmt.Sprintf("  •  %s", duration))
+		fmt.Fprintf(&content, "  •  %s", duration)
 	}
 	content.WriteString("\n")
 
@@ -789,7 +789,7 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 			catParts = append(catParts, fmt.Sprintf("%s (%d)", util.FormatCategory(cc.category), cc.count))
 		}
 		catLabel := s.MutedText.Render("Categories:")
-		content.WriteString(fmt.Sprintf("%s %s\n", catLabel, strings.Join(catParts, ", ")))
+		fmt.Fprintf(&content, "%s %s\n", catLabel, strings.Join(catParts, ", "))
 	}
 
 	// Render the summary box using predefined style
