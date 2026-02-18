@@ -17,26 +17,30 @@ import (
 var secretPatterns = []*regexp.Regexp{
 	// Well-known secret prefixes (standalone, no assignment needed)
 	// These catch secrets by their identifying prefix patterns
-	regexp.MustCompile(`['"]?(sk[-_](?:live|test|proj)[-_][A-Za-z0-9]{20,})['"]?`),                                         // Stripe/OpenAI secret keys (specific)
-	regexp.MustCompile(`['"]?(sk-[A-Za-z0-9]{20,})['"]?`),                                                                  // Generic sk- tokens (OpenAI, etc.)
-	regexp.MustCompile(`['"]?(pk[-_](?:live|test)[-_][A-Za-z0-9]{20,})['"]?`),                                              // Stripe publishable keys
-	regexp.MustCompile(`['"]?(AIzaSy[A-Za-z0-9_-]{33})['"]?`),                                                              // Google/Firebase API keys
-	regexp.MustCompile(`['"]?(SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})['"]?`),                                             // SendGrid API keys
-	regexp.MustCompile(`['"]?(xox[baprs]-[A-Za-z0-9-]{10,})['"]?`),                                                         // Slack tokens
-	regexp.MustCompile(`['"]?(ghp_[A-Za-z0-9]{36,})['"]?`),                                                                 // GitHub PATs (new format)
-	regexp.MustCompile(`['"]?(gho_[A-Za-z0-9]{36,})['"]?`),                                                                 // GitHub OAuth tokens
-	regexp.MustCompile(`['"]?(glpat-[A-Za-z0-9_-]{20,})['"]?`),                                                             // GitLab PATs
-	regexp.MustCompile(`['"]?(AKIA[A-Z0-9]{16})['"]?`),                                                                     // AWS access key IDs
-	regexp.MustCompile(`['"]?(AC[a-zA-Z0-9]{32})['"]?`),                                                                    // Twilio Account SIDs
-	regexp.MustCompile(`['"]?(token_[A-Za-z0-9]{20,})['"]?`),                                                               // token_ prefix values (e.g., token_1234567890...)
-	regexp.MustCompile(`['"]?(key-[a-f0-9]{32})['"]?`),                                                                     // Mailgun API keys
-	regexp.MustCompile(`['"]?(DefaultEndpointsProtocol=https;[^'"]{20,})['"]?`),                                            // Azure connection strings
-	regexp.MustCompile(`['"]?(mongodb(?:\+srv)?://[^'"]{10,})['"]?`),                                                       // MongoDB connection strings
-	regexp.MustCompile(`['"]?(postgresql://[^'"]{10,})['"]?`),                                                              // PostgreSQL connection strings
-	regexp.MustCompile(`['"]?(mysql://[^'"]{10,})['"]?`),                                                                   // MySQL connection strings
-	regexp.MustCompile(`['"]?(https://hooks\.slack\.com/services/[A-Za-z0-9/]+)['"]?`),                                     // Slack webhooks
-	regexp.MustCompile(`['"]?(https://[A-Za-z0-9]+@[A-Za-z0-9]+\.ingest\.sentry\.io/[0-9]+)['"]?`),                         // Sentry DSN URLs
-	regexp.MustCompile(`['"]?(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[^'"]+-----END[^'"]+-----)['"]?`), // Private keys
+	//
+	// NOTE: Pattern ordering is intentional - more specific patterns MUST come before
+	// generic ones to ensure proper matching. For example, "sk[-_](?:live|test|proj)..."
+	// must precede "sk-..." so Stripe/OpenAI keys with suffixes are matched first.
+	regexp.MustCompile(`['"]?(sk[-_](?:live|test|proj)[-_]?[A-Za-z0-9]{20,})['"]?`),                // Stripe/OpenAI secret keys (specific)
+	regexp.MustCompile(`['"]?(sk-[A-Za-z0-9]{20,})['"]?`),                                          // Generic sk- tokens (OpenAI, etc.)
+	regexp.MustCompile(`['"]?(pk[-_](?:live|test)[-_][A-Za-z0-9]{20,})['"]?`),                      // Stripe publishable keys
+	regexp.MustCompile(`['"]?(AIzaSy[A-Za-z0-9_-]{30,})['"]?`),                                     // Google/Firebase API keys (min 30 chars after prefix)
+	regexp.MustCompile(`['"]?(SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,})['"]?`),                   // SendGrid API keys (flexible lengths)
+	regexp.MustCompile(`['"]?(xox[baprs]-[A-Za-z0-9-]{10,})['"]?`),                                 // Slack tokens
+	regexp.MustCompile(`['"]?(ghp_[A-Za-z0-9]{36,})['"]?`),                                         // GitHub PATs (new format)
+	regexp.MustCompile(`['"]?(gho_[A-Za-z0-9]{36,})['"]?`),                                         // GitHub OAuth tokens
+	regexp.MustCompile(`['"]?(glpat-[A-Za-z0-9_-]{20,})['"]?`),                                     // GitLab PATs
+	regexp.MustCompile(`['"]?(AKIA[A-Z0-9]{16})['"]?`),                                             // AWS access key IDs
+	regexp.MustCompile(`['"]?(AC[a-zA-Z0-9]{32})['"]?`),                                            // Twilio Account SIDs
+	regexp.MustCompile(`['"]?(token_[A-Za-z0-9]{20,})['"]?`),                                       // token_ prefix values (e.g., token_1234567890...)
+	regexp.MustCompile(`['"]?(key-[a-f0-9]{32})['"]?`),                                             // Mailgun API keys
+	regexp.MustCompile(`['"]?(DefaultEndpointsProtocol=https;[^'"]{20,})['"]?`),                    // Azure connection strings
+	regexp.MustCompile(`['"]?(mongodb(?:\+srv)?://[^'"]{10,})['"]?`),                               // MongoDB connection strings
+	regexp.MustCompile(`['"]?(postgresql://[^'"]{10,})['"]?`),                                      // PostgreSQL connection strings
+	regexp.MustCompile(`['"]?(mysql://[^'"]{10,})['"]?`),                                           // MySQL connection strings
+	regexp.MustCompile(`['"]?(https://hooks\.slack\.com/services/[A-Za-z0-9/]+)['"]?`),             // Slack webhooks
+	regexp.MustCompile(`['"]?(https://[A-Za-z0-9]+@[A-Za-z0-9]+\.ingest\.sentry\.io/[0-9]+)['"]?`), // Sentry DSN URLs
+	regexp.MustCompile(`(?s)['"]?(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)['"]?`), // Private keys (multiline)
 
 	// AWS credentials (most specific - matches aws_secret_access_key before generic "secret")
 	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),

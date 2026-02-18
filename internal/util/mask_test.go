@@ -810,3 +810,86 @@ func TestMaskSecretInLine_PreservesQuotes(t *testing.T) {
 		})
 	}
 }
+
+// TestMaskSecretInLine_PrivateKeys verifies that PEM-formatted private keys
+// are properly masked, including RSA, EC, DSA, OPENSSH, and PGP variants.
+func TestMaskSecretInLine_PrivateKeys(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name: "RSA private key",
+			input: `-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyf8DgnX5X9g5yjW5tNk+PNqp
+-----END RSA PRIVATE KEY-----`,
+			wantNotContain: "MIIEowIBAAKCAQEA",
+		},
+		{
+			name:           "EC private key inline",
+			input:          `key = "-----BEGIN EC PRIVATE KEY-----MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEH-----END EC PRIVATE KEY-----"`, // #nosec G101
+			wantNotContain: "MIGHAgEAMBMG",
+		},
+		{
+			name:           "Generic private key",
+			input:          `-----BEGIN PRIVATE KEY-----MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSk-----END PRIVATE KEY-----`,
+			wantNotContain: "MIIEvgIBADAN",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// Benchmark tests to measure performance impact of secret masking patterns.
+// Run with: go test -bench=. -benchmem ./internal/util/...
+
+func BenchmarkMaskSecretInLine_NoSecrets(b *testing.B) {
+	line := `func main() { fmt.Println("hello world") }`
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInLine_WithSecret(b *testing.B) {
+	line := `api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInLine_MultipleSecrets(b *testing.B) {
+	line := `config = { "api_key": "sk-1234567890abcdef", "token": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInMultiLineString(b *testing.B) {
+	content := `package main
+
+func main() {
+    apiKey := "sk-1234567890abcdefghijklmnopqrstuvwxyz"
+    password := "supersecretpassword123"
+    token := "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    fmt.Println("Hello, World!")
+}
+` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInMultiLineString(content)
+	}
+}

@@ -890,7 +890,7 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	}
 
 	// Defense-in-depth: always mask secrets in code snippets before display,
-	// even if upstream already masked (masking is idempotent on masked content)
+	// even if upstream already masked (already-masked content remains masked)
 	if finding.CodeSnippet != "" {
 		finding.CodeSnippet = util.MaskSecretInMultiLineString(finding.CodeSnippet)
 	}
@@ -1205,6 +1205,18 @@ func maskFixForDisplay(fix *model.Fix) *model.Fix {
 			maskedFixes[i].Content = util.MaskSecretInMultiLineString(pf.Content)
 		}
 		fixCopy.ProposedFixes = maskedFixes
+	}
+
+	// Mask VulnerableCode content (defense-in-depth for consistency with JSON formatter)
+	if fixCopy.VulnerableCode != nil && fixCopy.VulnerableCode.Content != "" {
+		maskedVuln := *fixCopy.VulnerableCode
+		maskedVuln.Content = util.MaskSecretInMultiLineString(maskedVuln.Content)
+		fixCopy.VulnerableCode = &maskedVuln
+	}
+
+	// Mask PatchFiles content (map of filename -> patch content)
+	if len(fixCopy.PatchFiles) > 0 {
+		fixCopy.PatchFiles = util.MaskSecretsInStringMap(fixCopy.PatchFiles)
 	}
 
 	return &fixCopy
