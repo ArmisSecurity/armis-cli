@@ -819,6 +819,7 @@ func TestMaskSecretInLine_PrivateKeys(t *testing.T) {
 		input          string
 		wantNotContain string
 	}{
+		// #nosec G101 -- test fixture, not a real credential
 		{
 			name: "RSA private key",
 			input: `-----BEGIN RSA PRIVATE KEY-----

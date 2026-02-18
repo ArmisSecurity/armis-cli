@@ -1309,7 +1309,7 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	}
 	for i, line := range highlightedLines {
 		lineNum := s.ProposedLineNumber.Render(fmt.Sprintf("%4d", startLine+i))
-		sb.WriteString(fmt.Sprintf("  %s  %s\n", lineNum, line))
+		fmt.Fprintf(&sb, "  %s  %s\n", lineNum, line)
 	}
 
 	return sb.String()
@@ -1761,7 +1761,7 @@ func formatDiffWithColorsStyled(patch string) string {
 			case "context":
 				// Handle ellipsis marker (omitted lines indicator)
 				if op.Line.OldNum == -1 && op.Line.NewNum == -1 {
-					sb.WriteString(fmt.Sprintf("  %s\n", s.MutedText.Render(op.Line.Content)))
+					fmt.Fprintf(&sb, "  %s\n", s.MutedText.Render(op.Line.Content))
 					afterHunk = false
 					emptyCount = 0
 					continue
