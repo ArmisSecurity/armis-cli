@@ -480,6 +480,50 @@ func TestMaskSecretInLine_ServiceSpecificPatterns(t *testing.T) {
 	}
 }
 
+// TestMaskSecretInLine_NonCredentialDBConnectionStrings verifies that database connection
+// strings WITHOUT credentials (like localhost development configs) are NOT masked.
+// This prevents false positives on non-secret development configurations.
+func TestMaskSecretInLine_NonCredentialDBConnectionStrings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "MongoDB localhost without credentials",
+			input: `mongodb://localhost:27017`,
+		},
+		{
+			name:  "MongoDB localhost with database",
+			input: `mongodb://localhost:27017/mydb`,
+		},
+		{
+			name:  "PostgreSQL localhost without credentials",
+			input: `postgresql://localhost:5432/mydb`,
+		},
+		{
+			name:  "MySQL localhost without credentials",
+			input: `mysql://localhost:3306/test`,
+		},
+		{
+			name:  "MongoDB with only host",
+			input: `mongodb://db.example.com:27017`,
+		},
+		{
+			name:  "MongoDB+srv without credentials",
+			input: `mongodb+srv://cluster0.example.mongodb.net/mydb`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if result != tt.input {
+				t.Errorf("MaskSecretInLine() = %q, want %q (should NOT mask non-credential connection strings)", result, tt.input)
+			}
+		})
+	}
+}
+
 func TestMaskSecretInLine_DictLiterals(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -849,6 +893,24 @@ MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyf8DgnX5X9g5yjW5tNk+PNqp
 				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
 			}
 		})
+	}
+}
+
+// TestMaskSecretInLine_MaxLineLength verifies that extremely long lines are
+// returned unmodified to prevent ReDoS attacks (CWE-770).
+func TestMaskSecretInLine_MaxLineLength(t *testing.T) {
+	// Create a line just under the limit with a secret - should be masked
+	shortLine := `api_key = "` + strings.Repeat("x", 100) + `"` // #nosec G101
+	result := util.MaskSecretInLine(shortLine)
+	if !strings.Contains(result, "********") {
+		t.Errorf("Lines under limit should be masked, got: %s", result)
+	}
+
+	// Create a line over the limit (10KB+) with a secret - should NOT be masked
+	longLine := `api_key = "` + strings.Repeat("x", 11*1024) + `"` // #nosec G101
+	result = util.MaskSecretInLine(longLine)
+	if result != longLine {
+		t.Errorf("Lines over limit should be returned unmodified")
 	}
 }
 

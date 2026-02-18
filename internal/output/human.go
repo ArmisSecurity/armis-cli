@@ -890,15 +890,19 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	}
 
 	// Defense-in-depth: always mask secrets in code snippets before display,
-	// even if upstream already masked (already-masked content remains masked)
-	if finding.CodeSnippet != "" {
-		finding.CodeSnippet = util.MaskSecretInMultiLineString(finding.CodeSnippet)
+	// even if upstream already masked. Already-masked content (e.g., "********[20-40]")
+	// remains safely masked, though the exact format may change on re-processing.
+	// Create a local copy of the finding to avoid modifying the caller's struct,
+	// since formatCodeSnippetWithFrame reads from finding.CodeSnippet directly.
+	maskedFinding := finding
+	if maskedFinding.CodeSnippet != "" {
+		maskedFinding.CodeSnippet = util.MaskSecretInMultiLineString(maskedFinding.CodeSnippet)
 	}
 
 	// Code snippet with framed box
-	if finding.CodeSnippet != "" {
+	if maskedFinding.CodeSnippet != "" {
 		_, _ = fmt.Fprintf(w, "\n")
-		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippetWithFrame(finding))
+		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippetWithFrame(maskedFinding))
 	}
 
 	// Display proposed fix if available
@@ -1694,7 +1698,18 @@ func buildTokenPositions(tokens []string) []int {
 }
 
 // tokenizeLine splits a line into word-like tokens preserving positions
+// maxTokenizeLength is the maximum line length that will be tokenized.
+// Lines exceeding this limit return a single-element slice to prevent
+// unbounded memory allocation (CWE-770) from attacker-controlled input.
+const maxTokenizeLength = 10 * 1024
+
 func tokenizeLine(s string) []string {
+	// Defense against unbounded memory allocation (CWE-770):
+	// return early for extremely long lines to prevent slice growth
+	if len(s) > maxTokenizeLength {
+		return []string{s}
+	}
+
 	var tokens []string
 	var current strings.Builder
 
