@@ -146,7 +146,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
 	uploadSpinner.Stop()
 	styles := output.GetStyles()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
 
@@ -164,7 +164,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
@@ -208,11 +208,11 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	var pullCmd, saveCmd *exec.Cmd
 	switch dockerCmd {
 	case dockerBinary:
-		pullCmd = exec.CommandContext(ctx, "docker", "pull", imageName)
-		saveCmd = exec.CommandContext(ctx, "docker", "save", "-o", outputPath, imageName)
+		pullCmd = exec.CommandContext(ctx, "docker", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
+		saveCmd = exec.CommandContext(ctx, "docker", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
 	case podmanBinary:
-		pullCmd = exec.CommandContext(ctx, "podman", "pull", imageName)
-		saveCmd = exec.CommandContext(ctx, "podman", "save", "-o", outputPath, imageName)
+		pullCmd = exec.CommandContext(ctx, "podman", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
+		saveCmd = exec.CommandContext(ctx, "podman", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
 	default:
 		return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
 	}
@@ -321,6 +321,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
+				// #nosec G705 -- Debug output to stderr; no XSS risk in CLI context
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
 			}
 		}

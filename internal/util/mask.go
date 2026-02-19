@@ -15,6 +15,33 @@ import (
 // Assignment operators supported: =, :, :=, =>
 // The regex (?::=|[:=]>?) matches := first, then falls back to :, =, =>, or :>
 var secretPatterns = []*regexp.Regexp{
+	// Well-known secret prefixes (standalone, no assignment needed)
+	// These catch secrets by their identifying prefix patterns
+	//
+	// NOTE: Pattern ordering is intentional - more specific patterns MUST come before
+	// generic ones to ensure proper matching. For example, "sk[-_](?:live|test|proj)..."
+	// must precede "sk-..." so Stripe/OpenAI keys with suffixes are matched first.
+	regexp.MustCompile(`['"]?(sk[-_](?:live|test|proj)[-_]?[A-Za-z0-9]{20,})['"]?`),                // Stripe/OpenAI secret keys (specific)
+	regexp.MustCompile(`['"]?(sk-[A-Za-z0-9]{20,})['"]?`),                                          // Generic sk- tokens (OpenAI, etc.)
+	regexp.MustCompile(`['"]?(pk[-_](?:live|test)[-_][A-Za-z0-9]{20,})['"]?`),                      // Stripe publishable keys
+	regexp.MustCompile(`['"]?(AIzaSy[A-Za-z0-9_-]{30,})['"]?`),                                     // Google/Firebase API keys (min 30 chars after prefix)
+	regexp.MustCompile(`['"]?(SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,})['"]?`),                   // SendGrid API keys (flexible lengths)
+	regexp.MustCompile(`['"]?(xox[baprs]-[A-Za-z0-9-]{10,})['"]?`),                                 // Slack tokens
+	regexp.MustCompile(`['"]?(ghp_[A-Za-z0-9]{36,})['"]?`),                                         // GitHub PATs (new format)
+	regexp.MustCompile(`['"]?(gho_[A-Za-z0-9]{36,})['"]?`),                                         // GitHub OAuth tokens
+	regexp.MustCompile(`['"]?(glpat-[A-Za-z0-9_-]{20,})['"]?`),                                     // GitLab PATs
+	regexp.MustCompile(`['"]?(AKIA[A-Z0-9]{16})['"]?`),                                             // AWS access key IDs
+	regexp.MustCompile(`['"]?(AC[a-zA-Z0-9]{32})['"]?`),                                            // Twilio Account SIDs (AC prefix + 32 chars; may match non-secrets in rare cases)
+	regexp.MustCompile(`['"]?(token_[A-Za-z0-9]{20,})['"]?`),                                       // token_ prefix values (e.g., token_1234567890...)
+	regexp.MustCompile(`['"]?(key-[a-f0-9]{32})['"]?`),                                             // Mailgun API keys
+	regexp.MustCompile(`['"]?(DefaultEndpointsProtocol=https;[^'"]{20,})['"]?`),                    // Azure connection strings (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(mongodb(?:\+srv)?://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),               // MongoDB connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(postgresql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                      // PostgreSQL connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(mysql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                           // MySQL connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(https://hooks\.slack\.com/services/[A-Za-z0-9/]+)['"]?`),             // Slack webhooks
+	regexp.MustCompile(`['"]?(https://[A-Za-z0-9]+@[A-Za-z0-9]+\.ingest\.sentry\.io/[0-9]+)['"]?`), // Sentry DSN URLs
+	regexp.MustCompile(`['"]?(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\n\rA-Za-z0-9+/= ]+-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)['"]?`), // Private keys (multiline; uses specific char class without \s to limit backtracking)
+
 	// AWS credentials (most specific - matches aws_secret_access_key before generic "secret")
 	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),
 	// Private keys (detect key content; require 16+ chars to reduce false positives)
@@ -25,14 +52,26 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(database[-_]?url|db[-_]?password|db[-_]?pass|database[-_]?password)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{8,})['"]?`),
 	// Connection strings (require 10+ chars to reduce false positives)
 	regexp.MustCompile(`(?i)(connection[-_]?string|conn[-_]?str)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{10,})['"]?`),
-	// Service-specific tokens (Slack, Discord, Stripe, etc.)
-	regexp.MustCompile(`(?i)(slack[-_]?token|discord[-_]?token|stripe[-_]?key|stripe[-_]?secret|twilio[-_]?auth|npm[-_]?token|pypi[-_]?token|github[-_]?token|gitlab[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+
+	// Service-specific tokens - split into smaller patterns for better performance and maintainability
+	regexp.MustCompile(`(?i)(slack[-_]?token|discord[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(stripe[-_]?(?:key|secret|api[-_]?key)|twilio[-_]?(?:auth|token|sid))\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(npm[-_]?token|pypi[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(github[-_]?token|gitlab[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(openai[-_]?(?:key|api[-_]?key)|azure[-_]?(?:key|connection[-_]?string))\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(sendgrid[-_]?(?:key|api[-_]?key)|firebase[-_]?(?:key|api[-_]?key)|mailchimp[-_]?(?:key|api[-_]?key)|mailgun[-_]?(?:key|api[-_]?key))\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(algolia[-_]?(?:key|api[-_]?key|app[-_]?id)|mapbox[-_]?(?:token|key)|datadog[-_]?(?:key|api[-_]?key)|pagerduty[-_]?(?:key|api[-_]?key)|newrelic[-_]?(?:key|license[-_]?key))\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+	regexp.MustCompile(`(?i)(paypal[-_]?(?:secret|client[-_]?id)|square[-_]?token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
+
 	// API keys and tokens (require 10+ chars to avoid short non-secrets)
 	regexp.MustCompile(`(?i)(api[-_]?key|apikey|api_token|access[-_]?token|auth[-_]?token|bearer|token)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9_./+=-]{10,})['"]?`),
 	// Signing and encryption keys
 	regexp.MustCompile(`(?i)(signing[-_]?key|encryption[-_]?key|secret[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{16,})['"]?`),
 	// JWT tokens - header starts with eyJ (base64 of '{"'), payload and signature are any base64url
 	regexp.MustCompile(`(eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)`),
+	// Bearer tokens in Authorization headers - masks entire "Bearer <token>" string
+	// Single capture group intentionally includes the full token for complete masking
+	regexp.MustCompile(`['"]?Bearer\s+([A-Za-z0-9_./+=-]{20,})['"]?`),
 	// Password patterns (require 8+ chars to reduce false positives)
 	regexp.MustCompile(`(?i)(password|passwd|pwd|secret)\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{8,})['"]?`),
 	// Hex strings that look like secrets (32+ chars)
@@ -40,6 +79,16 @@ var secretPatterns = []*regexp.Regexp{
 	// Generic credentials (least specific) - uses word boundaries and 10-char minimum
 	// to reduce false positives on common variable names like 'authService' or 'credType'
 	regexp.MustCompile(`(?i)\b(credential|cred|auth)\b\s*(?::=|[:=]>?)\s*['"]?([^\s'"]{10,})['"]?`),
+
+	// Generic catch-all for any identifier ending in _key, _secret, _token, _auth, _password
+	// with object prefix (self., this., obj.) - handles self.openai_key = "..."
+	// Requires quoted string value to avoid matching os.Getenv() calls
+	regexp.MustCompile(`(?i)(?:self\.|this\.)?([a-z_][a-z0-9_]*[-_](?:key|secret|token|auth|password))\s*(?::=|[:=]>?)\s*['"]([^'"]{10,})['"]`),
+
+	// Dict/JSON literals with quoted keys - handles {"api_key": "value"}, "password": "value", etc.
+	// Matches: bare keywords (password, secret, token) OR compound keys (api_key, auth_token) OR private_key_id
+	// Two capture groups: (1) key name, (2) value - so masking preserves the key
+	regexp.MustCompile(`(?i)['"](password|secret|token|auth|credential|private[-_]?key[-_]?id|[a-z_][a-z0-9_]*[-_](?:key|secret|token|auth|password|credential))['"]\s*:\s*['"]([^'"]{10,})['"]`),
 }
 
 // commonLiterals contains values that should not be masked even if they match a pattern.
@@ -49,10 +98,21 @@ var commonLiterals = map[string]bool{
 	"undefined": true, "none": true, "empty": true,
 }
 
+// maxLineLength is the maximum line length that will be processed for secret masking.
+// Lines exceeding this limit are returned unmodified to prevent ReDoS attacks (CWE-770).
+// 10KB is sufficient for any reasonable code line while preventing resource exhaustion.
+const maxLineLength = 10 * 1024
+
 // MaskSecretInLine replaces secret values in a line with asterisks while
 // preserving the code structure. Returns the masked line.
+// Lines exceeding maxLineLength (10KB) are returned unmodified to prevent ReDoS.
 func MaskSecretInLine(line string) string {
 	if line == "" {
+		return line
+	}
+
+	// Defense against ReDoS (CWE-770): skip regex processing for extremely long lines
+	if len(line) > maxLineLength {
 		return line
 	}
 
@@ -66,7 +126,7 @@ func MaskSecretInLine(line string) string {
 				return match
 			}
 
-			// For patterns with prefix + value, mask just the value
+			// For patterns with prefix + value (3+ capture groups), mask just the value (submatches[2])
 			if len(submatches) >= 3 {
 				value := submatches[2]
 				// Skip common literals that aren't secrets
@@ -74,11 +134,21 @@ func MaskSecretInLine(line string) string {
 					return match
 				}
 				masked := maskValue(value)
-				return strings.Replace(match, value, masked, 1)
+				// Use ReplaceAll to mask all occurrences of the secret value within the match,
+				// though typically each match contains the value only once
+				return strings.ReplaceAll(match, value, masked)
 			}
 
-			// For patterns without prefix (like JWT), mask the whole match
-			return maskValue(match)
+			// For patterns with a single capture group (well-known prefixes, JWT, Bearer, etc.),
+			// mask the captured value and replace it in the match to preserve surrounding structure
+			// (quotes, "Bearer " prefix, etc.)
+			value := submatches[1]
+			if commonLiterals[strings.ToLower(value)] {
+				return match
+			}
+			masked := maskValue(value)
+			// Use ReplaceAll to mask all occurrences of the secret value within the match
+			return strings.ReplaceAll(match, value, masked)
 		})
 	}
 
