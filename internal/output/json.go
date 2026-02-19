@@ -81,35 +81,9 @@ func maskFindingSecrets(f model.Finding) model.Finding {
 		f.CodeSnippet = util.MaskSecretInMultiLineString(f.CodeSnippet)
 	}
 
-	// Mask Fix data
+	// Mask Fix data using shared function (DRY - same logic as human formatter)
 	if f.Fix != nil {
-		fixCopy := *f.Fix
-
-		if fixCopy.Patch != nil && *fixCopy.Patch != "" {
-			masked := util.MaskSecretInMultiLineString(*fixCopy.Patch)
-			fixCopy.Patch = &masked
-		}
-
-		if fixCopy.VulnerableCode != nil {
-			vcCopy := *fixCopy.VulnerableCode
-			vcCopy.Content = util.MaskSecretInMultiLineString(vcCopy.Content)
-			fixCopy.VulnerableCode = &vcCopy
-		}
-
-		if len(fixCopy.ProposedFixes) > 0 {
-			maskedFixes := make([]model.CodeSnippetFix, len(fixCopy.ProposedFixes))
-			for i, pf := range fixCopy.ProposedFixes {
-				maskedFixes[i] = pf
-				maskedFixes[i].Content = util.MaskSecretInMultiLineString(pf.Content)
-			}
-			fixCopy.ProposedFixes = maskedFixes
-		}
-
-		if len(fixCopy.PatchFiles) > 0 {
-			fixCopy.PatchFiles = util.MaskSecretsInStringMap(fixCopy.PatchFiles)
-		}
-
-		f.Fix = &fixCopy
+		f.Fix = maskFixForDisplay(f.Fix)
 	}
 
 	return f

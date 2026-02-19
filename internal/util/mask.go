@@ -35,12 +35,12 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`['"]?(token_[A-Za-z0-9]{20,})['"]?`),                                       // token_ prefix values (e.g., token_1234567890...)
 	regexp.MustCompile(`['"]?(key-[a-f0-9]{32})['"]?`),                                             // Mailgun API keys
 	regexp.MustCompile(`['"]?(DefaultEndpointsProtocol=https;[^'"]{20,})['"]?`),                    // Azure connection strings (note: stops at quotes; passwords with quotes are partially matched)
-	regexp.MustCompile(`['"]?(mongodb(?:\+srv)?://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),               // MongoDB connection strings with credentials (stops at quotes)
-	regexp.MustCompile(`['"]?(postgresql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                      // PostgreSQL connection strings with credentials (stops at quotes)
-	regexp.MustCompile(`['"]?(mysql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                           // MySQL connection strings with credentials (stops at quotes)
+	regexp.MustCompile(`['"]?(mongodb(?:\+srv)?://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),               // MongoDB connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(postgresql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                      // PostgreSQL connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
+	regexp.MustCompile(`['"]?(mysql://[^:'"@]+:[^@'"]+@[^'"]{5,})['"]?`),                           // MySQL connection strings with credentials (note: stops at quotes; passwords with quotes are partially matched)
 	regexp.MustCompile(`['"]?(https://hooks\.slack\.com/services/[A-Za-z0-9/]+)['"]?`),             // Slack webhooks
 	regexp.MustCompile(`['"]?(https://[A-Za-z0-9]+@[A-Za-z0-9]+\.ingest\.sentry\.io/[0-9]+)['"]?`), // Sentry DSN URLs
-	regexp.MustCompile(`['"]?(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\nA-Za-z0-9+/=]+-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)['"]?`), // Private keys (multiline; uses specific char class for PEM base64 content to prevent backtracking)
+	regexp.MustCompile(`['"]?(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\n\rA-Za-z0-9+/= ]+-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)['"]?`), // Private keys (multiline; uses specific char class without \s to limit backtracking)
 
 	// AWS credentials (most specific - matches aws_secret_access_key before generic "secret")
 	regexp.MustCompile(`(?i)(aws[-_]?access[-_]?key[-_]?id|aws[-_]?secret[-_]?access[-_]?key)\s*(?::=|[:=]>?)\s*['"]?([A-Za-z0-9/+=]{16,})['"]?`),
