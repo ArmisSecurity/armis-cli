@@ -13,23 +13,16 @@ linters:
     - gosec
     - goconst
     - misspell
-
-linters-settings:
-  gosec:
-    excludes:
-      # G101: Hardcoded credentials - false positives in test files with example data
-      - G101
-      # G115: Integer overflow uintptr->int - standard Go pattern for terminal/fd detection
-      - G115
-      # G117: Struct fields matching secret patterns - legitimate config struct fields
-      - G117
-      # G204: Subprocess with variable - we validate image names before exec
-      - G204
-      # G704: SSRF via taint - URLs are admin-configured endpoints, not user input
-      - G704
-      # G705: XSS via taint - output is to stderr/terminal, not HTML
-      - G705
-  staticcheck:
-    checks:
-      - "all"
-      - "-QF1012" # WriteString(fmt.Sprintf) style suggestion - not a bug
+  settings:
+    gosec:
+      excludes:
+        # G101: Hardcoded credentials - false positives in test files with example data
+        - G101
+        # G115: Integer overflow uintptr->int - standard Go pattern for terminal/fd detection
+        - G115
+        # G204: Subprocess with variable - we validate image names before exec
+        - G204
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1012" # WriteString(fmt.Sprintf) style suggestion - not a bug

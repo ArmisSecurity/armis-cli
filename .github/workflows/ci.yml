@@ -82,7 +82,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          # Version omitted to use action's default (tracks Go compatibility)
+          version: v2.7.2
           args: --timeout=5m
 
   # Posts a sticky coverage comment to PRs (updates in place, details collapsed)
