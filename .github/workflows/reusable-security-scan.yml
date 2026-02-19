@@ -12,9 +12,9 @@ on:
         type: string
         default: '.'
       fail-on:
-        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
         type: string
-        default: 'CRITICAL'
+        default: ''
       pr-comment:
         description: 'Post scan results as PR comment'
         type: boolean
@@ -273,6 +273,12 @@ jobs:
           RESULTS_COUNT: ${{ steps.scan_analysis.outputs.results_count }}
           FAIL_ON: ${{ inputs.fail-on }}
         run: |
+          # Informational mode: if fail-on is empty, never fail on findings
+          if [ -z "$FAIL_ON" ]; then
+            echo "Scan completed in informational mode (no fail-on threshold). Found ${RESULTS_COUNT:-0} issues."
+            exit 0
+          fi
+
           if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_OUTCOME" = "cancelled" ]; then
             if [ "$HAS_RESULTS" = "false" ] || [ "${RESULTS_COUNT:-0}" = "0" ]; then
               # Scan failed without producing results - likely timeout or API error
