@@ -25,9 +25,9 @@ inputs:
     required: false
     default: 'sarif'
   fail-on:
-    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
     required: false
-    default: 'CRITICAL'
+    default: ''
   exit-code:
     description: 'Exit code to return when build fails'
     required: false

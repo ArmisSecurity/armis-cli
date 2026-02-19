@@ -13,3 +13,8 @@ linters:
     - gosec
     - goconst
     - misspell
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1012" # WriteString(fmt.Sprintf) style suggestion - not a bug

@@ -12,9 +12,9 @@ on:
         type: string
         default: '.'
       fail-on:
-        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
         type: string
-        default: 'CRITICAL'
+        default: ''
       pr-comment:
         description: 'Post scan results as PR comment'
         type: boolean
@@ -273,16 +273,29 @@ jobs:
           RESULTS_COUNT: ${{ steps.scan_analysis.outputs.results_count }}
           FAIL_ON: ${{ inputs.fail-on }}
         run: |
+          # First, check for operational failures (timeout, API errors, etc.)
+          # These should always fail regardless of informational mode
           if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_OUTCOME" = "cancelled" ]; then
             if [ "$HAS_RESULTS" = "false" ] || [ "${RESULTS_COUNT:-0}" = "0" ]; then
               # Scan failed without producing results - likely timeout or API error
               echo "::error::Armis scan failed (timeout, API error, or other issue). Check the 'Run Armis Security Scan' step for details."
               exit 1
-            else
-              # Scan completed but found vulnerabilities above threshold
-              echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
-              exit 1
             fi
+            # Scan produced results but step marked as failure - findings exceeded threshold
+            # Fall through to threshold check below
+          fi
+
+          # Informational mode: if fail-on is empty, never fail on findings
+          # (but operational failures above are still caught)
+          if [ -z "$FAIL_ON" ]; then
+            echo "Scan completed in informational mode (no fail-on threshold). Found ${RESULTS_COUNT:-0} issues."
+            exit 0
+          fi
+
+          # Check if findings exceeded threshold
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
+            exit 1
           fi
 
           echo "Scan completed successfully with no issues above threshold."
