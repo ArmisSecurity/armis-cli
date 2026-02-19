@@ -14,14 +14,6 @@ linters:
     - goconst
     - misspell
   settings:
-    gosec:
-      excludes:
-        # G101: Hardcoded credentials - false positives in test files with example data
-        - G101
-        # G115: Integer overflow uintptr->int - standard Go pattern for terminal/fd detection
-        - G115
-        # G204: Subprocess with variable - we validate image names before exec
-        - G204
     staticcheck:
       checks:
         - "all"
