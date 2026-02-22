@@ -1,6 +1,7 @@
 package image
 
 import (
+	"io"
 	"os/exec"
 	"testing"
 	"time"
@@ -344,6 +345,8 @@ func TestImageExistsLocally(t *testing.T) {
 	t.Run("existing image returns true", func(t *testing.T) {
 		// Pull a small known image first to ensure it exists
 		pullCmd := exec.CommandContext(t.Context(), dockerCmd, "pull", "busybox:latest") //nolint:gosec // G204: dockerCmd is validated by getDockerCommand()
+		pullCmd.Stdout = io.Discard
+		pullCmd.Stderr = io.Discard
 		if err := pullCmd.Run(); err != nil {
 			t.Skip("Could not pull test image: " + err.Error())
 		}

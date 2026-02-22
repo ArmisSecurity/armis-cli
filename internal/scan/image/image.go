@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ type Scanner struct {
 	includeNonExploitable bool
 	pollInterval          time.Duration
 	sbomVEXOpts           *scan.SBOMVEXOptions
+	pullPolicy            string // "always", "missing", "never"
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -63,6 +65,13 @@ func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 // WithSBOMVEXOptions sets SBOM and VEX generation options.
 func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 	s.sbomVEXOpts = opts
+	return s
+}
+
+// WithPullPolicy sets the image pull policy.
+// Valid values: "always" (always pull), "missing" (pull if not local), "never" (require local).
+func (s *Scanner) WithPullPolicy(policy string) *Scanner {
+	s.pullPolicy = policy
 	return s
 }
 
@@ -205,12 +214,25 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 
 	styles := output.GetStyles()
 
-	// Check if image exists locally; only pull if not present
-	if imageExistsLocally(ctx, dockerCmd, imageName) {
-		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
-			styles.MutedText.Render("Using local image"),
-			styles.Bold.Render(imageName))
-	} else {
+	// Determine pull behavior based on policy
+	localExists := imageExistsLocally(ctx, dockerCmd, imageName)
+	shouldPull := false
+
+	switch s.pullPolicy {
+	case "always":
+		shouldPull = true
+	case "never":
+		if !localExists {
+			return fmt.Errorf("image %q not found locally (pull policy is 'never')", imageName)
+		}
+		shouldPull = false
+	case "missing", "":
+		shouldPull = !localExists
+	default:
+		return fmt.Errorf("invalid pull policy %q: must be 'always', 'missing', or 'never'", s.pullPolicy)
+	}
+
+	if shouldPull {
 		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
@@ -221,6 +243,10 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		if err := pullCmd.Run(); err != nil {
 			return fmt.Errorf("failed to pull image: %w", err)
 		}
+	} else {
+		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+			styles.MutedText.Render("Using local image"),
+			styles.Bold.Render(imageName))
 	}
 
 	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
@@ -266,6 +292,7 @@ func validateDockerCommand(cmd string) error {
 // imageExistsLocally checks if the image is available in the local container runtime.
 func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
 	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
+	cmd.Stderr = io.Discard                                                   // Suppress "Error: no such image" noise
 	return cmd.Run() == nil
 }
 
