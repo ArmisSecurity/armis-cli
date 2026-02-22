@@ -131,14 +131,22 @@ jobs:
                            counts.HIGH > 0 ? '🟠 HIGH issues found' :
                            total > 0 ? '🟡 Issues found' : '✅ No issues';
 
-            let body = `${marker}\n## 🛡️ Armis Security Scan Results\n\n**${status}**\n\n`;
-            body += `| Severity | Count |\n|----------|-------|\n`;
-            if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
-            if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
-            if (counts.MEDIUM > 0) body += `| 🟡 MEDIUM | ${counts.MEDIUM} |\n`;
-            if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
-            if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
-            body += `\n**Total: ${total}**\n`;
+            const workflowRef = process.env.GITHUB_WORKFLOW_REF || '';
+            const ref = workflowRef.split('@')[1] || 'main';
+            const logoLight = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-light.png`;
+            const logoDark = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-dark.png`;
+            const logo = `<picture><source media="(prefers-color-scheme: dark)" srcset="${logoLight}"><source media="(prefers-color-scheme: light)" srcset="${logoDark}"><img alt="Armis AppSec logo" src="${logoDark}" height="24"></picture>`;
+
+            let body = `${marker}\n## ${logo} Security Scan Results\n\n**${status}**\n`;
+            if (total > 0) {
+              body += `\n| Severity | Count |\n|----------|-------|\n`;
+              if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
+              if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
+              if (counts.MEDIUM > 0) body += `| 🟡 MEDIUM | ${counts.MEDIUM} |\n`;
+              if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
+              if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
+              body += `\n**Total: ${total}**\n`;
+            }
 
             // Build detailed findings section
             if (total > 0) {
@@ -206,8 +214,6 @@ jobs:
               }
 
               body += `</details>`;
-            } else {
-              body += `\n<details><summary>View full results</summary>\n\nNo security issues found.\n</details>`;
             }
 
             // Find and update existing comment, or create new
