@@ -207,11 +207,11 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 
 	// Check if image exists locally; only pull if not present
 	if imageExistsLocally(ctx, dockerCmd, imageName) {
-		fmt.Fprintf(os.Stderr, "%s %s...\n",
+		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
 			styles.MutedText.Render("Using local image"),
 			styles.Bold.Render(imageName))
 	} else {
-		fmt.Fprintf(os.Stderr, "%s %s...\n",
+		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
 
