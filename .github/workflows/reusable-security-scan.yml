@@ -131,7 +131,11 @@ jobs:
                            counts.HIGH > 0 ? '🟠 HIGH issues found' :
                            total > 0 ? '🟡 Issues found' : '✅ No issues';
 
-            let body = `${marker}\n## 🛡️ Armis Security Scan Results\n\n**${status}**\n\n`;
+            const logoLight = 'https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/docs/assets/appsec-logo-light.png';
+            const logoDark = 'https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/docs/assets/appsec-logo-dark.png';
+            const logo = `<picture><source media="(prefers-color-scheme: dark)" srcset="${logoDark}"><source media="(prefers-color-scheme: light)" srcset="${logoLight}"><img alt="AppSec" src="${logoLight}" height="28"></picture>`;
+
+            let body = `${marker}\n## ${logo} Security Scan Results\n\n**${status}**\n\n`;
             body += `| Severity | Count |\n|----------|-------|\n`;
             if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
             if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
