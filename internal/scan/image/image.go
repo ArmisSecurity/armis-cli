@@ -90,8 +90,6 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 		_ = os.Remove(tmpFileName)
 	}()
 
-	styles := output.GetStyles()
-	fmt.Fprintf(os.Stderr, "%s %s...\n", styles.MutedText.Render("Exporting image"), styles.Bold.Render(imageName))
 	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
@@ -205,25 +203,28 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		return err
 	}
 
-	var pullCmd, saveCmd *exec.Cmd
-	switch dockerCmd {
-	case dockerBinary:
-		pullCmd = exec.CommandContext(ctx, "docker", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
-		saveCmd = exec.CommandContext(ctx, "docker", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
-	case podmanBinary:
-		pullCmd = exec.CommandContext(ctx, "podman", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
-		saveCmd = exec.CommandContext(ctx, "podman", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
-	default:
-		return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
+	styles := output.GetStyles()
+
+	// Check if image exists locally; only pull if not present
+	if imageExistsLocally(ctx, dockerCmd, imageName) {
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
+			styles.MutedText.Render("Using local image"),
+			styles.Bold.Render(imageName))
+	} else {
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
+			styles.MutedText.Render("Pulling image"),
+			styles.Bold.Render(imageName))
+
+		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
+		pullCmd.Stdout = os.Stderr
+		pullCmd.Stderr = os.Stderr
+		if err := pullCmd.Run(); err != nil {
+			return fmt.Errorf("failed to pull image: %w", err)
+		}
 	}
 
-	pullCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
-	pullCmd.Stderr = os.Stderr
-	if err := pullCmd.Run(); err != nil {
-		return fmt.Errorf("failed to pull image: %w", err)
-	}
-
-	saveCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
+	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
+	saveCmd.Stdout = os.Stderr
 	saveCmd.Stderr = os.Stderr
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)
@@ -260,6 +261,12 @@ func validateDockerCommand(cmd string) error {
 		return fmt.Errorf("unsupported container engine: %s", cmd)
 	}
 	return nil
+}
+
+// imageExistsLocally checks if the image is available in the local container runtime.
+func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
+	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
+	return cmd.Run() == nil
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {

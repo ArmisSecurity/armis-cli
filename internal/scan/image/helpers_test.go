@@ -1,6 +1,7 @@
 package image
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 
@@ -315,4 +316,41 @@ func TestValidateDockerCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImageExistsLocally(t *testing.T) {
+	if !isDockerAvailable() {
+		t.Skip("Docker/Podman not available, skipping imageExistsLocally tests")
+	}
+
+	dockerCmd := getDockerCommand()
+
+	t.Run("non-existent image returns false", func(t *testing.T) {
+		// Use a clearly non-existent image name
+		result := imageExistsLocally(t.Context(), dockerCmd, "armis-cli-test-nonexistent:doesnotexist")
+		if result {
+			t.Error("Expected false for non-existent image, got true")
+		}
+	})
+
+	t.Run("invalid image name returns false", func(t *testing.T) {
+		// Invalid image names should also return false (inspect fails)
+		result := imageExistsLocally(t.Context(), dockerCmd, "")
+		if result {
+			t.Error("Expected false for empty image name, got true")
+		}
+	})
+
+	t.Run("existing image returns true", func(t *testing.T) {
+		// Pull a small known image first to ensure it exists
+		pullCmd := exec.CommandContext(t.Context(), dockerCmd, "pull", "busybox:latest") //nolint:gosec // G204: dockerCmd is validated by getDockerCommand()
+		if err := pullCmd.Run(); err != nil {
+			t.Skip("Could not pull test image: " + err.Error())
+		}
+
+		result := imageExistsLocally(t.Context(), dockerCmd, "busybox:latest")
+		if !result {
+			t.Error("Expected true for existing image, got false")
+		}
+	})
 }
