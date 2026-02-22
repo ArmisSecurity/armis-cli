@@ -16,6 +16,7 @@ import (
 )
 
 var tarballPath string
+var pullPolicy string
 
 var scanImageCmd = &cobra.Command{
 	Use:   "image [image-name]",
@@ -71,7 +72,8 @@ var scanImageCmd = &cobra.Command{
 			return fmt.Errorf("failed to create API client: %w", err)
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
-		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable).
+			WithPullPolicy(pullPolicy)
 
 		// Warn if output paths are specified without the corresponding generation flags
 		if sbomOutput != "" && !generateSBOM {
@@ -144,5 +146,6 @@ var scanImageCmd = &cobra.Command{
 
 func init() {
 	scanImageCmd.Flags().StringVar(&tarballPath, "tarball", "", "Path to a container image tarball")
+	scanImageCmd.Flags().StringVar(&pullPolicy, "pull", "missing", "Image pull policy: 'always', 'missing' (default), or 'never'. Ignored when --tarball is used")
 	scanCmd.AddCommand(scanImageCmd)
 }

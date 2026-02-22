@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ type Scanner struct {
 	includeNonExploitable bool
 	pollInterval          time.Duration
 	sbomVEXOpts           *scan.SBOMVEXOptions
+	pullPolicy            string // "always", "missing", "never"
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -66,6 +68,13 @@ func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 	return s
 }
 
+// WithPullPolicy sets the image pull policy.
+// Valid values: "always" (always pull), "missing" (pull if not local), "never" (require local).
+func (s *Scanner) WithPullPolicy(policy string) *Scanner {
+	s.pullPolicy = policy
+	return s
+}
+
 // ScanImage scans a container image by name.
 func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanResult, error) {
 	normalised, err := validateImageName(imageName)
@@ -90,8 +99,6 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 		_ = os.Remove(tmpFileName)
 	}()
 
-	styles := output.GetStyles()
-	fmt.Fprintf(os.Stderr, "%s %s...\n", styles.MutedText.Render("Exporting image"), styles.Bold.Render(imageName))
 	if err := s.exportImage(ctx, imageName, tmpFileName); err != nil {
 		return nil, fmt.Errorf("failed to export image: %w", err)
 	}
@@ -146,7 +153,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
 	uploadSpinner.Stop()
 	styles := output.GetStyles()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
 
@@ -164,7 +171,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
@@ -205,25 +212,34 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		return err
 	}
 
-	var pullCmd, saveCmd *exec.Cmd
-	switch dockerCmd {
-	case dockerBinary:
-		pullCmd = exec.CommandContext(ctx, "docker", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
-		saveCmd = exec.CommandContext(ctx, "docker", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
-	case podmanBinary:
-		pullCmd = exec.CommandContext(ctx, "podman", "pull", imageName)                   //nolint:gosec // G204: imageName is validated by validateImageName()
-		saveCmd = exec.CommandContext(ctx, "podman", "save", "-o", outputPath, imageName) //nolint:gosec // G204: imageName is validated, outputPath is controlled
-	default:
-		return fmt.Errorf("unsupported container CLI: %q", dockerCmd)
+	styles := output.GetStyles()
+
+	// Determine pull behavior based on policy
+	localExists := imageExistsLocally(ctx, dockerCmd, imageName)
+	shouldPull, err := determinePullBehavior(s.pullPolicy, localExists)
+	if err != nil {
+		return fmt.Errorf("image %q: %w", imageName, err)
 	}
 
-	pullCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
-	pullCmd.Stderr = os.Stderr
-	if err := pullCmd.Run(); err != nil {
-		return fmt.Errorf("failed to pull image: %w", err)
+	if shouldPull {
+		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+			styles.MutedText.Render("Pulling image"),
+			styles.Bold.Render(imageName))
+
+		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
+		pullCmd.Stdout = os.Stderr
+		pullCmd.Stderr = os.Stderr
+		if err := pullCmd.Run(); err != nil {
+			return fmt.Errorf("failed to pull image: %w", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+			styles.MutedText.Render("Using local image"),
+			styles.Bold.Render(imageName))
 	}
 
-	saveCmd.Stdout = os.Stderr // Use stderr to avoid polluting structured stdout output
+	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
+	saveCmd.Stdout = os.Stderr
 	saveCmd.Stderr = os.Stderr
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)
@@ -260,6 +276,31 @@ func validateDockerCommand(cmd string) error {
 		return fmt.Errorf("unsupported container engine: %s", cmd)
 	}
 	return nil
+}
+
+// imageExistsLocally checks if the image is available in the local container runtime.
+func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
+	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
+	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect
+	cmd.Stderr = io.Discard                                                   // Suppress "Error: no such image" noise
+	return cmd.Run() == nil
+}
+
+// determinePullBehavior returns whether to pull and any error based on policy and local existence.
+func determinePullBehavior(policy string, localExists bool) (shouldPull bool, err error) {
+	switch policy {
+	case "always":
+		return true, nil
+	case "never":
+		if !localExists {
+			return false, fmt.Errorf("image not found locally (pull policy is 'never')")
+		}
+		return false, nil
+	case "missing", "":
+		return !localExists, nil
+	default:
+		return false, fmt.Errorf("invalid pull policy %q: must be 'always', 'missing', or 'never'", policy)
+	}
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
@@ -321,7 +362,6 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				// #nosec G705 -- Debug output to stderr; no XSS risk in CLI context
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
 			}
 		}
