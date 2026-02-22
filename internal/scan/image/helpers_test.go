@@ -357,3 +357,34 @@ func TestImageExistsLocally(t *testing.T) {
 		}
 	})
 }
+
+func TestDeterminePullBehavior(t *testing.T) {
+	tests := []struct {
+		name        string
+		policy      string
+		localExists bool
+		wantPull    bool
+		wantErr     bool
+	}{
+		{"always pulls even when exists", "always", true, true, false},
+		{"always pulls when missing", "always", false, true, false},
+		{"missing skips when exists", "missing", true, false, false},
+		{"missing pulls when missing", "missing", false, true, false},
+		{"never uses local when exists", "never", true, false, false},
+		{"never errors when missing", "never", false, false, true},
+		{"empty defaults to missing behavior exists", "", true, false, false},
+		{"empty defaults to missing behavior missing", "", false, true, false},
+		{"invalid policy errors", "invalid", true, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shouldPull, err := determinePullBehavior(tt.policy, tt.localExists)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("determinePullBehavior() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && shouldPull != tt.wantPull {
+				t.Errorf("determinePullBehavior() shouldPull = %v, want %v", shouldPull, tt.wantPull)
+			}
+		})
+	}
+}

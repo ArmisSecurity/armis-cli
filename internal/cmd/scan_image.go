@@ -146,6 +146,6 @@ var scanImageCmd = &cobra.Command{
 
 func init() {
 	scanImageCmd.Flags().StringVar(&tarballPath, "tarball", "", "Path to a container image tarball")
-	scanImageCmd.Flags().StringVar(&pullPolicy, "pull", "missing", "Image pull policy: 'always', 'missing' (default), or 'never'")
+	scanImageCmd.Flags().StringVar(&pullPolicy, "pull", "missing", "Image pull policy: 'always', 'missing' (default), or 'never'. Ignored when --tarball is used")
 	scanCmd.AddCommand(scanImageCmd)
 }

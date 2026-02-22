@@ -472,6 +472,27 @@ jobs:
           category: container-scan
 ```
 
+#### Image Pull Policy
+
+Control how images are fetched before scanning with the `--pull` flag:
+
+| Policy | Use Case |
+|--------|----------|
+| `always` | CI/CD - ensures latest image from registry |
+| `missing` | Development - saves time by reusing local images (default) |
+| `never` | Air-gapped - requires pre-pulled images |
+
+For CI/CD pipelines scanning remote images, use `--pull=always` to ensure you're scanning the latest version:
+
+```yaml
+- name: Scan container image
+  run: |
+    armis-cli scan image ${{ env.IMAGE_TAG }} \
+      --pull=always \
+      --fail-on CRITICAL \
+      --format sarif
+```
+
 #### Scan from Tarball
 
 For images built in a previous job or CI step:

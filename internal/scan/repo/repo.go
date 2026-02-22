@@ -611,7 +611,6 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				// #nosec G705 -- Debug output to stderr; no XSS risk in CLI context
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
 			}
 		}

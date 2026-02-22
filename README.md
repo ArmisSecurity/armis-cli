@@ -300,6 +300,21 @@ armis-cli scan image my-app:v1.0.0 --tenant-id my-tenant
 armis-cli scan image --tarball ./image.tar --tenant-id my-tenant
 ```
 
+#### Pull Policy
+
+Control how images are fetched before scanning:
+
+```bash
+# Use local image if available, otherwise pull (default)
+armis-cli scan image nginx:latest --pull=missing
+
+# Always pull latest from registry (recommended for CI/CD)
+armis-cli scan image nginx:latest --pull=always
+
+# Never pull, require local image (for air-gapped environments)
+armis-cli scan image nginx:latest --pull=never
+```
+
 ---
 
 ## Output Formats

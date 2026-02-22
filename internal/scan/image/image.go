@@ -153,7 +153,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 
 	uploadSpinner.Stop()
 	styles := output.GetStyles()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
 
@@ -171,7 +171,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	spinner.Stop()
-	fmt.Fprintf(os.Stderr, "%s %s\n\n", //nolint:gosec // G705: Output to stderr with lipgloss styles, not HTML
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
@@ -216,24 +216,13 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 
 	// Determine pull behavior based on policy
 	localExists := imageExistsLocally(ctx, dockerCmd, imageName)
-	shouldPull := false
-
-	switch s.pullPolicy {
-	case "always":
-		shouldPull = true
-	case "never":
-		if !localExists {
-			return fmt.Errorf("image %q not found locally (pull policy is 'never')", imageName)
-		}
-		shouldPull = false
-	case "missing", "":
-		shouldPull = !localExists
-	default:
-		return fmt.Errorf("invalid pull policy %q: must be 'always', 'missing', or 'never'", s.pullPolicy)
+	shouldPull, err := determinePullBehavior(s.pullPolicy, localExists)
+	if err != nil {
+		return fmt.Errorf("image %q: %w", imageName, err)
 	}
 
 	if shouldPull {
-		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
 
@@ -244,7 +233,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			return fmt.Errorf("failed to pull image: %w", err)
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
 			styles.MutedText.Render("Using local image"),
 			styles.Bold.Render(imageName))
 	}
@@ -292,8 +281,26 @@ func validateDockerCommand(cmd string) error {
 // imageExistsLocally checks if the image is available in the local container runtime.
 func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
 	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
+	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect
 	cmd.Stderr = io.Discard                                                   // Suppress "Error: no such image" noise
 	return cmd.Run() == nil
+}
+
+// determinePullBehavior returns whether to pull and any error based on policy and local existence.
+func determinePullBehavior(policy string, localExists bool) (shouldPull bool, err error) {
+	switch policy {
+	case "always":
+		return true, nil
+	case "never":
+		if !localExists {
+			return false, fmt.Errorf("image not found locally (pull policy is 'never')")
+		}
+		return false, nil
+	case "missing", "":
+		return !localExists, nil
+	default:
+		return false, fmt.Errorf("invalid pull policy %q: must be 'always', 'missing', or 'never'", policy)
+	}
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
@@ -355,7 +362,6 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				// #nosec G705 -- Debug output to stderr; no XSS risk in CLI context
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
 			}
 		}
