@@ -107,7 +107,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	if resp.StatusCode != http.StatusOK {
 		// Log detailed error info when debug mode is enabled
 		if c.debug {
-			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body)) //nolint:gosec // G705: Debug output to stderr only, not rendered in HTML
+			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
 		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return "", fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
