@@ -25,20 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Smart local image detection - automatically detects whether an image exists locally (docker/podman) before attempting remote pull, improving scan speed for local images (#80)
-- AppSec logo branding in CI security scan results (#79)
-
-### Changed
-
-- Enhanced secret masking with defense-in-depth approach across all output formatters (human, JSON, SARIF) - secrets are now masked at multiple layers (#77)
+- Smart local image detection - automatically detects whether an image exists locally (docker/podman) before attempting remote pull, improving scan speed for local images
+- AppSec logo branding in CI security scan results
 
 ### Fixed
 
-- Support empty `--fail-on` flag for informational-only scans that should never fail the build (#78)
+- Support empty `--fail-on` flag for informational-only scans that should never fail the build
 
 ### Security
 
-- Defense-in-depth secret masking prevents accidental secret exposure in scan output, proposed fixes, and debug logs (#77)
+- Defense-in-depth secret masking prevents accidental secret exposure in scan output, proposed fixes, and debug logs
 
 ---
 
