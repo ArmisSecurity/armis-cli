@@ -14,6 +14,9 @@ linters:
     - goconst
     - misspell
   settings:
+    gosec:
+      excludes:
+        - G705 # XSS via taint analysis - not applicable to CLI stderr output
     staticcheck:
       checks:
         - "all"
