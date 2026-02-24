@@ -175,6 +175,7 @@ func TestClient_StartIngest(t *testing.T) {
 	})
 
 	t.Run("upload error", func(t *testing.T) {
+		t.Parallel()
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusBadRequest, "Invalid request")
 		})
