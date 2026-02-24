@@ -75,7 +75,7 @@ jobs:
           cosign-release: "v2.2.2"
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: latest
