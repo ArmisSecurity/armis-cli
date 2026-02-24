@@ -10,6 +10,7 @@ import (
 )
 
 func TestJSONFormatter_Format(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 
 	result := &model.ScanResult{
@@ -63,6 +64,7 @@ func TestJSONFormatter_Format(t *testing.T) {
 }
 
 func TestJSONFormatter_FormatWithOptions(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 
 	result := &model.ScanResult{
@@ -96,6 +98,7 @@ func TestJSONFormatter_FormatWithOptions(t *testing.T) {
 }
 
 func TestJSONFormatter_EmptyFindings(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 
 	result := &model.ScanResult{
@@ -126,6 +129,7 @@ func TestJSONFormatter_EmptyFindings(t *testing.T) {
 }
 
 func TestJSONFormatter_MasksSecrets(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 	secretSnippet := `password = "SuperSecretPassword123!"`
 
@@ -165,6 +169,7 @@ func TestJSONFormatter_MasksSecrets(t *testing.T) {
 }
 
 func TestJSONFormatter_MasksFixSecrets(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 	secretPatch := `- password = "OldSecret123"
 + password = "NewSecret456"` // #nosec G101 - test data for secret masking
@@ -201,6 +206,7 @@ func TestJSONFormatter_MasksFixSecrets(t *testing.T) {
 }
 
 func TestJSONFormatter_MaskedContentPreserved(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 	// Already masked content - masking preserves the masked markers
 	alreadyMasked := `password = ********[20-40]`
@@ -238,6 +244,7 @@ func TestJSONFormatter_MaskedContentPreserved(t *testing.T) {
 }
 
 func TestJSONFormatter_MasksAllFixFields(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 
 	startLine := 10
@@ -299,6 +306,7 @@ func TestJSONFormatter_MasksAllFixFields(t *testing.T) {
 }
 
 func TestJSONFormatter_MultiLineSecrets(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 	multiLineSnippet := `config := struct {
     Password string
@@ -341,6 +349,7 @@ func TestJSONFormatter_MultiLineSecrets(t *testing.T) {
 }
 
 func TestJSONFormatter_NilAndEmptyHandling(t *testing.T) {
+	t.Parallel()
 	formatter := &JSONFormatter{}
 
 	t.Run("nil result", func(t *testing.T) {
