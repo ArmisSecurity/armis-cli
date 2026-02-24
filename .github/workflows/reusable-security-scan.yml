@@ -138,7 +138,7 @@ jobs:
             // GitHub theme-aware images with height constraint (24px to match heading text)
             const logo = `<img alt="Armis AppSec" src="${logoLight}#gh-dark-mode-only" height="24"><img alt="Armis AppSec" src="${logoDark}#gh-light-mode-only" height="24">`;
 
-            let body = `${marker}\n## ${logo} Security Scan Results\n\n**${status}**\n`;
+            let body = `${marker}\n## ${logo}&nbsp;Security Scan Results\n\n**${status}**\n`;
             if (total > 0) {
               body += `\n| Severity | Count |\n|----------|-------|\n`;
               if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
