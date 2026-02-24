@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -71,6 +72,10 @@ var rootCmd = &cobra.Command{
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		// Show update notification after any command completes (like gh CLI)
+		PrintUpdateNotification()
+	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Initialize colors based on --color flag
 		mode := cli.ColorMode(colorFlag)
@@ -176,14 +181,16 @@ func PrintUpdateNotification() {
 		return
 	}
 
-	// Non-blocking read: only show if result is already available
+	// Wait briefly for cached results (100ms is imperceptible but enough for disk reads).
+	// Fresh network requests (10s timeout) won't complete in time -- that's fine,
+	// the notification will show on the next run once the cache is populated.
 	select {
 	case result, ok := <-updateResultCh:
 		if ok && result != nil {
 			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
 			fmt.Fprint(os.Stderr, msg)
 		}
-	default:
+	case <-time.After(100 * time.Millisecond):
 		// Check hasn't completed yet -- silently skip
 	}
 }

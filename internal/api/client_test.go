@@ -22,7 +22,9 @@ const (
 )
 
 func TestNewClient(t *testing.T) {
+	t.Parallel()
 	t.Run("creates client with defaults", func(t *testing.T) {
+		t.Parallel()
 		authProvider := testutil.NewTestAuthProvider("token123")
 		client, err := NewClient("https://api.example.com", authProvider, false, 0)
 		if err != nil {
@@ -41,6 +43,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("uses custom upload timeout", func(t *testing.T) {
+		t.Parallel()
 		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 5*time.Minute)
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
@@ -52,6 +55,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("accepts custom HTTP client", func(t *testing.T) {
+		t.Parallel()
 		customClient := httpclient.NewClient(httpclient.Config{Timeout: 30 * time.Second})
 		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(customClient))
 		if err != nil {
@@ -64,6 +68,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("allows localhost HTTP", func(t *testing.T) {
+		t.Parallel()
 		client, err := NewClient("http://localhost:8080", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err != nil {
 			t.Fatalf("NewClient should allow localhost HTTP: %v", err)
@@ -74,6 +79,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("allows 127.0.0.1 HTTP", func(t *testing.T) {
+		t.Parallel()
 		client, err := NewClient("http://127.0.0.1:8080", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err != nil {
 			t.Fatalf("NewClient should allow 127.0.0.1 HTTP: %v", err)
@@ -84,6 +90,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("rejects non-localhost HTTP", func(t *testing.T) {
+		t.Parallel()
 		_, err := NewClient("http://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err == nil {
 			t.Error("Expected error for non-HTTPS non-localhost URL")
@@ -91,6 +98,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	t.Run("rejects invalid URL", func(t *testing.T) {
+		t.Parallel()
 		_, err := NewClient("://invalid", testutil.NewTestAuthProvider("token123"), false, 0)
 		if err == nil {
 			t.Error("Expected error for invalid URL")
@@ -99,6 +107,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_IsDebug(t *testing.T) {
+	t.Parallel()
 	client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token"), true, 0)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
@@ -117,7 +126,9 @@ func TestClient_IsDebug(t *testing.T) {
 }
 
 func TestClient_StartIngest(t *testing.T) {
+	t.Parallel()
 	t.Run("successful upload", func(t *testing.T) {
+		t.Parallel()
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "POST" {
 				t.Errorf("Expected POST, got %s", r.Method)
@@ -164,6 +175,7 @@ func TestClient_StartIngest(t *testing.T) {
 	})
 
 	t.Run("upload error", func(t *testing.T) {
+		t.Parallel()
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusBadRequest, "Invalid request")
 		})

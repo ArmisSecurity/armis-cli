@@ -222,7 +222,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	}
 
 	if shouldPull {
-		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
 
@@ -233,7 +233,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			return fmt.Errorf("failed to pull image: %w", err)
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "%s %s...\n", //nolint:gosec // G705: imageName is validated, stderr output is not HTML
+		fmt.Fprintf(os.Stderr, "%s %s...\n",
 			styles.MutedText.Render("Using local image"),
 			styles.Bold.Render(imageName))
 	}
