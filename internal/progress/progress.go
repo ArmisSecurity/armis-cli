@@ -60,7 +60,7 @@ type fdWriter interface {
 // isTerminalWriter reports whether the given writer is connected to a terminal.
 func isTerminalWriter(w io.Writer) bool {
 	if f, ok := w.(fdWriter); ok {
-		return term.IsTerminal(int(f.Fd()))
+		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
 	}
 	return false
 }

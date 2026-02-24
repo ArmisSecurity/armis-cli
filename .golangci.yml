@@ -13,3 +13,11 @@ linters:
     - gosec
     - goconst
     - misspell
+  settings:
+    gosec:
+      excludes:
+        - G705 # XSS via taint analysis - not applicable to CLI stderr output
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1012" # WriteString(fmt.Sprintf) style suggestion - not a bug

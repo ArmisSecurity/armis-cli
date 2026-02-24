@@ -149,7 +149,7 @@ func (c *Checker) fetchLatestVersion(ctx context.Context) (string, error) {
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "armis-cli-update-check")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constant GitHub API endpoint
 	if err != nil {
 		return "", err
 	}

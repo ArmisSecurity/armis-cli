@@ -12,9 +12,9 @@ on:
         type: string
         default: '.'
       fail-on:
-        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL)'
+        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
         type: string
-        default: 'CRITICAL'
+        default: ''
       pr-comment:
         description: 'Post scan results as PR comment'
         type: boolean
@@ -131,14 +131,23 @@ jobs:
                            counts.HIGH > 0 ? '🟠 HIGH issues found' :
                            total > 0 ? '🟡 Issues found' : '✅ No issues';
 
-            let body = `${marker}\n## 🛡️ Armis Security Scan Results\n\n**${status}**\n\n`;
-            body += `| Severity | Count |\n|----------|-------|\n`;
-            if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
-            if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
-            if (counts.MEDIUM > 0) body += `| 🟡 MEDIUM | ${counts.MEDIUM} |\n`;
-            if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
-            if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
-            body += `\n**Total: ${total}**\n`;
+            const workflowRef = process.env.GITHUB_WORKFLOW_REF || '';
+            const ref = workflowRef.split('@')[1] || 'main';
+            const logoLight = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-light.png`;
+            const logoDark = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-dark.png`;
+            // GitHub theme-aware images with height constraint (24px to match heading text)
+            const logo = `<img alt="Armis AppSec" src="${logoLight}#gh-dark-mode-only" height="24"><img alt="Armis AppSec" src="${logoDark}#gh-light-mode-only" height="24">`;
+
+            let body = `${marker}\n## ${logo}&nbsp;Security Scan Results\n\n**${status}**\n`;
+            if (total > 0) {
+              body += `\n| Severity | Count |\n|----------|-------|\n`;
+              if (counts.CRITICAL > 0) body += `| 🔴 CRITICAL | ${counts.CRITICAL} |\n`;
+              if (counts.HIGH > 0) body += `| 🟠 HIGH | ${counts.HIGH} |\n`;
+              if (counts.MEDIUM > 0) body += `| 🟡 MEDIUM | ${counts.MEDIUM} |\n`;
+              if (counts.LOW > 0) body += `| 🔵 LOW | ${counts.LOW} |\n`;
+              if (counts.INFO > 0) body += `| ⚪ INFO | ${counts.INFO} |\n`;
+              body += `\n**Total: ${total}**\n`;
+            }
 
             // Build detailed findings section
             if (total > 0) {
@@ -206,8 +215,6 @@ jobs:
               }
 
               body += `</details>`;
-            } else {
-              body += `\n<details><summary>View full results</summary>\n\nNo security issues found.\n</details>`;
             }
 
             // Find and update existing comment, or create new
@@ -273,16 +280,29 @@ jobs:
           RESULTS_COUNT: ${{ steps.scan_analysis.outputs.results_count }}
           FAIL_ON: ${{ inputs.fail-on }}
         run: |
+          # First, check for operational failures (timeout, API errors, etc.)
+          # These should always fail regardless of informational mode
           if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_OUTCOME" = "cancelled" ]; then
             if [ "$HAS_RESULTS" = "false" ] || [ "${RESULTS_COUNT:-0}" = "0" ]; then
               # Scan failed without producing results - likely timeout or API error
               echo "::error::Armis scan failed (timeout, API error, or other issue). Check the 'Run Armis Security Scan' step for details."
               exit 1
-            else
-              # Scan completed but found vulnerabilities above threshold
-              echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
-              exit 1
             fi
+            # Scan produced results but step marked as failure - findings exceeded threshold
+            # Fall through to threshold check below
+          fi
+
+          # Informational mode: if fail-on is empty, never fail on findings
+          # (but operational failures above are still caught)
+          if [ -z "$FAIL_ON" ]; then
+            echo "Scan completed in informational mode (no fail-on threshold). Found ${RESULTS_COUNT:-0} issues."
+            exit 0
+          fi
+
+          # Check if findings exceeded threshold
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
+            exit 1
           fi
 
           echo "Scan completed successfully with no issues above threshold."

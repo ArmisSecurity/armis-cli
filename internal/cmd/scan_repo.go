@@ -126,7 +126,6 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		PrintUpdateNotification()
 		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},

@@ -28,13 +28,13 @@ func TestMaskSecretInLine(t *testing.T) {
 		},
 		{
 			name:           "AWS access key",
-			input:          `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`,
+			input:          `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`, // #nosec G101
 			wantContains:   "AWS_ACCESS_KEY_ID",
 			wantNotContain: "IOSFODNN7",
 		},
 		{
 			name:           "token in config",
-			input:          `auth_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			input:          `auth_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
 			wantContains:   "auth_token",
 			wantNotContain: "xxxxxxxxxxx",
 		},
@@ -64,7 +64,7 @@ func TestMaskSecretInLine(t *testing.T) {
 		},
 		{
 			name:           "secret hex hash",
-			input:          `secret_hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"`,
+			input:          `secret_hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"`, // #nosec G101
 			wantContains:   "secret_hash",
 			wantNotContain: "e5f6a1b2c3d4e5f6a1b2c3d4",
 		},
@@ -179,12 +179,12 @@ func TestMaskSecretInLine_NoPrefixLeakage(t *testing.T) {
 		},
 		{
 			name:              "GitHub token prefix ghp_ must not leak",
-			input:             `auth_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			input:             `auth_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
 			forbiddenPrefixes: []string{"ghp_"},
 		},
 		{
 			name:              "AWS key prefix AKIA must not leak",
-			input:             `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`,
+			input:             `AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE`, // #nosec G101
 			forbiddenPrefixes: []string{"AKIA"},
 		},
 		{
@@ -352,5 +352,664 @@ func TestMaskSecretsInStringMap_DoesNotModifyOriginal(t *testing.T) {
 	// Verify original map was not modified
 	if original["config.go"] != originalValue {
 		t.Error("MaskSecretsInStringMap modified the original map")
+	}
+}
+
+func TestMaskSecretInLine_WellKnownPrefixes(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name:           "OpenAI key prefix sk-proj",
+			input:          `self.openai_key = "sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"`,
+			wantNotContain: "sk-proj-1234567890",
+		},
+		{
+			name:           "Google/Firebase API key AIzaSy",
+			input:          `firebase_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`, // #nosec G101
+			wantNotContain: "AIzaSyDaGmWKa4JsXZ",
+		},
+		{
+			name:           "SendGrid key SG.",
+			input:          `SENDGRID_KEY = "SG.1234567890abcdefghijklmnopqr.stuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"`,
+			wantNotContain: "SG.1234567890",
+		},
+		{
+			name:           "Stripe publishable key pk_live",
+			input:          `stripe_public = "pk_live_51H9X8YF2eZvKYlo2C8RzQ9mN4P3vT5aU6gW7hE8iF9jG0kH1lI2mJ3nK4oL5pM6"`,
+			wantNotContain: "pk_live_51H9X8YF",
+		},
+		{
+			name:           "Mailgun key-prefix",
+			input:          `MAILGUN_KEY = "key-1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
+			wantNotContain: "key-1234567890",
+		},
+		{
+			name:           "Twilio Account SID AC prefix",
+			input:          `TWILIO_SID = "AC1234567890abcdefghijklmnopqrstuv"`,
+			wantNotContain: "AC1234567890",
+		},
+		{
+			name:           "Azure connection string",
+			input:          `azure_key = "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=abcdefghij"`,
+			wantNotContain: "DefaultEndpointsProtocol=https",
+		},
+		{
+			name:           "Slack webhook URL",
+			input:          `SLACK_WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`, // #nosec G101
+			wantNotContain: "hooks.slack.com",
+		},
+		{
+			name:           "MongoDB connection string",
+			input:          `connection_string = "mongodb://admin:password123@production-db.example.com:27017/mydb"`,
+			wantNotContain: "mongodb://admin:password",
+		},
+		{
+			name:           "PostgreSQL connection string",
+			input:          `postgres_conn = "postgresql://dbuser:SuperSecret123@db.example.com:5432/production_db"`, // #nosec G101
+			wantNotContain: "postgresql://dbuser:SuperSecret",
+		},
+		{
+			name:           "Sentry DSN URL",
+			input:          `"dsn": "https://1234567890abcdef@o123456.ingest.sentry.io/1234567"`, // #nosec G101
+			wantNotContain: "1234567890abcdef@",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			// Verify masked placeholder is present
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+func TestMaskSecretInLine_ServiceSpecificPatterns(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name:           "self.openai_key with object prefix",
+			input:          `self.openai_key = "sk-secret-1234567890abcdef"`,
+			wantNotContain: "sk-secret-1234",
+		},
+		{
+			name:           "sendgrid_key assignment",
+			input:          `sendgrid_key = "SG.abcdefghijklmnopqrstuvwx.1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"`,
+			wantNotContain: "SG.abcdefgh",
+		},
+		{
+			name:           "firebase_api_key",
+			input:          `firebase_api_key = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"`, // #nosec G101
+			wantNotContain: "AIzaSyDaGmW",
+		},
+		{
+			name:           "mailchimp_key",
+			input:          `mailchimp_key = "1234567890abcdefghijklmnopqrstuv-us1"`,
+			wantNotContain: "1234567890abcdef",
+		},
+		{
+			name:           "algolia_api_key",
+			input:          `algolia_api_key = "1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
+			wantNotContain: "1234567890abc",
+		},
+		{
+			name:           "datadog_api_key",
+			input:          `datadog_api_key = "1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
+			wantNotContain: "1234567890abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_NonCredentialDBConnectionStrings verifies that database connection
+// strings WITHOUT credentials (like localhost development configs) are NOT masked.
+// This prevents false positives on non-secret development configurations.
+func TestMaskSecretInLine_NonCredentialDBConnectionStrings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "MongoDB localhost without credentials",
+			input: `mongodb://localhost:27017`,
+		},
+		{
+			name:  "MongoDB localhost with database",
+			input: `mongodb://localhost:27017/mydb`,
+		},
+		{
+			name:  "PostgreSQL localhost without credentials",
+			input: `postgresql://localhost:5432/mydb`,
+		},
+		{
+			name:  "MySQL localhost without credentials",
+			input: `mysql://localhost:3306/test`,
+		},
+		{
+			name:  "MongoDB with only host",
+			input: `mongodb://db.example.com:27017`,
+		},
+		{
+			name:  "MongoDB+srv without credentials",
+			input: `mongodb+srv://cluster0.example.mongodb.net/mydb`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if result != tt.input {
+				t.Errorf("MaskSecretInLine() = %q, want %q (should NOT mask non-credential connection strings)", result, tt.input)
+			}
+		})
+	}
+}
+
+func TestMaskSecretInLine_DictLiterals(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+		wantContains   string
+	}{
+		{
+			name:           "quoted key dict literal",
+			input:          `"api_key": "sk-1234567890abcdefghijklmnopqrstuvwxyz"`,
+			wantNotContain: "sk-1234567890abc",
+			wantContains:   `"api_key"`,
+		},
+		{
+			name:           "JSON-style secret token",
+			input:          `"auth_token": "ghp_1234567890abcdefghijklmnopqrstuvwxyzAB"`, // #nosec G101
+			wantNotContain: "ghp_1234567890",
+			wantContains:   `"auth_token"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if tt.wantContains != "" && !strings.Contains(result, tt.wantContains) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q", result, tt.wantContains)
+			}
+		})
+	}
+}
+
+func TestMaskSecretInLine_DoesNotMaskEnvVarCalls(t *testing.T) {
+	// Note: The 10+ character minimum for values means short function names
+	// like os.Getenv (9 chars) won't be masked, but longer ones like
+	// os.environ.get (14 chars) may be masked as false positives.
+	// This is an acceptable trade-off for catching unquoted secrets.
+	tests := []struct {
+		name        string
+		input       string
+		wantContain string
+	}{
+		{
+			name:        "os.Getenv call preserved (under 10 chars)",
+			input:       `api_key = os.Getenv("API_KEY")`,
+			wantContain: `os.Getenv("API_KEY")`,
+		},
+		{
+			name:        "getenv call preserved",
+			input:       `key = getenv("SECRET")`,
+			wantContain: `getenv("SECRET")`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if !strings.Contains(result, tt.wantContain) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q (env var call should not be masked)", result, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_TwilioSIDAlphanumeric verifies that Twilio Account SIDs
+// with alphanumeric characters (not just hex) are properly masked.
+func TestMaskSecretInLine_TwilioSIDAlphanumeric(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name:           "Twilio SID with non-hex letters (g-z)",
+			input:          `account_sid = "AC1234567890abcdefghijklmnopqrstuv"`, // #nosec G101
+			wantNotContain: "AC1234567890",
+		},
+		{
+			name:           "Twilio SID uppercase letters beyond F",
+			input:          `TWILIO_SID = "ACabcdefGHIJKLMNOPQRSTUVWXYZ012345"`, // #nosec G101
+			wantNotContain: "ACabcdefGHIJKL",
+		},
+		{
+			name:           "Twilio SID in JSON",
+			input:          `"accountSid": "AC0123456789ABCDEFghijklmnopqrstuv"`, // #nosec G101
+			wantNotContain: "AC0123456789",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_GenericSkToken verifies that sk- tokens without
+// the specific live/test/proj suffix are still masked.
+func TestMaskSecretInLine_GenericSkToken(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name:           "generic sk- token (no suffix)",
+			input:          `key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"`, // #nosec G101
+			wantNotContain: "sk-1234567890",
+		},
+		{
+			name:           "OpenAI token without proj/live/test",
+			input:          `OPENAI_KEY = "sk-abcdefghijklmnopqrstuvwxyz012345"`, // #nosec G101
+			wantNotContain: "sk-abcdefghij",
+		},
+		{
+			name:           "sk- token in quoted value",
+			input:          `"apiKey": "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"`, // #nosec G101
+			wantNotContain: "sk-ABCDEFGHIJ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_BearerToken verifies that Bearer tokens in
+// Authorization headers are masked (without assignment operator).
+func TestMaskSecretInLine_BearerToken(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+		wantContains   string
+	}{
+		{
+			name:           "Bearer token in header string",
+			input:          `"Bearer sk-1234567890abcdefghijklmnopqrstuvwxyz"`, // #nosec G101
+			wantNotContain: "sk-1234567890",
+		},
+		{
+			name:           "Bearer with single quotes",
+			input:          `'Bearer ghp_1234567890abcdefghijklmnopqrstuvwxyzABCD'`, // #nosec G101
+			wantNotContain: "ghp_1234567890",
+		},
+		{
+			name:           "Authorization header value",
+			input:          `Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"`, // #nosec G101
+			wantNotContain: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+			wantContains:   "Authorization",
+		},
+		{
+			name:           "Bearer without quotes",
+			input:          `Bearer sk-1234567890abcdefghijklmnopqrstuvwxyz`, // #nosec G101
+			wantNotContain: "sk-1234567890",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if tt.wantContains != "" && !strings.Contains(result, tt.wantContains) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q", result, tt.wantContains)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_TokenPrefixValues verifies that values starting with
+// token_ followed by alphanumeric are masked.
+func TestMaskSecretInLine_TokenPrefixValues(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		{
+			name:           "X-Auth-Token header value",
+			input:          `"X-Auth-Token": "token_1234567890abcdefghijklmnopqrstuvwxyz"`, // #nosec G101
+			wantNotContain: "token_1234567890",
+		},
+		{
+			name:           "token_ value without quotes",
+			input:          `auth = token_abcdefghijklmnopqrstuvwxyz012345`, // #nosec G101
+			wantNotContain: "token_abcdefghij",
+		},
+		{
+			name:           "token_ in assignment",
+			input:          `my_token = "token_ABCDEFGHIJKLMNOPQRSTUVWXYZ"`, // #nosec G101
+			wantNotContain: "token_ABCDEFGHIJ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_BareKeywordDictLiterals verifies that dict literals with
+// bare keywords like "password" (not "db_password") are masked.
+func TestMaskSecretInLine_BareKeywordDictLiterals(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+		wantContains   string
+	}{
+		{
+			name:           "bare password key",
+			input:          `"password": "SuperSecretPassword123!"`, // #nosec G101
+			wantNotContain: "SuperSecretPassword",
+			wantContains:   `"password"`,
+		},
+		{
+			name:           "bare secret key",
+			input:          `"secret": "my_super_secret_value_here"`, // #nosec G101
+			wantNotContain: "my_super_secret",
+			wantContains:   `"secret"`,
+		},
+		{
+			name:           "bare token key",
+			input:          `"token": "abcdefghijklmnopqrstuvwxyz"`, // #nosec G101
+			wantNotContain: "abcdefghijklmnop",
+			wantContains:   `"token"`,
+		},
+		{
+			name:           "private_key_id field",
+			input:          `"private_key_id": "1234567890abcdef1234567890abcdef12345678"`, // #nosec G101
+			wantNotContain: "1234567890abcdef",
+			wantContains:   `"private_key_id"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if tt.wantContains != "" && !strings.Contains(result, tt.wantContains) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q", result, tt.wantContains)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_PreservesQuotes verifies that well-known prefix patterns
+// preserve surrounding quote structure when masking. This is a regression test
+// for a bug where patterns like ['"]?(sk-...)['"]? replaced the entire match
+// (including quotes) instead of just the captured value.
+func TestMaskSecretInLine_PreservesQuotes(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantContain string // substring that MUST be present (to verify structure)
+	}{
+		{
+			name:        "sk- token preserves double quotes",
+			input:       `api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"`,
+			wantContain: `= "********`,
+		},
+		{
+			name:        "sk- token preserves single quotes",
+			input:       `api_key = 'sk-1234567890abcdefghijklmnopqrstuvwxyz'`,
+			wantContain: `= '********`,
+		},
+		{
+			name:        "GitHub PAT preserves quotes",
+			input:       `token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`, // #nosec G101
+			wantContain: `= "********`,
+		},
+		{
+			name:        "Slack webhook preserves quotes",
+			input:       `WEBHOOK = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"`, // #nosec G101
+			wantContain: `= "********`,
+		},
+		{
+			name:        "Bearer token preserves quotes and prefix",
+			input:       `"Bearer sk-1234567890abcdefghijklmnopqrstuvwxyz"`,
+			wantContain: `"Bearer ********`,
+		},
+		{
+			name:        "MongoDB connection string preserves quotes",
+			input:       `conn = "mongodb://admin:password123@db.example.com:27017/mydb"`, // #nosec G101
+			wantContain: `= "********`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if !strings.Contains(result, tt.wantContain) {
+				t.Errorf("MaskSecretInLine() = %q, should contain %q (quotes not preserved)", result, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_PrivateKeys verifies that PEM-formatted private keys
+// are properly masked, including RSA, EC, DSA, OPENSSH, and PGP variants.
+func TestMaskSecretInLine_PrivateKeys(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+	}{
+		// #nosec G101 -- test fixture, not a real credential
+		{
+			name: "RSA private key",
+			input: `-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyf8DgnX5X9g5yjW5tNk+PNqp
+-----END RSA PRIVATE KEY-----`,
+			wantNotContain: "MIIEowIBAAKCAQEA",
+		},
+		{
+			name:           "EC private key inline",
+			input:          `key = "-----BEGIN EC PRIVATE KEY-----MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEH-----END EC PRIVATE KEY-----"`, // #nosec G101
+			wantNotContain: "MIGHAgEAMBMG",
+		},
+		{
+			name:           "Generic private key",
+			input:          `-----BEGIN PRIVATE KEY-----MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSk-----END PRIVATE KEY-----`,
+			wantNotContain: "MIIEvgIBADAN",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q", result, tt.wantNotContain)
+			}
+			if !strings.Contains(result, "********") {
+				t.Errorf("MaskSecretInLine() = %q, expected masked placeholder", result)
+			}
+		})
+	}
+}
+
+// TestMaskSecretInLine_MaxLineLength verifies that extremely long lines are
+// returned unmodified to prevent ReDoS attacks (CWE-770).
+func TestMaskSecretInLine_MaxLineLength(t *testing.T) {
+	// Create a line just under the limit with a secret - should be masked
+	shortLine := `api_key = "` + strings.Repeat("x", 100) + `"` // #nosec G101
+	result := util.MaskSecretInLine(shortLine)
+	if !strings.Contains(result, "********") {
+		t.Errorf("Lines under limit should be masked, got: %s", result)
+	}
+
+	// Create a line over the limit (10KB+) with a secret - should NOT be masked
+	longLine := `api_key = "` + strings.Repeat("x", 11*1024) + `"` // #nosec G101
+	result = util.MaskSecretInLine(longLine)
+	if result != longLine {
+		t.Errorf("Lines over limit should be returned unmodified")
+	}
+}
+
+// Benchmark tests to measure performance impact of secret masking patterns.
+// Run with: go test -bench=. -benchmem ./internal/util/...
+
+func BenchmarkMaskSecretInLine_NoSecrets(b *testing.B) {
+	line := `func main() { fmt.Println("hello world") }`
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInLine_WithSecret(b *testing.B) {
+	line := `api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInLine_MultipleSecrets(b *testing.B) {
+	line := `config = { "api_key": "sk-1234567890abcdef", "token": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+func BenchmarkMaskSecretInMultiLineString(b *testing.B) {
+	content := `package main
+
+func main() {
+    apiKey := "sk-1234567890abcdefghijklmnopqrstuvwxyz"
+    password := "supersecretpassword123"
+    token := "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    fmt.Println("Hello, World!")
+}
+` // #nosec G101
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInMultiLineString(content)
+	}
+}
+
+// BenchmarkMaskSecretInLine_WorstCase tests performance with input that triggers
+// near-matches across multiple patterns without actually matching. This helps detect
+// potential backtracking issues when patterns partially match but fail.
+func BenchmarkMaskSecretInLine_WorstCase(b *testing.B) {
+	// Input designed to trigger partial matches across many patterns:
+	// - Looks like assignment but short values
+	// - Contains secret-like keywords
+	// - Has quotes and special chars that patterns must traverse
+	line := `config = { "api": "short", "key": "val", "sk-": "x", "password": "", "token": "12345" }`
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		util.MaskSecretInLine(line)
+	}
+}
+
+// TestMaskSecretInLine_NestedQuotes verifies behavior with JSON-style escaped quotes.
+// Note: The regex patterns stop at quote boundaries, so escaped quotes within values
+// will cause partial matching. This is documented behavior - the value up to the
+// escaped quote will be masked, which is acceptable from a security standpoint
+// (partial masking is safe, leaking secrets is not).
+func TestMaskSecretInLine_NestedQuotes(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantNotContain string
+		description    string
+	}{
+		{
+			name:           "escaped quotes in value - partial mask expected",
+			input:          `"api_key": "value_with_\"escaped\"_content_1234567890"`, // #nosec G101
+			wantNotContain: "value_with_",
+			description:    "Content before escaped quote should be masked",
+		},
+		{
+			name:           "simple quoted value without escapes",
+			input:          `"password": "SuperSecretPassword123!"`, // #nosec G101
+			wantNotContain: "SuperSecretPassword",
+			description:    "Standard case without escapes should mask fully",
+		},
+		{
+			name:           "value ending with escaped quote",
+			input:          `"secret": "ends_with_quote\""`, // #nosec G101
+			wantNotContain: "ends_with_quote",
+			description:    "Value before trailing escaped quote should be masked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := util.MaskSecretInLine(tt.input)
+			if strings.Contains(result, tt.wantNotContain) {
+				t.Errorf("MaskSecretInLine() = %q, should NOT contain %q (%s)", result, tt.wantNotContain, tt.description)
+			}
+		})
 	}
 }

@@ -579,14 +579,14 @@ func TestPrintUpdateNotification(t *testing.T) {
 		PrintUpdateNotification()
 	})
 
-	t.Run("empty channel does not block", func(t *testing.T) {
+	t.Run("empty channel times out gracefully", func(t *testing.T) {
 		originalUpdateResultCh := updateResultCh
 		defer func() { updateResultCh = originalUpdateResultCh }()
 
 		// Create an unbuffered channel with no value
 		updateResultCh = make(chan *update.CheckResult)
 
-		// Should return immediately without blocking
+		// Should return after ~100ms timeout (not block indefinitely)
 		done := make(chan bool, 1)
 		go func() {
 			PrintUpdateNotification()
@@ -595,9 +595,9 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 		select {
 		case <-done:
-			// Success - function returned
-		case <-time.After(100 * time.Millisecond):
-			t.Error("PrintUpdateNotification blocked on empty channel")
+			// Success - function returned after timeout
+		case <-time.After(200 * time.Millisecond):
+			t.Error("PrintUpdateNotification blocked indefinitely on empty channel")
 		}
 	})
 }

@@ -1,6 +1,8 @@
 package image
 
 import (
+	"io"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -312,6 +314,76 @@ func TestValidateDockerCommand(t *testing.T) {
 			err := validateDockerCommand(tt.cmd)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateDockerCommand(%q) error = %v, wantErr %v", tt.cmd, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestImageExistsLocally(t *testing.T) {
+	if !isDockerAvailable() {
+		t.Skip("Docker/Podman not available, skipping imageExistsLocally tests")
+	}
+
+	dockerCmd := getDockerCommand()
+
+	t.Run("non-existent image returns false", func(t *testing.T) {
+		// Use a clearly non-existent image name
+		result := imageExistsLocally(t.Context(), dockerCmd, "armis-cli-test-nonexistent:doesnotexist")
+		if result {
+			t.Error("Expected false for non-existent image, got true")
+		}
+	})
+
+	t.Run("invalid image name returns false", func(t *testing.T) {
+		// Invalid image names should also return false (inspect fails)
+		result := imageExistsLocally(t.Context(), dockerCmd, "")
+		if result {
+			t.Error("Expected false for empty image name, got true")
+		}
+	})
+
+	t.Run("existing image returns true", func(t *testing.T) {
+		// Pull a small known image first to ensure it exists
+		pullCmd := exec.CommandContext(t.Context(), dockerCmd, "pull", "busybox:latest") //nolint:gosec // G204: dockerCmd is validated by getDockerCommand()
+		pullCmd.Stdout = io.Discard
+		pullCmd.Stderr = io.Discard
+		if err := pullCmd.Run(); err != nil {
+			t.Skip("Could not pull test image: " + err.Error())
+		}
+
+		result := imageExistsLocally(t.Context(), dockerCmd, "busybox:latest")
+		if !result {
+			t.Error("Expected true for existing image, got false")
+		}
+	})
+}
+
+func TestDeterminePullBehavior(t *testing.T) {
+	tests := []struct {
+		name        string
+		policy      string
+		localExists bool
+		wantPull    bool
+		wantErr     bool
+	}{
+		{"always pulls even when exists", "always", true, true, false},
+		{"always pulls when missing", "always", false, true, false},
+		{"missing skips when exists", "missing", true, false, false},
+		{"missing pulls when missing", "missing", false, true, false},
+		{"never uses local when exists", "never", true, false, false},
+		{"never errors when missing", "never", false, false, true},
+		{"empty defaults to missing behavior exists", "", true, false, false},
+		{"empty defaults to missing behavior missing", "", false, true, false},
+		{"invalid policy errors", "invalid", true, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shouldPull, err := determinePullBehavior(tt.policy, tt.localExists)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("determinePullBehavior() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && shouldPull != tt.wantPull {
+				t.Errorf("determinePullBehavior() shouldPull = %v, want %v", shouldPull, tt.wantPull)
 			}
 		})
 	}

@@ -58,7 +58,7 @@ func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
 // authRequest is the request body for the authenticate endpoint.
 type authRequest struct {
 	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	ClientSecret string `json:"client_secret"` //nolint:gosec // G117: This is a JSON field name for auth request, not a secret value
 }
 
 // authResponse is the response from the authenticate endpoint.
@@ -88,7 +88,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
 		return "", fmt.Errorf("authentication request failed: %w", err)
 	}

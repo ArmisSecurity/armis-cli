@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // JSONFormatter formats scan results as JSON.
@@ -12,9 +13,11 @@ type JSONFormatter struct{}
 
 // Format formats the scan result as JSON.
 func (f *JSONFormatter) Format(result *model.ScanResult, w io.Writer) error {
+	// Defense-in-depth: mask secrets before JSON serialization
+	masked := maskScanResultForOutput(result)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(result)
+	return encoder.Encode(masked)
 }
 
 // FormatWithOptions formats the scan result as JSON with custom options.
@@ -27,6 +30,9 @@ func (f *JSONFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer,
 
 // formatWithDebug outputs JSON with additional debug metadata.
 func (f *JSONFormatter) formatWithDebug(result *model.ScanResult, w io.Writer, opts FormatOptions) error {
+	// Defense-in-depth: mask secrets before JSON serialization
+	masked := maskScanResultForOutput(result)
+
 	type debugOutput struct {
 		*model.ScanResult
 		FormatOptions struct {
@@ -36,7 +42,7 @@ func (f *JSONFormatter) formatWithDebug(result *model.ScanResult, w io.Writer, o
 		} `json:"_formatOptions"`
 	}
 
-	out := debugOutput{ScanResult: result}
+	out := debugOutput{ScanResult: masked}
 	out.FormatOptions.GroupBy = opts.GroupBy
 	out.FormatOptions.RepoPath = opts.RepoPath
 	out.FormatOptions.Debug = opts.Debug
@@ -44,4 +50,41 @@ func (f *JSONFormatter) formatWithDebug(result *model.ScanResult, w io.Writer, o
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(out)
+}
+
+// maskScanResultForOutput creates a shallow copy of ScanResult with secrets
+// masked in code-containing fields. This provides defense-in-depth against
+// secret leakage through JSON output.
+func maskScanResultForOutput(result *model.ScanResult) *model.ScanResult {
+	if result == nil {
+		return nil
+	}
+
+	// Shallow copy the ScanResult
+	masked := *result
+
+	// Deep copy and mask the findings slice
+	if len(result.Findings) > 0 {
+		masked.Findings = make([]model.Finding, len(result.Findings))
+		for i, f := range result.Findings {
+			masked.Findings[i] = maskFindingSecrets(f)
+		}
+	}
+
+	return &masked
+}
+
+// maskFindingSecrets returns a copy of the Finding with secrets masked in code fields.
+func maskFindingSecrets(f model.Finding) model.Finding {
+	// Mask CodeSnippet
+	if f.CodeSnippet != "" {
+		f.CodeSnippet = util.MaskSecretInMultiLineString(f.CodeSnippet)
+	}
+
+	// Mask Fix data using shared function (DRY - same logic as human formatter)
+	if f.Fix != nil {
+		f.Fix = maskFixForDisplay(f.Fix)
+	}
+
+	return f
 }

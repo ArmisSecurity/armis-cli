@@ -728,11 +728,11 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	content.WriteString("SCAN COMPLETE\n")
 
 	// Total findings - simple and prominent
-	content.WriteString(fmt.Sprintf("%d findings", result.Summary.Total))
+	fmt.Fprintf(&content, "%d findings", result.Summary.Total)
 
 	// Duration if available (inline)
 	if duration := scanDuration(result); duration != "" {
-		content.WriteString(fmt.Sprintf("  •  %s", duration))
+		fmt.Fprintf(&content, "  •  %s", duration)
 	}
 	content.WriteString("\n")
 
@@ -789,7 +789,7 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 			catParts = append(catParts, fmt.Sprintf("%s (%d)", util.FormatCategory(cc.category), cc.count))
 		}
 		catLabel := s.MutedText.Render("Categories:")
-		content.WriteString(fmt.Sprintf("%s %s\n", catLabel, strings.Join(catParts, ", ")))
+		fmt.Fprintf(&content, "%s %s\n", catLabel, strings.Join(catParts, ", "))
 	}
 
 	// Render the summary box using predefined style
@@ -889,10 +889,20 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		}
 	}
 
+	// Defense-in-depth: always mask secrets in code snippets before display,
+	// even if upstream already masked. Already-masked content (e.g., "********[20-40]")
+	// remains safely masked, though the exact format may change on re-processing.
+	// Create a local copy of the finding to avoid modifying the caller's struct,
+	// since formatCodeSnippetWithFrame reads from finding.CodeSnippet directly.
+	maskedFinding := finding
+	if maskedFinding.CodeSnippet != "" {
+		maskedFinding.CodeSnippet = util.MaskSecretInMultiLineString(maskedFinding.CodeSnippet)
+	}
+
 	// Code snippet with framed box
-	if finding.CodeSnippet != "" {
+	if maskedFinding.CodeSnippet != "" {
 		_, _ = fmt.Fprintf(w, "\n")
-		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippetWithFrame(finding))
+		_, _ = fmt.Fprintf(w, "%s\n", formatCodeSnippetWithFrame(maskedFinding))
 	}
 
 	// Display proposed fix if available
@@ -1180,11 +1190,50 @@ func wrapTitle(title string, maxWidth, indent int) string {
 	return result.String()
 }
 
+// maskFixForDisplay creates a copy of Fix with secrets masked in code fields.
+// This provides defense-in-depth against secret leakage through proposed fixes and patches.
+func maskFixForDisplay(fix *model.Fix) *model.Fix {
+	fixCopy := *fix
+
+	// Mask Patch (unified diff, multi-line)
+	if fixCopy.Patch != nil && *fixCopy.Patch != "" {
+		masked := util.MaskSecretInMultiLineString(*fixCopy.Patch)
+		fixCopy.Patch = &masked
+	}
+
+	// Mask ProposedFixes content
+	if len(fixCopy.ProposedFixes) > 0 {
+		maskedFixes := make([]model.CodeSnippetFix, len(fixCopy.ProposedFixes))
+		for i, pf := range fixCopy.ProposedFixes {
+			maskedFixes[i] = pf
+			maskedFixes[i].Content = util.MaskSecretInMultiLineString(pf.Content)
+		}
+		fixCopy.ProposedFixes = maskedFixes
+	}
+
+	// Mask VulnerableCode content (defense-in-depth for consistency with JSON formatter)
+	if fixCopy.VulnerableCode != nil && fixCopy.VulnerableCode.Content != "" {
+		maskedVuln := *fixCopy.VulnerableCode
+		maskedVuln.Content = util.MaskSecretInMultiLineString(maskedVuln.Content)
+		fixCopy.VulnerableCode = &maskedVuln
+	}
+
+	// Mask PatchFiles content (map of filename -> patch content)
+	if len(fixCopy.PatchFiles) > 0 {
+		fixCopy.PatchFiles = util.MaskSecretsInStringMap(fixCopy.PatchFiles)
+	}
+
+	return &fixCopy
+}
+
 // formatFixSection formats the proposed fix section for display.
 func formatFixSection(fix *model.Fix) string {
 	if fix == nil {
 		return ""
 	}
+
+	// Defense-in-depth: mask secrets in code-containing fields before display
+	fix = maskFixForDisplay(fix)
 
 	s := GetStyles()
 	var sb strings.Builder
@@ -1247,11 +1296,11 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	s := GetStyles()
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("  File: %s", snippet.FilePath))
+	fmt.Fprintf(&sb, "  File: %s", snippet.FilePath)
 	if snippet.StartLine != nil && snippet.EndLine != nil {
-		sb.WriteString(fmt.Sprintf(" (lines %d-%d)", *snippet.StartLine, *snippet.EndLine))
+		fmt.Fprintf(&sb, " (lines %d-%d)", *snippet.StartLine, *snippet.EndLine)
 	} else if snippet.StartLine != nil {
-		sb.WriteString(fmt.Sprintf(" (line %d)", *snippet.StartLine))
+		fmt.Fprintf(&sb, " (line %d)", *snippet.StartLine)
 	}
 	sb.WriteString("\n")
 
@@ -1264,7 +1313,7 @@ func formatProposedSnippet(snippet model.CodeSnippetFix) string {
 	}
 	for i, line := range highlightedLines {
 		lineNum := s.ProposedLineNumber.Render(fmt.Sprintf("%4d", startLine+i))
-		sb.WriteString(fmt.Sprintf("  %s  %s\n", lineNum, line))
+		fmt.Fprintf(&sb, "  %s  %s\n", lineNum, line)
 	}
 
 	return sb.String()
@@ -1649,7 +1698,18 @@ func buildTokenPositions(tokens []string) []int {
 }
 
 // tokenizeLine splits a line into word-like tokens preserving positions
+// maxTokenizeLength is the maximum line length that will be tokenized.
+// Lines exceeding this limit return a single-element slice to prevent
+// unbounded memory allocation (CWE-770) from attacker-controlled input.
+const maxTokenizeLength = 10 * 1024
+
 func tokenizeLine(s string) []string {
+	// Defense against unbounded memory allocation (CWE-770):
+	// return early for extremely long lines to prevent slice growth
+	if len(s) > maxTokenizeLength {
+		return []string{s}
+	}
+
 	var tokens []string
 	var current strings.Builder
 
@@ -1716,7 +1776,7 @@ func formatDiffWithColorsStyled(patch string) string {
 			case "context":
 				// Handle ellipsis marker (omitted lines indicator)
 				if op.Line.OldNum == -1 && op.Line.NewNum == -1 {
-					sb.WriteString(fmt.Sprintf("  %s\n", s.MutedText.Render(op.Line.Content)))
+					fmt.Fprintf(&sb, "  %s\n", s.MutedText.Render(op.Line.Content))
 					afterHunk = false
 					emptyCount = 0
 					continue
