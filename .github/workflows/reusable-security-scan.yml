@@ -135,8 +135,8 @@ jobs:
             const ref = workflowRef.split('@')[1] || 'main';
             const logoLight = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-light.png`;
             const logoDark = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/${ref}/docs/assets/appsec-logo-dark.png`;
-            // GitHub theme-aware markdown: light logo for dark mode, dark logo for light mode
-            const logo = `![Armis AppSec](${logoLight}#gh-dark-mode-only)![Armis AppSec](${logoDark}#gh-light-mode-only)`;
+            // GitHub theme-aware images with height constraint (24px to match heading text)
+            const logo = `<img alt="Armis AppSec" src="${logoLight}#gh-dark-mode-only" height="24"><img alt="Armis AppSec" src="${logoDark}#gh-light-mode-only" height="24">`;
 
             let body = `${marker}\n## ${logo} Security Scan Results\n\n**${status}**\n`;
             if (total > 0) {
