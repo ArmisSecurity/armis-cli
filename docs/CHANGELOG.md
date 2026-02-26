@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-02-26
+
+### Changed
+
+- Updated golang.org/x/term to v0.40.0 (#76)
+- Updated github.com/mattn/go-runewidth to v0.0.20 (#82)
+- Updated goreleaser/goreleaser-action to v7 (#83)
+- Optimized CI testing workflow (#85)
+- Improved GitHub theme-aware markdown for AppSec logo (#84)
+
+---
+
 ## [1.2.0] - 2026-02-23
 
 ### Added
@@ -200,7 +212,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.7...v1.1.0
 [1.0.7]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.6...v1.0.7
