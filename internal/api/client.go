@@ -42,8 +42,9 @@ const (
 )
 
 // copyChunkSize is the buffer size for context-aware copying.
-// 32KB provides a good balance between performance and cancellation responsiveness.
-const copyChunkSize = 32 * 1024
+// 256KB reduces syscall overhead for multi-GB uploads while still providing
+// sub-second cancellation responsiveness at typical network speeds.
+const copyChunkSize = 256 * 1024
 
 // copyWithContext copies from src to dst while periodically checking context cancellation.
 // This allows long-running copies (e.g., multi-GB uploads) to be cancelled promptly.
@@ -366,7 +367,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 
 	// Check for write errors that may not have caused the HTTP request to fail
 	if writeErr != nil {
-		return "", writeErr
+		return "", fmt.Errorf("upload stream error (server responded %d): %w", resp.StatusCode, writeErr)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
