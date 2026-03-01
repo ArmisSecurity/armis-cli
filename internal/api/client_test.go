@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,26 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
+
+// failingReader is a test helper that returns an error after reading some data.
+type failingReader struct {
+	bytesRead int
+	failAfter int
+	err       error
+}
+
+func (f *failingReader) Read(p []byte) (n int, err error) {
+	if f.bytesRead >= f.failAfter {
+		return 0, f.err
+	}
+	// Return some data before failing
+	toRead := min(len(p), f.failAfter-f.bytesRead)
+	for i := range toRead {
+		p[i] = 'x'
+	}
+	f.bytesRead += toRead
+	return toRead, nil
+}
 
 // Test constants to satisfy goconst linter.
 const (
@@ -228,6 +250,48 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("handles source reader error", func(t *testing.T) {
+		t.Parallel()
+
+		// Server that reads the full request body to ensure client detects write error
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			// Attempt to parse the multipart form - this reads the body
+			// The reader error will cause this to fail, but we still send a response
+			_ = r.ParseMultipartForm(32 << 20)
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
+		})
+
+		// Use a short timeout to make the test faster
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		// Create a reader that fails immediately (simulating disk error)
+		diskError := errors.New("simulated disk read error")
+		failReader := &failingReader{
+			failAfter: 0, // Fail on first read
+			err:       diskError,
+		}
+
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         failReader,
+			Size:         1000, // Claim larger size than we'll actually read
+		}
+		_, err = client.StartIngest(context.Background(), opts)
+
+		if err == nil {
+			t.Error("Expected error for failing reader")
+		}
+		if !strings.Contains(err.Error(), "disk read error") && !strings.Contains(err.Error(), "failed to copy file data") {
+			t.Errorf("Expected disk read error, got: %v", err)
+		}
+	})
+
 	t.Run("sends SBOM and VEX flags when set", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -275,6 +339,70 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 		if scanID != testScanID {
 			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
+		}
+	})
+
+	t.Run("context cancellation stops upload promptly", func(t *testing.T) {
+		t.Parallel()
+
+		// Server that slowly reads the request body to simulate a slow upload
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			// Read body slowly - this will be interrupted by context cancellation
+			buf := make([]byte, 1024)
+			for {
+				_, err := r.Body.Read(buf)
+				if err != nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
+			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		// Create a slow reader that produces data slowly (simulating large file read)
+		slowData := &slowReader{
+			data:       bytes.Repeat([]byte("x"), 100000), // 100KB
+			chunkSize:  1000,
+			chunkDelay: 5 * time.Millisecond,
+		}
+
+		opts := IngestOptions{
+			TenantID:     "tenant-456",
+			ArtifactType: "image",
+			Filename:     "test.tar",
+			Data:         slowData,
+			Size:         100000,
+		}
+
+		// Cancel context after 50ms - upload should be stopped promptly
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		_, err = client.StartIngest(ctx, opts)
+		elapsed := time.Since(start)
+
+		// Should return an error (context cancelled or deadline exceeded)
+		if err == nil {
+			t.Fatal("Expected context cancellation error")
+		}
+
+		// Should return promptly (within 200ms), not wait for the full upload
+		if elapsed > 200*time.Millisecond {
+			t.Errorf("StartIngest took too long to respond to cancellation: %v", elapsed)
+		}
+
+		// Error should be context-related
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
+			!strings.Contains(err.Error(), "context") {
+			t.Errorf("Expected context-related error, got: %v", err)
 		}
 	})
 }
@@ -1321,4 +1449,91 @@ func TestClient_WaitForScan(t *testing.T) {
 			t.Fatal("Expected error for failed get scan result")
 		}
 	})
+}
+
+func TestCopyWithContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("copies data successfully", func(t *testing.T) {
+		t.Parallel()
+		src := bytes.NewReader([]byte("hello world"))
+		dst := &bytes.Buffer{}
+
+		n, err := copyWithContext(context.Background(), dst, src)
+
+		if err != nil {
+			t.Fatalf("copyWithContext failed: %v", err)
+		}
+		if n != 11 {
+			t.Errorf("Expected 11 bytes copied, got %d", n)
+		}
+		if dst.String() != "hello world" {
+			t.Errorf("Expected 'hello world', got %q", dst.String())
+		}
+	})
+
+	t.Run("respects context cancellation", func(t *testing.T) {
+		t.Parallel()
+		// Create a slow reader that yields data in chunks
+		slowReader := &slowReader{
+			data:       bytes.Repeat([]byte("x"), 10000),
+			chunkSize:  100,
+			chunkDelay: 10 * time.Millisecond,
+		}
+		dst := &bytes.Buffer{}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err := copyWithContext(ctx, dst, slowReader)
+
+		if err == nil {
+			t.Fatal("Expected context deadline error")
+		}
+		if err != context.DeadlineExceeded {
+			t.Errorf("Expected DeadlineExceeded, got: %v", err)
+		}
+		// Should have copied some data before cancellation
+		if dst.Len() == 0 {
+			t.Error("Expected some data to be copied before cancellation")
+		}
+	})
+
+	t.Run("handles reader error", func(t *testing.T) {
+		t.Parallel()
+		readErr := errors.New("read error")
+		src := &failingReader{failAfter: 5, err: readErr}
+		dst := &bytes.Buffer{}
+
+		n, err := copyWithContext(context.Background(), dst, src)
+
+		if err == nil {
+			t.Fatal("Expected reader error")
+		}
+		if err != readErr {
+			t.Errorf("Expected read error, got: %v", err)
+		}
+		if n != 5 {
+			t.Errorf("Expected 5 bytes copied before error, got %d", n)
+		}
+	})
+}
+
+// slowReader is a test helper that reads data slowly to test context cancellation.
+type slowReader struct {
+	data       []byte
+	pos        int
+	chunkSize  int
+	chunkDelay time.Duration
+}
+
+func (s *slowReader) Read(p []byte) (n int, err error) {
+	if s.pos >= len(s.data) {
+		return 0, io.EOF
+	}
+	time.Sleep(s.chunkDelay)
+	end := min(s.pos+s.chunkSize, len(s.data))
+	n = copy(p, s.data[s.pos:end])
+	s.pos += n
+	return n, nil
 }

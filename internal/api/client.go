@@ -2,7 +2,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,6 +41,51 @@ const (
 	hostLoopbackIP = "127.0.0.1"
 )
 
+// copyChunkSize is the buffer size for context-aware copying.
+// 32KB provides a good balance between performance and cancellation responsiveness.
+const copyChunkSize = 32 * 1024
+
+// copyWithContext copies from src to dst while periodically checking context cancellation.
+// This allows long-running copies (e.g., multi-GB uploads) to be cancelled promptly.
+// Returns the number of bytes copied and any error encountered.
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, copyChunkSize)
+	var written int64
+
+	for {
+		// Check context before each chunk read
+		select {
+		case <-ctx.Done():
+			return written, ctx.Err()
+		default:
+		}
+
+		nr, rerr := src.Read(buf)
+		if nr > 0 {
+			nw, werr := dst.Write(buf[:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if werr == nil {
+					werr = io.ErrShortWrite
+				}
+			}
+			written += int64(nw)
+			if werr != nil {
+				return written, werr
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				return written, nil
+			}
+			return written, rerr
+		}
+	}
+}
+
 // AuthHeaderProvider provides authorization headers for API requests.
 // This interface allows for different authentication mechanisms (JWT, Basic auth)
 // while keeping the API client decoupled from specific auth implementations.
@@ -64,9 +108,19 @@ type Client struct {
 type ClientOption func(*Client)
 
 // WithHTTPClient sets a custom HTTP client for the API client.
+// Note: This does NOT override uploadHTTPClient, which has special no-retry
+// configuration for streaming uploads. Use WithUploadHTTPClient for that.
 func WithHTTPClient(client *httpclient.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = client
+	}
+}
+
+// WithUploadHTTPClient sets a custom HTTP client for upload operations.
+// This is primarily for testing. In production, the default upload client
+// is configured with DisableRetry: true because streaming bodies cannot be rewound.
+func WithUploadHTTPClient(client *httpclient.Client) ClientOption {
+	return func(c *Client) {
 		c.uploadHTTPClient = client
 	}
 }
@@ -112,9 +166,7 @@ func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uplo
 	})
 
 	uploadHTTPClient := httpclient.NewClient(httpclient.Config{
-		RetryMax:       3,
-		RetryWaitMin:   1 * time.Second,
-		RetryWaitMax:   10 * time.Second,
+		DisableRetry:   true, // Streaming bodies cannot be rewound for retry
 		DisableTimeout: true,
 	})
 
@@ -197,71 +249,125 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 
 	start := time.Now()
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+	// Use io.Pipe to stream multipart data directly to the HTTP request body.
+	// This avoids buffering the entire file in memory, preventing OOM on large uploads.
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType() // Capture before goroutine starts
 
-	if err := writer.WriteField("tenant_id", opts.TenantID); err != nil {
-		return "", fmt.Errorf("failed to write tenant_id field: %w", err)
-	}
+	// Channel to receive errors from the writer goroutine
+	errChan := make(chan error, 1)
 
-	if err := writer.WriteField("artifact_type", opts.ArtifactType); err != nil {
-		return "", fmt.Errorf("failed to write artifact_type field: %w", err)
-	}
+	// Goroutine writes multipart data to the pipe; HTTP request reads from it
+	go func() {
+		var writeErr error
+		defer func() {
+			if writeErr != nil {
+				_ = pw.CloseWithError(writeErr)
+			} else {
+				_ = pw.Close()
+			}
+			errChan <- writeErr
+		}()
 
-	if err := writer.WriteField("scan_type", "full"); err != nil {
-		return "", fmt.Errorf("failed to write scan_type field: %w", err)
-	}
-
-	// Add SBOM/VEX generation flags if requested
-	if opts.GenerateSBOM {
-		if c.debug {
-			fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending sbom_generate=true ===\n")
+		// Check context before starting
+		select {
+		case <-uploadCtx.Done():
+			writeErr = uploadCtx.Err()
+			return
+		default:
 		}
-		if err := writer.WriteField("sbom_generate", "true"); err != nil {
-			return "", fmt.Errorf("failed to write sbom_generate field: %w", err)
-		}
-	}
-	if opts.GenerateVEX {
-		if c.debug {
-			fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending vex_generate=true ===\n")
-		}
-		if err := writer.WriteField("vex_generate", "true"); err != nil {
-			return "", fmt.Errorf("failed to write vex_generate field: %w", err)
-		}
-	}
 
-	// Use filepath.Base to sanitize filename and prevent path traversal in multipart
-	part, err := writer.CreateFormFile("tar_file", filepath.Base(opts.Filename))
-	if err != nil {
-		return "", fmt.Errorf("failed to create form file: %w", err)
-	}
+		if writeErr = writer.WriteField("tenant_id", opts.TenantID); writeErr != nil {
+			writeErr = fmt.Errorf("failed to write tenant_id field: %w", writeErr)
+			return
+		}
 
-	if _, err := io.Copy(part, opts.Data); err != nil {
-		return "", fmt.Errorf("failed to copy file data: %w", err)
-	}
+		if writeErr = writer.WriteField("artifact_type", opts.ArtifactType); writeErr != nil {
+			writeErr = fmt.Errorf("failed to write artifact_type field: %w", writeErr)
+			return
+		}
 
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("failed to close multipart writer: %w", err)
-	}
+		if writeErr = writer.WriteField("scan_type", "full"); writeErr != nil {
+			writeErr = fmt.Errorf("failed to write scan_type field: %w", writeErr)
+			return
+		}
+
+		// Add SBOM/VEX generation flags if requested
+		if opts.GenerateSBOM {
+			if c.debug {
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending sbom_generate=true ===\n")
+			}
+			if writeErr = writer.WriteField("sbom_generate", "true"); writeErr != nil {
+				writeErr = fmt.Errorf("failed to write sbom_generate field: %w", writeErr)
+				return
+			}
+		}
+		if opts.GenerateVEX {
+			if c.debug {
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Sending vex_generate=true ===\n")
+			}
+			if writeErr = writer.WriteField("vex_generate", "true"); writeErr != nil {
+				writeErr = fmt.Errorf("failed to write vex_generate field: %w", writeErr)
+				return
+			}
+		}
+
+		// Use filepath.Base to sanitize filename and prevent path traversal in multipart
+		var part io.Writer
+		part, writeErr = writer.CreateFormFile("tar_file", filepath.Base(opts.Filename))
+		if writeErr != nil {
+			writeErr = fmt.Errorf("failed to create form file: %w", writeErr)
+			return
+		}
+
+		// Use context-aware copy for responsive cancellation during large uploads
+		if _, writeErr = copyWithContext(uploadCtx, part, opts.Data); writeErr != nil {
+			writeErr = fmt.Errorf("failed to copy file data: %w", writeErr)
+			return
+		}
+
+		if writeErr = writer.Close(); writeErr != nil {
+			writeErr = fmt.Errorf("failed to close multipart writer: %w", writeErr)
+			return
+		}
+	}()
 
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
-	req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, body)
+	req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, pr)
 	if err != nil {
+		_ = pr.Close()
+		<-errChan // Wait for goroutine to finish
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Use setAuthHeader to ensure credentials are only sent over HTTPS
 	if err := c.setAuthHeader(uploadCtx, req); err != nil {
+		_ = pr.Close()
+		<-errChan // Wait for goroutine to finish
 		return "", err
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.uploadHTTPClient.Do(req)
+
+	// Wait for the writer goroutine to finish and collect any error
+	writeErr := <-errChan
+
 	if err != nil {
 		elapsed := time.Since(start).Round(time.Millisecond)
+		// If both HTTP and write failed, include both errors
+		if writeErr != nil {
+			return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w (write error: %v)", elapsed, formatBytes(opts.Size), err, writeErr)
+		}
 		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(opts.Size), err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
+
+	// Check for write errors that may not have caused the HTTP request to fail
+	if writeErr != nil {
+		return "", writeErr
+	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		elapsed := time.Since(start).Round(time.Millisecond)

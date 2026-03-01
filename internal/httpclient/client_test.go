@@ -56,6 +56,21 @@ func TestNewClient(t *testing.T) {
 			t.Errorf("Expected RetryWaitMax of 10s, got %v", client.config.RetryWaitMax)
 		}
 	})
+
+	t.Run("disables retry when requested", func(t *testing.T) {
+		cfg := Config{
+			DisableRetry: true,
+		}
+		client := NewClient(cfg)
+
+		// When DisableRetry is true, RetryMax should remain 0 (not defaulted to 3)
+		if client.config.RetryMax != 0 {
+			t.Errorf("Expected RetryMax of 0 when DisableRetry=true, got %d", client.config.RetryMax)
+		}
+		if !client.config.DisableRetry {
+			t.Error("Expected DisableRetry to be true")
+		}
+	})
 }
 
 func TestClientDo_Success(t *testing.T) {
@@ -200,6 +215,36 @@ func TestClientDo_PersistentServerError(t *testing.T) {
 	_, err = client.Do(req)
 	if err == nil {
 		t.Error("Expected error after exhausting retries, got nil")
+	}
+}
+
+func TestClientDo_DisableRetryNoRetries(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("server error"))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{
+		DisableRetry: true,
+		Timeout:      5 * time.Second,
+	})
+
+	req, err := http.NewRequest("GET", server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	_, err = client.Do(req)
+	if err == nil {
+		t.Error("Expected error on 5xx, got nil")
+	}
+
+	// With DisableRetry=true, should only make 1 attempt (no retries)
+	if attempts != 1 {
+		t.Errorf("Expected exactly 1 attempt with DisableRetry=true, got %d", attempts)
 	}
 }
 
