@@ -28,7 +28,7 @@ func (f *failingReader) Read(p []byte) (n int, err error) {
 	}
 	// Return some data before failing
 	toRead := min(len(p), f.failAfter-f.bytesRead)
-	for i := range toRead {
+	for i := 0; i < toRead; i++ {
 		p[i] = 'x'
 	}
 	f.bytesRead += toRead
@@ -173,8 +173,9 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -204,8 +205,9 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -232,8 +234,9 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 50*time.Millisecond,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -266,8 +269,9 @@ func TestClient_StartIngest(t *testing.T) {
 
 		// Use a short timeout to make the test faster
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -321,8 +325,9 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -365,8 +370,9 @@ func TestClient_StartIngest(t *testing.T) {
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(httpClient))
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
