@@ -263,10 +263,27 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	writer := multipart.NewWriter(pw)
 	contentType := writer.FormDataContentType() // Capture before goroutine starts
 
+	// Create request BEFORE starting the writer goroutine.
+	// This prevents a deadlock where the goroutine blocks on opts.Data.Read()
+	// while we wait on errChan after a request creation failure.
+	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
+	req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, pr)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set auth header BEFORE starting the writer goroutine.
+	// Same rationale: avoid deadlock if auth fails while goroutine is blocked reading.
+	if err := c.setAuthHeader(uploadCtx, req); err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", contentType)
+
 	// Channel to receive errors from the writer goroutine
 	errChan := make(chan error, 1)
 
-	// Goroutine writes multipart data to the pipe; HTTP request reads from it
+	// Goroutine writes multipart data to the pipe; HTTP request reads from it.
+	// Started AFTER request/auth succeed to avoid deadlock on early failures.
 	go func() {
 		var writeErr error
 		defer func() {
@@ -341,23 +358,13 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 		}
 	}()
 
-	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
-	req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, pr)
-	if err != nil {
-		_ = pr.Close()
-		<-errChan // Wait for goroutine to finish
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Use setAuthHeader to ensure credentials are only sent over HTTPS
-	if err := c.setAuthHeader(uploadCtx, req); err != nil {
-		_ = pr.Close()
-		<-errChan // Wait for goroutine to finish
-		return "", err
-	}
-	req.Header.Set("Content-Type", contentType)
-
 	resp, err := c.uploadHTTPClient.Do(req)
+
+	// Close the pipe reader to unblock the writer goroutine.
+	// This is critical: if the server returns early (non-2xx) or the transport
+	// stops reading (HTTP/2, proxies), the writer may be blocked on pw.Write().
+	// CloseWithError ensures the writer sees an error instead of blocking forever.
+	_ = pr.CloseWithError(io.ErrUnexpectedEOF)
 
 	// Wait for the writer goroutine to finish and collect any error
 	writeErr := <-errChan
@@ -381,8 +388,9 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
-	// Only check write errors if HTTP status was OK - these indicate true stream failures
-	if writeErr != nil {
+	// Only check write errors if HTTP status was OK - these indicate true stream failures.
+	// Ignore io.ErrUnexpectedEOF since we use that to signal intentional pipe closure.
+	if writeErr != nil && writeErr != io.ErrUnexpectedEOF {
 		return "", fmt.Errorf("upload stream error: %w", writeErr)
 	}
 
