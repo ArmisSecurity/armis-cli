@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -48,7 +49,11 @@ const copyChunkSize = 256 * 1024
 
 // errInvalidWrite indicates a Write returned an impossible byte count.
 // This matches Go's internal io package error for invalid writes.
-var errInvalidWrite = fmt.Errorf("invalid write result")
+var errInvalidWrite = errors.New("invalid write result")
+
+// maxZeroReads is the maximum consecutive zero-byte reads before returning an error.
+// This prevents infinite loops from malformed readers that return (0, nil).
+const maxZeroReads = 100
 
 // copyWithContext copies from src to dst while periodically checking context cancellation.
 // This allows long-running copies (e.g., multi-GB uploads) to be cancelled promptly.
@@ -56,6 +61,7 @@ var errInvalidWrite = fmt.Errorf("invalid write result")
 func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
 	buf := make([]byte, copyChunkSize)
 	var written int64
+	var zeroReads int
 
 	for {
 		// Check context before each chunk read
@@ -67,6 +73,7 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 
 		nr, rerr := src.Read(buf)
 		if nr > 0 {
+			zeroReads = 0 // Reset counter on successful read
 			nw, werr := dst.Write(buf[:nr])
 			// Check for invalid write (negative or wrote more than buffer size)
 			// This matches Go's io.Copy implementation pattern
@@ -83,6 +90,12 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 			// Check for short write (wrote less than read)
 			if nw < nr {
 				return written, io.ErrShortWrite
+			}
+		} else if rerr == nil {
+			// Read returned 0 bytes with no error - protect against infinite loop
+			zeroReads++
+			if zeroReads >= maxZeroReads {
+				return written, errors.New("reader returned zero bytes repeatedly without error or EOF")
 			}
 		}
 		if rerr != nil {
@@ -360,19 +373,12 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 
 	resp, err := c.uploadHTTPClient.Do(req)
 
-	// Close the pipe reader to unblock the writer goroutine.
-	// This is critical: if the server returns early (non-2xx) or the transport
-	// stops reading (HTTP/2, proxies), the writer may be blocked on pw.Write().
-	// CloseWithError ensures the writer sees an error instead of blocking forever.
-	_ = pr.CloseWithError(io.ErrUnexpectedEOF)
-
-	// Wait for the writer goroutine to finish and collect any error
-	writeErr := <-errChan
-
+	// Handle HTTP transport errors - close pipe to unblock writer goroutine
 	if err != nil {
+		_ = pr.CloseWithError(err)
+		writeErr := <-errChan
 		elapsed := time.Since(start).Round(time.Millisecond)
-		// If both HTTP and write failed, include both errors
-		if writeErr != nil {
+		if writeErr != nil && !errors.Is(writeErr, err) {
 			return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w (write error: %v)", elapsed, formatBytes(opts.Size), err, writeErr)
 		}
 		return "", fmt.Errorf("upload request failed after %s (tar size=%s): %w", elapsed, formatBytes(opts.Size), err)
@@ -382,15 +388,20 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	// Check HTTP status first - server errors (like 401) cause pipe closure,
 	// so the HTTP status is the root cause, not the resulting write error
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		// Close pipe to unblock writer goroutine on server rejection
+		_ = pr.CloseWithError(fmt.Errorf("server returned %s", resp.Status))
+		<-errChan // Wait for writer to finish (ignore error, HTTP status is root cause)
 		elapsed := time.Since(start).Round(time.Millisecond)
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("upload failed after %s (tar size=%s, status=%s): %s",
 			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
-	// Only check write errors if HTTP status was OK - these indicate true stream failures.
-	// Ignore io.ErrUnexpectedEOF since we use that to signal intentional pipe closure.
-	if writeErr != nil && writeErr != io.ErrUnexpectedEOF {
+	// Success path: wait for writer goroutine to complete naturally.
+	// Don't close pipe early - with HTTP/2 the server may respond before reading
+	// the entire body, so we need to let the upload finish completely.
+	writeErr := <-errChan
+	if writeErr != nil {
 		return "", fmt.Errorf("upload stream error: %w", writeErr)
 	}
 
