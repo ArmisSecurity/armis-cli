@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -191,8 +192,14 @@ func TestResolveOutput(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid path", func(t *testing.T) {
-		// Try to create file in non-existent root directory
-		outputPath := "/nonexistent_root_xyz/output.txt"
+		// Use a path that's guaranteed to fail on both Windows and Unix.
+		// On Windows, "/foo" becomes "C:\foo" which may be writable.
+		var outputPath string
+		if runtime.GOOS == "windows" {
+			outputPath = `Z:\nonexistent_drive_xyz_12345\output.txt`
+		} else {
+			outputPath = "/nonexistent_root_xyz/output.txt"
+		}
 
 		cmd := newTestCmd()
 		_, err := ResolveOutput(cmd, outputPath, ohFormatHuman, "auto")
@@ -203,7 +210,12 @@ func TestResolveOutput(t *testing.T) {
 
 	t.Run("resets state on error", func(t *testing.T) {
 		// Ensure outputToFile is reset even when file creation fails
-		outputPath := "/nonexistent_root_xyz/output.txt"
+		var outputPath string
+		if runtime.GOOS == "windows" {
+			outputPath = `Z:\nonexistent_drive_xyz_12345\output.txt`
+		} else {
+			outputPath = "/nonexistent_root_xyz/output.txt"
+		}
 
 		cmd := newTestCmd()
 		_, _ = ResolveOutput(cmd, outputPath, ohFormatHuman, "auto")
