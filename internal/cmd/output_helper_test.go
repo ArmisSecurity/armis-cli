@@ -3,7 +3,6 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -153,6 +152,9 @@ func TestResolveOutput(t *testing.T) {
 	})
 
 	t.Run("cleanup resets outputToFile state", func(t *testing.T) {
+		// Force colors in auto mode so behavior depends on correct state reset
+		t.Setenv("CLICOLOR_FORCE", "1")
+
 		tmpDir := t.TempDir()
 		outputPath := filepath.Join(tmpDir, "output.txt")
 
@@ -166,10 +168,10 @@ func TestResolveOutput(t *testing.T) {
 		cfg.cleanup()
 
 		// Verify state was reset by checking colors work in auto mode
-		// (outputToFile=false means colors depend on TTY, not forced off)
-		cli.InitColors(cli.ColorModeAlways)
+		// With CLICOLOR_FORCE=1 and outputToFile=false, colors should be enabled
+		cli.InitColors(cli.ColorModeAuto)
 		if !cli.ColorsEnabled() {
-			t.Error("expected colors to be enabled after cleanup reset state")
+			t.Error("expected outputToFile state to be reset after cleanup (colors should be enabled in auto mode with CLICOLOR_FORCE=1)")
 		}
 	})
 
@@ -192,14 +194,15 @@ func TestResolveOutput(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid path", func(t *testing.T) {
-		// Use a path that's guaranteed to fail on both Windows and Unix.
-		// On Windows, "/foo" becomes "C:\foo" which may be writable.
-		var outputPath string
-		if runtime.GOOS == "windows" {
-			outputPath = `Z:\nonexistent_drive_xyz_12345\output.txt`
-		} else {
-			outputPath = "/nonexistent_root_xyz/output.txt"
+		// Create a file (not a directory) to trigger ENOTDIR when MkdirAll tries
+		// to create a directory at this path - portable across all platforms
+		tmpDir := t.TempDir()
+		blockingFile := filepath.Join(tmpDir, "notadir")
+		if err := os.WriteFile(blockingFile, []byte("x"), 0600); err != nil {
+			t.Fatalf("failed to create blocking file: %v", err)
 		}
+		// Try to create output file inside the file (ENOTDIR)
+		outputPath := filepath.Join(blockingFile, "output.txt")
 
 		cmd := newTestCmd()
 		_, err := ResolveOutput(cmd, outputPath, ohFormatHuman, "auto")
@@ -209,21 +212,26 @@ func TestResolveOutput(t *testing.T) {
 	})
 
 	t.Run("resets state on error", func(t *testing.T) {
-		// Ensure outputToFile is reset even when file creation fails
-		var outputPath string
-		if runtime.GOOS == "windows" {
-			outputPath = `Z:\nonexistent_drive_xyz_12345\output.txt`
-		} else {
-			outputPath = "/nonexistent_root_xyz/output.txt"
+		// Force colors in auto mode so behavior depends on correct state reset
+		t.Setenv("CLICOLOR_FORCE", "1")
+
+		// Create a file (not a directory) to trigger ENOTDIR when MkdirAll tries
+		// to create a directory at this path - portable across all platforms
+		tmpDir := t.TempDir()
+		blockingFile := filepath.Join(tmpDir, "notadir")
+		if err := os.WriteFile(blockingFile, []byte("x"), 0600); err != nil {
+			t.Fatalf("failed to create blocking file: %v", err)
 		}
+		outputPath := filepath.Join(blockingFile, "output.txt")
 
 		cmd := newTestCmd()
 		_, _ = ResolveOutput(cmd, outputPath, ohFormatHuman, "auto")
 
-		// Verify state was reset by checking colors work
-		cli.InitColors(cli.ColorModeAlways)
+		// Verify state was reset by checking colors are enabled in auto mode
+		// With CLICOLOR_FORCE=1 and outputToFile=false, colors should be enabled
+		cli.InitColors(cli.ColorModeAuto)
 		if !cli.ColorsEnabled() {
-			t.Error("expected outputToFile state to be reset after error")
+			t.Error("expected outputToFile state to be reset after error (colors should be enabled in auto mode with CLICOLOR_FORCE=1)")
 		}
 	})
 

@@ -17,8 +17,14 @@ type FileOutput struct {
 // NewFileOutput creates an output writer targeting a file.
 // It creates parent directories if they don't exist.
 // The returned FileOutput should be closed after use.
+//
+// Security note: This function accepts any user-specified path from the --output CLI flag.
+// This is intentional - CLI tools run with the user's own privileges, so the user can
+// already write to any path they have access to via their shell. There is no privilege
+// escalation or sandbox escape possible. The path is cleaned to normalize traversal
+// sequences (e.g., "../") but not restricted to a specific directory.
 func NewFileOutput(path string) (*FileOutput, error) {
-	// Resolve to absolute path and clean it to prevent path traversal
+	// Resolve to absolute path and clean it to normalize any traversal sequences
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve output path %s: %w", path, err)
@@ -33,9 +39,11 @@ func NewFileOutput(path string) (*FileOutput, error) {
 		}
 	}
 
-	// Create or truncate the output file
-	// #nosec G304 -- path is cleaned and resolved to absolute; user explicitly specifies --output
-	file, err := os.Create(cleanPath)
+	// Create or truncate the output file with restricted permissions (owner read/write only).
+	// #nosec G304 -- This is a CLI tool where the user explicitly specifies --output path.
+	// The user already has shell access and can write anywhere they have permissions.
+	// Path is cleaned via filepath.Abs+Clean; no privilege escalation is possible.
+	file, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file %s: %w", cleanPath, err)
 	}

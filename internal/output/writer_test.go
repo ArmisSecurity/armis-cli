@@ -3,7 +3,6 @@ package output
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -87,6 +86,28 @@ func TestNewFileOutput(t *testing.T) {
 		}
 	})
 
+	t.Run("creates file with restricted permissions", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "sensitive-output.json")
+
+		fo, err := NewFileOutput(path)
+		if err != nil {
+			t.Fatalf("NewFileOutput() error = %v", err)
+		}
+		defer func() { _ = fo.Close() }()
+
+		// Verify file has 0600 permissions (owner read/write only)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat() error = %v", err)
+		}
+		// Mask out the file type bits, check only permission bits
+		perm := info.Mode().Perm()
+		if perm != 0600 {
+			t.Errorf("file permissions = %o, want 0600", perm)
+		}
+	})
+
 	t.Run("creates parent directories", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "nested", "dir", "output.json")
@@ -134,16 +155,15 @@ func TestNewFileOutput(t *testing.T) {
 	})
 
 	t.Run("error on invalid path", func(t *testing.T) {
-		// Use a path that's guaranteed to fail on both Windows and Unix.
-		// On Windows, "/foo" becomes "C:\foo" which may be writable, so use
-		// an invalid drive letter. On Unix, a root-level nonexistent dir fails.
-		var path string
-		if runtime.GOOS == "windows" {
-			// Drive letter Z: is unlikely to exist on CI runners
-			path = `Z:\nonexistent_drive_xyz_12345\output.json`
-		} else {
-			path = "/nonexistent_root_dir_xyz/output.json"
+		// Create a file (not a directory) to trigger ENOTDIR when MkdirAll tries
+		// to create a directory at this path - portable across all platforms
+		tmpDir := t.TempDir()
+		blockingFile := filepath.Join(tmpDir, "notadir")
+		if err := os.WriteFile(blockingFile, []byte("x"), 0600); err != nil {
+			t.Fatalf("failed to create blocking file: %v", err)
 		}
+		// Try to create output file inside the file (ENOTDIR)
+		path := filepath.Join(blockingFile, "output.json")
 
 		_, err := NewFileOutput(path)
 		if err == nil {

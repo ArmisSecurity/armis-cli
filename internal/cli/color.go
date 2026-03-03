@@ -120,6 +120,12 @@ func SetOutputToFile(toFile bool) {
 	outputToFile = toFile
 }
 
+// GetOutputToFile returns the current outputToFile state.
+// Used to capture state for restoration after temporary changes.
+func GetOutputToFile() bool {
+	return outputToFile
+}
+
 func enableColors() {
 	colorsEnabled = true
 	errorLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(colorErrorFg)

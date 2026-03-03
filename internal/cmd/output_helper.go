@@ -55,8 +55,11 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 		}
 	}
 
-	// Disable colors when writing to file (unless --color=always)
+	// Capture previous state for restoration on error or cleanup
+	prevOutputToFile := cli.GetOutputToFile()
 	colorMode := cli.ColorMode(colorFlag)
+
+	// Disable colors when writing to file (unless --color=always)
 	if colorMode != cli.ColorModeAlways {
 		cli.SetOutputToFile(true)
 		cli.InitColors(colorMode) // Pass actual mode, not hardcoded Auto
@@ -66,15 +69,19 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 	// Create output file
 	fileOutput, err := output.NewFileOutput(outputPath)
 	if err != nil {
-		// Reset state on error
-		cli.SetOutputToFile(false)
+		// Restore previous state on error
+		cli.SetOutputToFile(prevOutputToFile)
+		cli.InitColors(colorMode)
+		output.SyncColors()
 		return nil, err
 	}
 
 	cfg.Writer = fileOutput.Writer()
 	cfg.cleanup = func() {
-		// Always reset outputToFile state to prevent leakage across invocations
-		cli.SetOutputToFile(false)
+		// Restore previous outputToFile state and re-sync colors
+		cli.SetOutputToFile(prevOutputToFile)
+		cli.InitColors(colorMode)
+		output.SyncColors()
 		if cerr := fileOutput.Close(); cerr != nil {
 			cli.PrintWarningf("failed to close output file: %v", cerr)
 		}
