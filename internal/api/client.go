@@ -365,16 +365,18 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
-	// Check for write errors that may not have caused the HTTP request to fail
-	if writeErr != nil {
-		return "", fmt.Errorf("upload stream error (server responded %d): %w", resp.StatusCode, writeErr)
-	}
-
+	// Check HTTP status first - server errors (like 401) cause pipe closure,
+	// so the HTTP status is the root cause, not the resulting write error
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		elapsed := time.Since(start).Round(time.Millisecond)
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("upload failed after %s (tar size=%s, status=%s): %s",
 			elapsed, formatBytes(opts.Size), resp.Status, strings.TrimSpace(string(bodyBytes)))
+	}
+
+	// Only check write errors if HTTP status was OK - these indicate true stream failures
+	if writeErr != nil {
+		return "", fmt.Errorf("upload stream error: %w", writeErr)
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
