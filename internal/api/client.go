@@ -46,6 +46,10 @@ const (
 // sub-second cancellation responsiveness at typical network speeds.
 const copyChunkSize = 256 * 1024
 
+// errInvalidWrite indicates a Write returned an impossible byte count.
+// This matches Go's internal io package error for invalid writes.
+var errInvalidWrite = fmt.Errorf("invalid write result")
+
 // copyWithContext copies from src to dst while periodically checking context cancellation.
 // This allows long-running copies (e.g., multi-GB uploads) to be cancelled promptly.
 // Returns the number of bytes copied and any error encountered.
@@ -64,17 +68,20 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 		nr, rerr := src.Read(buf)
 		if nr > 0 {
 			nw, werr := dst.Write(buf[:nr])
-			if nw < 0 || nr < nw {
+			// Check for invalid write (negative or wrote more than buffer size)
+			// This matches Go's io.Copy implementation pattern
+			if nw < 0 || nw > nr {
 				nw = 0
 				if werr == nil {
-					werr = io.ErrShortWrite
+					werr = errInvalidWrite
 				}
 			}
 			written += int64(nw)
 			if werr != nil {
 				return written, werr
 			}
-			if nr != nw {
+			// Check for short write (wrote less than read)
+			if nw < nr {
 				return written, io.ErrShortWrite
 			}
 		}
