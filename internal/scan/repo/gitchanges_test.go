@@ -43,6 +43,7 @@ func setupGitRepo(t *testing.T) string {
 
 // runGitCmd is a helper to run git commands in tests.
 func runGitCmd(dir string, args ...string) error {
+	// #nosec G204 -- test helper with controlled args
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
