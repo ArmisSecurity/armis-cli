@@ -237,3 +237,67 @@ func TestPrintError_PlainMessage(t *testing.T) {
 		t.Errorf("expected:\n%q\ngot:\n%q", expected, output)
 	}
 }
+
+func TestSetOutputToFile(t *testing.T) {
+	// Reset state after test
+	defer func() {
+		SetOutputToFile(false)
+	}()
+
+	t.Run("colors disabled when outputToFile is true in auto mode", func(t *testing.T) {
+		SetOutputToFile(true)
+		InitColors(ColorModeAuto)
+		if ColorsEnabled() {
+			t.Error("expected colors to be disabled when outputToFile is true")
+		}
+	})
+
+	t.Run("colors enabled when outputToFile is false in auto mode with CLICOLOR_FORCE", func(t *testing.T) {
+		t.Setenv("CLICOLOR_FORCE", "1")
+		SetOutputToFile(false)
+		InitColors(ColorModeAuto)
+		if !ColorsEnabled() {
+			t.Error("expected colors to be enabled with CLICOLOR_FORCE")
+		}
+	})
+
+	t.Run("colors enabled with always mode even when outputToFile is true", func(t *testing.T) {
+		SetOutputToFile(true)
+		InitColors(ColorModeAlways)
+		if !ColorsEnabled() {
+			t.Error("expected colors to be enabled with ColorModeAlways regardless of outputToFile")
+		}
+	})
+}
+
+func TestInitColors_Auto_CLICOLOR(t *testing.T) {
+	t.Run("CLICOLOR=0 disables colors", func(t *testing.T) {
+		t.Setenv("CLICOLOR", "0")
+		InitColors(ColorModeAuto)
+		if ColorsEnabled() {
+			t.Error("expected colors to be disabled when CLICOLOR=0")
+		}
+	})
+}
+
+func TestInitColors_Auto_CLICOLOR_FORCE(t *testing.T) {
+	t.Run("CLICOLOR_FORCE enables colors", func(t *testing.T) {
+		t.Setenv("CLICOLOR_FORCE", "1")
+		SetOutputToFile(false)
+		InitColors(ColorModeAuto)
+		if !ColorsEnabled() {
+			t.Error("expected colors to be enabled with CLICOLOR_FORCE=1")
+		}
+	})
+
+	t.Run("CLICOLOR_FORCE=0 does not force colors", func(t *testing.T) {
+		t.Setenv("CLICOLOR_FORCE", "0")
+		// In a non-TTY environment (like test), colors would normally be disabled
+		InitColors(ColorModeAuto)
+		// Colors should be disabled because CLICOLOR_FORCE=0 doesn't force anything
+		// and we're not in a TTY
+		if ColorsEnabled() {
+			t.Error("expected colors to be disabled with CLICOLOR_FORCE=0 in non-TTY")
+		}
+	})
+}

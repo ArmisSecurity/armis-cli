@@ -42,15 +42,21 @@ var colorsEnabled = true
 // colorsForced tracks whether colors are forced via --color=always.
 var colorsForced = false
 
+// outputToFile tracks whether output is being written to a file via --output flag.
+var outputToFile = false
+
 // InitColors resolves the final color state based on the --color flag value,
 // the NO_COLOR env var, and TTY detection. This should be called after flag parsing.
 //
 // Precedence:
 //  1. --color=always -> colors ON (overrides everything, including NO_COLOR)
 //  2. --color=never  -> colors OFF
-//  3. NO_COLOR env   -> colors OFF (takes precedence over auto)
-//  4. TERM=dumb      -> colors OFF
-//  5. --color=auto   -> detect TTY on stderr
+//  3. --output flag  -> colors OFF (writing to file, not terminal)
+//  4. NO_COLOR env   -> colors OFF (takes precedence over auto)
+//  5. CLICOLOR=0     -> colors OFF
+//  6. TERM=dumb      -> colors OFF
+//  7. CLICOLOR_FORCE -> colors ON (overrides TTY detection in auto mode)
+//  8. --color=auto   -> detect TTY on both stderr and stdout
 func InitColors(mode ColorMode) {
 	// Reset colorsForced - only ColorModeAlways sets it to true
 	colorsForced = false
@@ -62,7 +68,16 @@ func InitColors(mode ColorMode) {
 	case ColorModeNever:
 		disableColors()
 	case ColorModeAuto:
+		// Writing to file disables colors in auto mode
+		if outputToFile {
+			disableColors()
+			return
+		}
 		if os.Getenv("NO_COLOR") != "" {
+			disableColors()
+			return
+		}
+		if os.Getenv("CLICOLOR") == "0" {
 			disableColors()
 			return
 		}
@@ -70,7 +85,17 @@ func InitColors(mode ColorMode) {
 			disableColors()
 			return
 		}
+		// CLICOLOR_FORCE overrides TTY detection (like gh CLI)
+		if os.Getenv("CLICOLOR_FORCE") != "" && os.Getenv("CLICOLOR_FORCE") != "0" {
+			enableColors()
+			return
+		}
+		// Check both stderr (for spinners/errors) and stdout (for results)
 		if !term.IsTerminal(int(os.Stderr.Fd())) { //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
+			disableColors()
+			return
+		}
+		if !term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
 			disableColors()
 			return
 		}
@@ -87,6 +112,12 @@ func ColorsEnabled() bool {
 // When true, the color profile should be set to TrueColor regardless of TTY detection.
 func ColorsForced() bool {
 	return colorsForced
+}
+
+// SetOutputToFile marks that output is being written to a file.
+// When true, colors will be disabled in auto mode (unless --color=always).
+func SetOutputToFile(toFile bool) {
+	outputToFile = toFile
 }
 
 func enableColors() {
