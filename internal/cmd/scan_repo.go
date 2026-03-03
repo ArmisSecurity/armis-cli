@@ -27,8 +27,8 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
   $ armis-cli scan repo . --sbom --sbom-output sbom.json
   $ armis-cli scan repo . --changed
-  $ armis-cli scan repo . --changed staged
-  $ armis-cli scan repo . --changed main`,
+  $ armis-cli scan repo . --changed=staged
+  $ armis-cli scan repo . --changed=main`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
@@ -189,8 +189,8 @@ func init() {
 	scanRepoCmd.Flags().StringSliceVar(&includeFiles, "include-files", nil,
 		"Comma-separated list of file paths to include in scan (relative to repository root)")
 	scanRepoCmd.Flags().StringVar(&changedRef, "changed", "",
-		"Scan only changed files: use without value for uncommitted changes, "+
-			"'staged' for staged only, or a git ref (e.g., main, HEAD~1)")
+		"Scan only git-changed files: --changed for uncommitted, "+
+			"--changed=staged for staged only, --changed=REF for changes vs a branch (e.g., --changed=main)")
 	// NoOptDefVal is the value used when --changed is passed without a value
 	scanRepoCmd.Flags().Lookup("changed").NoOptDefVal = "uncommitted"
 	scanRepoCmd.MarkFlagsMutuallyExclusive("include-files", "changed")
