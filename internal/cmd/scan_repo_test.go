@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
+
+const testChangedModeUncommitted = "uncommitted"
 
 func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	// Create test findings
@@ -141,4 +144,124 @@ func TestScanRepoRunE_InvalidPath(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
+}
+
+func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
+	// Save and restore global state
+	originalToken := token
+	originalTenantID := tenantID
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalChangedRef := changedRef
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		changedRef = originalChangedRef
+		// Reset flag state
+		_ = scanRepoCmd.Flags().Set("changed", "")
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	token = testToken
+	tenantID = testTenantID
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+
+	// Create a temp directory (NOT a git repo)
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Set --changed flag to trigger git change detection
+	changedRef = testChangedModeUncommitted
+	if err := scanRepoCmd.Flags().Set("changed", testChangedModeUncommitted); err != nil {
+		t.Fatalf("failed to set changed flag: %v", err)
+	}
+
+	// Run the command - should fail with user-friendly error about git repo
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{tmpDir})
+	if err == nil {
+		t.Fatal("expected error for --changed on non-git directory")
+	}
+	if !strings.Contains(err.Error(), "--changed requires a git repository") {
+		t.Errorf("expected git repository error, got: %v", err)
+	}
+}
+
+func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
+	// Save and restore global state
+	originalToken := token
+	originalTenantID := tenantID
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalChangedRef := changedRef
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		changedRef = originalChangedRef
+		// Reset flag state
+		_ = scanRepoCmd.Flags().Set("changed", "")
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	token = testToken
+	tenantID = testTenantID
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+
+	// Create a git repo with no uncommitted changes
+	tmpDir := t.TempDir()
+	if err := runTestGitCmd(tmpDir, "init"); err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+	if err := runTestGitCmd(tmpDir, "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("failed to configure git: %v", err)
+	}
+	if err := runTestGitCmd(tmpDir, "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("failed to configure git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	if err := runTestGitCmd(tmpDir, "add", "main.go"); err != nil {
+		t.Fatalf("failed to stage file: %v", err)
+	}
+	if err := runTestGitCmd(tmpDir, "commit", "-m", "Initial commit"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Set --changed flag
+	changedRef = testChangedModeUncommitted
+	if err := scanRepoCmd.Flags().Set("changed", testChangedModeUncommitted); err != nil {
+		t.Fatalf("failed to set changed flag: %v", err)
+	}
+
+	// Run the command - should return nil (no error) when no changes found
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{tmpDir})
+	if err != nil {
+		t.Errorf("expected nil error for no changes (early return), got: %v", err)
+	}
+}
+
+// runTestGitCmd is a helper to run git commands in tests.
+func runTestGitCmd(dir string, args ...string) error {
+	// #nosec G204 -- test helper with controlled args
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run()
 }

@@ -1,29 +1,31 @@
 package repo
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // setupGitRepo creates a temporary git repository with an initial commit.
-// Returns the repo path and a cleanup function.
+// Returns the repo path; cleanup is handled by t.TempDir().
 func setupGitRepo(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 
 	// Initialize git repo
-	if err := runGitCmd(tmpDir, "init"); err != nil {
+	if err := runGitCmd(t, tmpDir, "init"); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
 	// Configure git user (required for commits)
-	if err := runGitCmd(tmpDir, "config", "user.email", "test@example.com"); err != nil {
+	if err := runGitCmd(t, tmpDir, "config", "user.email", "test@example.com"); err != nil {
 		t.Fatalf("Failed to configure git: %v", err)
 	}
-	if err := runGitCmd(tmpDir, "config", "user.name", "Test User"); err != nil {
+	if err := runGitCmd(t, tmpDir, "config", "user.name", "Test User"); err != nil {
 		t.Fatalf("Failed to configure git: %v", err)
 	}
 
@@ -31,10 +33,10 @@ func setupGitRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(tmpDir, "initial.txt"), []byte("initial content"), 0600); err != nil {
 		t.Fatalf("Failed to create initial file: %v", err)
 	}
-	if err := runGitCmd(tmpDir, "add", "initial.txt"); err != nil {
+	if err := runGitCmd(t, tmpDir, "add", "initial.txt"); err != nil {
 		t.Fatalf("Failed to stage initial file: %v", err)
 	}
-	if err := runGitCmd(tmpDir, "commit", "-m", "Initial commit"); err != nil {
+	if err := runGitCmd(t, tmpDir, "commit", "-m", "Initial commit"); err != nil {
 		t.Fatalf("Failed to create initial commit: %v", err)
 	}
 
@@ -42,13 +44,21 @@ func setupGitRepo(t *testing.T) string {
 }
 
 // runGitCmd is a helper to run git commands in tests.
-func runGitCmd(dir string, args ...string) error {
+// Output is captured and only logged on failure to keep CI output clean.
+func runGitCmd(t *testing.T, dir string, args ...string) error {
+	t.Helper()
 	// #nosec G204 -- test helper with controlled args
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		t.Logf("git %s failed: %v\nstdout: %s\nstderr: %s",
+			strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	return err
 }
 
 func TestGitChangedFiles_Uncommitted(t *testing.T) {
@@ -76,7 +86,7 @@ func TestGitChangedFiles_Uncommitted(t *testing.T) {
 	if err := os.WriteFile(stagedFile, []byte("staged content"), 0600); err != nil {
 		t.Fatalf("Failed to create staged file: %v", err)
 	}
-	if err := runGitCmd(repoDir, "add", "staged.txt"); err != nil {
+	if err := runGitCmd(t, repoDir, "add", "staged.txt"); err != nil {
 		t.Fatalf("Failed to stage file: %v", err)
 	}
 
@@ -115,7 +125,7 @@ func TestGitChangedFiles_Staged(t *testing.T) {
 	if err := os.WriteFile(stagedFile, []byte("staged content"), 0600); err != nil {
 		t.Fatalf("Failed to create staged file: %v", err)
 	}
-	if err := runGitCmd(repoDir, "add", "staged.txt"); err != nil {
+	if err := runGitCmd(t, repoDir, "add", "staged.txt"); err != nil {
 		t.Fatalf("Failed to stage file: %v", err)
 	}
 
@@ -148,7 +158,7 @@ func TestGitChangedFiles_Ref(t *testing.T) {
 	repoDir := setupGitRepo(t)
 
 	// Create a branch from initial commit
-	if err := runGitCmd(repoDir, "branch", "feature"); err != nil {
+	if err := runGitCmd(t, repoDir, "branch", "feature"); err != nil {
 		t.Fatalf("Failed to create branch: %v", err)
 	}
 
@@ -157,10 +167,10 @@ func TestGitChangedFiles_Ref(t *testing.T) {
 	if err := os.WriteFile(newFile, []byte("new content"), 0600); err != nil {
 		t.Fatalf("Failed to create new file: %v", err)
 	}
-	if err := runGitCmd(repoDir, "add", "new.txt"); err != nil {
+	if err := runGitCmd(t, repoDir, "add", "new.txt"); err != nil {
 		t.Fatalf("Failed to stage new file: %v", err)
 	}
-	if err := runGitCmd(repoDir, "commit", "-m", "Add new file"); err != nil {
+	if err := runGitCmd(t, repoDir, "commit", "-m", "Add new file"); err != nil {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
@@ -294,8 +304,10 @@ func TestGitChangedFiles_Subdirectory(t *testing.T) {
 	if len(files) != 1 {
 		t.Errorf("expected 1 file in subdirectory, got %d: %v", len(files), files)
 	}
-	if len(files) > 0 && files[0] != "pkg/helper.go" {
-		t.Errorf("expected pkg/helper.go, got %s", files[0])
+	// Use filepath.FromSlash for cross-platform comparison (backslashes on Windows)
+	expected := filepath.FromSlash("pkg/helper.go")
+	if len(files) > 0 && files[0] != expected {
+		t.Errorf("expected %s, got %s", expected, files[0])
 	}
 }
 

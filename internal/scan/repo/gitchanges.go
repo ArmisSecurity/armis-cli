@@ -103,7 +103,9 @@ func gitRepoRoot(path string) (string, error) {
 		}
 		return "", fmt.Errorf("%w: %s", ErrNotGitRepo, path)
 	}
-	return strings.TrimSpace(output), nil
+	// On Windows, git returns paths with forward slashes (e.g., C:/Users/...).
+	// Convert to native path separators for consistent comparison with filepath.Abs results.
+	return filepath.FromSlash(strings.TrimSpace(output)), nil
 }
 
 // changedUncommitted returns files with uncommitted changes (staged + unstaged + untracked).
@@ -112,14 +114,15 @@ func changedUncommitted(repoRoot string) ([]string, error) {
 	// --diff-filter=ACMRT excludes deleted files (D)
 	diffOutput, err := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", "HEAD")
 	if err != nil {
-		// If HEAD doesn't exist (fresh repo with no commits), get staged files instead
-		if strings.Contains(err.Error(), "HEAD") {
+		// If HEAD doesn't exist (fresh repo with no commits), get staged files instead.
+		// Check for specific git error messages indicating missing HEAD revision.
+		if strings.Contains(err.Error(), "unknown revision") ||
+			strings.Contains(err.Error(), "bad revision") {
 			stagedOutput, stagedErr := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", "--cached")
 			if stagedErr != nil {
-				diffOutput = ""
-			} else {
-				diffOutput = stagedOutput
+				return nil, fmt.Errorf("failed to get uncommitted changes (no HEAD and staged diff failed): %w", stagedErr)
 			}
+			diffOutput = stagedOutput
 		} else {
 			return nil, fmt.Errorf("failed to get uncommitted changes: %w", err)
 		}
