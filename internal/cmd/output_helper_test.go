@@ -31,7 +31,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		if cfg.Writer != os.Stdout {
 			t.Error("expected Writer to be os.Stdout when outputPath is empty")
@@ -51,7 +51,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		if cfg.Format != ohFormatJSON {
 			t.Errorf("expected Format = %q (auto-detected), got %q", ohFormatJSON, cfg.Format)
@@ -67,7 +67,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		if cfg.Format != ohFormatSARIF {
 			t.Errorf("expected Format = %q (auto-detected), got %q", ohFormatSARIF, cfg.Format)
@@ -83,7 +83,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		if cfg.Format != ohFormatJUnit {
 			t.Errorf("expected Format = %q (auto-detected), got %q", ohFormatJUnit, cfg.Format)
@@ -104,7 +104,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		if cfg.Format != ohFormatSARIF {
 			t.Errorf("expected Format = %q (explicit), got %q", ohFormatSARIF, cfg.Format)
@@ -120,7 +120,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		// Verify file was created
 		if _, err := os.Stat(outputPath); os.IsNotExist(err) {
@@ -143,7 +143,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		// Verify nested directories and file were created
 		if _, err := os.Stat(outputPath); os.IsNotExist(err) {
@@ -165,7 +165,7 @@ func TestResolveOutput(t *testing.T) {
 		}
 
 		// Call cleanup
-		cfg.cleanup()
+		cfg.Cleanup()
 
 		// Verify state was reset by checking colors work in auto mode
 		// With CLICOLOR_FORCE=1 and outputToFile=false, colors should be enabled
@@ -184,7 +184,7 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		// With --color=always, colors should remain enabled even when writing to file
 		cli.InitColors(cli.ColorModeAlways)
@@ -244,11 +244,35 @@ func TestResolveOutput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveOutput() error = %v", err)
 		}
-		defer cfg.cleanup()
+		defer cfg.Cleanup()
 
 		// .txt is not recognized, so format should stay as ohFormatHuman
 		if cfg.Format != ohFormatHuman {
 			t.Errorf("expected Format = %q (unrecognized extension), got %q", ohFormatHuman, cfg.Format)
 		}
+	})
+
+	t.Run("cleanup is idempotent", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputPath := filepath.Join(tmpDir, "output.txt")
+
+		cmd := newTestCmd()
+		cfg, err := ResolveOutput(cmd, outputPath, ohFormatHuman, "auto")
+		if err != nil {
+			t.Fatalf("ResolveOutput() error = %v", err)
+		}
+
+		// Call cleanup multiple times - should not panic or error
+		cfg.Cleanup()
+		cfg.Cleanup()
+		cfg.Cleanup()
+
+		// Verify the file was properly closed (we can write a new file at the same path)
+		// #nosec G304 -- test code using controlled temp directory path
+		fo, err := os.Create(outputPath)
+		if err != nil {
+			t.Fatalf("failed to create file after cleanup: %v", err)
+		}
+		_ = fo.Close()
 	})
 }

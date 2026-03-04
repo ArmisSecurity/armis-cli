@@ -48,6 +48,11 @@ func NewFileOutput(path string) (*FileOutput, error) {
 		return nil, fmt.Errorf("failed to create output file %s: %w", cleanPath, err)
 	}
 
+	// Best-effort: ensure restrictive permissions even if the file already existed.
+	// On Unix, OpenFile's mode is ignored for existing files, so explicitly chmod.
+	// Ignore errors here to avoid breaking on platforms/filesystems that don't support this.
+	_ = os.Chmod(cleanPath, 0600)
+
 	return &FileOutput{file: file}, nil
 }
 

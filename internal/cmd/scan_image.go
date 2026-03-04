@@ -126,7 +126,7 @@ var scanImageCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer outputCfg.cleanup()
+		defer outputCfg.Cleanup()
 
 		formatter, err := output.GetFormatter(outputCfg.Format)
 		if err != nil {
@@ -145,6 +145,8 @@ var scanImageCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
+		// Explicitly call cleanup before ExitIfNeeded since os.Exit bypasses defers
+		outputCfg.Cleanup()
 		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},

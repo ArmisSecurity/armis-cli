@@ -3,6 +3,7 @@ package output
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -97,14 +98,17 @@ func TestNewFileOutput(t *testing.T) {
 		defer func() { _ = fo.Close() }()
 
 		// Verify file has 0600 permissions (owner read/write only)
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("os.Stat() error = %v", err)
-		}
-		// Mask out the file type bits, check only permission bits
-		perm := info.Mode().Perm()
-		if perm != 0600 {
-			t.Errorf("file permissions = %o, want 0600", perm)
+		// Skip permission check on Windows - Go doesn't preserve POSIX permission bits there
+		if runtime.GOOS != "windows" {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("os.Stat() error = %v", err)
+			}
+			// Mask out the file type bits, check only permission bits
+			perm := info.Mode().Perm()
+			if perm != 0600 {
+				t.Errorf("file permissions = %o, want 0600", perm)
+			}
 		}
 	})
 

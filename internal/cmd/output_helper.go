@@ -17,6 +17,19 @@ type OutputConfig struct {
 	Format string
 	// cleanup is called to close the file and reset state. Always call this via defer.
 	cleanup func()
+	// cleaned tracks whether cleanup has already been called (for idempotency)
+	cleaned bool
+}
+
+// Cleanup closes the output file (if any) and restores color state.
+// This method is idempotent and safe to call multiple times.
+// Call explicitly before os.Exit paths (like ExitIfNeeded) since defers won't run.
+func (c *OutputConfig) Cleanup() {
+	if c.cleaned {
+		return
+	}
+	c.cleaned = true
+	c.cleanup()
 }
 
 // ResolveOutput determines the output writer and format for scan results.
