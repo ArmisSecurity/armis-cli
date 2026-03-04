@@ -2,34 +2,105 @@
 package output
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
+
+// osWindows is used for runtime.GOOS comparisons.
+const osWindows = "windows"
 
 // FileOutput manages writing formatted output to a file.
 type FileOutput struct {
 	file *os.File
 }
 
+// dangerousPaths contains paths that should never be written to by the CLI.
+// These are system-critical paths where accidental writes could cause system damage.
+var dangerousPaths = map[string]bool{
+	// Unix/Linux critical paths
+	"/etc/passwd":  true,
+	"/etc/shadow":  true,
+	"/etc/sudoers": true,
+	"/etc/hosts":   true,
+	// Windows critical paths (normalized to forward slashes for comparison)
+	"c:/windows/system32/config/sam":      true,
+	"c:/windows/system32/config/system":   true,
+	"c:/windows/system32/config/security": true,
+}
+
+// dangerousDirs contains directory prefixes that should be restricted.
+var dangerousDirs = []string{
+	"/etc/",
+	"/boot/",
+	"/proc/",
+	"/sys/",
+	"/dev/",
+}
+
+// validateOutputPath checks if the path is safe for writing output.
+// It rejects known dangerous system paths as a defense-in-depth measure.
+//
+// Note: This is a CLI tool that runs with user privileges, so the user could
+// write to these paths via their shell anyway. This validation is purely
+// defensive to prevent accidental damage from typos or automation errors.
+func validateOutputPath(absPath string) error {
+	// Normalize path for comparison (lowercase on Windows, forward slashes)
+	normalizedPath := absPath
+	if runtime.GOOS == osWindows {
+		normalizedPath = strings.ToLower(filepath.ToSlash(absPath))
+	}
+
+	// Check exact dangerous paths
+	checkPath := normalizedPath
+	if runtime.GOOS != osWindows {
+		checkPath = absPath
+	}
+	if dangerousPaths[checkPath] {
+		return fmt.Errorf("refusing to write to system-critical path: %s", absPath)
+	}
+
+	// Check dangerous directory prefixes (Unix only)
+	if runtime.GOOS != osWindows {
+		for _, dir := range dangerousDirs {
+			if strings.HasPrefix(absPath, dir) {
+				return fmt.Errorf("refusing to write to system directory: %s", absPath)
+			}
+		}
+	}
+
+	return nil
+}
+
 // NewFileOutput creates an output writer targeting a file.
 // It creates parent directories if they don't exist.
 // The returned FileOutput should be closed after use.
 //
-// Security note: This function accepts any user-specified path from the --output CLI flag.
-// This is intentional - CLI tools run with the user's own privileges, so the user can
-// already write to any path they have access to via their shell. There is no privilege
-// escalation or sandbox escape possible. The path is cleaned to normalize traversal
-// sequences (e.g., "../") but not restricted to a specific directory.
+// Security: This validates the path against known dangerous system paths, then
+// accepts any other user-specified path from the --output CLI flag. This is
+// intentional - CLI tools run with the user's own privileges, so the user can
+// already write to any path they have access to via their shell. There is no
+// privilege escalation or sandbox escape possible.
 func NewFileOutput(path string) (*FileOutput, error) {
+	if path == "" {
+		return nil, errors.New("output path cannot be empty")
+	}
+
 	// Resolve to absolute path and clean it to normalize any traversal sequences
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve output path %s: %w", path, err)
 	}
 	cleanPath := filepath.Clean(absPath)
+
+	// Validate path against dangerous system paths (defense in depth)
+	if err := validateOutputPath(cleanPath); err != nil {
+		return nil, err
+	}
 
 	// Create parent directories if needed
 	dir := filepath.Dir(cleanPath)
@@ -40,9 +111,10 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	}
 
 	// Create or truncate the output file with restricted permissions (owner read/write only).
-	// #nosec G304 -- This is a CLI tool where the user explicitly specifies --output path.
-	// The user already has shell access and can write anywhere they have permissions.
-	// Path is cleaned via filepath.Abs+Clean; no privilege escalation is possible.
+	// Security: Path is validated above against dangerous system paths. The remaining paths
+	// are intentionally unrestricted because this is a CLI tool running with user privileges.
+	// The user can already write anywhere they have permissions via their shell.
+	// #nosec G304 -- CLI tool with explicit user-controlled --output flag; no privilege escalation.
 	file, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file %s: %w", cleanPath, err)

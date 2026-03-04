@@ -99,7 +99,7 @@ func TestNewFileOutput(t *testing.T) {
 
 		// Verify file has 0600 permissions (owner read/write only)
 		// Skip permission check on Windows - Go doesn't preserve POSIX permission bits there
-		if runtime.GOOS != "windows" {
+		if runtime.GOOS != osWindows {
 			info, err := os.Stat(path)
 			if err != nil {
 				t.Fatalf("os.Stat() error = %v", err)
@@ -172,6 +172,40 @@ func TestNewFileOutput(t *testing.T) {
 		_, err := NewFileOutput(path)
 		if err == nil {
 			t.Error("expected error for invalid path")
+		}
+	})
+
+	t.Run("error on empty path", func(t *testing.T) {
+		_, err := NewFileOutput("")
+		if err == nil {
+			t.Error("expected error for empty path")
+		}
+	})
+
+	t.Run("rejects dangerous system paths", func(t *testing.T) {
+		if runtime.GOOS == osWindows {
+			t.Skip("dangerous path tests are Unix-specific")
+		}
+
+		dangerousPaths := []string{
+			"/etc/passwd",
+			"/etc/shadow",
+			"/etc/hosts",
+			"/etc/sudoers",
+			"/etc/someconfig",
+			"/boot/grub/grub.cfg",
+			"/proc/self/exe",
+			"/sys/kernel/debug",
+			"/dev/null", // Even /dev paths should be rejected
+		}
+
+		for _, path := range dangerousPaths {
+			t.Run(path, func(t *testing.T) {
+				_, err := NewFileOutput(path)
+				if err == nil {
+					t.Errorf("expected error for dangerous path %s", path)
+				}
+			})
 		}
 	})
 }
