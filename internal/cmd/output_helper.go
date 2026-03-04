@@ -48,7 +48,7 @@ func (c *OutputConfig) Cleanup() {
 //	if err != nil {
 //	    return err
 //	}
-//	defer cfg.cleanup()
+//	defer cfg.Cleanup()
 //	// use cfg.Writer and cfg.Format
 func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string) (*OutputConfig, error) {
 	cfg := &OutputConfig{
@@ -61,8 +61,12 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 		return cfg, nil
 	}
 
-	// Auto-detect format from extension if user hasn't explicitly set --format
-	if !cmd.Flags().Changed("format") {
+	// Auto-detect format from extension if user hasn't explicitly set --format.
+	// Use cmd.Flag() instead of cmd.Flags().Changed() because --format is a
+	// persistent flag on the root command, and Flags() doesn't include inherited flags.
+	fmtFlag := cmd.Flag("format")
+	formatExplicitlySet := fmtFlag != nil && fmtFlag.Changed
+	if !formatExplicitlySet {
 		if detected := output.FormatFromExtension(outputPath); detected != "" {
 			cfg.Format = detected
 		}

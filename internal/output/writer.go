@@ -111,9 +111,19 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	}
 
 	// Create or truncate the output file with restricted permissions (owner read/write only).
-	// Security: Path is validated above against dangerous system paths. The remaining paths
-	// are intentionally unrestricted because this is a CLI tool running with user privileges.
-	// The user can already write anywhere they have permissions via their shell.
+	//
+	// Security note (CWE-73 / path injection):
+	// This code intentionally accepts user-controlled paths from the --output CLI flag.
+	// This is NOT a vulnerability because:
+	//   1. This is a CLI tool that runs with the user's own privileges
+	//   2. The user already has shell access and can write anywhere (e.g., `cat > /any/path`)
+	//   3. There is no privilege escalation or sandbox escape possible
+	//   4. Dangerous system paths (/etc/*, /boot/*, etc.) are blocked above
+	//
+	// Static analyzers flag this as CWE-73 because they see user-input → file-write,
+	// but this pattern is standard for CLI tools (like `cat`, `tee`, `cp`, etc.).
+	// CodeQL/GHAS alerts for this should be dismissed as "Won't fix" in the UI.
+	//
 	// #nosec G304 -- CLI tool with explicit user-controlled --output flag; no privilege escalation.
 	file, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
