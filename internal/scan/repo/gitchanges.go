@@ -84,7 +84,10 @@ func GitChangedFiles(scanPath string, opts ChangedOptions) (*FileList, error) {
 	}
 
 	// Filter to only files within the scan path and convert to relative paths
-	filtered := filterToScanPath(repoRoot, absPath, changedPaths)
+	filtered, err := filterToScanPath(repoRoot, absPath, changedPaths)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(filtered) == 0 {
 		return nil, ErrNoChangedFiles
@@ -181,15 +184,16 @@ func changedSinceRef(repoRoot, ref string) ([]string, error) {
 
 // filterToScanPath filters changedPaths (relative to repoRoot) to only include
 // files within scanPath, and converts them to be relative to scanPath.
-func filterToScanPath(repoRoot, scanPath string, changedPaths []string) []string {
+func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]string, error) {
 	// If scanPath IS the repo root, no filtering needed
 	if repoRoot == scanPath {
-		return changedPaths
+		return changedPaths, nil
 	}
 
 	prefix, err := filepath.Rel(repoRoot, scanPath)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("cannot compute relative path from repo root %q to scan path %q: %w",
+			repoRoot, scanPath, err)
 	}
 	// Normalize to forward slashes for comparison
 	prefix = filepath.ToSlash(prefix)
@@ -207,7 +211,7 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) []string
 			}
 		}
 	}
-	return filtered
+	return filtered, nil
 }
 
 // runGit executes a git command in the given directory and returns stdout.

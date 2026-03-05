@@ -382,7 +382,10 @@ func TestFilterToScanPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterToScanPath(tt.repoRoot, tt.scanPath, tt.changedPaths)
+			got, err := filterToScanPath(tt.repoRoot, tt.scanPath, tt.changedPaths)
+			if err != nil {
+				t.Fatalf("filterToScanPath() unexpected error: %v", err)
+			}
 			if len(got) != len(tt.want) {
 				t.Errorf("filterToScanPath() = %v, want %v", got, tt.want)
 				return
