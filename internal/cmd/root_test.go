@@ -569,7 +569,15 @@ func TestRootPersistentPreRunE(t *testing.T) {
 
 // TestPrintUpdateNotification tests the update notification printing.
 func TestPrintUpdateNotification(t *testing.T) {
+	// Helper to reset notification state for each test
+	resetNotificationState := func() {
+		updateNotificationMu.Lock()
+		updateNotificationPrinted = false
+		updateNotificationMu.Unlock()
+	}
+
 	t.Run("nil channel does not panic", func(t *testing.T) {
+		resetNotificationState()
 		originalUpdateResultCh := updateResultCh
 		defer func() { updateResultCh = originalUpdateResultCh }()
 
@@ -580,6 +588,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 	})
 
 	t.Run("empty channel times out gracefully", func(t *testing.T) {
+		resetNotificationState()
 		originalUpdateResultCh := updateResultCh
 		defer func() { updateResultCh = originalUpdateResultCh }()
 
@@ -599,6 +608,29 @@ func TestPrintUpdateNotification(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 			t.Error("PrintUpdateNotification blocked indefinitely on empty channel")
 		}
+	})
+
+	t.Run("only prints once when called multiple times", func(t *testing.T) {
+		resetNotificationState()
+		originalUpdateResultCh := updateResultCh
+		defer func() { updateResultCh = originalUpdateResultCh }()
+
+		// Create a buffered channel with a result
+		ch := make(chan *update.CheckResult, 1)
+		ch <- nil // Send nil result (won't print but exercises the path)
+		close(ch)
+		updateResultCh = ch
+
+		// Call twice - should not panic or block
+		PrintUpdateNotification()
+		PrintUpdateNotification()
+
+		// Verify flag is set
+		updateNotificationMu.Lock()
+		if !updateNotificationPrinted {
+			t.Error("updateNotificationPrinted should be true after calling PrintUpdateNotification")
+		}
+		updateNotificationMu.Unlock()
 	})
 }
 

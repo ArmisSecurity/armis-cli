@@ -74,6 +74,25 @@ func NewChecker(currentVersion string) *Checker {
 	}
 }
 
+// CheckCached performs a synchronous check using only the local cache.
+// Returns a CheckResult if an update is available and cache is fresh, nil otherwise.
+// This is fast (~1-5ms) as it only reads from disk, no network calls.
+// Use this for immediate "at start" notifications; use CheckInBackground for
+// populating the cache via network when stale.
+func (c *Checker) CheckCached() *CheckResult {
+	cached := c.readCache()
+	if cached == nil || time.Since(cached.CheckedAt) >= c.cacheTTL {
+		return nil // cache miss or stale
+	}
+	if IsNewer(c.currentVersion, cached.LatestVersion) {
+		return &CheckResult{
+			LatestVersion:  cached.LatestVersion,
+			CurrentVersion: c.currentVersion,
+		}
+	}
+	return nil
+}
+
 // CheckInBackground starts a non-blocking version check.
 // Returns a channel that will receive at most one *CheckResult.
 // The channel is closed when the check completes (or is skipped).
@@ -291,10 +310,11 @@ func FormatNotification(current, latest, icon string) string {
 
 	updateCmd := getUpdateCommand()
 
-	label := styles.WarningText.Render(icon + " Update available:")
+	label := styles.WarningText.Render(icon + "  Update available:")
 	versions := styles.Bold.Render(fmt.Sprintf("v%s → v%s", current, latest))
 
-	msg := fmt.Sprintf("\n%s %s\n", label, versions)
+	// Use \n\n prefix for visual separation from command output (like gh CLI)
+	msg := fmt.Sprintf("\n\n%s %s\n", label, versions)
 	if updateCmd != "" {
 		msg += fmt.Sprintf("   %s\n", styles.MutedText.Render(updateCmd))
 	}

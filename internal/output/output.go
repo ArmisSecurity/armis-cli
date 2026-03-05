@@ -12,8 +12,18 @@ import (
 var (
 	stdoutSyncer           = func() error { return os.Stdout.Sync() }
 	stderrWriter io.Writer = os.Stderr
-	osExit                 = os.Exit
 )
+
+// ErrFindingsExceeded indicates scan found findings matching --fail-on severities.
+// This is not an error condition - it's expected behavior signaling CI systems.
+// The ExitCode field contains the configured exit code (default 1, or --exit-code value).
+type ErrFindingsExceeded struct {
+	ExitCode int
+}
+
+func (e *ErrFindingsExceeded) Error() string {
+	return "findings exceeded threshold"
+}
 
 // FormatOptions contains options for formatting scan results.
 type FormatOptions struct {
@@ -62,14 +72,16 @@ func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
 	return false
 }
 
-// ExitIfNeeded exits the program with the specified exit code if the scan should fail.
-func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode int) {
+// CheckExit returns an error if the scan should fail based on severity of findings.
+// The returned error should be propagated to main.go which handles the exit.
+// Returns nil if no findings match the fail-on severities.
+func CheckExit(result *model.ScanResult, failOnSeverities []string, exitCode int) error {
 	if ShouldFail(result, failOnSeverities) {
 		// Normalize exit code to valid POSIX range (0-255)
 		if exitCode < 0 || exitCode > 255 {
 			exitCode = 1
 		}
-		// Flush stdout to ensure all output is written before exit
+		// Flush stdout to ensure all output is written before returning
 		if err := stdoutSyncer(); err != nil {
 			// Silently ignore "sync not supported" errors - these occur when stdout
 			// is a pipe, socket, or /dev/stdout which don't support fsync.
@@ -80,6 +92,7 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 				_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
 			}
 		}
-		osExit(exitCode)
+		return &ErrFindingsExceeded{ExitCode: exitCode}
 	}
+	return nil
 }

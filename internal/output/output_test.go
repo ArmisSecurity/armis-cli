@@ -160,62 +160,43 @@ func TestShouldFail_CaseSensitive(t *testing.T) {
 	}
 }
 
-func TestExitIfNeeded_ExitsOnMatchingSeverity(t *testing.T) {
-	// Save original and restore after test
-	originalOsExit := osExit
-	defer func() { osExit = originalOsExit }()
-
-	var exitCode int
-	exitCalled := false
-	osExit = func(code int) {
-		exitCode = code
-		exitCalled = true
-	}
-
+func TestCheckExit_ReturnsErrorOnMatchingSeverity(t *testing.T) {
 	result := &model.ScanResult{
 		Findings: []model.Finding{
 			{Severity: model.SeverityCritical},
 		},
 	}
 
-	ExitIfNeeded(result, []string{"CRITICAL"}, 2)
+	err := CheckExit(result, []string{"CRITICAL"}, 2)
 
-	if !exitCalled {
-		t.Error("ExitIfNeeded should call osExit when severity matches")
+	if err == nil {
+		t.Error("CheckExit should return error when severity matches")
 	}
-	if exitCode != 2 {
-		t.Errorf("ExitIfNeeded called osExit with code %d, want 2", exitCode)
+
+	var findingsErr *ErrFindingsExceeded
+	if !errors.As(err, &findingsErr) {
+		t.Errorf("CheckExit should return *ErrFindingsExceeded, got %T", err)
+	}
+	if findingsErr.ExitCode != 2 {
+		t.Errorf("ErrFindingsExceeded.ExitCode = %d, want 2", findingsErr.ExitCode)
 	}
 }
 
-func TestExitIfNeeded_NoExitWhenNoMatch(t *testing.T) {
-	// Save original and restore after test
-	originalOsExit := osExit
-	defer func() { osExit = originalOsExit }()
-
-	exitCalled := false
-	osExit = func(code int) {
-		exitCalled = true
-	}
-
+func TestCheckExit_ReturnsNilWhenNoMatch(t *testing.T) {
 	result := &model.ScanResult{
 		Findings: []model.Finding{
 			{Severity: model.SeverityLow},
 		},
 	}
 
-	ExitIfNeeded(result, []string{"CRITICAL", "HIGH"}, 1)
+	err := CheckExit(result, []string{"CRITICAL", "HIGH"}, 1)
 
-	if exitCalled {
-		t.Error("ExitIfNeeded should not call osExit when severity does not match")
+	if err != nil {
+		t.Errorf("CheckExit should return nil when severity does not match, got %v", err)
 	}
 }
 
-func TestExitIfNeeded_NormalizesExitCode(t *testing.T) {
-	// Save original and restore after test
-	originalOsExit := osExit
-	defer func() { osExit = originalOsExit }()
-
+func TestCheckExit_NormalizesExitCode(t *testing.T) {
 	tests := []struct {
 		name         string
 		inputCode    int
@@ -230,36 +211,33 @@ func TestExitIfNeeded_NormalizesExitCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var exitCode int
-			osExit = func(code int) {
-				exitCode = code
-			}
-
 			result := &model.ScanResult{
 				Findings: []model.Finding{
 					{Severity: model.SeverityCritical},
 				},
 			}
 
-			ExitIfNeeded(result, []string{"CRITICAL"}, tt.inputCode)
+			err := CheckExit(result, []string{"CRITICAL"}, tt.inputCode)
 
-			if exitCode != tt.expectedCode {
-				t.Errorf("ExitIfNeeded with code %d called osExit with %d, want %d",
-					tt.inputCode, exitCode, tt.expectedCode)
+			var findingsErr *ErrFindingsExceeded
+			if !errors.As(err, &findingsErr) {
+				t.Fatalf("CheckExit should return *ErrFindingsExceeded, got %T", err)
+			}
+			if findingsErr.ExitCode != tt.expectedCode {
+				t.Errorf("CheckExit with code %d returned ExitCode %d, want %d",
+					tt.inputCode, findingsErr.ExitCode, tt.expectedCode)
 			}
 		})
 	}
 }
 
-func TestExitIfNeeded_StdoutSyncError(t *testing.T) {
+func TestCheckExit_StdoutSyncError(t *testing.T) {
 	// Save originals and restore after test
 	originalStdoutSyncer := stdoutSyncer
 	originalStderrWriter := stderrWriter
-	originalOsExit := osExit
 	defer func() {
 		stdoutSyncer = originalStdoutSyncer
 		stderrWriter = originalStderrWriter
-		osExit = originalOsExit
 	}()
 
 	// Mock stdoutSyncer to return an error
@@ -271,20 +249,22 @@ func TestExitIfNeeded_StdoutSyncError(t *testing.T) {
 	var stderrBuf bytes.Buffer
 	stderrWriter = &stderrBuf
 
-	// Mock osExit to not actually exit
-	osExit = func(code int) {}
-
 	result := &model.ScanResult{
 		Findings: []model.Finding{
 			{Severity: model.SeverityCritical},
 		},
 	}
 
-	ExitIfNeeded(result, []string{"CRITICAL"}, 1)
+	err := CheckExit(result, []string{"CRITICAL"}, 1)
+
+	// Should still return error despite sync failure
+	if err == nil {
+		t.Error("CheckExit should return error even when stdout sync fails")
+	}
 
 	stderrOutput := stderrBuf.String()
 	if stderrOutput == "" {
-		t.Error("ExitIfNeeded should write warning to stderr when stdout sync fails")
+		t.Error("CheckExit should write warning to stderr when stdout sync fails")
 	}
 	if !bytes.Contains(stderrBuf.Bytes(), []byte("Warning")) {
 		t.Errorf("stderr output should contain 'Warning', got: %s", stderrOutput)

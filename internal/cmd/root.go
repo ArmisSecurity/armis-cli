@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
@@ -52,6 +53,11 @@ var (
 
 	// updateResultCh receives version check results from background goroutine.
 	updateResultCh <-chan *update.CheckResult
+
+	// updateNotificationPrinted tracks if the notification has already been shown.
+	// Protected by updateNotificationMu for thread safety.
+	updateNotificationPrinted bool
+	updateNotificationMu      sync.Mutex
 )
 
 var rootCmd = &cobra.Command{
@@ -175,15 +181,38 @@ func init() {
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.
-// This should be called before any os.Exit() call to ensure the notification is displayed.
+// This function is safe to call multiple times - it will only print once per session.
+// Call it at the END of commands (via PersistentPostRun or main.go fallback) to match
+// the industry standard pattern used by gh, npm, and other popular CLIs.
 func PrintUpdateNotification() {
-	if updateResultCh == nil {
+	updateNotificationMu.Lock()
+	if updateNotificationPrinted {
+		updateNotificationMu.Unlock()
+		return
+	}
+	updateNotificationPrinted = true
+	updateNotificationMu.Unlock()
+
+	// Respect the same skip conditions as background checks in PersistentPreRunE.
+	// This ensures --no-update-check, CI mode, and dev builds never show notifications.
+	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
+		progress.IsCI() || version == "dev" {
 		return
 	}
 
-	// Wait briefly for cached results (100ms is imperceptible but enough for disk reads).
-	// Fresh network requests (10s timeout) won't complete in time -- that's fine,
-	// the notification will show on the next run once the cache is populated.
+	// Try synchronous cache check first (fast path when background goroutine hasn't completed).
+	checker := update.NewChecker(version)
+	if result := checker.CheckCached(); result != nil {
+		msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
+		fmt.Fprint(os.Stderr, msg)
+		return
+	}
+
+	// Fallback: wait briefly for background check result (handles edge cases
+	// where cache was just populated by the goroutine).
+	if updateResultCh == nil {
+		return
+	}
 	select {
 	case result, ok := <-updateResultCh:
 		if ok && result != nil {
