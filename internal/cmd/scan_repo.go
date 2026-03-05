@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// changedRef holds the value for the --changed flag (repo-specific, not shared with scan image).
+var changedRef string
+
 var scanRepoCmd = &cobra.Command{
 	Use:   "repo [path]",
 	Short: "Scan a local repository",
@@ -21,7 +25,10 @@ var scanRepoCmd = &cobra.Command{
 	Example: `  $ armis-cli scan repo .
   $ armis-cli scan repo . --format json
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
-  $ armis-cli scan repo . --sbom --sbom-output sbom.json`,
+  $ armis-cli scan repo . --sbom --sbom-output sbom.json
+  $ armis-cli scan repo . --changed
+  $ armis-cli scan repo . --changed=staged
+  $ armis-cli scan repo . --changed=main`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
@@ -101,6 +108,47 @@ var scanRepoCmd = &cobra.Command{
 			scanner = scanner.WithIncludeFiles(fileList)
 		}
 
+		// Handle --changed flag for scanning only git-changed files
+		if cmd.Flags().Changed("changed") {
+			absPath, err := filepath.Abs(repoPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path: %w", err)
+			}
+
+			var opts repo.ChangedOptions
+			switch changedRef {
+			case "uncommitted": // --changed (no value)
+				opts = repo.ChangedOptions{Mode: repo.ChangedModeUncommitted}
+			case "staged": // --changed=staged
+				opts = repo.ChangedOptions{Mode: repo.ChangedModeStaged}
+			case "": // --changed= (explicit empty value)
+				return fmt.Errorf("--changed requires a value (e.g., --changed=main, --changed=staged), " +
+					"or use --changed without '=' for uncommitted changes")
+			default: // --changed=<ref>
+				opts = repo.ChangedOptions{Mode: repo.ChangedModeRef, Ref: changedRef}
+			}
+
+			fileList, err := repo.GitChangedFiles(absPath, opts)
+			if err != nil {
+				if errors.Is(err, repo.ErrNotGitRepo) {
+					return fmt.Errorf("--changed requires a git repository: %w", err)
+				}
+				if errors.Is(err, repo.ErrNoChangedFiles) {
+					fmt.Fprintln(os.Stderr, "No changed files found - nothing to scan.")
+					return nil
+				}
+				if errors.Is(err, repo.ErrRefNotFound) {
+					return fmt.Errorf("--changed: git ref %q not found", changedRef)
+				}
+				if errors.Is(err, repo.ErrGitNotFound) {
+					return fmt.Errorf("--changed: %w", err)
+				}
+				return fmt.Errorf("--changed: %w", err)
+			}
+
+			scanner = scanner.WithIncludeFiles(fileList)
+		}
+
 		ctx, cancel := NewSignalContext()
 		defer cancel()
 
@@ -141,6 +189,14 @@ var scanRepoCmd = &cobra.Command{
 }
 
 func init() {
-	scanRepoCmd.Flags().StringSliceVar(&includeFiles, "include-files", nil, "Comma-separated list of file paths to include in scan (relative to repository root)")
+	scanRepoCmd.Flags().StringSliceVar(&includeFiles, "include-files", nil,
+		"Comma-separated list of file paths to include in scan (relative to repository root)")
+	scanRepoCmd.Flags().StringVar(&changedRef, "changed", "",
+		"Scan only git-changed files: --changed for uncommitted, "+
+			"--changed=staged for staged only, --changed=REF for changes vs a branch/tag "+
+			"(e.g., --changed=main). Note: 'staged' and 'uncommitted' are reserved and cannot be used as ref names")
+	// NoOptDefVal is the value used when --changed is passed without a value
+	scanRepoCmd.Flags().Lookup("changed").NoOptDefVal = "uncommitted"
+	scanRepoCmd.MarkFlagsMutuallyExclusive("include-files", "changed")
 	scanCmd.AddCommand(scanRepoCmd)
 }
