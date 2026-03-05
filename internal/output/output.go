@@ -71,9 +71,14 @@ func ExitIfNeeded(result *model.ScanResult, failOnSeverities []string, exitCode 
 		}
 		// Flush stdout to ensure all output is written before exit
 		if err := stdoutSyncer(); err != nil {
-			// Log flush failure to stderr (stdout may be broken)
-			// Using stderrWriter (instead of cli.PrintWarning) for testability
-			_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
+			// Silently ignore "sync not supported" errors - these occur when stdout
+			// is a pipe, socket, or /dev/stdout which don't support fsync.
+			// The output is still delivered correctly.
+			if !isSyncNotSupported(err) {
+				// Log actual flush failures to stderr (stdout may be broken)
+				// Using stderrWriter (instead of cli.PrintWarning) for testability
+				_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
+			}
 		}
 		osExit(exitCode)
 	}
