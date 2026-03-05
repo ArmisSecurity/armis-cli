@@ -378,6 +378,20 @@ func TestFilterToScanPath(t *testing.T) {
 			changedPaths: []string{"src/pkg/a.go", "src/other.go"},
 			want:         []string{"a.go"},
 		},
+		{
+			name:         "path traversal via dotdot excluded",
+			repoRoot:     "/repo",
+			scanPath:     "/repo/src",
+			changedPaths: []string{"src/../secret"},
+			want:         nil, // "../secret" after Clean is outside "src/"
+		},
+		{
+			name:         "path traversal that resolves inside included",
+			repoRoot:     "/repo",
+			scanPath:     "/repo/src",
+			changedPaths: []string{"src/pkg/../helper.go"},
+			want:         []string{"helper.go"}, // "src/helper.go" after Clean is still inside "src/"
+		},
 	}
 
 	for _, tt := range tests {
@@ -399,12 +413,50 @@ func TestFilterToScanPath(t *testing.T) {
 	}
 }
 
+func TestValidateRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		ref       string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid branch name", ref: "main", wantErr: false},
+		{name: "valid branch with slash", ref: "origin/main", wantErr: false},
+		{name: "valid tag", ref: "v1.0.0", wantErr: false},
+		{name: "valid commit hash", ref: "abc123def", wantErr: false},
+		{name: "dash prefix rejected", ref: "-flag", wantErr: true, errSubstr: "cannot start with dash"},
+		{name: "double dash rejected", ref: "--config", wantErr: true, errSubstr: "cannot start with dash"},
+		{name: "newline rejected", ref: "main\n", wantErr: true, errSubstr: "whitespace/control"},
+		{name: "tab rejected", ref: "main\tother", wantErr: true, errSubstr: "whitespace/control"},
+		{name: "null byte rejected", ref: "main\x00", wantErr: true, errSubstr: "whitespace/control"},
+		{name: "space rejected", ref: "main branch", wantErr: true, errSubstr: "whitespace/control"},
+		{name: "carriage return rejected", ref: "main\r", wantErr: true, errSubstr: "whitespace/control"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRef(tt.ref)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateRef(%q) expected error containing %q, got nil", tt.ref, tt.errSubstr)
+				} else if !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("validateRef(%q) expected error containing %q, got %q", tt.ref, tt.errSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateRef(%q) unexpected error: %v", tt.ref, err)
+				}
+			}
+		})
+	}
+}
+
 func TestParseLines(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   []string
-		wantNl bool // expect nil
+		name    string
+		input   string
+		want    []string
+		wantNil bool // expect nil
 	}{
 		{
 			name:  "normal lines",
@@ -417,9 +469,9 @@ func TestParseLines(t *testing.T) {
 			want:  []string{"a.go", "b.go"},
 		},
 		{
-			name:   "empty string",
-			input:  "",
-			wantNl: true,
+			name:    "empty string",
+			input:   "",
+			wantNil: true,
 		},
 		{
 			name:  "whitespace-only lines preserved",
@@ -436,7 +488,7 @@ func TestParseLines(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseLines(tt.input)
-			if tt.wantNl {
+			if tt.wantNil {
 				if got != nil {
 					t.Errorf("parseLines() = %v, want nil", got)
 				}

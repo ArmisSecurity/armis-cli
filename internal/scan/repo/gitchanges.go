@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // ChangedMode represents the type of changed files detection.
@@ -161,11 +162,27 @@ func changedStaged(repoRoot string) ([]string, error) {
 	return parseLines(output), nil
 }
 
+// validateRef checks that a git ref does not contain characters that could
+// cause unexpected behavior. While exec.Command prevents shell injection,
+// this provides defense-in-depth consistent with image name validation.
+func validateRef(ref string) error {
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("%w: %q (cannot start with dash)", ErrRefNotFound, ref)
+	}
+	for _, r := range ref {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return fmt.Errorf("%w: %q (contains illegal whitespace/control characters)", ErrRefNotFound, ref)
+		}
+	}
+	return nil
+}
+
 // changedSinceRef returns files changed between the given ref and HEAD.
 func changedSinceRef(repoRoot, ref string) ([]string, error) {
-	// Validate ref doesn't look like a flag (prevent git argument injection)
-	if strings.HasPrefix(ref, "-") {
-		return nil, fmt.Errorf("%w: %q (cannot start with dash)", ErrRefNotFound, ref)
+	// Validate ref for safety (defense-in-depth: prevent argument injection,
+	// control characters, and whitespace)
+	if err := validateRef(ref); err != nil {
+		return nil, err
 	}
 	// Use three-dot notation to compare ref...HEAD (changes since common ancestor)
 	// --diff-filter=ACMRT excludes deleted files (D)
@@ -203,7 +220,11 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 
 	var filtered []string
 	for _, p := range changedPaths {
-		slashP := filepath.ToSlash(p)
+		// Normalize path components (e.g., "subdir/../secret" -> "../secret")
+		// to prevent path traversal bypassing the prefix check (CWE-22).
+		// filepath.Clean must be called before ToSlash as it operates on native separators.
+		cleanP := filepath.Clean(p)
+		slashP := filepath.ToSlash(cleanP)
 		if strings.HasPrefix(slashP, prefix) {
 			rel := strings.TrimPrefix(slashP, prefix)
 			if rel != "" {

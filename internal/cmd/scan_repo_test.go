@@ -167,6 +167,10 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 		noUpdateCheck = originalNoUpdateCheck
 		// Reset flag state FIRST (this sets changedRef to "" via the bound variable)
 		_ = scanRepoCmd.Flags().Set("changed", "")
+		// Reset Changed field to prevent state leaking to subsequent tests.
+		// Flags().Set leaves Changed=true, which would cause cmd.Flags().Changed("changed")
+		// to return true even in tests that never set the flag.
+		scanRepoCmd.Flags().Lookup("changed").Changed = false
 		// Then restore the original value
 		changedRef = originalChangedRef
 		_ = os.Unsetenv("ARMIS_API_URL")
@@ -222,6 +226,10 @@ func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
 		noUpdateCheck = originalNoUpdateCheck
 		// Reset flag state FIRST (this sets changedRef to "" via the bound variable)
 		_ = scanRepoCmd.Flags().Set("changed", "")
+		// Reset Changed field to prevent state leaking to subsequent tests.
+		// Flags().Set leaves Changed=true, which would cause cmd.Flags().Changed("changed")
+		// to return true even in tests that never set the flag.
+		scanRepoCmd.Flags().Lookup("changed").Changed = false
 		// Then restore the original value
 		changedRef = originalChangedRef
 		_ = os.Unsetenv("ARMIS_API_URL")

@@ -193,7 +193,8 @@ func init() {
 		"Comma-separated list of file paths to include in scan (relative to repository root)")
 	scanRepoCmd.Flags().StringVar(&changedRef, "changed", "",
 		"Scan only git-changed files: --changed for uncommitted, "+
-			"--changed=staged for staged only, --changed=REF for changes vs a branch (e.g., --changed=main)")
+			"--changed=staged for staged only, --changed=REF for changes vs a branch/tag "+
+			"(e.g., --changed=main). Note: 'staged' and 'uncommitted' are reserved and cannot be used as ref names")
 	// NoOptDefVal is the value used when --changed is passed without a value
 	scanRepoCmd.Flags().Lookup("changed").NoOptDefVal = "uncommitted"
 	scanRepoCmd.MarkFlagsMutuallyExclusive("include-files", "changed")
