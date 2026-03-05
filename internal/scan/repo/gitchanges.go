@@ -105,7 +105,17 @@ func gitRepoRoot(path string) (string, error) {
 	}
 	// On Windows, git returns paths with forward slashes (e.g., C:/Users/...).
 	// Convert to native path separators for consistent comparison with filepath.Abs results.
-	return filepath.FromSlash(strings.TrimSpace(output)), nil
+	repoRoot := filepath.FromSlash(strings.TrimSpace(output))
+	repoRoot = filepath.Clean(repoRoot)
+
+	// Resolve symlinks so that comparisons against other paths that have
+	// been passed through filepath.EvalSymlinks (e.g., absPath) use the
+	// same canonical form. If resolution fails, fall back to the cleaned path.
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		return resolved, nil
+	}
+
+	return repoRoot, nil
 }
 
 // changedUncommitted returns files with uncommitted changes (staged + unstaged + untracked).
@@ -225,15 +235,20 @@ func runGit(dir string, args ...string) (string, error) {
 }
 
 // parseLines splits output by newlines and removes empty entries.
+// It only trims trailing newline/CR characters, preserving any spaces
+// in filenames (git can track files with leading/trailing spaces).
 func parseLines(output string) []string {
-	output = strings.TrimSpace(output)
+	// Only trim trailing newlines from the output, not all whitespace
+	// (a filename could legitimately start with a space)
+	output = strings.TrimRight(output, "\n\r")
 	if output == "" {
 		return nil
 	}
 	lines := strings.Split(output, "\n")
 	result := make([]string, 0, len(lines))
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
+		// Only trim trailing CR (for Windows CRLF compatibility), not spaces
+		line = strings.TrimSuffix(line, "\r")
 		if line != "" {
 			result = append(result, line)
 		}

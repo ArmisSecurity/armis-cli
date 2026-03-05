@@ -119,9 +119,12 @@ var scanRepoCmd = &cobra.Command{
 			switch changedRef {
 			case "uncommitted": // --changed (no value)
 				opts = repo.ChangedOptions{Mode: repo.ChangedModeUncommitted}
-			case "staged": // --changed staged
+			case "staged": // --changed=staged
 				opts = repo.ChangedOptions{Mode: repo.ChangedModeStaged}
-			default: // --changed <ref>
+			case "": // --changed= (explicit empty value)
+				return fmt.Errorf("--changed requires a value (e.g., --changed=main, --changed=staged), " +
+					"or use --changed without '=' for uncommitted changes")
+			default: // --changed=<ref>
 				opts = repo.ChangedOptions{Mode: repo.ChangedModeRef, Ref: changedRef}
 			}
 

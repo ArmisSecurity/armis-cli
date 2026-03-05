@@ -147,6 +147,10 @@ func TestScanRepoRunE_InvalidPath(t *testing.T) {
 }
 
 func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
@@ -161,9 +165,10 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
-		changedRef = originalChangedRef
-		// Reset flag state
+		// Reset flag state FIRST (this sets changedRef to "" via the bound variable)
 		_ = scanRepoCmd.Flags().Set("changed", "")
+		// Then restore the original value
+		changedRef = originalChangedRef
 		_ = os.Unsetenv("ARMIS_API_URL")
 	})
 
@@ -197,6 +202,10 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 }
 
 func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
@@ -211,9 +220,10 @@ func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
-		changedRef = originalChangedRef
-		// Reset flag state
+		// Reset flag state FIRST (this sets changedRef to "" via the bound variable)
 		_ = scanRepoCmd.Flags().Set("changed", "")
+		// Then restore the original value
+		changedRef = originalChangedRef
 		_ = os.Unsetenv("ARMIS_API_URL")
 	})
 

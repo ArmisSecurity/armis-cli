@@ -419,14 +419,14 @@ func TestParseLines(t *testing.T) {
 			wantNl: true,
 		},
 		{
-			name:   "only whitespace",
-			input:  "  \n  \n  ",
-			wantNl: true,
+			name:  "whitespace-only lines preserved",
+			input: "  \n  \n  ",
+			want:  []string{"  ", "  ", "  "},
 		},
 		{
-			name:  "lines with spaces",
+			name:  "preserves spaces in filenames",
 			input: "  a.go  \n  b.go  ",
-			want:  []string{"a.go", "b.go"},
+			want:  []string{"  a.go  ", "  b.go  "},
 		},
 	}
 
