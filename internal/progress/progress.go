@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/term"
@@ -212,8 +211,9 @@ func (s *Spinner) Start() {
 
 		// Hide cursor during spinner animation on real terminals.
 		// Skip for non-TTY writers (pipes, files, test buffers) to avoid garbage output.
-		// Also skip when colors are disabled (--color=never) to avoid ANSI escapes.
-		hideCursor := isTerminalWriter(s.writer) && cli.ColorsEnabled()
+		// Cursor hide/show are cursor control sequences (not color), so they work
+		// even when --color=never. This matches clearLine() which uses \033[K.
+		hideCursor := isTerminalWriter(s.writer)
 		if hideCursor {
 			_, _ = fmt.Fprint(s.writer, cursorHide)
 			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()

@@ -109,7 +109,14 @@ var scanRepoCmd = &cobra.Command{
 			return handleScanError(ctx, err)
 		}
 
-		formatter, err := output.GetFormatter(format)
+		// Resolve output destination and format (handles file creation, format auto-detection, colors)
+		outputCfg, err := ResolveOutput(cmd, outputFile, format, colorFlag)
+		if err != nil {
+			return err
+		}
+		defer outputCfg.Cleanup()
+
+		formatter, err := output.GetFormatter(outputCfg.Format)
 		if err != nil {
 			return err
 		}
@@ -122,10 +129,12 @@ var scanRepoCmd = &cobra.Command{
 			FailOnSeverities: failOnSeverities,
 		}
 
-		if err := formatter.FormatWithOptions(result, os.Stdout, opts); err != nil {
+		if err := formatter.FormatWithOptions(result, outputCfg.Writer, opts); err != nil {
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
+		// Explicitly call cleanup before ExitIfNeeded since os.Exit bypasses defers
+		outputCfg.Cleanup()
 		output.ExitIfNeeded(result, failOnSeverities, exitCode)
 		return nil
 	},

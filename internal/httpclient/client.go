@@ -18,6 +18,7 @@ type Config struct {
 	RetryWaitMax   time.Duration
 	Timeout        time.Duration
 	DisableTimeout bool
+	DisableRetry   bool // When true, no retries are attempted (for non-rewindable streaming bodies)
 }
 
 // Client is an HTTP client with retry and backoff support.
@@ -31,7 +32,7 @@ func NewClient(cfg Config) *Client {
 	if cfg.Timeout == 0 && !cfg.DisableTimeout {
 		cfg.Timeout = 30 * time.Second
 	}
-	if cfg.RetryMax == 0 {
+	if !cfg.DisableRetry && cfg.RetryMax == 0 {
 		cfg.RetryMax = 3
 	}
 	if cfg.RetryWaitMin == 0 {
@@ -92,17 +93,22 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return nil
 	}
 
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = c.config.RetryWaitMin
-	b.MaxInterval = c.config.RetryWaitMax
-	b.MaxElapsedTime = c.config.RetryWaitMax * time.Duration(c.config.RetryMax)
-
 	ctx := req.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	err = backoff.Retry(operation, backoff.WithContext(b, ctx))
+	if c.config.DisableRetry {
+		// No retries: execute once (for streaming bodies that cannot be rewound)
+		err = operation()
+	} else {
+		b := backoff.NewExponentialBackOff()
+		b.InitialInterval = c.config.RetryWaitMin
+		b.MaxInterval = c.config.RetryWaitMax
+		b.MaxElapsedTime = c.config.RetryWaitMax * time.Duration(c.config.RetryMax)
+
+		err = backoff.Retry(operation, backoff.WithContext(b, ctx))
+	}
 	if err != nil {
 		return nil, err
 	}

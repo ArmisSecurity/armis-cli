@@ -20,6 +20,7 @@ var (
 	sbomOutput            string
 	vexOutput             string
 	summaryTop            bool
+	outputFile            string
 )
 
 // validFormats contains the valid output format strings.
@@ -91,6 +92,7 @@ func init() {
 	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
+	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}
