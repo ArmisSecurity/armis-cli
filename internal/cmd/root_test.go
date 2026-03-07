@@ -579,8 +579,14 @@ func TestPrintUpdateNotification(t *testing.T) {
 	t.Run("nil channel does not panic", func(t *testing.T) {
 		resetNotificationState()
 		originalUpdateResultCh := updateResultCh
-		defer func() { updateResultCh = originalUpdateResultCh }()
+		originalVersion := version
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+		}()
 
+		// Set version to non-dev so skip conditions do not fire
+		version = "1.0.0"
 		updateResultCh = nil
 
 		// Should not panic
@@ -590,7 +596,14 @@ func TestPrintUpdateNotification(t *testing.T) {
 	t.Run("empty channel times out gracefully", func(t *testing.T) {
 		resetNotificationState()
 		originalUpdateResultCh := updateResultCh
-		defer func() { updateResultCh = originalUpdateResultCh }()
+		originalVersion := version
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+		}()
+
+		// Set version to non-dev so skip conditions do not fire
+		version = "1.0.0"
 
 		// Create an unbuffered channel with no value
 		updateResultCh = make(chan *update.CheckResult)
@@ -613,7 +626,14 @@ func TestPrintUpdateNotification(t *testing.T) {
 	t.Run("only prints once when called multiple times", func(t *testing.T) {
 		resetNotificationState()
 		originalUpdateResultCh := updateResultCh
-		defer func() { updateResultCh = originalUpdateResultCh }()
+		originalVersion := version
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+		}()
+
+		// Set version to non-dev so skip conditions don't fire
+		version = "1.0.0"
 
 		// Create a buffered channel with a result
 		ch := make(chan *update.CheckResult, 1)

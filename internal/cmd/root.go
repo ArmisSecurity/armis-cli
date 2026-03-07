@@ -26,6 +26,9 @@ const (
 	themeAuto  = "auto"
 	themeDark  = "dark"
 	themeLight = "light"
+
+	// versionDev is the version string used for development builds
+	versionDev = "dev"
 )
 
 var (
@@ -47,7 +50,7 @@ var (
 	clientSecret string
 	authEndpoint string
 
-	version = "dev"
+	version = versionDev
 	commit  = "none"
 	date    = "unknown"
 
@@ -115,7 +118,7 @@ var rootCmd = &cobra.Command{
 		isCompletionCmd := cmd.Name() == "completion" ||
 			(cmd.Parent() != nil && cmd.Parent().Name() == "completion")
 		if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
-			progress.IsCI() || version == "dev" ||
+			progress.IsCI() || version == versionDev ||
 			cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd {
 			return nil
 		}
@@ -185,6 +188,14 @@ func init() {
 // Call it at the END of commands (via PersistentPostRun or main.go fallback) to match
 // the industry standard pattern used by gh, npm, and other popular CLIs.
 func PrintUpdateNotification() {
+	// Check skip conditions first, before setting the printed flag.
+	// This ensures the flag is only set when we actually intend to show a notification,
+	// making tests more predictable and the code easier to reason about.
+	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
+		progress.IsCI() || version == versionDev {
+		return
+	}
+
 	updateNotificationMu.Lock()
 	if updateNotificationPrinted {
 		updateNotificationMu.Unlock()
@@ -192,13 +203,6 @@ func PrintUpdateNotification() {
 	}
 	updateNotificationPrinted = true
 	updateNotificationMu.Unlock()
-
-	// Respect the same skip conditions as background checks in PersistentPreRunE.
-	// This ensures --no-update-check, CI mode, and dev builds never show notifications.
-	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
-		progress.IsCI() || version == "dev" {
-		return
-	}
 
 	// Try synchronous cache check first (fast path when background goroutine hasn't completed).
 	checker := update.NewChecker(version)
