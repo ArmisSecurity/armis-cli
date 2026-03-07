@@ -41,7 +41,7 @@ jobs:
           args: release --snapshot --clean --skip=sign
 
       - name: Upload snapshot artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: snapshot-artifacts
           path: |
