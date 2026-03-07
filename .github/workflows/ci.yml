@@ -78,7 +78,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Download Linux coverage
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: coverage
           path: coverage
