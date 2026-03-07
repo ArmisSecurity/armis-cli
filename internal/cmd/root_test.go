@@ -11,10 +11,15 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/update"
 )
 
-func TestSetVersion(t *testing.T) {
-	SetVersion("1.0.0", "abc123", "2024-01-01")
+// Test constants
+const (
+	testVersion      = "1.0.0"
+)
 
-	if version != "1.0.0" {
+func TestSetVersion(t *testing.T) {
+	SetVersion(testVersion, "abc123", "2024-01-01")
+
+	if version != testVersion {
 		t.Errorf("Expected version '1.0.0', got %s", version)
 	}
 	if commit != "abc123" {
@@ -529,7 +534,7 @@ func TestRootPersistentPreRunE(t *testing.T) {
 		colorFlag = testColorAuto
 		themeFlag = themeAuto
 		noUpdateCheck = false
-		version = "1.0.0"
+		version = testVersion
 		updateResultCh = nil
 
 		// Set CI env var
@@ -586,7 +591,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 		}()
 
 		// Set version to non-dev so skip conditions do not fire
-		version = "1.0.0"
+		version = testVersion
 		updateResultCh = nil
 
 		// Should not panic
@@ -603,7 +608,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 		}()
 
 		// Set version to non-dev so skip conditions do not fire
-		version = "1.0.0"
+		version = testVersion
 
 		// Create an unbuffered channel with no value
 		updateResultCh = make(chan *update.CheckResult)
@@ -633,7 +638,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 		}()
 
 		// Set version to non-dev so skip conditions don't fire
-		version = "1.0.0"
+		version = testVersion
 
 		// Create a buffered channel with a result
 		ch := make(chan *update.CheckResult, 1)
