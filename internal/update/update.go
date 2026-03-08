@@ -313,8 +313,8 @@ func FormatNotification(current, latest, icon string) string {
 	label := styles.WarningText.Render(icon + "  Update available:")
 	versions := styles.Bold.Render(fmt.Sprintf("v%s → v%s", current, latest))
 
-	// Use \n\n prefix for visual separation from command output (like gh CLI)
-	msg := fmt.Sprintf("\n\n%s %s\n", label, versions)
+	// Use \n prefix for visual separation from command output
+	msg := fmt.Sprintf("\n%s %s\n", label, versions)
 	if updateCmd != "" {
 		msg += fmt.Sprintf("   %s\n", styles.MutedText.Render(updateCmd))
 	}
