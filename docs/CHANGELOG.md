@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-03-08
+
+### Added
+
+- `--changed` flag for scanning only git-changed files, enabling faster incremental scans (#93)
+- `--output` flag for specifying output file path with improved CI detection and progress display (#92)
+- Streaming multipart uploads for improved memory efficiency on large repositories (#91)
+
+### Fixed
+
+- Update notification now displays consistently after all commands (#94)
+
+### Changed
+
+- Updated go-git to v5.17.0 (#88)
+- Updated GitHub Actions: upload-artifact v7 (#87), download-artifact v8 (#89), sbom-action v0.23.0 (#90)
+
+---
+
 ## [1.2.1] - 2026-02-26
 
 ### Changed
@@ -212,7 +231,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.0.7...v1.1.0
