@@ -181,10 +181,7 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		// Explicitly call cleanup before ExitIfNeeded since os.Exit bypasses defers
-		outputCfg.Cleanup()
-		output.ExitIfNeeded(result, failOnSeverities, exitCode)
-		return nil
+		return output.CheckExit(result, failOnSeverities, exitCode)
 	},
 }
 

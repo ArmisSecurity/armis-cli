@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -471,5 +472,110 @@ func TestCacheFileJSON(t *testing.T) {
 
 	if decoded.LatestVersion != original.LatestVersion {
 		t.Errorf("LatestVersion = %q, want %q", decoded.LatestVersion, original.LatestVersion)
+	}
+}
+
+func TestChecker_CheckCached(t *testing.T) {
+	tests := []struct {
+		name           string
+		currentVersion string
+		cacheVersion   string
+		cacheAge       time.Duration
+		expectResult   bool
+	}{
+		{
+			name:           "fresh cache with update available",
+			currentVersion: "1.0.0",
+			cacheVersion:   "v1.2.0",
+			cacheAge:       time.Hour, // within 24h TTL
+			expectResult:   true,
+		},
+		{
+			name:           "fresh cache no update needed",
+			currentVersion: "1.2.0",
+			cacheVersion:   "v1.2.0",
+			cacheAge:       time.Hour,
+			expectResult:   false, // same version
+		},
+		{
+			name:           "fresh cache current is newer",
+			currentVersion: "2.0.0",
+			cacheVersion:   "v1.2.0",
+			cacheAge:       time.Hour,
+			expectResult:   false, // current is newer
+		},
+		{
+			name:           "stale cache with update available",
+			currentVersion: "1.0.0",
+			cacheVersion:   "v1.2.0",
+			cacheAge:       25 * time.Hour, // beyond 24h TTL
+			expectResult:   false,          // cache is stale
+		},
+		{
+			name:           "no cache",
+			currentVersion: "1.0.0",
+			cacheVersion:   "", // no cache written
+			cacheAge:       0,
+			expectResult:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cacheDir := t.TempDir()
+			checker := NewChecker(tt.currentVersion)
+			checker.cacheDir = cacheDir
+
+			// Write cache if specified
+			if tt.cacheVersion != "" {
+				checker.writeCache(&cacheFile{
+					LatestVersion: tt.cacheVersion,
+					CheckedAt:     time.Now().Add(-tt.cacheAge),
+				})
+			}
+
+			result := checker.CheckCached()
+
+			if tt.expectResult {
+				if result == nil {
+					t.Error("expected non-nil result")
+				} else {
+					if result.LatestVersion != tt.cacheVersion {
+						t.Errorf("LatestVersion = %q, want %q", result.LatestVersion, tt.cacheVersion)
+					}
+					if result.CurrentVersion != tt.currentVersion {
+						t.Errorf("CurrentVersion = %q, want %q", result.CurrentVersion, tt.currentVersion)
+					}
+				}
+			} else {
+				if result != nil {
+					t.Errorf("expected nil result, got %+v", result)
+				}
+			}
+		})
+	}
+}
+
+func TestChecker_CheckCachedDoesNotFetch(t *testing.T) {
+	// Verify that CheckCached never makes network requests
+	var serverCalled atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalled.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"tag_name": "v2.0.0"}`))
+	}))
+	defer server.Close()
+
+	checker := NewChecker("1.0.0")
+	checker.cacheDir = t.TempDir()
+	checker.githubAPIURL = server.URL
+
+	// No cache - should return nil without fetching
+	result := checker.CheckCached()
+	if result != nil {
+		t.Error("expected nil result when no cache")
+	}
+	if serverCalled.Load() {
+		t.Error("CheckCached should never make network requests")
 	}
 }

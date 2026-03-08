@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
@@ -25,6 +26,9 @@ const (
 	themeAuto  = "auto"
 	themeDark  = "dark"
 	themeLight = "light"
+
+	// versionDev is the version string used for development builds
+	versionDev = "dev"
 )
 
 var (
@@ -46,12 +50,21 @@ var (
 	clientSecret string
 	authEndpoint string
 
-	version = "dev"
+	version = versionDev
 	commit  = "none"
 	date    = "unknown"
 
 	// updateResultCh receives version check results from background goroutine.
 	updateResultCh <-chan *update.CheckResult
+
+	// updateNotificationPrinted tracks if the notification has already been shown.
+	// Protected by updateNotificationMu for thread safety.
+	updateNotificationPrinted bool
+	updateNotificationMu      sync.Mutex
+
+	// skipUpdateNotification is set by PersistentPreRunE for meta-commands
+	// (help, completion, etc.) where update notifications should be suppressed.
+	skipUpdateNotification bool
 )
 
 var rootCmd = &cobra.Command{
@@ -108,9 +121,14 @@ var rootCmd = &cobra.Command{
 		// - running meta-commands (help, completion, shell completion)
 		isCompletionCmd := cmd.Name() == "completion" ||
 			(cmd.Parent() != nil && cmd.Parent().Name() == "completion")
+		isMetaCmd := cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd
 		if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
-			progress.IsCI() || version == "dev" ||
-			cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd {
+			progress.IsCI() || version == versionDev || isMetaCmd {
+			// Set skipUpdateNotification for meta-commands so PrintUpdateNotification
+			// won't show notifications even via cache fast-path
+			if isMetaCmd {
+				skipUpdateNotification = true
+			}
 			return nil
 		}
 
@@ -175,24 +193,62 @@ func init() {
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.
-// This should be called before any os.Exit() call to ensure the notification is displayed.
+// This function is safe to call multiple times - it will only print once per session.
+// Call it at the END of commands (via PersistentPostRun or main.go fallback) to match
+// the industry standard pattern used by gh, npm, and other popular CLIs.
 func PrintUpdateNotification() {
-	if updateResultCh == nil {
+	// Check skip conditions first.
+	// skipUpdateNotification is set by PersistentPreRunE for meta-commands.
+	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
+		progress.IsCI() || version == versionDev || skipUpdateNotification {
 		return
 	}
 
-	// Wait briefly for cached results (100ms is imperceptible but enough for disk reads).
-	// Fresh network requests (10s timeout) won't complete in time -- that's fine,
-	// the notification will show on the next run once the cache is populated.
+	// Check if already printed - if so, return early.
+	updateNotificationMu.Lock()
+	if updateNotificationPrinted {
+		updateNotificationMu.Unlock()
+		return
+	}
+	updateNotificationMu.Unlock()
+
+	// Try synchronous cache check first (fast path when background goroutine hasn't completed).
+	checker := update.NewChecker(version)
+	if result := checker.CheckCached(); result != nil {
+		printUpdateNotificationOnce(result)
+		return
+	}
+
+	// Fallback: wait briefly for background check result (handles edge cases
+	// where cache was just populated by the goroutine).
+	if updateResultCh == nil {
+		return
+	}
 	select {
 	case result, ok := <-updateResultCh:
 		if ok && result != nil {
-			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
-			fmt.Fprint(os.Stderr, msg)
+			printUpdateNotificationOnce(result)
 		}
 	case <-time.After(100 * time.Millisecond):
-		// Check hasn't completed yet -- silently skip
+		// Check hasn't completed yet -- silently skip.
+		// The flag is NOT set here, so a subsequent call can still print
+		// if the background check completes by then.
 	}
+}
+
+// printUpdateNotificationOnce prints the notification and marks it as printed.
+// This ensures the flag is only set when we actually print something.
+func printUpdateNotificationOnce(result *update.CheckResult) {
+	updateNotificationMu.Lock()
+	if updateNotificationPrinted {
+		updateNotificationMu.Unlock()
+		return
+	}
+	updateNotificationPrinted = true
+	updateNotificationMu.Unlock()
+
+	msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
+	fmt.Fprint(os.Stderr, msg)
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

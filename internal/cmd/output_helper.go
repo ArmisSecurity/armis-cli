@@ -23,7 +23,7 @@ type OutputConfig struct {
 
 // Cleanup closes the output file (if any) and restores color state.
 // This method is idempotent and safe to call multiple times.
-// Call explicitly before os.Exit paths (like ExitIfNeeded) since defers won't run.
+// Called via defer in scan commands; the defer ensures cleanup on all exit paths.
 func (c *OutputConfig) Cleanup() {
 	if c.cleaned {
 		return

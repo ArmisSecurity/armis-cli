@@ -11,10 +11,15 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/update"
 )
 
-func TestSetVersion(t *testing.T) {
-	SetVersion("1.0.0", "abc123", "2024-01-01")
+// Test constants
+const (
+	testVersion = "1.0.0"
+)
 
-	if version != "1.0.0" {
+func TestSetVersion(t *testing.T) {
+	SetVersion(testVersion, "abc123", "2024-01-01")
+
+	if version != testVersion {
 		t.Errorf("Expected version '1.0.0', got %s", version)
 	}
 	if commit != "abc123" {
@@ -529,7 +534,7 @@ func TestRootPersistentPreRunE(t *testing.T) {
 		colorFlag = testColorAuto
 		themeFlag = themeAuto
 		noUpdateCheck = false
-		version = "1.0.0"
+		version = testVersion
 		updateResultCh = nil
 
 		// Set CI env var
@@ -569,10 +574,56 @@ func TestRootPersistentPreRunE(t *testing.T) {
 
 // TestPrintUpdateNotification tests the update notification printing.
 func TestPrintUpdateNotification(t *testing.T) {
-	t.Run("nil channel does not panic", func(t *testing.T) {
-		originalUpdateResultCh := updateResultCh
-		defer func() { updateResultCh = originalUpdateResultCh }()
+	// Helper to reset notification state for each test
+	resetNotificationState := func() {
+		updateNotificationMu.Lock()
+		updateNotificationPrinted = false
+		updateNotificationMu.Unlock()
+		skipUpdateNotification = false
+	}
 
+	// Helper to clear CI environment variables and isolate cache directory.
+	// This prevents tests from being affected by real cache files on disk.
+	setupTestEnv := func(t *testing.T) {
+		t.Helper()
+		// Clear CI env vars
+		ciVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "TRAVIS", "CONTINUOUS_INTEGRATION"}
+		for _, v := range ciVars {
+			if val := os.Getenv(v); val != "" {
+				_ = os.Unsetenv(v)
+				t.Cleanup(func() { _ = os.Setenv(v, val) })
+			}
+		}
+		// Isolate cache directory to prevent interference from real cache files
+		tempDir := t.TempDir()
+		if oldHome := os.Getenv("HOME"); oldHome != "" {
+			_ = os.Setenv("HOME", tempDir)
+			t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
+		}
+		if oldXDG := os.Getenv("XDG_CACHE_HOME"); oldXDG != "" {
+			_ = os.Setenv("XDG_CACHE_HOME", tempDir)
+			t.Cleanup(func() { _ = os.Setenv("XDG_CACHE_HOME", oldXDG) })
+		} else {
+			_ = os.Setenv("XDG_CACHE_HOME", tempDir)
+			t.Cleanup(func() { _ = os.Unsetenv("XDG_CACHE_HOME") })
+		}
+	}
+
+	t.Run("nil channel does not panic", func(t *testing.T) {
+		resetNotificationState()
+		setupTestEnv(t)
+		originalUpdateResultCh := updateResultCh
+		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
+		}()
+
+		// Set version to non-dev so skip conditions do not fire
+		version = testVersion
+		noUpdateCheck = false
 		updateResultCh = nil
 
 		// Should not panic
@@ -580,8 +631,20 @@ func TestPrintUpdateNotification(t *testing.T) {
 	})
 
 	t.Run("empty channel times out gracefully", func(t *testing.T) {
+		resetNotificationState()
+		setupTestEnv(t)
 		originalUpdateResultCh := updateResultCh
-		defer func() { updateResultCh = originalUpdateResultCh }()
+		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
+		}()
+
+		// Set version to non-dev so skip conditions do not fire
+		version = testVersion
+		noUpdateCheck = false
 
 		// Create an unbuffered channel with no value
 		updateResultCh = make(chan *update.CheckResult)
@@ -599,6 +662,75 @@ func TestPrintUpdateNotification(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 			t.Error("PrintUpdateNotification blocked indefinitely on empty channel")
 		}
+	})
+
+	t.Run("only prints once when called multiple times", func(t *testing.T) {
+		resetNotificationState()
+		setupTestEnv(t)
+		originalUpdateResultCh := updateResultCh
+		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
+		}()
+
+		// Set version to non-dev so skip conditions don't fire
+		version = testVersion
+		noUpdateCheck = false
+
+		// Create a buffered channel with a valid result that will trigger printing
+		ch := make(chan *update.CheckResult, 1)
+		ch <- &update.CheckResult{
+			CurrentVersion: testVersion,
+			LatestVersion:  "2.0.0",
+		}
+		close(ch)
+		updateResultCh = ch
+
+		// Call twice - should not panic or block, and should only print once
+		PrintUpdateNotification()
+		PrintUpdateNotification()
+
+		// Verify flag is set (because we sent a valid result)
+		updateNotificationMu.Lock()
+		if !updateNotificationPrinted {
+			t.Error("updateNotificationPrinted should be true after calling PrintUpdateNotification with valid result")
+		}
+		updateNotificationMu.Unlock()
+	})
+
+	t.Run("nil result does not set printed flag", func(t *testing.T) {
+		resetNotificationState()
+		setupTestEnv(t)
+		originalUpdateResultCh := updateResultCh
+		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
+		}()
+
+		// Set version to non-dev so skip conditions don't fire
+		version = testVersion
+		noUpdateCheck = false
+
+		// Create a buffered channel with nil result (no update available)
+		ch := make(chan *update.CheckResult, 1)
+		ch <- nil
+		close(ch)
+		updateResultCh = ch
+
+		PrintUpdateNotification()
+
+		// Verify flag is NOT set (nil result means nothing to print)
+		updateNotificationMu.Lock()
+		if updateNotificationPrinted {
+			t.Error("updateNotificationPrinted should be false when no update is available")
+		}
+		updateNotificationMu.Unlock()
 	})
 }
 
