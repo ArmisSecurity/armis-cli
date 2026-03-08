@@ -188,27 +188,24 @@ func init() {
 // Call it at the END of commands (via PersistentPostRun or main.go fallback) to match
 // the industry standard pattern used by gh, npm, and other popular CLIs.
 func PrintUpdateNotification() {
-	// Check skip conditions first, before setting the printed flag.
-	// This ensures the flag is only set when we actually intend to show a notification,
-	// making tests more predictable and the code easier to reason about.
+	// Check skip conditions first.
 	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
 		progress.IsCI() || version == versionDev {
 		return
 	}
 
+	// Check if already printed - if so, return early.
 	updateNotificationMu.Lock()
 	if updateNotificationPrinted {
 		updateNotificationMu.Unlock()
 		return
 	}
-	updateNotificationPrinted = true
 	updateNotificationMu.Unlock()
 
 	// Try synchronous cache check first (fast path when background goroutine hasn't completed).
 	checker := update.NewChecker(version)
 	if result := checker.CheckCached(); result != nil {
-		msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
-		fmt.Fprint(os.Stderr, msg)
+		printUpdateNotificationOnce(result)
 		return
 	}
 
@@ -220,12 +217,28 @@ func PrintUpdateNotification() {
 	select {
 	case result, ok := <-updateResultCh:
 		if ok && result != nil {
-			msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
-			fmt.Fprint(os.Stderr, msg)
+			printUpdateNotificationOnce(result)
 		}
 	case <-time.After(100 * time.Millisecond):
-		// Check hasn't completed yet -- silently skip
+		// Check hasn't completed yet -- silently skip.
+		// The flag is NOT set here, so a subsequent call can still print
+		// if the background check completes by then.
 	}
+}
+
+// printUpdateNotificationOnce prints the notification and marks it as printed.
+// This ensures the flag is only set when we actually print something.
+func printUpdateNotificationOnce(result *update.CheckResult) {
+	updateNotificationMu.Lock()
+	if updateNotificationPrinted {
+		updateNotificationMu.Unlock()
+		return
+	}
+	updateNotificationPrinted = true
+	updateNotificationMu.Unlock()
+
+	msg := update.FormatNotification(result.CurrentVersion, result.LatestVersion, output.IconDependency)
+	fmt.Fprint(os.Stderr, msg)
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

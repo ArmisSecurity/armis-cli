@@ -664,20 +664,55 @@ func TestPrintUpdateNotification(t *testing.T) {
 		version = testVersion
 		noUpdateCheck = false
 
-		// Create a buffered channel with a result
+		// Create a buffered channel with a valid result that will trigger printing
 		ch := make(chan *update.CheckResult, 1)
-		ch <- nil // Send nil result (won't print but exercises the path)
+		ch <- &update.CheckResult{
+			CurrentVersion: testVersion,
+			LatestVersion:  "2.0.0",
+		}
 		close(ch)
 		updateResultCh = ch
 
-		// Call twice - should not panic or block
+		// Call twice - should not panic or block, and should only print once
 		PrintUpdateNotification()
 		PrintUpdateNotification()
 
-		// Verify flag is set
+		// Verify flag is set (because we sent a valid result)
 		updateNotificationMu.Lock()
 		if !updateNotificationPrinted {
-			t.Error("updateNotificationPrinted should be true after calling PrintUpdateNotification")
+			t.Error("updateNotificationPrinted should be true after calling PrintUpdateNotification with valid result")
+		}
+		updateNotificationMu.Unlock()
+	})
+
+	t.Run("nil result does not set printed flag", func(t *testing.T) {
+		resetNotificationState()
+		clearCIEnvVars(t)
+		originalUpdateResultCh := updateResultCh
+		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
+		defer func() {
+			updateResultCh = originalUpdateResultCh
+			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
+		}()
+
+		// Set version to non-dev so skip conditions don't fire
+		version = testVersion
+		noUpdateCheck = false
+
+		// Create a buffered channel with nil result (no update available)
+		ch := make(chan *update.CheckResult, 1)
+		ch <- nil
+		close(ch)
+		updateResultCh = ch
+
+		PrintUpdateNotification()
+
+		// Verify flag is NOT set (nil result means nothing to print)
+		updateNotificationMu.Lock()
+		if updateNotificationPrinted {
+			t.Error("updateNotificationPrinted should be false when no update is available")
 		}
 		updateNotificationMu.Unlock()
 	})
