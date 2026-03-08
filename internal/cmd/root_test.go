@@ -13,7 +13,7 @@ import (
 
 // Test constants
 const (
-	testVersion      = "1.0.0"
+	testVersion = "1.0.0"
 )
 
 func TestSetVersion(t *testing.T) {
@@ -581,17 +581,33 @@ func TestPrintUpdateNotification(t *testing.T) {
 		updateNotificationMu.Unlock()
 	}
 
+	// Helper to clear CI environment variables that would cause skip conditions
+	clearCIEnvVars := func(t *testing.T) {
+		t.Helper()
+		ciVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "TRAVIS", "CONTINUOUS_INTEGRATION"}
+		for _, v := range ciVars {
+			if val := os.Getenv(v); val != "" {
+				_ = os.Unsetenv(v)
+				t.Cleanup(func() { _ = os.Setenv(v, val) })
+			}
+		}
+	}
+
 	t.Run("nil channel does not panic", func(t *testing.T) {
 		resetNotificationState()
+		clearCIEnvVars(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
 		defer func() {
 			updateResultCh = originalUpdateResultCh
 			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
 		}()
 
 		// Set version to non-dev so skip conditions do not fire
 		version = testVersion
+		noUpdateCheck = false
 		updateResultCh = nil
 
 		// Should not panic
@@ -600,15 +616,19 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 	t.Run("empty channel times out gracefully", func(t *testing.T) {
 		resetNotificationState()
+		clearCIEnvVars(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
 		defer func() {
 			updateResultCh = originalUpdateResultCh
 			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
 		}()
 
 		// Set version to non-dev so skip conditions do not fire
 		version = testVersion
+		noUpdateCheck = false
 
 		// Create an unbuffered channel with no value
 		updateResultCh = make(chan *update.CheckResult)
@@ -630,15 +650,19 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 	t.Run("only prints once when called multiple times", func(t *testing.T) {
 		resetNotificationState()
+		clearCIEnvVars(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
+		originalNoUpdateCheck := noUpdateCheck
 		defer func() {
 			updateResultCh = originalUpdateResultCh
 			version = originalVersion
+			noUpdateCheck = originalNoUpdateCheck
 		}()
 
 		// Set version to non-dev so skip conditions don't fire
 		version = testVersion
+		noUpdateCheck = false
 
 		// Create a buffered channel with a result
 		ch := make(chan *update.CheckResult, 1)
