@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -557,9 +558,9 @@ func TestChecker_CheckCached(t *testing.T) {
 
 func TestChecker_CheckCachedDoesNotFetch(t *testing.T) {
 	// Verify that CheckCached never makes network requests
-	serverCalled := false
+	var serverCalled atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serverCalled = true
+		serverCalled.Store(true)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"tag_name": "v2.0.0"}`))
 	}))
@@ -574,7 +575,7 @@ func TestChecker_CheckCachedDoesNotFetch(t *testing.T) {
 	if result != nil {
 		t.Error("expected nil result when no cache")
 	}
-	if serverCalled {
+	if serverCalled.Load() {
 		t.Error("CheckCached should never make network requests")
 	}
 }

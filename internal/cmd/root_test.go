@@ -579,11 +579,14 @@ func TestPrintUpdateNotification(t *testing.T) {
 		updateNotificationMu.Lock()
 		updateNotificationPrinted = false
 		updateNotificationMu.Unlock()
+		skipUpdateNotification = false
 	}
 
-	// Helper to clear CI environment variables that would cause skip conditions
-	clearCIEnvVars := func(t *testing.T) {
+	// Helper to clear CI environment variables and isolate cache directory.
+	// This prevents tests from being affected by real cache files on disk.
+	setupTestEnv := func(t *testing.T) {
 		t.Helper()
+		// Clear CI env vars
 		ciVars := []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "TRAVIS", "CONTINUOUS_INTEGRATION"}
 		for _, v := range ciVars {
 			if val := os.Getenv(v); val != "" {
@@ -591,11 +594,24 @@ func TestPrintUpdateNotification(t *testing.T) {
 				t.Cleanup(func() { _ = os.Setenv(v, val) })
 			}
 		}
+		// Isolate cache directory to prevent interference from real cache files
+		tempDir := t.TempDir()
+		if oldHome := os.Getenv("HOME"); oldHome != "" {
+			_ = os.Setenv("HOME", tempDir)
+			t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
+		}
+		if oldXDG := os.Getenv("XDG_CACHE_HOME"); oldXDG != "" {
+			_ = os.Setenv("XDG_CACHE_HOME", tempDir)
+			t.Cleanup(func() { _ = os.Setenv("XDG_CACHE_HOME", oldXDG) })
+		} else {
+			_ = os.Setenv("XDG_CACHE_HOME", tempDir)
+			t.Cleanup(func() { _ = os.Unsetenv("XDG_CACHE_HOME") })
+		}
 	}
 
 	t.Run("nil channel does not panic", func(t *testing.T) {
 		resetNotificationState()
-		clearCIEnvVars(t)
+		setupTestEnv(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
 		originalNoUpdateCheck := noUpdateCheck
@@ -616,7 +632,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 	t.Run("empty channel times out gracefully", func(t *testing.T) {
 		resetNotificationState()
-		clearCIEnvVars(t)
+		setupTestEnv(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
 		originalNoUpdateCheck := noUpdateCheck
@@ -650,7 +666,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 	t.Run("only prints once when called multiple times", func(t *testing.T) {
 		resetNotificationState()
-		clearCIEnvVars(t)
+		setupTestEnv(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
 		originalNoUpdateCheck := noUpdateCheck
@@ -687,7 +703,7 @@ func TestPrintUpdateNotification(t *testing.T) {
 
 	t.Run("nil result does not set printed flag", func(t *testing.T) {
 		resetNotificationState()
-		clearCIEnvVars(t)
+		setupTestEnv(t)
 		originalUpdateResultCh := updateResultCh
 		originalVersion := version
 		originalNoUpdateCheck := noUpdateCheck

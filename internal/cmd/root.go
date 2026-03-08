@@ -61,6 +61,10 @@ var (
 	// Protected by updateNotificationMu for thread safety.
 	updateNotificationPrinted bool
 	updateNotificationMu      sync.Mutex
+
+	// skipUpdateNotification is set by PersistentPreRunE for meta-commands
+	// (help, completion, etc.) where update notifications should be suppressed.
+	skipUpdateNotification bool
 )
 
 var rootCmd = &cobra.Command{
@@ -117,9 +121,14 @@ var rootCmd = &cobra.Command{
 		// - running meta-commands (help, completion, shell completion)
 		isCompletionCmd := cmd.Name() == "completion" ||
 			(cmd.Parent() != nil && cmd.Parent().Name() == "completion")
+		isMetaCmd := cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd
 		if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
-			progress.IsCI() || version == versionDev ||
-			cmd.Name() == "help" || cmd.Name() == "__complete" || isCompletionCmd {
+			progress.IsCI() || version == versionDev || isMetaCmd {
+			// Set skipUpdateNotification for meta-commands so PrintUpdateNotification
+			// won't show notifications even via cache fast-path
+			if isMetaCmd {
+				skipUpdateNotification = true
+			}
 			return nil
 		}
 
@@ -189,8 +198,9 @@ func init() {
 // the industry standard pattern used by gh, npm, and other popular CLIs.
 func PrintUpdateNotification() {
 	// Check skip conditions first.
+	// skipUpdateNotification is set by PersistentPreRunE for meta-commands.
 	if noUpdateCheck || os.Getenv("ARMIS_NO_UPDATE_CHECK") != "" ||
-		progress.IsCI() || version == versionDev {
+		progress.IsCI() || version == versionDev || skipUpdateNotification {
 		return
 	}
 
