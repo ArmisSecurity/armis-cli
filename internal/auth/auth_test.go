@@ -202,7 +202,7 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetAuthorizationHeader failed: %v", err)
 		}
-		// Raw JWT (no Bearer prefix)
+		// Raw JWT token (no Bearer prefix) - backend expects raw JWT per API contract
 		if header != mockJWT {
 			t.Errorf("Unexpected auth header: got %q, want %q", header, mockJWT)
 		}

@@ -108,7 +108,7 @@ func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, erro
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	// Raw JWT token (no Bearer prefix)
+	// Raw JWT token (no Bearer prefix) - backend expects raw JWT per API contract
 	return p.credentials.Token, nil
 }
 
