@@ -93,7 +93,7 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 }
 
 // GetAuthorizationHeader returns the Authorization header value.
-// For JWT auth: "Bearer <token>" per RFC 6750
+// For JWT auth: the raw JWT token (no "Bearer" prefix - backend expects raw JWT)
 // For Basic auth: "Basic <token>" per RFC 7617
 func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, error) {
 	if p.isLegacy {
@@ -108,8 +108,8 @@ func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, erro
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	// #nosec G101 -- Bearer auth scheme requires token in header per RFC 6750
-	return "Bearer " + p.credentials.Token, nil
+	// Raw JWT token (no Bearer prefix) - backend expects raw JWT per API contract
+	return p.credentials.Token, nil
 }
 
 // GetTenantID returns the tenant ID for API requests.
