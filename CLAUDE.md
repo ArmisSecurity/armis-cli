@@ -85,6 +85,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `ARMIS_CLIENT_SECRET` - Client secret for JWT authentication
 - `ARMIS_API_TOKEN` - API token for Basic authentication (fallback)
 - `ARMIS_TENANT_ID` - Tenant identifier (required only with Basic auth; JWT extracts it from token)
+- `ARMIS_API_URL` - Override base URL for Armis API (advanced; defaults based on --dev flag)
 - `ARMIS_FORMAT` - Default output format
 - `ARMIS_PAGE_LIMIT` - Results pagination size
 - `ARMIS_THEME` - Terminal background theme: auto, dark, light (default: auto)

@@ -296,6 +296,7 @@ armis-cli scan repo . \
 | `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
 | `ARMIS_API_TOKEN` | API token for Basic authentication |
 | `ARMIS_TENANT_ID` | Tenant identifier (required for Basic auth only) |
+| `ARMIS_API_URL` | Override base URL for Armis API and authentication (advanced) |
 
 **General:**
 

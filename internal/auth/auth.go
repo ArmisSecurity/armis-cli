@@ -48,7 +48,7 @@ type AuthProvider struct {
 }
 
 // NewAuthProvider creates an AuthProvider from configuration.
-// If ClientID and ClientSecret are set, uses JWT auth with the specified endpoint.
+// If ClientID and ClientSecret are set, uses JWT auth with the specified base URL.
 // Otherwise falls back to legacy Basic auth with Token.
 func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 	p := &AuthProvider{
