@@ -90,9 +90,9 @@ func TestRunAuth(t *testing.T) {
 				token = origToken
 				tenantID = origTenantID
 				if origAPIURL == "" {
-					os.Unsetenv("ARMIS_API_URL")
+					_ = os.Unsetenv("ARMIS_API_URL")
 				} else {
-					os.Setenv("ARMIS_API_URL", origAPIURL)
+					_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 				}
 			})
 
@@ -128,7 +128,7 @@ func TestRunAuth(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(resp)
 				}))
 				defer server.Close()
-				os.Setenv("ARMIS_API_URL", server.URL)
+				_ = os.Setenv("ARMIS_API_URL", server.URL)
 			}
 
 			// Create a minimal cobra command with context
@@ -170,9 +170,9 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 		token = origToken
 		tenantID = origTenantID
 		if origAPIURL == "" {
-			os.Unsetenv("ARMIS_API_URL")
+			_ = os.Unsetenv("ARMIS_API_URL")
 		} else {
-			os.Setenv("ARMIS_API_URL", origAPIURL)
+			_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 		}
 	})
 
@@ -183,7 +183,7 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 	// Set valid credentials but invalid endpoint
 	clientID = "test-client"
 	clientSecret = "test-secret"
-	os.Setenv("ARMIS_API_URL", "http://localhost:99999") // Invalid port
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:99999") // Invalid port
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
