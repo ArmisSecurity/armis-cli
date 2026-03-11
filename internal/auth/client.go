@@ -20,34 +20,34 @@ const (
 
 // AuthClient handles authentication with an external auth service.
 type AuthClient struct {
-	endpoint   string
+	baseURL    string
 	httpClient *http.Client
 	debug      bool
 }
 
-// NewAuthClient creates a new authentication client for the given endpoint.
-// The endpoint must be a valid HTTPS URL (HTTP allowed only for localhost).
+// NewAuthClient creates a new authentication client for the given base URL.
+// The base URL must be a valid HTTPS URL (HTTP allowed only for localhost).
 // If debug is true, authentication failures will log detailed error information.
-func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
-	if endpoint == "" {
-		return nil, fmt.Errorf("auth endpoint is required")
+func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("API base URL is required for authentication")
 	}
 
-	parsedURL, err := url.Parse(endpoint)
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid endpoint URL: %w", err)
+		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 
 	// Require HTTPS for non-localhost
 	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost endpoint")
+			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
 		}
 	}
 
 	return &AuthClient{
-		endpoint: strings.TrimSuffix(endpoint, "/"),
+		baseURL: strings.TrimSuffix(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -68,7 +68,7 @@ type authResponse struct {
 }
 
 // Authenticate exchanges client credentials for a JWT token.
-// Calls POST /api/v1/authenticate with client_id and client_secret.
+// Calls POST /api/v1/auth/token with client_id and client_secret.
 func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret string) (string, error) {
 	reqBody := authRequest{
 		ClientID:     clientID,
@@ -80,7 +80,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	authEndpoint := c.endpoint + "/api/v1/authenticate"
+	authEndpoint := c.baseURL + "/api/v1/auth/token"
 	req, err := http.NewRequestWithContext(ctx, "POST", authEndpoint, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)

@@ -49,6 +49,23 @@ func createMockJWTWithFloatExp(customerID string, exp float64) string {
 	return header + "." + payload + "." + signature
 }
 
+// createMockJWTWithRegion creates a mock JWT token with region claim.
+func createMockJWTWithRegion(customerID string, exp int64, region string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	claims := map[string]interface{}{
+		"customer_id": customerID,
+		"exp":         exp,
+		"region":      region,
+	}
+	claimsJSON, _ := json.Marshal(claims)
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	signature := base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
+
+	return header + "." + payload + "." + signature
+}
+
 func TestNewAuthProvider_LegacyAuth(t *testing.T) {
 	t.Run("succeeds with token and tenant ID", func(t *testing.T) {
 		config := AuthConfig{
@@ -171,7 +188,7 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		mockJWT := createMockJWT("tenant-from-jwt", time.Now().Add(1*time.Hour).Unix())
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/v1/authenticate" {
+			if r.URL.Path != "/api/v1/auth/token" {
 				t.Errorf("Unexpected path: %s", r.URL.Path)
 			}
 			if r.Method != "POST" {
@@ -186,7 +203,7 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		config := AuthConfig{
 			ClientID:     "test-client",
 			ClientSecret: "test-secret",
-			AuthEndpoint: server.URL,
+			BaseURL:      server.URL,
 		}
 
 		p, err := NewAuthProvider(config)
@@ -234,7 +251,7 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		config := AuthConfig{
 			ClientID:     "bad-client",
 			ClientSecret: "bad-secret",
-			AuthEndpoint: server.URL,
+			BaseURL:      server.URL,
 		}
 
 		_, err := NewAuthProvider(config)
@@ -246,19 +263,19 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("fails without auth endpoint", func(t *testing.T) {
+	t.Run("fails without base URL", func(t *testing.T) {
 		config := AuthConfig{
 			ClientID:     "test-client",
 			ClientSecret: "test-secret",
-			// No AuthEndpoint
+			// No BaseURL
 		}
 
 		_, err := NewAuthProvider(config)
 		if err == nil {
-			t.Error("Expected error for missing auth endpoint")
+			t.Error("Expected error for missing base URL")
 		}
-		if !strings.Contains(err.Error(), "--auth-endpoint is required") {
-			t.Errorf("Expected auth endpoint required error, got: %v", err)
+		if !strings.Contains(err.Error(), "base URL is required") {
+			t.Errorf("Expected base URL required error, got: %v", err)
 		}
 	})
 
@@ -275,7 +292,7 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		config := AuthConfig{
 			ClientID:     "test-client",
 			ClientSecret: "test-secret",
-			AuthEndpoint: server.URL,
+			BaseURL:      server.URL,
 			Token:        "basic-token",
 			TenantID:     "basic-tenant",
 		}
@@ -316,7 +333,7 @@ func TestAuthProvider_RefreshIfNeeded(t *testing.T) {
 	config := AuthConfig{
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		AuthEndpoint: server.URL,
+		BaseURL:      server.URL,
 	}
 
 	p, err := NewAuthProvider(config)
@@ -353,7 +370,7 @@ func TestAuthProvider_NoRefreshWhenValid(t *testing.T) {
 	config := AuthConfig{
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		AuthEndpoint: server.URL,
+		BaseURL:      server.URL,
 	}
 
 	p, err := NewAuthProvider(config)
@@ -390,7 +407,7 @@ func TestAuthProvider_ThreadSafe(t *testing.T) {
 	config := AuthConfig{
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		AuthEndpoint: server.URL,
+		BaseURL:      server.URL,
 	}
 
 	p, err := NewAuthProvider(config)
@@ -515,6 +532,113 @@ func TestParseJWTClaims(t *testing.T) {
 			t.Error("Expected error for invalid base64")
 		}
 	})
+
+	t.Run("valid JWT with region", func(t *testing.T) {
+		token := createMockJWTWithRegion("cust-789", 1700000000, "us1")
+
+		result, err := parseJWTClaims(token)
+		if err != nil {
+			t.Fatalf("parseJWTClaims failed: %v", err)
+		}
+
+		if result.CustomerID != "cust-789" {
+			t.Errorf("Expected customer_id 'cust-789', got %q", result.CustomerID)
+		}
+		if result.Region != "us1" {
+			t.Errorf("Expected region 'us1', got %q", result.Region)
+		}
+	})
+
+	t.Run("valid JWT without region (backward compatibility)", func(t *testing.T) {
+		// Tokens without region should still parse successfully
+		token := createMockJWT("cust-legacy", 1700000000)
+
+		result, err := parseJWTClaims(token)
+		if err != nil {
+			t.Fatalf("parseJWTClaims failed: %v", err)
+		}
+
+		if result.CustomerID != "cust-legacy" {
+			t.Errorf("Expected customer_id 'cust-legacy', got %q", result.CustomerID)
+		}
+		if result.Region != "" {
+			t.Errorf("Expected empty region for legacy token, got %q", result.Region)
+		}
+	})
+}
+
+func TestGetRegion(t *testing.T) {
+	t.Run("returns empty string for legacy Basic auth", func(t *testing.T) {
+		p, err := NewAuthProvider(AuthConfig{
+			Token:    "test-token",
+			TenantID: "tenant-123",
+		})
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		region, err := p.GetRegion(context.Background())
+		if err != nil {
+			t.Fatalf("GetRegion failed: %v", err)
+		}
+		if region != "" {
+			t.Errorf("Expected empty region for Basic auth, got %q", region)
+		}
+	})
+
+	t.Run("returns region for JWT auth", func(t *testing.T) {
+		mockJWT := createMockJWTWithRegion("tenant-123", time.Now().Add(1*time.Hour).Unix(), "eu1")
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
+		}))
+		defer server.Close()
+
+		p, err := NewAuthProvider(AuthConfig{
+			ClientID:     "test-client",
+			ClientSecret: "test-secret",
+			BaseURL:      server.URL,
+		})
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		region, err := p.GetRegion(context.Background())
+		if err != nil {
+			t.Fatalf("GetRegion failed: %v", err)
+		}
+		if region != "eu1" {
+			t.Errorf("Expected region 'eu1', got %q", region)
+		}
+	})
+
+	t.Run("returns empty region for JWT without region claim", func(t *testing.T) {
+		mockJWT := createMockJWT("tenant-123", time.Now().Add(1*time.Hour).Unix())
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
+		}))
+		defer server.Close()
+
+		p, err := NewAuthProvider(AuthConfig{
+			ClientID:     "test-client",
+			ClientSecret: "test-secret",
+			BaseURL:      server.URL,
+		})
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		region, err := p.GetRegion(context.Background())
+		if err != nil {
+			t.Fatalf("GetRegion failed: %v", err)
+		}
+		if region != "" {
+			t.Errorf("Expected empty region for token without region, got %q", region)
+		}
+	})
 }
 
 func TestIsLegacy(t *testing.T) {
@@ -574,13 +698,13 @@ func TestNewAuthClient(t *testing.T) {
 		}
 	})
 
-	t.Run("fails with empty endpoint", func(t *testing.T) {
+	t.Run("fails with empty base URL", func(t *testing.T) {
 		_, err := NewAuthClient("", false)
 		if err == nil {
-			t.Error("Expected error for empty endpoint")
+			t.Error("Expected error for empty base URL")
 		}
-		if !strings.Contains(err.Error(), "auth endpoint is required") {
-			t.Errorf("Expected endpoint required error, got: %v", err)
+		if !strings.Contains(err.Error(), "API base URL is required") {
+			t.Errorf("Expected base URL required error, got: %v", err)
 		}
 	})
 
@@ -589,7 +713,7 @@ func TestNewAuthClient(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for invalid URL")
 		}
-		if !strings.Contains(err.Error(), "invalid endpoint URL") {
+		if !strings.Contains(err.Error(), "invalid base URL") {
 			t.Errorf("Expected invalid URL error, got: %v", err)
 		}
 	})
@@ -615,7 +739,7 @@ func TestAuthProvider_DoubleCheckedLocking(t *testing.T) {
 	config := AuthConfig{
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		AuthEndpoint: server.URL,
+		BaseURL:      server.URL,
 	}
 
 	p, err := NewAuthProvider(config)
@@ -677,7 +801,7 @@ func TestAuthProvider_ContextCancellation(t *testing.T) {
 		config: AuthConfig{
 			ClientID:     "test-client",
 			ClientSecret: "test-secret",
-			AuthEndpoint: slowServer.URL,
+			BaseURL:      slowServer.URL,
 		},
 		authClient: authClient,
 		credentials: &JWTCredentials{

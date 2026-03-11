@@ -18,7 +18,7 @@ type AuthConfig struct {
 	// JWT auth credentials
 	ClientID     string
 	ClientSecret string //nolint:gosec // G117: This is a config field name, not a secret value
-	AuthEndpoint string // Full URL to the authentication service
+	BaseURL      string // Moose API base URL (dev or prod)
 
 	// Legacy Basic auth
 	Token    string
@@ -33,6 +33,7 @@ type JWTCredentials struct {
 	Token     string
 	TenantID  string // Extracted from customer_id claim
 	ExpiresAt time.Time
+	Region    string // Deployment region (e.g., "us1", "eu1", "au1")
 }
 
 // AuthProvider manages authentication tokens with automatic refresh.
@@ -64,12 +65,12 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 
 	// Determine auth mode: JWT credentials take priority
 	if config.ClientID != "" && config.ClientSecret != "" {
-		// JWT auth
+		// JWT auth via moose
 		p.isLegacy = false
-		if config.AuthEndpoint == "" {
-			return nil, fmt.Errorf("--auth-endpoint is required when using client credentials")
+		if config.BaseURL == "" {
+			return nil, fmt.Errorf("base URL is required for JWT authentication")
 		}
-		authClient, err := NewAuthClient(config.AuthEndpoint, config.Debug)
+		authClient, err := NewAuthClient(config.BaseURL, config.Debug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create auth client: %w", err)
 		}
@@ -129,6 +130,23 @@ func (p *AuthProvider) GetTenantID(ctx context.Context) (string, error) {
 	return p.credentials.TenantID, nil
 }
 
+// GetRegion returns the deployment region from the JWT token.
+// For JWT auth: extracted from region claim (may be empty for older tokens)
+// For Basic auth: returns empty string (no region available)
+func (p *AuthProvider) GetRegion(ctx context.Context) (string, error) {
+	if p.isLegacy {
+		return "", nil // Legacy auth doesn't have region
+	}
+
+	if err := p.refreshIfNeeded(ctx); err != nil {
+		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.credentials.Region, nil
+}
+
 // IsLegacy returns true if using legacy Basic auth.
 func (p *AuthProvider) IsLegacy() bool {
 	return p.isLegacy
@@ -184,6 +202,7 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		Token:     token,
 		TenantID:  claims.CustomerID,
 		ExpiresAt: claims.ExpiresAt,
+		Region:    claims.Region,
 	}
 
 	return nil
@@ -207,6 +226,7 @@ func (p *AuthProvider) refreshIfNeeded(ctx context.Context) error {
 type jwtClaims struct {
 	CustomerID string // maps to tenant_id
 	ExpiresAt  time.Time
+	Region     string // deployment region (optional)
 }
 
 // parseJWTClaims extracts claims from a JWT without signature verification.
@@ -233,7 +253,8 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 
 	var data struct {
 		CustomerID string  `json:"customer_id"`
-		Exp        float64 `json:"exp"` // float64 to handle servers that return fractional timestamps
+		Exp        float64 `json:"exp"`    // float64 to handle servers that return fractional timestamps
+		Region     string  `json:"region"` // optional deployment region
 	}
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse JWT payload: %w", err)
@@ -252,5 +273,6 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 	return &jwtClaims{
 		CustomerID: data.CustomerID,
 		ExpiresAt:  time.Unix(expSec, 0),
+		Region:     data.Region, // may be empty for backward compatibility
 	}, nil
 }

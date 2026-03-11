@@ -48,7 +48,6 @@ var (
 	// JWT authentication
 	clientID     string
 	clientSecret string
-	authEndpoint string
 
 	version = versionDev
 	commit  = "none"
@@ -163,7 +162,6 @@ func init() {
 	// JWT authentication
 	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
 	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&authEndpoint, "auth-endpoint", os.Getenv("ARMIS_AUTH_ENDPOINT"), "Authentication service endpoint URL (env: ARMIS_AUTH_ENDPOINT)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
@@ -266,12 +264,12 @@ func getAPIBaseURL() string {
 }
 
 // getAuthProvider creates an AuthProvider based on the provided credentials.
-// Priority: JWT auth (--client-id, --client-secret, --auth-endpoint) > Basic auth (--token)
+// Priority: JWT auth (--client-id, --client-secret) > Basic auth (--token)
 func getAuthProvider() (*auth.AuthProvider, error) {
 	return auth.NewAuthProvider(auth.AuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		AuthEndpoint: authEndpoint,
+		BaseURL:      getAPIBaseURL(),
 		Token:        token,
 		TenantID:     tenantID,
 		Debug:        debug,
