@@ -4,6 +4,7 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -36,9 +37,20 @@ func GetCacheDir() string {
 
 // GetCacheFilePath returns the validated path to a cache file.
 // Returns empty string if the path cannot be determined or validated.
+// The filename must be a simple filename (no path separators or absolute paths).
 func GetCacheFilePath(filename string) string {
 	cacheDir := GetCacheDir()
 	if cacheDir == "" {
+		return ""
+	}
+
+	// Reject absolute paths - filepath.Join would discard cacheDir (CWE-22)
+	if filepath.IsAbs(filename) {
+		return ""
+	}
+
+	// Reject path separators - filename should be a simple name like "cache.json"
+	if strings.ContainsAny(filename, `/\`) {
 		return ""
 	}
 
@@ -47,6 +59,11 @@ func GetCacheFilePath(filename string) string {
 	// Re-validate the full path (filename could contain traversal attempts)
 	sanitized, err := SanitizePath(filePath)
 	if err != nil {
+		return ""
+	}
+
+	// Final containment check: ensure result is within cache directory
+	if !strings.HasPrefix(sanitized, cacheDir) {
 		return ""
 	}
 

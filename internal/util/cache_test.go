@@ -64,29 +64,39 @@ func TestGetCacheFilePath(t *testing.T) {
 
 func TestGetCacheFilePath_SafeFilenames(t *testing.T) {
 	// This function is designed to be called with safe, constant filenames.
-	// The security boundary is at the caller level - callers should only pass
-	// known-safe filenames like "region-cache.json" or "update-check.json".
-	//
-	// Note: filepath.Join handles absolute paths by stripping the leading slash,
-	// so even malicious filenames like "/etc/passwd" become "cache-dir/etc/passwd"
-	// which stays within the cache directory.
+	// The security boundary is enforced by rejecting absolute paths and
+	// path separators in the filename parameter.
 
 	tests := []struct {
 		name         string
 		filename     string
 		wantContains string
+		wantEmpty    bool
 	}{
-		{"simple json file", "test.json", "test.json"},
-		{"hyphenated name", "region-cache.json", "region-cache.json"},
-		// On Unix: /etc/passwd -> etc/passwd; on Windows: /etc/passwd -> etc\passwd
-		{"absolute path becomes relative", "/etc/passwd", filepath.Join("etc", "passwd")},
+		{"simple json file", "test.json", "test.json", false},
+		{"hyphenated name", "region-cache.json", "region-cache.json", false},
+		// Absolute paths are rejected (CWE-22: filepath.Join would discard cacheDir)
+		{"absolute path rejected", "/etc/passwd", "", true},
+		// Path separators are rejected to ensure filename is a simple name
+		{"path with forward slash rejected", "foo/bar.json", "", true},
+		{"path with backslash rejected", "foo\\bar.json", "", true},
+		// Traversal attempts are rejected by SanitizePath
+		{"traversal rejected", "..\\secret.txt", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := GetCacheFilePath(tt.filename)
+
+			if tt.wantEmpty {
+				if path != "" {
+					t.Errorf("GetCacheFilePath(%q) = %q, want empty (rejected)", tt.filename, path)
+				}
+				return
+			}
+
 			if path == "" {
-				t.Errorf("GetCacheFilePath(%q) returned empty", tt.filename)
+				t.Errorf("GetCacheFilePath(%q) returned empty, want non-empty", tt.filename)
 				return
 			}
 			if !strings.Contains(path, tt.wantContains) {

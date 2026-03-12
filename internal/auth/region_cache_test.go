@@ -263,18 +263,38 @@ func TestRegionCache_TableDriven(t *testing.T) {
 
 // TestPackageLevelFunctions verifies the backward-compatible package functions work.
 // Note: These use the global defaultCache, which shares state across tests if run in parallel.
-// We test them in isolation by ensuring the cache is cleared.
+// We test them in isolation by temporarily replacing defaultCache with a test instance.
 func TestPackageLevelFunctions(t *testing.T) {
-	// This test uses the real cache directory, so we just verify the functions
-	// don't panic and maintain the basic contract.
+	// Use a temporary cache directory so we don't modify the user's real cache
+	origCache := defaultCache
+	defaultCache = &RegionCache{cacheDir: t.TempDir()}
+	t.Cleanup(func() {
+		defaultCache = origCache
+	})
 
-	// Clear any existing cache
+	// Clear any existing cache in the temporary directory
 	clearCachedRegion()
 
 	// Load from empty should return false
 	region, ok := loadCachedRegion("test-client-pkg-level")
 	if ok {
-		// Cache might have leftover data from other tests; just verify contract
-		t.Logf("Unexpected cache hit, region=%q (may be leftover from other tests)", region)
+		t.Errorf("Expected cache miss from empty cache, got region=%q", region)
+	}
+
+	// Save and load round-trip
+	saveCachedRegion("test-client-pkg-level", testRegionUS1)
+	region, ok = loadCachedRegion("test-client-pkg-level")
+	if !ok {
+		t.Error("Expected cache hit after save")
+	}
+	if region != testRegionUS1 {
+		t.Errorf("Expected region %q, got %q", testRegionUS1, region)
+	}
+
+	// Clear should remove the entry
+	clearCachedRegion()
+	_, ok = loadCachedRegion("test-client-pkg-level")
+	if ok {
+		t.Error("Expected cache miss after clear")
 	}
 }
