@@ -216,11 +216,8 @@ func (c *Client) IsDebug() bool {
 // request URL uses HTTPS (or localhost for testing). This prevents credential
 // exposure over insecure channels.
 //
-// For JWT auth: sends raw JWT token (no "Bearer" prefix)
+// For JWT auth: sends "Bearer <token>" per RFC 6750
 // For Basic auth: sends "Basic <token>" per RFC 7617
-//
-// NOTE: The backend expects raw JWT tokens without the "Bearer" prefix.
-// This is unconventional but matches the backend API contract.
 //
 // SECURITY NOTE: The localhost/127.0.0.1 exception is intentional for local
 // development and testing environments where HTTPS certificates are not available.

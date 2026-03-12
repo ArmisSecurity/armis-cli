@@ -219,9 +219,10 @@ func TestNewAuthProvider_JWTAuth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetAuthorizationHeader failed: %v", err)
 		}
-		// Raw JWT token (no Bearer prefix) - backend expects raw JWT per API contract
-		if header != mockJWT {
-			t.Errorf("Unexpected auth header: got %q, want %q", header, mockJWT)
+		// Bearer token per RFC 6750
+		expectedHeader := "Bearer " + mockJWT
+		if header != expectedHeader {
+			t.Errorf("Unexpected auth header: got %q, want %q", header, expectedHeader)
 		}
 
 		tid, err := p.GetTenantID(context.Background())
@@ -897,8 +898,9 @@ func TestAuthProvider_CachedRegionRetryOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuthorizationHeader failed: %v", err)
 	}
-	if header != mockJWT {
-		t.Errorf("Expected JWT token, got %q", header)
+	expectedHeader := "Bearer " + mockJWT
+	if header != expectedHeader {
+		t.Errorf("Expected Bearer JWT token, got %q", header)
 	}
 
 	// Verify cache was updated with correct region
