@@ -44,6 +44,13 @@ func GetCacheFilePath(filename string) string {
 		return ""
 	}
 
+	// Reject empty, whitespace-only, ".", and ".." filenames
+	// These would result in returning cacheDir itself, not a file path
+	filename = strings.TrimSpace(filename)
+	if filename == "" || filename == "." || filename == ".." {
+		return ""
+	}
+
 	// Reject absolute paths - filepath.Join would discard cacheDir (CWE-22)
 	if filepath.IsAbs(filename) {
 		return ""
@@ -62,8 +69,13 @@ func GetCacheFilePath(filename string) string {
 		return ""
 	}
 
-	// Final containment check: ensure result is within cache directory
-	if !strings.HasPrefix(sanitized, cacheDir) {
+	// Final containment check: ensure result is within cache directory using robust path-based check
+	// Using filepath.Rel is more robust than strings.HasPrefix (handles case-insensitivity, path separators)
+	rel, err := filepath.Rel(cacheDir, sanitized)
+	if err != nil {
+		return ""
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return ""
 	}
 

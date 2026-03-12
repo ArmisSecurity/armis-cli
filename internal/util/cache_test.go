@@ -75,6 +75,11 @@ func TestGetCacheFilePath_SafeFilenames(t *testing.T) {
 	}{
 		{"simple json file", "test.json", "test.json", false},
 		{"hyphenated name", "region-cache.json", "region-cache.json", false},
+		// Empty and special filenames are rejected (would return directory path)
+		{"empty filename rejected", "", "", true},
+		{"whitespace only rejected", "   ", "", true},
+		{"dot rejected", ".", "", true},
+		{"double dot rejected", "..", "", true},
 		// Absolute paths are rejected (CWE-22: filepath.Join would discard cacheDir)
 		{"absolute path rejected", "/etc/passwd", "", true},
 		// Path separators are rejected to ensure filename is a simple name

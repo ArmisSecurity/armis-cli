@@ -826,3 +826,87 @@ func TestAuthProvider_ContextCancellation(t *testing.T) {
 		t.Logf("Got error: %v (context cancellation may manifest differently)", err)
 	}
 }
+
+func TestAuthProvider_CachedRegionRetryOnFailure(t *testing.T) {
+	// Test that when auth fails with a cached region hint,
+	// the provider clears the cache and retries without the hint.
+	// This handles stale cache (region changed) without requiring user to re-run.
+
+	// Use a temporary cache directory to avoid affecting real cache
+	origCache := defaultCache
+	tempDir := t.TempDir()
+	defaultCache = &RegionCache{cacheDir: tempDir}
+	t.Cleanup(func() {
+		defaultCache = origCache
+	})
+
+	// Track requests to verify retry behavior
+	var requestCount int32
+	staleRegion := "stale-region"
+	correctRegion := "us1"
+
+	// Pre-populate cache with a stale region
+	saveCachedRegion("test-client", staleRegion)
+
+	mockJWT := createMockJWTWithRegion("tenant-123", time.Now().Add(1*time.Hour).Unix(), correctRegion)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+
+		// Parse request body to check for region hint
+		var reqBody struct {
+			Region *string `json:"region"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+
+		// First request with stale region hint should fail
+		if reqBody.Region != nil && *reqBody.Region == staleRegion {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Second request without region hint (or with correct region) should succeed
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"token":  mockJWT,
+			"region": correctRegion,
+		})
+	}))
+	defer server.Close()
+
+	config := AuthConfig{
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		BaseURL:      server.URL,
+	}
+
+	// Create auth provider - this triggers initial authentication
+	p, err := NewAuthProvider(config)
+	if err != nil {
+		t.Fatalf("NewAuthProvider failed: %v", err)
+	}
+
+	// Verify we made 2 requests: first failed with hint, second succeeded without
+	finalCount := atomic.LoadInt32(&requestCount)
+	if finalCount != 2 {
+		t.Errorf("Expected 2 requests (failed with hint + retry without), got %d", finalCount)
+	}
+
+	// Verify auth succeeded
+	header, err := p.GetAuthorizationHeader(context.Background())
+	if err != nil {
+		t.Fatalf("GetAuthorizationHeader failed: %v", err)
+	}
+	if header != mockJWT {
+		t.Errorf("Expected JWT token, got %q", header)
+	}
+
+	// Verify cache was updated with correct region
+	cachedRegion, ok := loadCachedRegion("test-client")
+	if !ok {
+		t.Error("Expected region to be cached after successful auth")
+	}
+	if cachedRegion != correctRegion {
+		t.Errorf("Expected cached region %q, got %q", correctRegion, cachedRegion)
+	}
+}

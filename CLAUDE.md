@@ -86,7 +86,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `ARMIS_API_TOKEN` - API token for Basic authentication (fallback)
 - `ARMIS_TENANT_ID` - Tenant identifier (required only with Basic auth; JWT extracts it from token)
 - `ARMIS_API_URL` - Override base URL for Armis API (advanced; defaults based on --dev flag)
-- `ARMIS_REGION` - Override Armis cloud region (equivalent to `--region`; affects default API URL selection)
+- `ARMIS_REGION` - Override Armis cloud region (equivalent to `--region`; used for region-aware authentication)
 - `ARMIS_FORMAT` - Default output format
 - `ARMIS_PAGE_LIMIT` - Results pagination size
 - `ARMIS_THEME` - Terminal background theme: auto, dark, light (default: auto)
