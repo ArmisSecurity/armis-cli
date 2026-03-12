@@ -30,9 +30,6 @@ const (
 
 	// cacheFileName is the name of the cache file.
 	cacheFileName = "update-check.json"
-
-	// cacheDirName is the subdirectory name for cache files.
-	cacheDirName = "armis-cli"
 )
 
 // CheckResult holds the result of a version check.
@@ -195,18 +192,15 @@ func (c *Checker) fetchLatestVersion(ctx context.Context) (string, error) {
 // getCacheFilePath returns the path to the cache file.
 func (c *Checker) getCacheFilePath() string {
 	if c.cacheDir != "" {
-		// Validate cacheDir to prevent path traversal (CWE-73)
+		// Testing override - validate the provided path
 		sanitized, err := util.SanitizePath(c.cacheDir)
 		if err != nil {
 			return "" // invalid cacheDir, disable caching
 		}
 		return filepath.Join(sanitized, cacheFileName)
 	}
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return "" // no caching possible
-	}
-	return filepath.Join(cacheDir, cacheDirName, cacheFileName)
+	// Use shared utility for default cache path
+	return util.GetCacheFilePath(cacheFileName)
 }
 
 // readCache attempts to read a cached check result.

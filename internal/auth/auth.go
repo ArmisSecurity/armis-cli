@@ -19,6 +19,7 @@ type AuthConfig struct {
 	ClientID     string
 	ClientSecret string //nolint:gosec // G117: This is a config field name, not a secret value
 	BaseURL      string // Moose API base URL (dev or prod)
+	Region       string // Optional region override - bypasses auto-discovery if set
 
 	// Legacy Basic auth
 	Token    string
@@ -40,11 +41,13 @@ type JWTCredentials struct {
 // It supports both JWT authentication and legacy Basic authentication.
 // For JWT auth, tokens are automatically refreshed when within 5 minutes of expiry.
 type AuthProvider struct {
-	config      AuthConfig
-	credentials *JWTCredentials
-	authClient  *AuthClient
-	mu          sync.RWMutex
-	isLegacy    bool // true if using Basic auth (--token)
+	config       AuthConfig
+	credentials  *JWTCredentials
+	authClient   *AuthClient
+	mu           sync.RWMutex
+	isLegacy     bool   // true if using Basic auth (--token)
+	cachedRegion string // memoized region from disk cache (loaded once)
+	regionLoaded bool   // true if cachedRegion has been loaded from disk
 }
 
 // NewAuthProvider creates an AuthProvider from configuration.
@@ -178,6 +181,16 @@ func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 
 // exchangeCredentials exchanges client credentials for a JWT token.
 // Uses double-checked locking to prevent thundering herd of concurrent refreshes.
+// Leverages region caching to avoid auto-discovery overhead on subsequent requests.
+//
+// Region selection priority:
+//  1. --region flag (config.Region) - explicit override, bypasses cache and discovery
+//  2. Cached region - from previous successful auth for this client_id
+//  3. Auto-discovery - server tries regions until one succeeds
+//
+// Retry behavior: If auth fails with a cached region hint (not explicit --region),
+// the cache is cleared and auth is retried without the hint. This handles stale
+// cache gracefully without requiring user to re-run the command.
 func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -187,19 +200,57 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		return nil
 	}
 
-	token, err := p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret)
+	// Load cached region once per process (memoize to avoid repeated disk I/O)
+	if !p.regionLoaded {
+		if region, ok := loadCachedRegion(p.config.ClientID); ok {
+			p.cachedRegion = region
+		}
+		p.regionLoaded = true
+	}
+
+	// Determine region hint - explicit flag takes priority over cache
+	var regionHint *string
+	var usingCachedHint bool
+	if p.config.Region != "" {
+		// Explicit --region flag - don't retry on failure (user error)
+		regionHint = &p.config.Region
+	} else if p.cachedRegion != "" {
+		// Cached region - will retry without hint on failure
+		regionHint = &p.cachedRegion
+		usingCachedHint = true
+	}
+
+	result, err := p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret, regionHint)
 	if err != nil {
-		return err
+		// If auth failed with a cached region hint, clear cache and retry without hint
+		// This handles stale cache (region changed) without requiring user to re-run
+		if usingCachedHint {
+			clearCachedRegion()
+			p.cachedRegion = ""
+			// Retry without region hint - let server auto-discover
+			result, err = p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret, nil)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Cache the discovered region for future requests (skip if unchanged)
+	if result.Region != "" && result.Region != p.cachedRegion {
+		saveCachedRegion(p.config.ClientID, result.Region)
+		p.cachedRegion = result.Region
 	}
 
 	// Parse JWT to extract claims
-	claims, err := parseJWTClaims(token)
+	claims, err := parseJWTClaims(result.Token)
 	if err != nil {
 		return fmt.Errorf("failed to parse JWT: %w", err)
 	}
 
 	p.credentials = &JWTCredentials{
-		Token:     token,
+		Token:     result.Token,
 		TenantID:  claims.CustomerID,
 		ExpiresAt: claims.ExpiresAt,
 		Region:    claims.Region,

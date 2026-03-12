@@ -48,6 +48,7 @@ var (
 	// JWT authentication
 	clientID     string
 	clientSecret string
+	region       string
 
 	version = versionDev
 	commit  = "none"
@@ -162,6 +163,7 @@ func init() {
 	// JWT authentication
 	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
 	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
+	rootCmd.PersistentFlags().StringVar(&region, "region", os.Getenv("ARMIS_REGION"), "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
@@ -270,6 +272,7 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		BaseURL:      getAPIBaseURL(),
+		Region:       region,
 		Token:        token,
 		TenantID:     tenantID,
 		Debug:        debug,
