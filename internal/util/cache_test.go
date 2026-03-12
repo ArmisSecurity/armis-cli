@@ -78,7 +78,8 @@ func TestGetCacheFilePath_SafeFilenames(t *testing.T) {
 	}{
 		{"simple json file", "test.json", "test.json"},
 		{"hyphenated name", "region-cache.json", "region-cache.json"},
-		{"absolute path becomes relative", "/etc/passwd", "etc/passwd"}, // stripped of leading /
+		// On Unix: /etc/passwd -> etc/passwd; on Windows: /etc/passwd -> etc\passwd
+		{"absolute path becomes relative", "/etc/passwd", filepath.Join("etc", "passwd")},
 	}
 
 	for _, tt := range tests {

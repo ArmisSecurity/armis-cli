@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -169,6 +170,10 @@ func TestRegionCache_Overwrite(t *testing.T) {
 }
 
 func TestRegionCache_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
+
 	tempDir := t.TempDir()
 	cache := &RegionCache{cacheDir: tempDir}
 
