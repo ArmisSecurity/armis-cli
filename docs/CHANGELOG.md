@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- JWT authentication flags (`--client-id`, `--client-secret`) now enabled by default as the primary authentication method (#95)
+- JWT authentication via `--client-id` / `--client-secret` is now the recommended authentication method, taking priority over `--token` when both are provided (#95)
 
 ### Changed
 
