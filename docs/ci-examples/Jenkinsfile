@@ -1,10 +1,11 @@
 pipeline {
     agent any
-    
+
     environment {
-        ARMIS_API_TOKEN = credentials('armis-api-token')
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
     }
-    
+
     stages {
         stage('Install Armis CLI') {
             steps {
@@ -13,7 +14,7 @@ pipeline {
                 '''
             }
         }
-        
+
         stage('Security Scan') {
             steps {
                 sh '''
@@ -27,7 +28,7 @@ pipeline {
             }
         }
     }
-    
+
     post {
         failure {
             echo 'Security scan found critical vulnerabilities!'
