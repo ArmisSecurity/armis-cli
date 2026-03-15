@@ -114,6 +114,13 @@ var rootCmd = &cobra.Command{
 
 		output.SyncColors()
 
+		// Warn if the removed ARMIS_AUTH_ENDPOINT env var is set
+		if os.Getenv("ARMIS_AUTH_ENDPOINT") != "" {
+			cli.PrintWarning("ARMIS_AUTH_ENDPOINT is no longer supported. " +
+				"The auth endpoint is now derived from the base URL. " +
+				"Use ARMIS_API_URL to override the base URL, or --region to specify a region.")
+		}
+
 		// Skip update check if:
 		// - explicitly disabled via flag or env var
 		// - running in CI

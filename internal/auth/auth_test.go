@@ -860,9 +860,10 @@ func TestAuthProvider_CachedRegionRetryOnFailure(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
-		// First request with stale region hint should fail
+		// First request with stale region hint should fail with 403 (region rejected).
+		// Note: 401 means invalid credentials and should NOT trigger retry.
 		if reqBody.Region != nil && *reqBody.Region == staleRegion {
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 

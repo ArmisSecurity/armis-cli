@@ -107,10 +107,14 @@ func TestGetCacheFilePath_SafeFilenames(t *testing.T) {
 			if !strings.Contains(path, tt.wantContains) {
 				t.Errorf("GetCacheFilePath(%q) = %q, want to contain %q", tt.filename, path, tt.wantContains)
 			}
-			// Verify result is within cache directory
+			// Verify result is within cache directory using a path-safe check
 			cacheDir := GetCacheDir()
-			if !strings.HasPrefix(path, cacheDir) {
-				t.Errorf("GetCacheFilePath(%q) = %q, not within cache dir %q", tt.filename, path, cacheDir)
+			rel, err := filepath.Rel(cacheDir, path)
+			if err != nil {
+				t.Fatalf("filepath.Rel(%q, %q) error: %v", cacheDir, path, err)
+			}
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				t.Errorf("GetCacheFilePath(%q) = %q, escapes cache dir %q (rel=%q)", tt.filename, path, cacheDir, rel)
 			}
 		})
 	}

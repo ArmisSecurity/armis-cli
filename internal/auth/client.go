@@ -18,6 +18,16 @@ const (
 	maxResponseSize = 1 << 20 // 1MB
 )
 
+// AuthError represents an authentication failure with HTTP status context.
+// This allows callers to distinguish between different failure modes
+// (e.g., invalid credentials vs. region-specific rejection vs. server error).
+type AuthError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *AuthError) Error() string { return e.Message }
+
 // AuthClient handles authentication with an external auth service.
 type AuthClient struct {
 	baseURL    string
@@ -111,7 +121,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, &AuthError{StatusCode: resp.StatusCode, Message: "invalid credentials"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -120,7 +130,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
 		}
 		// Don't include raw response body in error to prevent potential info leakage
-		return nil, fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
+		return nil, &AuthError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("authentication failed (status %d)", resp.StatusCode)}
 	}
 
 	var authResp authResponse

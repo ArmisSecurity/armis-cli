@@ -13,6 +13,10 @@ import (
 const (
 	// regionCacheFileName is the name of the region cache file.
 	regionCacheFileName = "region-cache.json"
+
+	// maxCacheFileSize limits region cache reads to prevent memory exhaustion
+	// from corrupted or maliciously large files. The actual cache is ~60 bytes.
+	maxCacheFileSize = 4096 // 4KB
 )
 
 // regionCacheEntry is the on-disk JSON structure for persisting region.
@@ -36,6 +40,14 @@ func NewRegionCache() *RegionCache {
 func (c *RegionCache) Load(clientID string) (string, bool) {
 	path := c.getFilePath()
 	if path == "" {
+		return "", false
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	if info.Size() > maxCacheFileSize {
 		return "", false
 	}
 

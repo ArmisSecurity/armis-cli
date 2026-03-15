@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +92,7 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: use --token flag or ARMIS_API_TOKEN environment variable")
+		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET for JWT auth, or ARMIS_API_TOKEN for legacy auth")
 	}
 
 	return p, nil
@@ -222,9 +224,11 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 
 	result, err := p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret, regionHint)
 	if err != nil {
-		// If auth failed with a cached region hint, clear cache and retry without hint
-		// This handles stale cache (region changed) without requiring user to re-run
-		if usingCachedHint {
+		// If auth failed with a cached region hint, retry only for region-specific rejections.
+		// Skip retry for: transport errors (not *AuthError), 401 (bad credentials).
+		// This avoids double requests on network failures and prevents wiping correct cache entries.
+		var authErr *AuthError
+		if usingCachedHint && errors.As(err, &authErr) && authErr.StatusCode != http.StatusUnauthorized {
 			clearCachedRegion()
 			p.cachedRegion = ""
 			// Retry without region hint - let server auto-discover
