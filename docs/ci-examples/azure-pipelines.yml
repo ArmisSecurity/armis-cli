@@ -1,3 +1,4 @@
+---
 trigger:
   branches:
     include:
@@ -8,23 +9,25 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
+  ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+  ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
 
 steps:
-- script: |
-    curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-  displayName: 'Install Armis CLI'
+  - script: |
+      curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+    displayName: 'Install Armis CLI'
 
-- script: |
-    armis-cli scan repo . --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
-  displayName: 'Run Security Scan'
-  env:
-    ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
+  - script: |
+      armis-cli scan repo . --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    displayName: 'Run Security Scan'
+    env:
+      ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+      ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
 
-- task: PublishTestResults@2
-  condition: always()
-  inputs:
-    testResultsFormat: 'JUnit'
-    testResultsFiles: '**/scan-results.xml'
-    failTaskOnFailedTests: true
-  displayName: 'Publish Scan Results'
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/scan-results.xml'
+      failTaskOnFailedTests: true
+    displayName: 'Publish Scan Results'

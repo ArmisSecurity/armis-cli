@@ -30,17 +30,24 @@ The pipeline consists of two jobs:
 
 ### Required Secrets
 
-The pipeline requires one GitHub secret:
+#### JWT Authentication (Recommended)
 
-- `ARMIS_API_TOKEN`: API token for authenticating with Armis Cloud
+Obtain credentials from the VIPR external API screen in the Armis platform:
 
-To set this up:
+- `ARMIS_CLIENT_ID`: Client ID for JWT authentication
+- `ARMIS_CLIENT_SECRET`: Client secret for JWT authentication
+
+#### Basic Authentication (Legacy)
+
+- `ARMIS_API_TOKEN`: API token for Basic authentication
+- `ARMIS_TENANT_ID`: Tenant identifier (not needed with JWT)
+
+To set up secrets:
 
 1. Go to your repository settings
 2. Navigate to Secrets and variables → Actions
 3. Click "New repository secret"
-4. Name: `ARMIS_API_TOKEN`
-5. Value: Your Armis Cloud API token
+4. Add `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` (or `ARMIS_API_TOKEN` for legacy auth)
 
 ### Severity Thresholds
 
@@ -68,7 +75,8 @@ make scan
 Or manually:
 
 ```bash
-export ARMIS_API_TOKEN="your-token"
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
 ./bin/armis scan repo . --fail-on CRITICAL,HIGH
 ```
 
@@ -135,14 +143,15 @@ on:
 
 ## Troubleshooting
 
-### Pipeline Fails with "ARMIS_API_TOKEN not set"
+### Pipeline Fails with Authentication Errors
 
-- Ensure the secret is configured in repository settings
-- Check that the secret name matches exactly: `ARMIS_API_TOKEN`
+- For JWT (recommended): ensure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` are configured in repository settings
+- For Basic auth (legacy): ensure `ARMIS_API_TOKEN` is configured
+- Check that secret names match exactly (case-sensitive)
 
 ### Pipeline Fails with "API connection error"
 
-- Verify the API token is valid
+- Verify the credentials are valid
 - Check if Armis Cloud API is accessible from GitHub Actions runners
 - Review the API endpoint configuration
 
