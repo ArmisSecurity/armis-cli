@@ -697,7 +697,7 @@ Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variabl
 #### "authentication required"
 
 - No valid authentication credentials were provided
-- Set `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` environment variables or secrets
+- Set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` for JWT auth (recommended), or `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` for legacy auth
 
 #### "tenant ID required"
 

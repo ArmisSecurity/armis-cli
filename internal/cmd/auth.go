@@ -18,16 +18,14 @@ This command is useful for:
 - Obtaining tokens for use with other tools
 - Debugging JWT-related issues
 
-Requires --client-id, --client-secret, and --auth-endpoint flags or
-their corresponding environment variables (ARMIS_CLIENT_ID,
-ARMIS_CLIENT_SECRET, ARMIS_AUTH_ENDPOINT).`,
+Requires --client-id and --client-secret flags or their corresponding
+environment variables (ARMIS_CLIENT_ID, ARMIS_CLIENT_SECRET).`,
 	Example: `  # Obtain JWT token using flags
-  armis-cli auth --client-id MY_ID --client-secret MY_SECRET --auth-endpoint https://auth.example.com
+  armis-cli auth --client-id MY_ID --client-secret MY_SECRET
 
   # Obtain token using environment variables
   export ARMIS_CLIENT_ID=MY_ID
   export ARMIS_CLIENT_SECRET=MY_SECRET
-  export ARMIS_AUTH_ENDPOINT=https://auth.example.com
   armis-cli auth`,
 	RunE: runAuth,
 }
@@ -45,9 +43,6 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	}
 	if clientSecret == "" {
 		return fmt.Errorf("--client-secret is required (or set ARMIS_CLIENT_SECRET)")
-	}
-	if authEndpoint == "" {
-		return fmt.Errorf("--auth-endpoint is required (or set ARMIS_AUTH_ENDPOINT)")
 	}
 
 	provider, err := getAuthProvider()

@@ -1,0 +1,83 @@
+// Package util provides shared utilities for the CLI.
+package util
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	// CacheDirName is the subdirectory name for CLI cache files.
+	// Used by both update checker and region cache.
+	CacheDirName = "armis-cli"
+)
+
+// GetCacheDir returns the validated path to the CLI's cache directory.
+// Returns empty string if the cache directory cannot be determined or validated.
+// The directory is NOT created by this function - callers should create it if needed.
+//
+// Default location: ~/.cache/armis-cli (or platform equivalent)
+func GetCacheDir() string {
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+
+	cacheDir := filepath.Join(userCacheDir, CacheDirName)
+
+	// Validate path to prevent traversal attacks (CWE-73)
+	sanitized, err := SanitizePath(cacheDir)
+	if err != nil {
+		return ""
+	}
+
+	return sanitized
+}
+
+// GetCacheFilePath returns the validated path to a cache file.
+// Returns empty string if the path cannot be determined or validated.
+// The filename must be a simple filename (no path separators or absolute paths).
+func GetCacheFilePath(filename string) string {
+	cacheDir := GetCacheDir()
+	if cacheDir == "" {
+		return ""
+	}
+
+	// Reject empty, whitespace-only, ".", and ".." filenames
+	// These would result in returning cacheDir itself, not a file path
+	filename = strings.TrimSpace(filename)
+	if filename == "" || filename == "." || filename == ".." {
+		return ""
+	}
+
+	// Reject absolute paths - filepath.Join would discard cacheDir (CWE-22)
+	if filepath.IsAbs(filename) {
+		return ""
+	}
+
+	// Reject path separators - filename should be a simple name like "cache.json"
+	if strings.ContainsAny(filename, `/\`) {
+		return ""
+	}
+
+	filePath := filepath.Join(cacheDir, filename)
+
+	// Re-validate the full path (filename could contain traversal attempts)
+	sanitized, err := SanitizePath(filePath)
+	if err != nil {
+		return ""
+	}
+
+	// Final containment check: ensure result is within cache directory using robust path-based check
+	// Using filepath.Rel is more robust than strings.HasPrefix (handles case-insensitivity, path separators)
+	rel, err := filepath.Rel(cacheDir, sanitized)
+	if err != nil {
+		return ""
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+
+	return sanitized
+}

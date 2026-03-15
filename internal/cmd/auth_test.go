@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -56,14 +57,6 @@ func TestRunAuth(t *testing.T) {
 			errContains:  "--client-secret is required",
 		},
 		{
-			name:         "missing auth-endpoint",
-			clientID:     "test-client",
-			clientSecret: "test-secret",
-			setupServer:  false, // No server = empty authEndpoint
-			wantErr:      true,
-			errContains:  "--auth-endpoint is required",
-		},
-		{
 			name:           "successful authentication",
 			clientID:       "test-client",
 			clientSecret:   "test-secret",
@@ -87,16 +80,20 @@ func TestRunAuth(t *testing.T) {
 			// Save and restore original values (t.Cleanup runs even on panic)
 			origClientID := clientID
 			origClientSecret := clientSecret
-			origAuthEndpoint := authEndpoint
 			origToken := token
 			origTenantID := tenantID
+			origAPIURL := os.Getenv("ARMIS_API_URL")
 
 			t.Cleanup(func() {
 				clientID = origClientID
 				clientSecret = origClientSecret
-				authEndpoint = origAuthEndpoint
 				token = origToken
 				tenantID = origTenantID
+				if origAPIURL == "" {
+					_ = os.Unsetenv("ARMIS_API_URL")
+				} else {
+					_ = os.Setenv("ARMIS_API_URL", origAPIURL)
+				}
 			})
 
 			// Clear legacy auth vars to ensure JWT path is taken
@@ -111,7 +108,7 @@ func TestRunAuth(t *testing.T) {
 				// Create mock auth server
 				mockJWT := createMockJWT("customer-123", time.Now().Add(time.Hour).Unix())
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path != "/api/v1/authenticate" {
+					if r.URL.Path != "/api/v1/auth/token" {
 						w.WriteHeader(http.StatusNotFound)
 						return
 					}
@@ -131,9 +128,7 @@ func TestRunAuth(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(resp)
 				}))
 				defer server.Close()
-				authEndpoint = server.URL
-			} else {
-				authEndpoint = ""
+				_ = os.Setenv("ARMIS_API_URL", server.URL)
 			}
 
 			// Create a minimal cobra command with context
@@ -165,16 +160,20 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 	// Save and restore original values (t.Cleanup runs even on panic)
 	origClientID := clientID
 	origClientSecret := clientSecret
-	origAuthEndpoint := authEndpoint
 	origToken := token
 	origTenantID := tenantID
+	origAPIURL := os.Getenv("ARMIS_API_URL")
 
 	t.Cleanup(func() {
 		clientID = origClientID
 		clientSecret = origClientSecret
-		authEndpoint = origAuthEndpoint
 		token = origToken
 		tenantID = origTenantID
+		if origAPIURL == "" {
+			_ = os.Unsetenv("ARMIS_API_URL")
+		} else {
+			_ = os.Setenv("ARMIS_API_URL", origAPIURL)
+		}
 	})
 
 	// Clear legacy auth vars
@@ -184,7 +183,7 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 	// Set valid credentials but invalid endpoint
 	clientID = "test-client"
 	clientSecret = "test-secret"
-	authEndpoint = "http://localhost:99999" // Invalid port
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:99999") // Invalid port
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
