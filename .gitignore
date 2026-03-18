@@ -13,3 +13,5 @@ coverage.out
 coverage_output.out
 *.test
 *.prof
+__pycache__/
+*.pyc

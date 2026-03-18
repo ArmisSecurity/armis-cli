@@ -1,0 +1,11 @@
+{
+  "scanner": {
+    "command": "python",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/server.py"],
+    "env": {
+      "CEREBRAS_API_KEY": "${CEREBRAS_API_KEY}",
+      "APPSEC_SCAN_MODE": "fast",
+      "FASTMCP_LOG_LEVEL": "ERROR"
+    }
+  }
+}

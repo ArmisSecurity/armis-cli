@@ -1,0 +1,20 @@
+{
+  "name": "armis-appsec-marketplace",
+  "owner": {
+    "name": "AppSec Team"
+  },
+  "metadata": {
+    "description": "AI-powered security scanner for Claude Code - scans code, files, and diffs for vulnerabilities",
+    "version": "1.0.0",
+    "pluginRoot": ".."
+  },
+  "plugins": [
+    {
+      "name": "armis-appsec",
+      "description": "AI-powered security scanner that finds vulnerabilities in code, files, and diffs. Auto-scans code Claude writes before responding.",
+      "source": "./",
+      "license": "UNLICENSED",
+      "category": "development"
+    }
+  ]
+}

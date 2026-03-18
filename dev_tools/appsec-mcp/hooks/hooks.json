@@ -1,0 +1,16 @@
+{
+  "description": "Auto-scan code for security vulnerabilities when Claude finishes responding",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/stop_scan.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
