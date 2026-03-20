@@ -2,13 +2,13 @@
 Armis AppSec Scanner -- MCP Server
 
 A lightweight MCP server that exposes AI-powered vulnerability discovery
-as tools any coding agent can call. Talks directly to Cerebras (qwen-3-235b)
-using the same scanner prompt from the production pipeline.
+as tools any coding agent can call. Calls the Moose scanning API which
+handles model selection and prompt versioning server-side.
 
 Usage:
-    CEREBRAS_API_KEY=<key> python server.py
+    APPSEC_API_TOKEN=<token> python server.py
     # or via MCP stdio transport:
-    CEREBRAS_API_KEY=<key> mcp run server.py
+    APPSEC_API_TOKEN=<token> mcp run server.py
 """
 
 import asyncio
@@ -19,15 +19,25 @@ import re
 import subprocess
 import sys
 import time
-from typing import Literal, Optional
 
 # Ensure scanner_core is importable regardless of cwd
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _plugin_dir)
+
+# Load .env from plugin directory if it exists (for APPSEC_API_TOKEN etc.)
+_env_file = os.path.join(_plugin_dir, ".env")
+if os.path.isfile(_env_file):
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
-from scanner_core import DEFAULT_MODE, call_cerebras, format_findings, parse_findings
+from scanner_core import call_appsec_api, format_findings, parse_findings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("appsec-mcp")
@@ -62,9 +72,6 @@ _MAX_CODE_CHARS = 90_000
 # Git ref validation: alphanumeric + common ref chars (branch, tag, SHA, HEAD~3)
 _VALID_GIT_REF = re.compile(r"^[a-zA-Z0-9_./\-~^@{}]+$")
 
-ScanMode = Optional[Literal["fast", "standard", "full"]]
-
-
 def _validate_file_path(file_path: str) -> str:
     """Resolve and validate a file path. Returns the resolved path or raises ToolError."""
     resolved = os.path.realpath(file_path)
@@ -86,7 +93,6 @@ def _validate_file_path(file_path: str) -> str:
 async def scan_code(
     code: str,
     filename: str = "snippet",
-    mode: ScanMode = None,
     ctx: Context | None = None,
 ) -> str:
     """Scan a code snippet for security vulnerabilities.
@@ -97,34 +103,29 @@ async def scan_code(
     Args:
         code: The source code to scan.
         filename: Optional filename for context (e.g. "auth.py").
-        mode: Scan depth -- "fast" (quick, minimal), "standard" (with taint
-              tracking), or "full" (production-grade with CWE hints). Defaults
-              to APPSEC_SCAN_MODE env var or "fast".
 
     Returns:
         A formatted report of any vulnerabilities found, including CWE IDs,
         severity, affected lines, and explanations.
     """
-    effective_mode = mode or DEFAULT_MODE
-
     if len(code) > _MAX_CODE_CHARS:
         code = code[:_MAX_CODE_CHARS]
         logger.warning(f"Truncated code input to {_MAX_CODE_CHARS} chars")
 
     if ctx:
-        await ctx.info(f"Scanning {filename} ({len(code)} chars, mode={effective_mode})")
-    logger.info(f"Scanning code snippet: {filename} ({len(code)} chars, mode={effective_mode})")
+        await ctx.info(f"Scanning {filename} ({len(code)} chars)")
+    logger.info(f"Scanning code snippet: {filename} ({len(code)} chars)")
 
     t0 = time.monotonic()
     try:
-        raw = await asyncio.to_thread(call_cerebras, code, effective_mode)
+        raw = await asyncio.to_thread(call_appsec_api, code)
     except RuntimeError as e:
         raise ToolError(str(e)) from e
     except Exception as e:
         raise ToolError(f"Scan failed: {e}") from e
 
     findings = parse_findings(raw)
-    report = format_findings(findings, filename, mode=effective_mode)
+    report = format_findings(findings, filename)
     _cache_scan(report, findings, filename)
 
     if ctx:
@@ -137,7 +138,6 @@ async def scan_code(
 @mcp.tool()
 async def scan_file(
     file_path: str,
-    mode: ScanMode = None,
     ctx: Context | None = None,
 ) -> str:
     """Scan a file on disk for security vulnerabilities.
@@ -147,13 +147,10 @@ async def scan_file(
 
     Args:
         file_path: Absolute path to the file to scan.
-        mode: Scan depth -- "fast", "standard", or "full". Defaults to
-              APPSEC_SCAN_MODE env var or "fast".
 
     Returns:
         A formatted report of any vulnerabilities found.
     """
-    effective_mode = mode or DEFAULT_MODE
     resolved = _validate_file_path(file_path)
 
     if not os.path.isfile(resolved):
@@ -190,19 +187,19 @@ async def scan_file(
 
     filename = os.path.basename(file_path)
     if ctx:
-        await ctx.info(f"Scanning {filename} ({len(code)} chars, mode={effective_mode})")
-    logger.info(f"Scanning file: {file_path} ({len(code)} chars, mode={effective_mode})")
+        await ctx.info(f"Scanning {filename} ({len(code)} chars)")
+    logger.info(f"Scanning file: {file_path} ({len(code)} chars)")
 
     t0 = time.monotonic()
     try:
-        raw = await asyncio.to_thread(call_cerebras, code, effective_mode)
+        raw = await asyncio.to_thread(call_appsec_api, code)
     except RuntimeError as e:
         raise ToolError(str(e)) from e
     except Exception as e:
         raise ToolError(f"Scan failed: {e}") from e
 
     findings = parse_findings(raw)
-    report = format_findings(findings, filename, mode=effective_mode)
+    report = format_findings(findings, filename)
     _cache_scan(report, findings, filename)
 
     if ctx:
@@ -217,7 +214,6 @@ async def scan_diff(
     repo_path: str = "",
     ref: str = "",
     staged: bool = False,
-    mode: ScanMode = None,
     ctx: Context | None = None,
 ) -> str:
     """Scan git changes for security vulnerabilities.
@@ -231,13 +227,10 @@ async def scan_diff(
              If empty, diffs unstaged changes (or staged if staged=True).
         staged: If True, scan staged changes only (git diff --cached).
                 Ignored if ref is provided.
-        mode: Scan depth -- "fast", "standard", or "full".
 
     Returns:
         A formatted report of vulnerabilities found in the changed code.
     """
-    effective_mode = mode or DEFAULT_MODE
-
     if ref and not _VALID_GIT_REF.match(ref):
         raise ToolError(
             f"Invalid git ref: '{ref}'. "
@@ -281,19 +274,19 @@ async def scan_diff(
 
     label = f"diff against {ref}" if ref else ("staged changes" if staged else "unstaged changes")
     if ctx:
-        await ctx.info(f"Scanning {label} ({len(diff_text)} chars, mode={effective_mode})")
-    logger.info(f"Scanning {label} ({len(diff_text)} chars, mode={effective_mode})")
+        await ctx.info(f"Scanning {label} ({len(diff_text)} chars)")
+    logger.info(f"Scanning {label} ({len(diff_text)} chars)")
 
     t0 = time.monotonic()
     try:
-        raw = await asyncio.to_thread(call_cerebras, diff_text, effective_mode)
+        raw = await asyncio.to_thread(call_appsec_api, diff_text)
     except RuntimeError as e:
         raise ToolError(str(e)) from e
     except Exception as e:
         raise ToolError(f"Scan failed: {e}") from e
 
     findings = parse_findings(raw)
-    report = format_findings(findings, label, mode=effective_mode)
+    report = format_findings(findings, label)
     _cache_scan(report, findings, label)
 
     if ctx:

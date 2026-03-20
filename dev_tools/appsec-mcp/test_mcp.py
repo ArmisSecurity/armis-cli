@@ -144,7 +144,7 @@ def print_result(r: TestResult):
 
 def make_mock_cerebras(response: str):
     """Return a function that replaces call_cerebras with a canned response."""
-    def _mock(code: str, mode: str = "") -> str:
+    def _mock(code: str) -> str:
         return response
     return _mock
 
@@ -241,37 +241,12 @@ def test_scan_code_filename_in_report():
     return TestResult(name="scan_code_filename_in_report", passed=not failures, duration=0, failures=failures)
 
 
-def test_scan_code_mode_passed_through():
-    """The mode argument is forwarded to call_cerebras."""
-    from server import scan_code
-    captured = {}
-    def mock_cerebras(code, mode=""):
-        captured["mode"] = mode
-        return MOCK_RESPONSE_CLEAN
-    with patch("server.call_cerebras", mock_cerebras):
-        run(scan_code(code="x = 1", filename="test.py", mode="full"))
-    failures = []
-    if captured.get("mode") != "full":
-        failures.append(f"Expected mode='full', got '{captured.get('mode')}'")
-    return TestResult(name="scan_code_mode_passed_through", passed=not failures, duration=0, failures=failures)
-
-
-def test_scan_code_mode_in_report():
-    """The mode label appears in the formatted report."""
-    from server import scan_code
-    with patch("server.call_cerebras", make_mock_cerebras(MOCK_RESPONSE_ONE_FINDING)):
-        result = run(scan_code(code="x = 1", filename="test.py", mode="standard"))
-    failures = []
-    if "standard" not in result.lower():
-        failures.append("Mode 'standard' not shown in report")
-    return TestResult(name="scan_code_mode_in_report", passed=not failures, duration=0, failures=failures)
-
 
 def test_scan_file_reads_and_scans():
     """scan_file reads a real file and passes contents to the scanner."""
     from server import scan_file
     captured = {}
-    def mock_cerebras(code, mode=""):
+    def mock_cerebras(code):
         captured["code"] = code
         return MOCK_RESPONSE_ONE_FINDING
 
@@ -328,7 +303,7 @@ def test_scan_file_truncates_large():
     """scan_file truncates files over 90k chars."""
     from server import scan_file
     captured = {}
-    def mock_cerebras(code, mode=""):
+    def mock_cerebras(code):
         captured["len"] = len(code)
         return MOCK_RESPONSE_CLEAN
 
@@ -364,7 +339,7 @@ def test_scan_diff_with_changes():
     captured = {}
     fake_diff = "diff --git a/foo.py b/foo.py\n+print('hi')"
 
-    def mock_cerebras(code, mode=""):
+    def mock_cerebras(code):
         captured["code"] = code
         return MOCK_RESPONSE_ONE_FINDING
 
@@ -434,7 +409,7 @@ def test_scan_diff_truncates_large():
     from server import scan_diff
     captured = {}
     big_diff = "+" * 100_000
-    def mock_cerebras(code, mode=""):
+    def mock_cerebras(code):
         captured["len"] = len(code)
         return MOCK_RESPONSE_CLEAN
     mock_result = type("R", (), {"returncode": 0, "stdout": big_diff, "stderr": ""})()
@@ -450,7 +425,7 @@ def test_scan_diff_truncates_large():
 def test_format_findings_clean_report():
     """Formatted report for zero findings shows clean message."""
     from scanner_core import format_findings
-    result = format_findings([], "test.py", mode="fast")
+    result = format_findings([], "test.py")
     failures = []
     if "SCAN test.py" not in result:
         failures.append("Missing SCAN header")
@@ -467,7 +442,7 @@ def test_format_findings_taint_display():
         "cwe_name": "SQL Injection", "explanation": "bad",
         "has_secret": False, "tainted_function_references": ["get_user", "query_db"],
     }]
-    result = format_findings(findings, "test.py", mode="standard")
+    result = format_findings(findings, "test.py")
     failures = []
     if "get_user" not in result:
         failures.append("Tainted function 'get_user' not in report")
@@ -507,7 +482,7 @@ def test_scan_code_cerebras_failure():
     """scan_code raises ToolError when Cerebras call fails."""
     from mcp.server.fastmcp.exceptions import ToolError
     from server import scan_code
-    def mock_raise(code, mode=""):
+    def mock_raise(code):
         raise ConnectionError("Network unreachable")
     failures = []
     with patch("server.call_cerebras", mock_raise):
@@ -524,7 +499,7 @@ def test_scan_code_missing_api_key():
     """scan_code raises ToolError when API key is missing."""
     from mcp.server.fastmcp.exceptions import ToolError
     from server import scan_code
-    def mock_raise(code, mode=""):
+    def mock_raise(code):
         raise RuntimeError("CEREBRAS_API_KEY not set.")
     failures = []
     with patch("server.call_cerebras", mock_raise):
@@ -541,7 +516,7 @@ def test_scan_code_truncates_large():
     """scan_code truncates code over 90k chars."""
     from server import scan_code
     captured = {}
-    def mock_cerebras(code, mode=""):
+    def mock_cerebras(code):
         captured["len"] = len(code)
         return MOCK_RESPONSE_CLEAN
     with patch("server.call_cerebras", mock_cerebras):
@@ -679,7 +654,7 @@ def test_format_findings_sorted_by_severity():
          "cwe_name": "Command Injection", "explanation": "high issue",
          "has_secret": False, "tainted_function_references": []},
     ]
-    result = format_findings(findings, "test.py", mode="fast")
+    result = format_findings(findings, "test.py")
     failures = []
     crit_pos = result.find("CRITICAL")
     high_pos = result.find("HIGH")
@@ -1000,7 +975,7 @@ def test_mcp_tool_listing():
 
     if "scan_code" in tools:
         props = tools["scan_code"].inputSchema.get("properties", {})
-        for param in ["code", "filename", "mode"]:
+        for param in ["code", "filename"]:
             if param not in props:
                 failures.append(f"scan_code missing '{param}' parameter")
 
@@ -1061,8 +1036,6 @@ ALL_TESTS = [
     ("direct", test_scan_code_malformed_response),
     ("direct", test_scan_code_cwe_zero_filtered),
     ("direct", test_scan_code_filename_in_report),
-    ("direct", test_scan_code_mode_passed_through),
-    ("direct", test_scan_code_mode_in_report),
     ("direct", test_scan_file_reads_and_scans),
     ("direct", test_scan_file_not_found),
     ("direct", test_scan_file_empty),
