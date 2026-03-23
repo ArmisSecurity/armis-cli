@@ -1,5 +1,8 @@
 name: 'Armis CLI Action'
-description: 'Run the Armis CLI in your workflow'
+# NOTE: This action supports Linux and macOS runners only.
+# For Windows runners, use the PowerShell install script directly:
+#   irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+description: 'Run the Armis CLI in your workflow (Linux/macOS only)'
 author: 'ArmisSecurity'
 inputs:
   api_token:
