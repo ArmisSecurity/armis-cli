@@ -105,6 +105,8 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		if tarballPath != "" {
+			// CWE-22: SanitizePath rejects ".." path components and cleans the path.
+			// The tarball path comes from a CLI flag (local user context, not remote input).
 			sanitizedPath, pathErr := util.SanitizePath(tarballPath)
 			if pathErr != nil {
 				return fmt.Errorf("invalid tarball path: %w", pathErr)
