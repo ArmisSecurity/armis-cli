@@ -165,7 +165,9 @@ func (p *AuthProvider) IsLegacy() bool {
 // specifically for the `auth` command to output tokens for piping to other tools.
 // The token is only printed to stdout when explicitly requested by the user.
 //
-// #nosec G101 -- Intentional credential exposure for CLI output
+// #nosec G101 CWE-522 -- Intentional credential exposure for CLI output.
+// Raw token access is required for the `auth` command and for setting Authorization headers.
+// The CLI runs in the user's own security context; token visibility is by design.
 func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 	if p.isLegacy {
 		return p.config.Token, nil
