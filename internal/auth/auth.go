@@ -293,7 +293,10 @@ type jwtClaims struct {
 // 2. The backend validates the signature server-side for all API requests
 // 3. This function only extracts claims for local caching/refresh logic
 //
-// #nosec G104 -- JWT signature verification delegated to backend
+// #nosec G104 CWE-327 -- JWT signature verification is intentionally omitted.
+// The CLI is the consumer (not validator) of tokens received via HTTPS from the auth service.
+// Server-side validation occurs on every API request. Claims here are used only for
+// client-side caching, refresh logic, and region routing.
 func parseJWTClaims(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
