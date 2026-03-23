@@ -238,6 +238,8 @@ func (s *Spinner) Start() {
 			return "\r\033[K"
 		}
 
+		// CWE-835 false positive: loop exits via stopChan (Stop()), ctx.Done
+		// (context cancel/timeout), or safety-net DefaultSpinnerTimeout (30 min).
 		for {
 			select {
 			case <-s.stopChan:
