@@ -105,12 +105,18 @@ Download the latest release for your platform from the [releases page](https://g
    $dir = "C:\Tools\armis-cli"
    New-Item -ItemType Directory -Path $dir -Force
    Move-Item armis-cli.exe $dir\
-   [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
+   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+   if ([string]::IsNullOrEmpty($userPath)) {
+     $newPath = $dir
+   } else {
+     $newPath = "$userPath;$dir"
+   }
+   [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
    ```
 
 4. Restart your terminal for PATH changes to take effect.
 
-> **Note:** Only `windows/amd64` (64-bit Intel/AMD) builds are available. ARM64 Windows is not currently supported.
+> **Note:** These instructions use the `windows/amd64` (64-bit Intel/AMD) build. If other Windows architectures (such as ARM64) are available on the releases page, download the archive that matches your system and follow the same steps.
 
 </details>
 
@@ -198,7 +204,13 @@ If you see "command not found" after installation:
 
    ```powershell
    $dir = "$env:LOCALAPPDATA\armis-cli"
-   [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
+   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+   if ([string]::IsNullOrEmpty($userPath)) {
+     $newPath = $dir
+   } else {
+     $newPath = "$userPath;$dir"
+   }
+   [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
    ```
 
    Then restart your terminal.
@@ -775,7 +787,7 @@ When using JWT authentication, the tenant ID is automatically extracted from the
 
 New versions are automatically built and published when version tags are pushed. Each release includes:
 
-- Pre-built binaries for macOS, Linux, and Windows (amd64 and arm64)
+- Pre-built binaries for macOS and Linux (amd64 and arm64) and Windows (amd64)
 - SHA256 checksums for verification
 - Automated changelog generation
 

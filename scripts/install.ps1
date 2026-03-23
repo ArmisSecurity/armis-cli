@@ -14,17 +14,28 @@ $Repo = "ArmisSecurity/armis-cli"
 $BinaryName = "armis-cli.exe"
 
 function Test-CIEnvironment {
-    # Treat only explicit true-like values as indicating a CI environment.
+    # Boolean vars: only treat as CI when value is an explicit true-like string.
     $trueValues = @('1', 'true', 'yes', 'y', 'on')
-    $ciEnvVars = @('CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_HOME', 'CIRCLECI', 'TF_BUILD')
+    $booleanVars = @('CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI', 'TF_BUILD')
 
-    foreach ($envVarName in $ciEnvVars) {
+    foreach ($envVarName in $booleanVars) {
         $envItem = Get-Item -Path "Env:$envVarName" -ErrorAction SilentlyContinue
         if ($null -ne $envItem -and -not [string]::IsNullOrWhiteSpace($envItem.Value)) {
             $normalized = $envItem.Value.Trim().ToLowerInvariant()
             if ($trueValues -contains $normalized) {
                 return $true
             }
+        }
+    }
+
+    # Presence vars: treat as CI when set to any non-empty value (e.g. JENKINS_HOME
+    # is typically a filesystem path like /var/jenkins_home, not a boolean).
+    $presenceVars = @('JENKINS_HOME')
+
+    foreach ($envVarName in $presenceVars) {
+        $envItem = Get-Item -Path "Env:$envVarName" -ErrorAction SilentlyContinue
+        if ($null -ne $envItem -and -not [string]::IsNullOrWhiteSpace($envItem.Value)) {
+            return $true
         }
     }
 
@@ -109,6 +120,37 @@ function Verify-Checksums {
     }
 
     Write-Host "✓ Checksums verified successfully" -ForegroundColor Green
+}
+
+function Add-DirectoryToPath {
+    param(
+        [string]$ExistingPath,
+        [string]$Directory
+    )
+
+    $segments = @()
+    $installDirKey = $Directory.TrimEnd('\')
+    $hasInstallDir = $false
+
+    if (-not [string]::IsNullOrWhiteSpace($ExistingPath)) {
+        foreach ($seg in $ExistingPath -split ';') {
+            if ([string]::IsNullOrWhiteSpace($seg)) {
+                continue
+            }
+            $segTrim = $seg.Trim()
+            $segKey = $segTrim.TrimEnd('\')
+            if (-not $hasInstallDir -and $segKey -ieq $installDirKey) {
+                $hasInstallDir = $true
+            }
+            $segments += $segTrim
+        }
+    }
+
+    if (-not $hasInstallDir) {
+        $segments += $Directory
+    }
+
+    return ($segments -join ';')
 }
 
 function Main {
@@ -202,22 +244,23 @@ function Main {
 
         Copy-Item -Path $binarySource -Destination $binaryDest -Force
 
-        # Add to PATH (skip in CI environments where PATH is ephemeral)
+        # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
         if (-not (Test-CIEnvironment)) {
             $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-            if ($currentPath -notlike "*$InstallDir*") {
+            $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
+            if ($newUserPath -ne $currentPath) {
                 Write-Host "Adding to PATH..."
                 [Environment]::SetEnvironmentVariable(
                     "Path",
-                    "$currentPath;$InstallDir",
+                    $newUserPath,
                     "User"
                 )
-                $env:Path = "$env:Path;$InstallDir"
+                $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
                 Write-Host "Added $InstallDir to user PATH" -ForegroundColor Green
                 Write-Host "   (Restart your terminal for PATH changes to take effect)"
             }
         } else {
-            $env:Path = "$env:Path;$InstallDir"
+            $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
         }
 
         Write-Host ""
