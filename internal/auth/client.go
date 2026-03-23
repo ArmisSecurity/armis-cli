@@ -125,9 +125,15 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Log detailed error info when debug mode is enabled
+		// Log detailed error info when debug mode is enabled.
+		// Truncate body to avoid exposing large amounts of potentially sensitive data.
 		if c.debug {
-			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
+			debugBody := string(body)
+			const maxDebugLen = 512
+			if len(debugBody) > maxDebugLen {
+				debugBody = debugBody[:maxDebugLen] + "... (truncated)"
+			}
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth failed with status %d, response length: %d bytes\n%s\n", resp.StatusCode, len(body), debugBody)
 		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return nil, &AuthError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("authentication failed (status %d)", resp.StatusCode)}
