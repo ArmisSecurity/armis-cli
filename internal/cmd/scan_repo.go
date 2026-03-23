@@ -55,6 +55,8 @@ var scanRepoCmd = &cobra.Command{
 			return err
 		}
 
+		// CWE-770 false positive: getPageLimit() validates page limit is in range 1-1000
+		// (see validatePageLimit in root.go). The limit is already bounded.
 		limit, err := getPageLimit()
 		if err != nil {
 			return err
