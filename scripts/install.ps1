@@ -171,6 +171,24 @@ function Main {
         exit 1
     }
 
+    # Validate install directory is under user-writable locations
+    $allowedPrefixes = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE, $env:ProgramFiles)
+    $isAllowed = $false
+    foreach ($prefix in $allowedPrefixes) {
+        if ($prefix -and $InstallDir.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $isAllowed = $true
+            break
+        }
+    }
+    if (-not $isAllowed) {
+        Write-Warning "Install directory '$InstallDir' is outside standard user locations."
+        $confirm = Read-Host "Continue? (y/N)"
+        if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+            Write-Error "Installation cancelled by user"
+            exit 1
+        }
+    }
+
     # Validate Version format (except for the special 'latest' value)
     if ($Version -ne "latest" -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[0-9A-Za-z\.-]+)?$') {
         Write-Error "Invalid version format: '$Version'. Expected formats like 'v1.2.3' or '1.2.3' (optionally with suffix like -beta.1), or 'latest'."
