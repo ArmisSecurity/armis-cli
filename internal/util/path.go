@@ -49,14 +49,23 @@ func SanitizePath(p string) (string, error) {
 // where a path could be validated before the directory exists and then exploited
 // after creation by a malicious symlink or directory structure.
 func SafeJoinPath(basePath, relativePath string) (string, error) {
-	// Verify base path is an existing directory
-	info, err := os.Stat(basePath)
+	// Resolve symlinks in basePath to mitigate TOCTOU race conditions (CWE-367).
+	// By resolving before validation, we ensure the stat check and path join
+	// operate on the same physical directory.
+	resolvedBase, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve base path: %w", err)
+	}
+
+	// Verify resolved base path is an existing directory
+	info, err := os.Stat(resolvedBase)
 	if err != nil {
 		return "", fmt.Errorf("cannot access base path: %w", err)
 	}
 	if !info.IsDir() {
 		return "", errors.New("base path must be a directory")
 	}
+	basePath = resolvedBase
 
 	if relativePath == "" {
 		return "", errors.New("empty relative path")
