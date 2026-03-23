@@ -2,11 +2,17 @@ package image
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/distribution/reference"
 )
+
+// validImageNamePattern matches the allowlist of characters valid in Docker image references:
+// alphanumeric, dots, hyphens, underscores, colons (tag separator), slashes (registry/path),
+// and @ (digest separator).
+var validImageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._/:@-]+$`)
 
 func validateImageName(raw string) (string, error) {
 	for _, r := range raw {
@@ -16,6 +22,9 @@ func validateImageName(raw string) (string, error) {
 	}
 	if strings.HasPrefix(raw, "-") {
 		return "", fmt.Errorf("image name may not start with '-'")
+	}
+	if !validImageNamePattern.MatchString(raw) {
+		return "", fmt.Errorf("image name contains invalid characters: only alphanumeric, '.', '-', '_', '/', ':', '@' are allowed")
 	}
 
 	ref, err := reference.ParseNormalizedNamed(raw)
