@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,19 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 	}, nil
 }
 
+// maxIgnoreFileSize is the maximum allowed size for .armisignore files (1MB).
+// Ignore files are typically a few KB at most; anything larger is likely an error.
+const maxIgnoreFileSize = 1 * 1024 * 1024
+
 func loadIgnoreFile(ignoreFilePath, repoRoot string) ([]gitignore.Pattern, error) {
+	info, err := os.Stat(ignoreFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxIgnoreFileSize {
+		return nil, fmt.Errorf(".armisignore file %s is too large (%d bytes, max %d)", ignoreFilePath, info.Size(), maxIgnoreFileSize)
+	}
+
 	data, err := os.ReadFile(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
 	if err != nil {
 		return nil, err
