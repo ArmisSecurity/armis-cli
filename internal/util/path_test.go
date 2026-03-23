@@ -245,7 +245,7 @@ func TestSafeJoinPath(t *testing.T) {
 			basePath:     "/non/existent/path",
 			relativePath: "file.txt",
 			wantErr:      true,
-			errSubstr:    "cannot access base path",
+			errSubstr:    "cannot resolve base path",
 		},
 	}
 
@@ -323,7 +323,13 @@ func TestSafeJoinPathResultsContainedInBase(t *testing.T) {
 			if !strings.HasSuffix(normalizedResult, tt.wantSuffix) {
 				t.Errorf("util.SafeJoinPath(%q, %q) = %q, want suffix %q", baseDir, tt.relativePath, normalizedResult, tt.wantSuffix)
 			}
-			normalizedBase := filepath.ToSlash(baseDir)
+			// EvalSymlinks resolves symlinks (e.g. /var -> /private/var on macOS,
+			// short names on Windows), so compare against the resolved base.
+			resolvedBase, err := filepath.EvalSymlinks(baseDir)
+			if err != nil {
+				t.Fatalf("filepath.EvalSymlinks(%q) failed: %v", baseDir, err)
+			}
+			normalizedBase := filepath.ToSlash(resolvedBase)
 			if !strings.HasPrefix(normalizedResult, normalizedBase) {
 				t.Errorf("util.SafeJoinPath(%q, %q) = %q, should start with base %q", baseDir, tt.relativePath, normalizedResult, normalizedBase)
 			}
