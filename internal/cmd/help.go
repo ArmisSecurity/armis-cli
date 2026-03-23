@@ -37,7 +37,9 @@ func SetupHelp(cmd *cobra.Command) {
 		// Save original output destination before redirecting
 		originalOut := c.OutOrStdout()
 
-		// Capture help output to a buffer
+		// CWE-770 false positive: buffer content is from Cobra's help template
+		// (hardcoded command names/flags), not user input. Additionally, styleHelpOutput
+		// enforces maxHelpTextSize as defense-in-depth.
 		buf := new(bytes.Buffer)
 		c.SetOut(buf)
 		c.SetUsageTemplate(styledUsageTemplate())
