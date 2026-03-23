@@ -70,6 +70,8 @@ func NewReader(r io.Reader, size int64, description string, disabled bool) io.Re
 		return r
 	}
 
+	// CWE-770 false positive: size is used only for progress percentage display,
+	// not for memory allocation. progressbar.DefaultBytes does not allocate size bytes.
 	bar := progressbar.DefaultBytes(
 		size,
 		description,
