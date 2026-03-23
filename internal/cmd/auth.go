@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -58,7 +59,10 @@ func runAuth(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get token: %w", err)
 	}
 
-	// Print the raw token without any prefix (useful for piping to other tools)
+	// Print the raw token without any prefix (useful for piping to other tools).
+	// CWE-522: Token output is the intentional purpose of this command.
+	// Warning is sent to stderr so it doesn't interfere with piped usage.
+	fmt.Fprintln(os.Stderr, "Warning: token output below. Avoid storing in logs or shell history.")
 	fmt.Println(token)
 	return nil
 }
