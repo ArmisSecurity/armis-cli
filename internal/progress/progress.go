@@ -176,6 +176,8 @@ func (s *Spinner) Start() {
 	s.mu.Unlock()
 
 	if s.disabled || IsCI() {
+		// CWE-253 false positive: write errors for terminal/CI output are intentionally
+		// discarded - there is no meaningful recovery action for failed terminal writes.
 		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", message, startTime.Format("15:04:05"))
 		return
 	}
