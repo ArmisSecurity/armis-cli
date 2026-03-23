@@ -69,7 +69,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			req.Body = newBody
 		}
 
-		resp, err = c.httpClient.Do(req) //nolint:gosec // G704: URL is from API client, validated before use
+		// CWE-918 false positive: URLs are constructed internally by the API client from
+		// validated configuration (base URL + fixed endpoints), not from user input.
+		// The base URL is validated in NewAuthClient (HTTPS required for non-localhost).
+		resp, err = c.httpClient.Do(req) //nolint:gosec // G704: URL from API client, not user-controlled
 		if err != nil {
 			// Close response body if present to prevent resource leaks
 			// (some HTTP errors may return both a response and an error)
