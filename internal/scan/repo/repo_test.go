@@ -1425,38 +1425,38 @@ func TestScan(t *testing.T) {
 
 func TestIsPathContained(t *testing.T) {
 	t.Run("valid contained path", func(t *testing.T) {
-		if !isPathContained("/repo", "/repo/src/main.go") {
+		if !isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/repo/src/main.go")) {
 			t.Error("Expected path to be contained")
 		}
 	})
 
 	t.Run("nested valid path", func(t *testing.T) {
-		if !isPathContained("/repo", "/repo/a/b/c/file.go") {
+		if !isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/repo/a/b/c/file.go")) {
 			t.Error("Expected nested path to be contained")
 		}
 	})
 
 	t.Run("path escapes with double dots", func(t *testing.T) {
-		if isPathContained("/repo", "/repo/../etc/passwd") {
+		if isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/repo/../etc/passwd")) {
 			t.Error("Expected path traversal to be rejected")
 		}
 	})
 
 	t.Run("absolute path outside base", func(t *testing.T) {
-		if isPathContained("/repo", "/etc/passwd") {
+		if isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/etc/passwd")) {
 			t.Error("Expected absolute path outside base to be rejected")
 		}
 	})
 
 	t.Run("path at root level", func(t *testing.T) {
-		if !isPathContained("/repo", "/repo/file.go") {
+		if !isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/repo/file.go")) {
 			t.Error("Expected file at root level to be contained")
 		}
 	})
 
 	t.Run("same directory", func(t *testing.T) {
 		// The base directory itself should be considered contained
-		if !isPathContained("/repo", "/repo") {
+		if !isPathContained(filepath.FromSlash("/repo"), filepath.FromSlash("/repo")) {
 			t.Error("Expected base directory itself to be contained")
 		}
 	})
