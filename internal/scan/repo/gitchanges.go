@@ -212,6 +212,11 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 		return nil, fmt.Errorf("cannot compute relative path from repo root %q to scan path %q: %w",
 			repoRoot, scanPath, err)
 	}
+	// CWE-22: Reject prefix containing ".." to prevent path traversal.
+	// This ensures scanPath is actually within repoRoot.
+	if prefix == ".." || strings.HasPrefix(prefix, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("scan path %q is outside repository root %q", scanPath, repoRoot)
+	}
 	// Normalize to forward slashes for comparison
 	prefix = filepath.ToSlash(prefix)
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
