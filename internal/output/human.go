@@ -389,6 +389,8 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 		if filepath.IsAbs(finding.File) {
 			return "", 0, fmt.Errorf("absolute path not allowed without repository context: %q", finding.File)
 		}
+		// CWE-22: SanitizePath rejects ".." path components to prevent traversal.
+		// With repoPath, SafeJoinPath (above) ensures containment within the repo.
 		sanitized, pathErr := util.SanitizePath(finding.File)
 		if pathErr != nil {
 			return "", 0, fmt.Errorf("invalid file path: %w", pathErr)
