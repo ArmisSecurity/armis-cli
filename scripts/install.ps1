@@ -14,15 +14,31 @@ $Repo = "ArmisSecurity/armis-cli"
 $BinaryName = "armis-cli.exe"
 
 function Test-CIEnvironment {
-    return [bool]($env:CI -or $env:GITHUB_ACTIONS -or $env:GITLAB_CI -or
-                  $env:JENKINS_HOME -or $env:CIRCLECI -or $env:TF_BUILD)
+    # Treat only explicit true-like values as indicating a CI environment.
+    $trueValues = @('1', 'true', 'yes', 'y', 'on')
+    $ciEnvVars = @('CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_HOME', 'CIRCLECI', 'TF_BUILD')
+
+    foreach ($envVarName in $ciEnvVars) {
+        $envItem = Get-Item -Path "Env:$envVarName" -ErrorAction SilentlyContinue
+        if ($null -ne $envItem -and -not [string]::IsNullOrWhiteSpace($envItem.Value)) {
+            $normalized = $envItem.Value.Trim().ToLowerInvariant()
+            if ($trueValues -contains $normalized) {
+                return $true
+            }
+        }
+    }
+
+    return $false
 }
 
 function Get-Architecture {
     $arch = $env:PROCESSOR_ARCHITECTURE
     switch ($arch) {
         "AMD64" { return "amd64" }
-        "ARM64" { return "arm64" }
+        "ARM64" {
+            Write-Error "Windows ARM64 is not currently supported by this installer. Please use an x64 (AMD64) environment."
+            exit 1
+        }
         default {
             Write-Error "Unsupported architecture: $arch"
             exit 1

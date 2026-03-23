@@ -682,14 +682,12 @@ variables:
 steps:
   - powershell: |
       irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
-    displayName: 'Install Armis CLI'
 
-  - powershell: |
       armis-cli scan repo . `
         --format junit `
         --fail-on HIGH,CRITICAL `
         > $(Build.ArtifactStagingDirectory)\scan-results.xml
-    displayName: 'Run Security Scan'
+    displayName: 'Install Armis CLI and Run Security Scan'
     env:
       ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
       ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
