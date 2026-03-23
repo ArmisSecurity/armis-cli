@@ -215,6 +215,8 @@ func (s *Spinner) Start() {
 		// even when --color=never. This matches clearLine() which uses \033[K.
 		hideCursor := isTerminalWriter(s.writer)
 		if hideCursor {
+			// CWE-253 false positive: write errors for terminal cursor control sequences
+			// are intentionally discarded - no meaningful recovery for failed terminal writes.
 			_, _ = fmt.Fprint(s.writer, cursorHide)
 			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
 		}
