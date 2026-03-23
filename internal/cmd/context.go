@@ -33,7 +33,9 @@ func NewSignalContext() (context.Context, context.CancelFunc) {
 func handleScanError(ctx context.Context, err error) error {
 	_ = ctx // unused but kept for API consistency
 	if errors.Is(err, context.Canceled) {
-		_, _ = fmt.Fprintln(os.Stderr, "") // newline before warning; ignore write errors
+		// CWE-252 false positive: write errors for stderr formatting are intentionally
+		// discarded - no meaningful recovery for failed terminal writes.
+		_, _ = fmt.Fprintln(os.Stderr, "")
 		cli.PrintWarning("Scan cancelled")
 		return ErrScanCancelled
 	}
