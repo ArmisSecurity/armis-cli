@@ -96,6 +96,9 @@ func (c *RegionCache) Save(clientID, region string) {
 		return
 	}
 
+	// CWE-522 false positive: clientID is an identifier, not a secret credential.
+	// File permissions 0o600 restrict access to the owning user. This is standard
+	// practice for CLI config caches (similar to ~/.docker/config.json).
 	_ = os.WriteFile(path, data, 0o600) //nolint:gosec // path validated by getFilePath
 }
 
