@@ -81,16 +81,38 @@ The script will automatically:
 irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 ```
 
-### Scoop (Windows)
+### Scoop (Windows) — Coming Soon
 
-```powershell
-scoop bucket add armis https://github.com/ArmisSecurity/scoop-bucket
-scoop install armis-cli
-```
+> Scoop support is planned. For now, use the PowerShell installer above or [download manually](#manual-download).
 
 ### Manual Download
 
 Download the latest release for your platform from the [releases page](https://github.com/ArmisSecurity/armis-cli/releases).
+
+<details>
+<summary>Windows manual install steps</summary>
+
+1. Download `armis-cli-windows-amd64.zip` from the [releases page](https://github.com/ArmisSecurity/armis-cli/releases)
+2. Extract the ZIP (right-click > **Extract All**, or use PowerShell):
+
+   ```powershell
+   Expand-Archive armis-cli-windows-amd64.zip -DestinationPath .
+   ```
+
+3. Move `armis-cli.exe` to a directory in your PATH, or add its location:
+
+   ```powershell
+   $dir = "C:\Tools\armis-cli"
+   New-Item -ItemType Directory -Path $dir -Force
+   Move-Item armis-cli.exe $dir\
+   [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
+   ```
+
+4. Restart your terminal for PATH changes to take effect.
+
+> **Note:** Only `windows/amd64` (64-bit Intel/AMD) builds are available. ARM64 Windows is not currently supported.
+
+</details>
 
 ### Using Go
 
@@ -102,8 +124,17 @@ go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 
 After installation, verify that the CLI is working:
 
+**Linux/macOS:**
+
 ```bash
 which armis-cli
+armis-cli --version
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Get-Command armis-cli
 armis-cli --version
 ```
 
@@ -149,6 +180,35 @@ If you see "command not found" after installation:
    ~/.local/bin/armis-cli --help
    ```
 
+#### Windows (PowerShell)
+
+1. **Check if it's installed:**
+
+   ```powershell
+   Test-Path "$env:LOCALAPPDATA\armis-cli\armis-cli.exe"
+   ```
+
+2. **Check your PATH:**
+
+   ```powershell
+   $env:Path -split ';' | Where-Object { $_ -like '*armis*' }
+   ```
+
+3. **Add to PATH if needed:**
+
+   ```powershell
+   $dir = "$env:LOCALAPPDATA\armis-cli"
+   [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
+   ```
+
+   Then restart your terminal.
+
+4. **Run directly with full path:**
+
+   ```powershell
+   & "$env:LOCALAPPDATA\armis-cli\armis-cli.exe" --help
+   ```
+
 ---
 
 ## Verification
@@ -173,6 +233,30 @@ cosign verify-blob \
 # Verify the checksum
 sha256sum --ignore-missing -c armis-cli-checksums.txt
 ```
+
+<details>
+<summary>PowerShell equivalent</summary>
+
+```powershell
+# Download the binary, checksums, and signature
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-windows-amd64.zip" -OutFile armis-cli-windows-amd64.zip
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt" -OutFile armis-cli-checksums.txt
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig" -OutFile armis-cli-checksums.txt.sig
+
+# Verify the signature (requires cosign: https://docs.sigstore.dev/cosign/installation/)
+cosign verify-blob `
+  --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --signature armis-cli-checksums.txt.sig `
+  armis-cli-checksums.txt
+
+# Verify the checksum
+$expected = (Get-Content armis-cli-checksums.txt | Select-String "armis-cli-windows-amd64.zip") -replace '\s+.*'
+$actual = (Get-FileHash armis-cli-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()
+if ($expected -eq $actual) { Write-Host "Checksum OK" -ForegroundColor Green } else { Write-Error "Checksum mismatch" }
+```
+
+</details>
 
 ### Verify SLSA Provenance (Supply Chain Security)
 
@@ -204,6 +288,19 @@ npm install -g @cyclonedx/cyclonedx-cli
 cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 ```
 
+<details>
+<summary>PowerShell equivalent</summary>
+
+```powershell
+# Download SBOM
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-windows-amd64.zip.sbom.cdx.json" -OutFile sbom.cdx.json
+
+# View dependencies
+(Get-Content sbom.cdx.json | ConvertFrom-Json).components | Select-Object name, version | Format-Table
+```
+
+</details>
+
 **Learn more:**
 
 - [SLSA Framework](https://slsa.dev/)
@@ -225,6 +322,13 @@ export ARMIS_CLIENT_ID="your-client-id"
 export ARMIS_CLIENT_SECRET="your-client-secret"
 ```
 
+**PowerShell:**
+
+```powershell
+$env:ARMIS_CLIENT_ID = "your-client-id"
+$env:ARMIS_CLIENT_SECRET = "your-client-secret"
+```
+
 The tenant ID is automatically extracted from the JWT token — no need to set it separately.
 
 #### Basic Authentication (Legacy)
@@ -232,6 +336,13 @@ The tenant ID is automatically extracted from the JWT token — no need to set i
 ```bash
 export ARMIS_API_TOKEN="your-api-token"
 export ARMIS_TENANT_ID="your-tenant-id"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_API_TOKEN = "your-api-token"
+$env:ARMIS_TENANT_ID = "your-tenant-id"
 ```
 
 ### Scan a repository
@@ -681,6 +792,14 @@ make build
 ```
 
 The binary will be in `bin/armis-cli`.
+
+**Windows (without Make):**
+
+```powershell
+git clone https://github.com/ArmisSecurity/armis-cli.git
+cd armis-cli
+go build -o bin\armis-cli.exe ./cmd/armis-cli
+```
 
 ---
 

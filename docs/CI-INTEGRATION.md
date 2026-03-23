@@ -189,7 +189,13 @@ permissions:
 
 ### Option 2: GitHub Action
 
-Use the action directly when you need more control over your workflow:
+Use the action directly when you need more control over your workflow.
+
+> **Note:** The GitHub Action currently supports Linux and macOS runners only. For Windows runners (`windows-latest`), use [Option 3: Manual Installation](#option-3-manual-installation) with the PowerShell install script:
+>
+> ```powershell
+> irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+> ```
 
 ```yaml
 name: Security Scan
@@ -589,6 +595,40 @@ pipeline {
 
 Configure credentials using [Jenkins Credentials](https://www.jenkins.io/doc/book/using/using-credentials/).
 
+#### Jenkins (Windows Agent)
+
+```groovy
+pipeline {
+    agent { label 'windows' }
+
+    environment {
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
+    }
+
+    stages {
+        stage('Security Scan') {
+            steps {
+                powershell '''
+                    irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+                    armis-cli scan repo . `
+                        --format junit `
+                        --fail-on HIGH,CRITICAL `
+                        > scan-results.xml
+                '''
+                junit 'scan-results.xml'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'scan-results.xml', allowEmptyArchive: true
+        }
+    }
+}
+```
+
 ---
 
 ### Azure DevOps
@@ -626,6 +666,40 @@ steps:
 ```
 
 Configure secrets using [Variable Groups](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups).
+
+#### Azure DevOps (Windows Runner)
+
+```yaml
+trigger:
+  - main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - group: armis-credentials
+
+steps:
+  - powershell: |
+      irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+    displayName: 'Install Armis CLI'
+
+  - powershell: |
+      armis-cli scan repo . `
+        --format junit `
+        --fail-on HIGH,CRITICAL `
+        > $(Build.ArtifactStagingDirectory)\scan-results.xml
+    displayName: 'Run Security Scan'
+    env:
+      ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+      ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/scan-results.xml'
+    condition: always()
+```
 
 ---
 

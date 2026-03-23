@@ -13,12 +13,17 @@ $ErrorActionPreference = "Stop"
 $Repo = "ArmisSecurity/armis-cli"
 $BinaryName = "armis-cli.exe"
 
+function Test-CIEnvironment {
+    return [bool]($env:CI -or $env:GITHUB_ACTIONS -or $env:GITLAB_CI -or
+                  $env:JENKINS_HOME -or $env:CIRCLECI -or $env:TF_BUILD)
+}
+
 function Get-Architecture {
     $arch = $env:PROCESSOR_ARCHITECTURE
     switch ($arch) {
         "AMD64" { return "amd64" }
         "ARM64" { return "arm64" }
-        default { 
+        default {
             Write-Error "Unsupported architecture: $arch"
             exit 1
         }
@@ -30,7 +35,7 @@ function Download-File {
         [string]$Url,
         [string]$Output
     )
-    
+
     Write-Host "📥 Downloading from: $Url"
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Output -UseBasicParsing
@@ -46,12 +51,12 @@ function Verify-Checksums {
         [string]$ChecksumsFile,
         [string]$ChecksumsSig
     )
-    
+
     if (-not $Verify) {
         Write-Host "⚠️  Skipping verification (-Verify:`$false)"
         return
     }
-    
+
     $cosignPath = Get-Command cosign -ErrorAction SilentlyContinue
     if ($cosignPath) {
         Write-Host "🔐 Verifying signature with cosign..."
@@ -69,24 +74,24 @@ function Verify-Checksums {
         Write-Host "ℹ️  cosign not found, verifying checksums only"
         Write-Host "   Install cosign for full signature verification: https://docs.sigstore.dev/cosign/installation/"
     }
-    
+
     Write-Host "🔍 Verifying checksums..."
     $archiveName = Split-Path $ArchiveFile -Leaf
     $checksumContent = Get-Content $ChecksumsFile | Where-Object { $_ -match $archiveName }
-    
+
     if (-not $checksumContent) {
         Write-Error "Checksum not found for $archiveName"
         exit 1
     }
-    
+
     $expectedHash = ($checksumContent -split '\s+')[0]
     $actualHash = (Get-FileHash -Path $ArchiveFile -Algorithm SHA256).Hash.ToLower()
-    
+
     if ($expectedHash -ne $actualHash) {
         Write-Error "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
         exit 1
     }
-    
+
     Write-Host "✓ Checksums verified successfully" -ForegroundColor Green
 }
 
@@ -117,26 +122,26 @@ function Main {
     $arch = Get-Architecture
     Write-Host "Detected Architecture: $arch"
     Write-Host ""
-    
+
     if ($Version -eq "latest") {
         $baseUrl = "https://github.com/$Repo/releases/latest/download"
     } else {
         $baseUrl = "https://github.com/$Repo/releases/download/$Version"
     }
-    
+
     $archiveName = "armis-cli-windows-$arch.zip"
     # Use GUID for cryptographically secure random directory name
     $tmpDir = Join-Path $env:TEMP "armis-cli-install-$([guid]::NewGuid().ToString())"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    
+
     try {
         $archiveFile = Join-Path $tmpDir $archiveName
         $checksumsFile = Join-Path $tmpDir "armis-cli-checksums.txt"
         $checksumsSig = Join-Path $tmpDir "armis-cli-checksums.txt.sig"
-        
+
         Write-Host "📦 Downloading $archiveName..."
         Download-File -Url "$baseUrl/$archiveName" -Output $archiveFile
-        
+
         Write-Host "📥 Downloading checksums..."
         Download-File -Url "$baseUrl/armis-cli-checksums.txt" -Output $checksumsFile
         try {
@@ -144,7 +149,7 @@ function Main {
         } catch {
             Write-Host "⚠️  Signature file not found, skipping signature verification" -ForegroundColor Yellow
         }
-        
+
         Write-Host ""
         if (Test-Path $checksumsSig) {
             Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsSig $checksumsSig
@@ -152,39 +157,76 @@ function Main {
             Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsSig ""
         }
         Write-Host ""
-        
+
         Write-Host "📂 Extracting archive..."
         Expand-Archive -Path $archiveFile -DestinationPath $tmpDir -Force
-        
+
         Write-Host "📥 Installing to $InstallDir..."
         if (-not (Test-Path $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
-        
+
         $binarySource = Join-Path $tmpDir $BinaryName
         $binaryDest = Join-Path $InstallDir $BinaryName
-        
-        Copy-Item -Path $binarySource -Destination $binaryDest -Force
-        
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($currentPath -notlike "*$InstallDir*") {
-            Write-Host "📝 Adding to PATH..."
-            [Environment]::SetEnvironmentVariable(
-                "Path",
-                "$currentPath;$InstallDir",
-                "User"
-            )
-            $env:Path = "$env:Path;$InstallDir"
-            Write-Host "✓ Added $InstallDir to user PATH" -ForegroundColor Green
-            Write-Host "   (Restart your terminal for PATH changes to take effect)"
+
+        # Detect upgrade vs fresh install
+        if (Test-Path $binaryDest) {
+            try {
+                $existingVersion = & $binaryDest --version 2>$null | Select-Object -First 1
+                if ($existingVersion) {
+                    Write-Host "Upgrading existing installation..."
+                    Write-Host "   Current: $existingVersion"
+                } else {
+                    Write-Host "Replacing existing installation..."
+                }
+            } catch {
+                Write-Host "Replacing existing installation..."
+            }
         }
-        
+
+        Copy-Item -Path $binarySource -Destination $binaryDest -Force
+
+        # Add to PATH (skip in CI environments where PATH is ephemeral)
+        if (-not (Test-CIEnvironment)) {
+            $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            if ($currentPath -notlike "*$InstallDir*") {
+                Write-Host "Adding to PATH..."
+                [Environment]::SetEnvironmentVariable(
+                    "Path",
+                    "$currentPath;$InstallDir",
+                    "User"
+                )
+                $env:Path = "$env:Path;$InstallDir"
+                Write-Host "Added $InstallDir to user PATH" -ForegroundColor Green
+                Write-Host "   (Restart your terminal for PATH changes to take effect)"
+            }
+        } else {
+            $env:Path = "$env:Path;$InstallDir"
+        }
+
         Write-Host ""
-        Write-Host "✅ Armis CLI installed successfully!" -ForegroundColor Green
+        Write-Host "Armis CLI installed successfully!" -ForegroundColor Green
+
+        # Show installed version
+        try {
+            $newVersion = & $binaryDest --version 2>$null | Select-Object -First 1
+            if ($newVersion) {
+                Write-Host "   Location: $binaryDest"
+                Write-Host "   Version:  $newVersion"
+            }
+        } catch {}
+
         Write-Host ""
         Write-Host "Run 'armis-cli --help' to get started"
+
+        if (-not (Test-CIEnvironment)) {
+            Write-Host ""
+            Write-Host "Tip: Enable tab completion by adding to your PowerShell profile:"
+            Write-Host "   armis-cli completion powershell | Out-String | Invoke-Expression"
+        }
+
         Write-Host ""
-        
+
     } finally {
         if (Test-Path $tmpDir) {
             Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
