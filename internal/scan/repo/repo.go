@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,7 +432,11 @@ func calculateFilesSize(repoRoot string, files []string) (int64, error) {
 			continue // Skip non-existent files
 		}
 		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-			size += info.Size()
+			fileSize := info.Size()
+			if fileSize > 0 && size > math.MaxInt64-fileSize {
+				return 0, fmt.Errorf("total file size overflow: exceeds maximum representable value")
+			}
+			size += fileSize
 		}
 	}
 	return size, nil
