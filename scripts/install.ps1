@@ -186,15 +186,31 @@ function Main {
         
         $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
         if ($currentPath -notlike "*$InstallDir*") {
-            Write-Host "📝 Adding to PATH..."
-            [Environment]::SetEnvironmentVariable(
-                "Path",
-                "$currentPath;$InstallDir",
-                "User"
-            )
-            $env:Path = "$env:Path;$InstallDir"
-            Write-Host "✓ Added $InstallDir to user PATH" -ForegroundColor Green
-            Write-Host "   (Restart your terminal for PATH changes to take effect)"
+            # CWE-427: Validate directory ownership before adding to PATH.
+            # Only add to PATH if the directory is under the current user's profile
+            # or a standard program location, to prevent uncontrolled search path injection.
+            $safeLocations = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE, $env:ProgramFiles)
+            $isSafe = $false
+            foreach ($loc in $safeLocations) {
+                if ($loc -and $InstallDir.StartsWith($loc, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $isSafe = $true
+                    break
+                }
+            }
+            if (-not $isSafe) {
+                Write-Warning "Skipping PATH modification: '$InstallDir' is not under a standard user location."
+                Write-Host "   Add it manually if needed: `$env:Path += ';$InstallDir'"
+            } else {
+                Write-Host "📝 Adding to PATH..."
+                [Environment]::SetEnvironmentVariable(
+                    "Path",
+                    "$currentPath;$InstallDir",
+                    "User"
+                )
+                $env:Path = "$env:Path;$InstallDir"
+                Write-Host "✓ Added $InstallDir to user PATH" -ForegroundColor Green
+                Write-Host "   (Restart your terminal for PATH changes to take effect)"
+            }
         }
         
         Write-Host ""
