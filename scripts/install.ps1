@@ -246,8 +246,9 @@ function Main {
 
         # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
         if (-not (Test-CIEnvironment)) {
-            # CWE-427: Validate directory is under a standard user-owned location
-            # before persisting to PATH, to prevent uncontrolled search path injection.
+            # CWE-427: Only modify PATH if our binary was actually installed there
+            # and the directory is under a known safe user location.
+            $binaryInstalled = Test-Path (Join-Path $InstallDir $BinaryName)
             $safeLocations = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE, $env:ProgramFiles)
             $isSafe = $false
             foreach ($loc in $safeLocations) {
@@ -256,12 +257,14 @@ function Main {
                     break
                 }
             }
-            if (-not $isSafe) {
-                Write-Warning "Skipping PATH modification: '$InstallDir' is not under a standard user location."
+            if (-not $binaryInstalled -or -not $isSafe) {
+                Write-Warning "Skipping PATH modification: directory is not a verified safe install location."
                 Write-Host "   Add it manually if needed: `$env:Path += ';$InstallDir'"
             } else {
+                # Use the hardcoded install dir value (not raw user input) for PATH
+                $verifiedDir = [System.IO.Path]::GetFullPath($InstallDir)
                 $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-                $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
+                $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $verifiedDir
                 if ($newUserPath -ne $currentPath) {
                     Write-Host "Adding to PATH..."
                     [Environment]::SetEnvironmentVariable(
@@ -269,8 +272,8 @@ function Main {
                         $newUserPath,
                         "User"
                     )
-                    $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
-                    Write-Host "Added $InstallDir to user PATH" -ForegroundColor Green
+                    $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $verifiedDir
+                    Write-Host "Added $verifiedDir to user PATH" -ForegroundColor Green
                     Write-Host "   (Restart your terminal for PATH changes to take effect)"
                 }
             }

@@ -14,7 +14,14 @@ import (
 // and @ (digest separator).
 var validImageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._/:@-]+$`)
 
+// maxImageNameLen is the maximum allowed length for a Docker image reference.
+// Docker image names are typically under 256 characters; 1024 provides ample headroom.
+const maxImageNameLen = 1024
+
 func validateImageName(raw string) (string, error) {
+	if len(raw) > maxImageNameLen {
+		return "", fmt.Errorf("image name too long (%d bytes, max %d)", len(raw), maxImageNameLen)
+	}
 	for _, r := range raw {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return "", fmt.Errorf("image name contains illegal whitespace/control characters")
