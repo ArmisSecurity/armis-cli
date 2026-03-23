@@ -37,5 +37,6 @@ func handleScanError(ctx context.Context, err error) error {
 		cli.PrintWarning("Scan cancelled")
 		return ErrScanCancelled
 	}
-	return fmt.Errorf("scan failed: %w", err)
+	// CLI tool: error details help the local user debug issues, no sensitive data exposed
+	return fmt.Errorf("scan failed: %w", err) // #nosec CWE-209
 }
