@@ -170,7 +170,7 @@ func (p *AuthProvider) IsLegacy() bool {
 // The CLI runs in the user's own security context; token visibility is by design.
 func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 	if p.isLegacy {
-		return p.config.Token, nil
+		return p.config.Token, nil // #nosec CWE-522 -- intentional token return for CLI auth command
 	}
 
 	// Refresh JWT if needed
@@ -306,7 +306,7 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 	}
 
 	// Decode payload (second part) - JWT uses base64url encoding without padding
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1]) // #nosec CWE-327 -- decode only, no crypto verification needed
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}

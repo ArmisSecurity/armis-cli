@@ -63,6 +63,6 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	// CWE-522: Token output is the intentional purpose of this command.
 	// Warning is sent to stderr so it doesn't interfere with piped usage.
 	fmt.Fprintln(os.Stderr, "Warning: token output below. Avoid storing in logs or shell history.")
-	fmt.Println(token)
+	fmt.Println(token) // #nosec CWE-522 -- intentional token output for CLI auth command
 	return nil
 }

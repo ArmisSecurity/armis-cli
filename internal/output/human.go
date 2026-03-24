@@ -1007,7 +1007,7 @@ func severityRank(sev model.Severity) int {
 }
 
 func isGitRepo(repoPath string) bool {
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree") // #nosec CWE-22 -- repoPath from CLI arg (local user context)
 	cmd.Dir = repoPath
 	err := cmd.Run()
 	return err == nil
@@ -1037,7 +1037,7 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 
 	// #nosec G204 -- file path is validated above, git blame is intentional for showing code ownership
 	// Use "--" separator to prevent file argument from being interpreted as an option
-	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", "--", file)
+	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", "--", file) // #nosec CWE-22
 	cmd.Dir = repoPath
 	output, err := cmd.Output()
 	if err != nil {

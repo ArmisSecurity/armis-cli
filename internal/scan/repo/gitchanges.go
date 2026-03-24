@@ -248,7 +248,7 @@ func runGit(dir string, args ...string) (string, error) {
 	// Force English output for consistent error message parsing across locales
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer // #nosec CWE-770 -- git output bounded by repo size, already validated
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

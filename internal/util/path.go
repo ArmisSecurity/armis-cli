@@ -27,7 +27,7 @@ func SanitizePath(p string) (string, error) {
 		}
 	}
 
-	cleaned := filepath.Clean(p)
+	cleaned := filepath.Clean(p) // #nosec CWE-22 -- this IS the sanitization function
 
 	if cleaned == "" {
 		return "", errors.New("invalid path")

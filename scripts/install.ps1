@@ -163,9 +163,8 @@ function Main {
     # then validate the normalized result for defense-in-depth
     $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
-    # After normalization, verify no ".." segments remain
-    # GetFullPath should resolve all "..", but we double-check for defense-in-depth
-    # Pattern matches ".." as a complete path segment (between backslashes or at boundaries)
+    # CWE-22 false positive: this IS the path traversal defense.
+    # GetFullPath (above) resolves ".." segments; this regex is defense-in-depth.
     if ($InstallDir -match '(^|\\)\.\.($|\\)') {
         Write-Error "Invalid install directory: path traversal detected after normalization"
         exit 1

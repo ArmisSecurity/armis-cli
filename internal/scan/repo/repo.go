@@ -75,7 +75,7 @@ func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 // Scan scans a repository at the given path.
 func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
 	// Validate path to prevent path traversal
-	if _, err := util.SanitizePath(path); err != nil {
+	if _, err := util.SanitizePath(path); err != nil { // #nosec CWE-22 -- this IS the path validation
 		return nil, fmt.Errorf("invalid repository path: %w", err)
 	}
 

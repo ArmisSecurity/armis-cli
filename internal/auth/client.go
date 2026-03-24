@@ -108,7 +108,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
+	resp, err := c.httpClient.Do(req) //nolint:gosec // CWE-522,G704: credentials sent over HTTPS to validated endpoint
 	if err != nil {
 		return nil, fmt.Errorf("authentication request failed: %w", err)
 	}

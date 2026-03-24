@@ -117,7 +117,7 @@ var scanImageCmd = &cobra.Command{
 			}
 		} else {
 			imageName := args[0]
-			result, err = scanner.ScanImage(ctx, imageName)
+			result, err = scanner.ScanImage(ctx, imageName) // #nosec CWE-20 -- validated by validateImageName above
 			if err != nil {
 				return handleScanError(ctx, err)
 			}

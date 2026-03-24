@@ -371,7 +371,12 @@ main() {
     chmod +x "$BINARY_FILE"
 
     TARGET_PATH="$INSTALL_DIR/$BINARY_NAME"
-    
+
+    # CWE-59: Reject symlinks at the target path to prevent link-following attacks
+    if [ -L "$TARGET_PATH" ]; then
+        fail "Target path $TARGET_PATH is a symlink. Remove it before installing."
+    fi
+
     # Check if upgrading existing installation
     EXISTING_VERSION=""
     if [ -f "$TARGET_PATH" ]; then

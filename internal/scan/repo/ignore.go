@@ -63,7 +63,7 @@ func loadIgnoreFile(ignoreFilePath, repoRoot string) ([]gitignore.Pattern, error
 		return nil, fmt.Errorf(".armisignore file %s is too large (%d bytes, max %d)", ignoreFilePath, info.Size(), maxIgnoreFileSize)
 	}
 
-	data, err := os.ReadFile(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
+	data, err := os.ReadFile(ignoreFilePath) // #nosec G304 CWE-22 -- path constructed internally from repo root
 	if err != nil {
 		return nil, err
 	}
