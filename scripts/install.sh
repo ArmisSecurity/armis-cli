@@ -290,8 +290,9 @@ verify_checksums() {
     elif command -v shasum > /dev/null 2>&1; then
         actual_checksum=$(shasum -a 256 "$archive_file" | awk '{print $1}')
     else
-        echo "⚠️  No checksum tool found (sha256sum or shasum), skipping checksum verification"
-        return 0
+        echo "❌ No checksum tool found (sha256sum or shasum). Cannot verify download integrity."
+        echo "   Install sha256sum or shasum and try again."
+        return 1
     fi
     
     if [ "$expected_checksum" != "$actual_checksum" ]; then
