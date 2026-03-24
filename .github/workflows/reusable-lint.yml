@@ -3,6 +3,10 @@ name: Reusable Lint
 on:
   workflow_call:
 
+# CKV2_GHA_1: Restrict top-level permissions to read-only (least privilege)
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
