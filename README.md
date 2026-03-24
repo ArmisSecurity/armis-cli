@@ -510,6 +510,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   security-events: write
   pull-requests: write
 
@@ -556,6 +557,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
@@ -585,6 +587,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
