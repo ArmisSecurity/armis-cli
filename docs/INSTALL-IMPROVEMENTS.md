@@ -136,6 +136,18 @@ Make installation work immediately without requiring shell restarts or manual so
 - ✅ Skips PATH modification
 - ✅ Clean logs
 
+### Windows (PowerShell Installer)
+
+- ✅ Native PowerShell installer (`scripts/install.ps1`)
+- ✅ Default install: `$env:LOCALAPPDATA\armis-cli` (no admin required)
+- ✅ Automatic user-level PATH modification
+- ✅ SHA256 checksum verification + optional cosign signature verification
+- ✅ GUID-based temp directory for secure extraction
+- ✅ CI/CD environment detection (skips persistent PATH changes)
+- ✅ Upgrade detection (shows current vs new version)
+- ✅ Shell completion hint for PowerShell
+- ⚠️ Only `windows/amd64` builds available (no ARM64)
+
 ### Fish Shell Users
 
 - ✅ Fully supported
