@@ -69,12 +69,20 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("invalid --exit-code value %d: must be between 1 and 255", exitCode)
 		}
 
-		// Validate timeout values: must be positive
+		// Validate timeout values: must be positive and bounded
 		if scanTimeout < 1 {
 			return fmt.Errorf("invalid --scan-timeout value %d: must be at least 1 minute", scanTimeout)
 		}
+		const maxScanTimeout = 1440 // 24 hours
+		if scanTimeout > maxScanTimeout {
+			return fmt.Errorf("invalid --scan-timeout value %d: must not exceed %d minutes (24 hours)", scanTimeout, maxScanTimeout)
+		}
 		if uploadTimeout < 1 {
 			return fmt.Errorf("invalid --upload-timeout value %d: must be at least 1 minute", uploadTimeout)
+		}
+		const maxUploadTimeout = 120 // 2 hours
+		if uploadTimeout > maxUploadTimeout {
+			return fmt.Errorf("invalid --upload-timeout value %d: must not exceed %d minutes", uploadTimeout, maxUploadTimeout)
 		}
 
 		return nil
