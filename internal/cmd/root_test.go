@@ -739,14 +739,12 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	// Save original values
 	originalClientID := clientID
 	originalClientSecret := clientSecret
-	originalAuthEndpoint := authEndpoint
 	originalToken := token
 	originalTenantID := tenantID
 
 	t.Cleanup(func() {
 		clientID = originalClientID
 		clientSecret = originalClientSecret
-		authEndpoint = originalAuthEndpoint
 		token = originalToken
 		tenantID = originalTenantID
 	})
@@ -754,7 +752,6 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	// Clear all auth credentials
 	clientID = ""
 	clientSecret = ""
-	authEndpoint = ""
 	token = ""
 	tenantID = ""
 

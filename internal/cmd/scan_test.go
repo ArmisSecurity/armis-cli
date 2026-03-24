@@ -114,7 +114,7 @@ func TestScanRepoCmd(t *testing.T) {
 		scanRepoCmd.SetOut(&buf)
 		scanRepoCmd.SetErr(&buf)
 
-		err := scanRepoCmd.RunE(scanRepoCmd, []string{"/tmp/test"})
+		err := scanRepoCmd.RunE(scanRepoCmd, []string{t.TempDir()})
 		if err == nil {
 			t.Error("Expected error when token not set")
 		}
@@ -130,7 +130,7 @@ func TestScanRepoCmd(t *testing.T) {
 			useDev = false
 		}()
 
-		err := scanRepoCmd.RunE(scanRepoCmd, []string{"/tmp/test"})
+		err := scanRepoCmd.RunE(scanRepoCmd, []string{t.TempDir()})
 		if err == nil {
 			t.Error("Expected error when tenant ID not set")
 		}
@@ -146,7 +146,7 @@ func TestScanRepoCmd(t *testing.T) {
 			useDev = false
 		}()
 
-		err := scanRepoCmd.RunE(scanRepoCmd, []string{"/tmp/test"})
+		err := scanRepoCmd.RunE(scanRepoCmd, []string{t.TempDir()})
 		if err == nil {
 			t.Error("Expected error when base URL not configured")
 		}

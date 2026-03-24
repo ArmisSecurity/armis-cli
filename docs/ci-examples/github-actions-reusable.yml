@@ -1,3 +1,4 @@
+---
 # GitHub Actions - Reusable Workflow (Recommended)
 #
 # This is the simplest way to integrate Armis security scanning.
@@ -8,6 +9,9 @@
 #   - Artifact storage
 #
 # Required secrets:
+#   The reusable workflow currently accepts Basic auth secrets (api-token/tenant-id).
+#   For JWT authentication (recommended), use manual installation instead.
+#
 #   - ARMIS_API_TOKEN: Your Armis API token
 #   - ARMIS_TENANT_ID: Your Armis tenant identifier
 

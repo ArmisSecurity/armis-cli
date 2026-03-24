@@ -1,9 +1,14 @@
+---
 # GitHub Actions - Direct Action Usage
 #
 # This example uses the Armis CLI GitHub Action directly.
 # For the recommended reusable workflow approach, see github-actions-reusable.yml
 #
-# Required secrets:
+# Required secrets (JWT - recommended):
+#   - ARMIS_CLIENT_ID: Client ID from VIPR external API screen
+#   - ARMIS_CLIENT_SECRET: Client secret from VIPR external API screen
+#
+# Legacy secrets (Basic auth):
 #   - ARMIS_API_TOKEN: Your Armis API token
 #   - ARMIS_TENANT_ID: Your Armis tenant identifier
 

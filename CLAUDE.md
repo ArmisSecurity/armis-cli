@@ -43,7 +43,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 ### Core Packages
 
-- `internal/auth/` - Authentication provider supporting two modes. JWT (priority): client credentials exchange at `/api/v1/authenticate`, auto-refresh 5min before expiry, tenant ID extracted from `customer_id` JWT claim. Basic (fallback): static token + explicit tenant ID. Implements `AuthHeaderProvider` interface used by the API client.
+- `internal/auth/` - Authentication provider supporting two modes. JWT (priority): client credentials exchange at `/api/v1/auth/token`, auto-refresh 5min before expiry, tenant ID extracted from `customer_id` JWT claim. Basic (fallback): static token + explicit tenant ID. Implements `AuthHeaderProvider` interface used by the API client.
 - `internal/api/` - API client for Armis Cloud. Two HTTP clients: one for general calls (60s timeout), one for uploads (streaming, no timeout, no retry). Functional options pattern (`WithHTTPClient()`, `WithUploadHTTPClient()`, `WithAllowLocalURLs()`). Upload uses `io.Pipe` streaming to avoid OOM on large files. Enforces HTTPS, validates presigned S3 URLs against SSRF.
 - `internal/model/` - Data structures: `Finding` (23 fields), `ScanResult`, `Summary`, `Fix`, `FindingValidation` (with taint/reachability analysis), API response types (`NormalizedFinding`, pagination).
 - `internal/output/` - Output formatters (human, json, sarif, junit) implementing the `Formatter` interface. `styles.go` defines ~50 lipgloss styles using Tailwind CSS color palette. `icons.go` defines Unicode constants (severity dots, box-drawing chars). `SyncColors()` switches between full-color and plain styles based on `cli.ColorsEnabled()`.
@@ -83,9 +83,10 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 - `ARMIS_CLIENT_ID` - Client ID for JWT authentication (recommended)
 - `ARMIS_CLIENT_SECRET` - Client secret for JWT authentication
-- `ARMIS_AUTH_ENDPOINT` - JWT authentication service endpoint URL
 - `ARMIS_API_TOKEN` - API token for Basic authentication (fallback)
 - `ARMIS_TENANT_ID` - Tenant identifier (required only with Basic auth; JWT extracts it from token)
+- `ARMIS_API_URL` - Override base URL for Armis API (advanced; defaults based on --dev flag)
+- `ARMIS_REGION` - Override Armis cloud region (equivalent to `--region`; used for region-aware authentication)
 - `ARMIS_FORMAT` - Default output format
 - `ARMIS_PAGE_LIMIT` - Results pagination size
 - `ARMIS_THEME` - Terminal background theme: auto, dark, light (default: auto)

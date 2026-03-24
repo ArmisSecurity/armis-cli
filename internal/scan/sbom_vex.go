@@ -50,7 +50,7 @@ func NewSBOMVEXDownloader(client *api.Client, tenantID string, opts *SBOMVEXOpti
 func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName string) error {
 	// Sanitize artifact name to prevent path traversal
 	sanitizedName := filepath.Base(artifactName)
-	if sanitizedName == "." || sanitizedName == ".." || sanitizedName == "/" || sanitizedName == "" {
+	if sanitizedName == "." || sanitizedName == ".." || sanitizedName == string(filepath.Separator) || sanitizedName == "" {
 		return fmt.Errorf("invalid artifact name")
 	}
 

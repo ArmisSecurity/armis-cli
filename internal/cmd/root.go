@@ -48,7 +48,7 @@ var (
 	// JWT authentication
 	clientID     string
 	clientSecret string
-	authEndpoint string
+	region       string
 
 	version = versionDev
 	commit  = "none"
@@ -114,6 +114,13 @@ var rootCmd = &cobra.Command{
 
 		output.SyncColors()
 
+		// Warn if the removed ARMIS_AUTH_ENDPOINT env var is set
+		if os.Getenv("ARMIS_AUTH_ENDPOINT") != "" {
+			cli.PrintWarning("ARMIS_AUTH_ENDPOINT is no longer supported. " +
+				"The auth endpoint is now derived from the base URL. " +
+				"Use ARMIS_API_URL to override the base URL, or --region to specify a region.")
+		}
+
 		// Skip update check if:
 		// - explicitly disabled via flag or env var
 		// - running in CI
@@ -163,21 +170,7 @@ func init() {
 	// JWT authentication
 	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
 	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&authEndpoint, "auth-endpoint", os.Getenv("ARMIS_AUTH_ENDPOINT"), "Authentication service endpoint URL (env: ARMIS_AUTH_ENDPOINT)")
-
-	// Hide JWT flags until backend support is available
-	if err := rootCmd.PersistentFlags().MarkHidden("client-id"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to hide flag 'client-id': %v\n", err)
-		os.Exit(1)
-	}
-	if err := rootCmd.PersistentFlags().MarkHidden("client-secret"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to hide flag 'client-secret': %v\n", err)
-		os.Exit(1)
-	}
-	if err := rootCmd.PersistentFlags().MarkHidden("auth-endpoint"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to hide flag 'auth-endpoint': %v\n", err)
-		os.Exit(1)
-	}
+	rootCmd.PersistentFlags().StringVar(&region, "region", os.Getenv("ARMIS_REGION"), "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
@@ -280,12 +273,13 @@ func getAPIBaseURL() string {
 }
 
 // getAuthProvider creates an AuthProvider based on the provided credentials.
-// Priority: JWT auth (--client-id, --client-secret, --auth-endpoint) > Basic auth (--token)
+// Priority: JWT auth (--client-id, --client-secret) > Basic auth (--token)
 func getAuthProvider() (*auth.AuthProvider, error) {
 	return auth.NewAuthProvider(auth.AuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		AuthEndpoint: authEndpoint,
+		BaseURL:      getAPIBaseURL(),
+		Region:       region,
 		Token:        token,
 		TenantID:     tenantID,
 		Debug:        debug,

@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +20,8 @@ type AuthConfig struct {
 	// JWT auth credentials
 	ClientID     string
 	ClientSecret string //nolint:gosec // G117: This is a config field name, not a secret value
-	AuthEndpoint string // Full URL to the authentication service
+	BaseURL      string // Moose API base URL (dev or prod)
+	Region       string // Optional region override - bypasses auto-discovery if set
 
 	// Legacy Basic auth
 	Token    string
@@ -33,21 +36,24 @@ type JWTCredentials struct {
 	Token     string
 	TenantID  string // Extracted from customer_id claim
 	ExpiresAt time.Time
+	Region    string // Deployment region (e.g., "us1", "eu1", "au1")
 }
 
 // AuthProvider manages authentication tokens with automatic refresh.
 // It supports both JWT authentication and legacy Basic authentication.
 // For JWT auth, tokens are automatically refreshed when within 5 minutes of expiry.
 type AuthProvider struct {
-	config      AuthConfig
-	credentials *JWTCredentials
-	authClient  *AuthClient
-	mu          sync.RWMutex
-	isLegacy    bool // true if using Basic auth (--token)
+	config       AuthConfig
+	credentials  *JWTCredentials
+	authClient   *AuthClient
+	mu           sync.RWMutex
+	isLegacy     bool   // true if using Basic auth (--token)
+	cachedRegion string // memoized region from disk cache (loaded once)
+	regionLoaded bool   // true if cachedRegion has been loaded from disk
 }
 
 // NewAuthProvider creates an AuthProvider from configuration.
-// If ClientID and ClientSecret are set, uses JWT auth with the specified endpoint.
+// If ClientID and ClientSecret are set, uses JWT auth with the specified base URL.
 // Otherwise falls back to legacy Basic auth with Token.
 func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 	p := &AuthProvider{
@@ -64,12 +70,12 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 
 	// Determine auth mode: JWT credentials take priority
 	if config.ClientID != "" && config.ClientSecret != "" {
-		// JWT auth
+		// JWT auth via moose
 		p.isLegacy = false
-		if config.AuthEndpoint == "" {
-			return nil, fmt.Errorf("--auth-endpoint is required when using client credentials")
+		if config.BaseURL == "" {
+			return nil, fmt.Errorf("base URL is required for JWT authentication")
 		}
-		authClient, err := NewAuthClient(config.AuthEndpoint, config.Debug)
+		authClient, err := NewAuthClient(config.BaseURL, config.Debug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create auth client: %w", err)
 		}
@@ -86,14 +92,14 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: use --token flag or ARMIS_API_TOKEN environment variable")
+		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET for JWT auth, or ARMIS_API_TOKEN for legacy auth")
 	}
 
 	return p, nil
 }
 
 // GetAuthorizationHeader returns the Authorization header value.
-// For JWT auth: the raw JWT token (no "Bearer" prefix - backend expects raw JWT)
+// For JWT auth: "Bearer <token>" per RFC 6750
 // For Basic auth: "Basic <token>" per RFC 7617
 func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, error) {
 	if p.isLegacy {
@@ -108,8 +114,8 @@ func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, erro
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	// Raw JWT token (no Bearer prefix)
-	return p.credentials.Token, nil
+	// Bearer token per RFC 6750
+	return "Bearer " + p.credentials.Token, nil
 }
 
 // GetTenantID returns the tenant ID for API requests.
@@ -127,6 +133,23 @@ func (p *AuthProvider) GetTenantID(ctx context.Context) (string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.credentials.TenantID, nil
+}
+
+// GetRegion returns the deployment region from the JWT token.
+// For JWT auth: extracted from region claim (may be empty for older tokens)
+// For Basic auth: returns empty string (no region available)
+func (p *AuthProvider) GetRegion(ctx context.Context) (string, error) {
+	if p.isLegacy {
+		return "", nil // Legacy auth doesn't have region
+	}
+
+	if err := p.refreshIfNeeded(ctx); err != nil {
+		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.credentials.Region, nil
 }
 
 // IsLegacy returns true if using legacy Basic auth.
@@ -160,6 +183,16 @@ func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 
 // exchangeCredentials exchanges client credentials for a JWT token.
 // Uses double-checked locking to prevent thundering herd of concurrent refreshes.
+// Leverages region caching to avoid auto-discovery overhead on subsequent requests.
+//
+// Region selection priority:
+//  1. --region flag (config.Region) - explicit override, bypasses cache and discovery
+//  2. Cached region - from previous successful auth for this client_id
+//  3. Auto-discovery - server tries regions until one succeeds
+//
+// Retry behavior: If auth fails with a cached region hint (not explicit --region),
+// the cache is cleared and auth is retried without the hint. This handles stale
+// cache gracefully without requiring user to re-run the command.
 func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -169,21 +202,62 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		return nil
 	}
 
-	token, err := p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret)
+	// Load cached region once per process (memoize to avoid repeated disk I/O)
+	if !p.regionLoaded {
+		if region, ok := loadCachedRegion(p.config.ClientID); ok {
+			p.cachedRegion = region
+		}
+		p.regionLoaded = true
+	}
+
+	// Determine region hint - explicit flag takes priority over cache
+	var regionHint *string
+	var usingCachedHint bool
+	if p.config.Region != "" {
+		// Explicit --region flag - don't retry on failure (user error)
+		regionHint = &p.config.Region
+	} else if p.cachedRegion != "" {
+		// Cached region - will retry without hint on failure
+		regionHint = &p.cachedRegion
+		usingCachedHint = true
+	}
+
+	result, err := p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret, regionHint)
 	if err != nil {
-		return err
+		// If auth failed with a cached region hint, retry only for region-specific rejections.
+		// Skip retry for: transport errors (not *AuthError), 401 (bad credentials).
+		// This avoids double requests on network failures and prevents wiping correct cache entries.
+		var authErr *AuthError
+		if usingCachedHint && errors.As(err, &authErr) && authErr.StatusCode != http.StatusUnauthorized {
+			clearCachedRegion()
+			p.cachedRegion = ""
+			// Retry without region hint - let server auto-discover
+			result, err = p.authClient.Authenticate(ctx, p.config.ClientID, p.config.ClientSecret, nil)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Cache the discovered region for future requests (skip if unchanged)
+	if result.Region != "" && result.Region != p.cachedRegion {
+		saveCachedRegion(p.config.ClientID, result.Region)
+		p.cachedRegion = result.Region
 	}
 
 	// Parse JWT to extract claims
-	claims, err := parseJWTClaims(token)
+	claims, err := parseJWTClaims(result.Token)
 	if err != nil {
 		return fmt.Errorf("failed to parse JWT: %w", err)
 	}
 
 	p.credentials = &JWTCredentials{
-		Token:     token,
+		Token:     result.Token,
 		TenantID:  claims.CustomerID,
 		ExpiresAt: claims.ExpiresAt,
+		Region:    claims.Region,
 	}
 
 	return nil
@@ -207,6 +281,7 @@ func (p *AuthProvider) refreshIfNeeded(ctx context.Context) error {
 type jwtClaims struct {
 	CustomerID string // maps to tenant_id
 	ExpiresAt  time.Time
+	Region     string // deployment region (optional)
 }
 
 // parseJWTClaims extracts claims from a JWT without signature verification.
@@ -233,7 +308,8 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 
 	var data struct {
 		CustomerID string  `json:"customer_id"`
-		Exp        float64 `json:"exp"` // float64 to handle servers that return fractional timestamps
+		Exp        float64 `json:"exp"`    // float64 to handle servers that return fractional timestamps
+		Region     string  `json:"region"` // optional deployment region
 	}
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse JWT payload: %w", err)
@@ -252,5 +328,6 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 	return &jwtClaims{
 		CustomerID: data.CustomerID,
 		ExpiresAt:  time.Unix(expSec, 0),
+		Region:     data.Region, // may be empty for backward compatibility
 	}, nil
 }

@@ -25,12 +25,23 @@ For comprehensive documentation including advanced patterns and troubleshooting,
 
 ## Required Secrets
 
-All examples require these secrets to be configured in your CI platform:
+All examples require authentication secrets to be configured in your CI platform.
+
+**JWT Authentication (Recommended):**
+
+Obtain credentials from the VIPR external API screen in the Armis platform.
 
 | Secret | Description |
 |--------|-------------|
-| `ARMIS_API_TOKEN` | Your Armis API token for authentication |
-| `ARMIS_TENANT_ID` | Your Armis tenant identifier |
+| `ARMIS_CLIENT_ID` | Client ID for JWT authentication |
+| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
+
+**Basic Authentication (Legacy):**
+
+| Secret | Description |
+|--------|-------------|
+| `ARMIS_API_TOKEN` | API token for Basic authentication |
+| `ARMIS_TENANT_ID` | Tenant identifier (not needed with JWT) |
 
 ## SBOM and VEX Generation
 
@@ -38,7 +49,6 @@ Generate Software Bill of Materials and Vulnerability Exploitability eXchange do
 
 ```bash
 armis-cli scan repo . \
-  --tenant-id "$ARMIS_TENANT_ID" \
   --sbom --vex \
   --sbom-output ./artifacts/sbom.json \
   --vex-output ./artifacts/vex.json

@@ -81,16 +81,44 @@ The script will automatically:
 irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 ```
 
-### Scoop (Windows)
+### Scoop (Windows) — Coming Soon
 
-```powershell
-scoop bucket add armis https://github.com/ArmisSecurity/scoop-bucket
-scoop install armis-cli
-```
+> Scoop support is planned. For now, use the PowerShell installer above or [download manually](#manual-download).
 
 ### Manual Download
 
 Download the latest release for your platform from the [releases page](https://github.com/ArmisSecurity/armis-cli/releases).
+
+<details>
+<summary>Windows manual install steps</summary>
+
+1. Download `armis-cli-windows-amd64.zip` from the [releases page](https://github.com/ArmisSecurity/armis-cli/releases)
+2. Extract the ZIP (right-click > **Extract All**, or use PowerShell):
+
+   ```powershell
+   Expand-Archive armis-cli-windows-amd64.zip -DestinationPath .
+   ```
+
+3. Move `armis-cli.exe` to a directory in your PATH, or add its location:
+
+   ```powershell
+   $dir = "C:\Tools\armis-cli"
+   New-Item -ItemType Directory -Path $dir -Force
+   Move-Item armis-cli.exe $dir\
+   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+   if ([string]::IsNullOrEmpty($userPath)) {
+     $newPath = $dir
+   } else {
+     $newPath = "$userPath;$dir"
+   }
+   [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+   ```
+
+4. Restart your terminal for PATH changes to take effect.
+
+> **Note:** These instructions use the `windows/amd64` (64-bit Intel/AMD) build. If other Windows architectures (such as ARM64) are available on the releases page, download the archive that matches your system and follow the same steps.
+
+</details>
 
 ### Using Go
 
@@ -102,8 +130,17 @@ go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 
 After installation, verify that the CLI is working:
 
+**Linux/macOS:**
+
 ```bash
 which armis-cli
+armis-cli --version
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Get-Command armis-cli
 armis-cli --version
 ```
 
@@ -149,6 +186,41 @@ If you see "command not found" after installation:
    ~/.local/bin/armis-cli --help
    ```
 
+#### Windows (PowerShell)
+
+1. **Check if it's installed:**
+
+   ```powershell
+   Test-Path "$env:LOCALAPPDATA\armis-cli\armis-cli.exe"
+   ```
+
+2. **Check your PATH:**
+
+   ```powershell
+   $env:Path -split ';' | Where-Object { $_ -like '*armis*' }
+   ```
+
+3. **Add to PATH if needed:**
+
+   ```powershell
+   $dir = "$env:LOCALAPPDATA\armis-cli"
+   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+   if ([string]::IsNullOrEmpty($userPath)) {
+     $newPath = $dir
+   } else {
+     $newPath = "$userPath;$dir"
+   }
+   [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+   ```
+
+   Then restart your terminal.
+
+4. **Run directly with full path:**
+
+   ```powershell
+   & "$env:LOCALAPPDATA\armis-cli\armis-cli.exe" --help
+   ```
+
 ---
 
 ## Verification
@@ -173,6 +245,30 @@ cosign verify-blob \
 # Verify the checksum
 sha256sum --ignore-missing -c armis-cli-checksums.txt
 ```
+
+<details>
+<summary>PowerShell equivalent</summary>
+
+```powershell
+# Download the binary, checksums, and signature
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-windows-amd64.zip" -OutFile armis-cli-windows-amd64.zip
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt" -OutFile armis-cli-checksums.txt
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-checksums.txt.sig" -OutFile armis-cli-checksums.txt.sig
+
+# Verify the signature (requires cosign: https://docs.sigstore.dev/cosign/installation/)
+cosign verify-blob `
+  --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --signature armis-cli-checksums.txt.sig `
+  armis-cli-checksums.txt
+
+# Verify the checksum
+$expected = (Get-Content armis-cli-checksums.txt | Select-String "armis-cli-windows-amd64.zip") -replace '\s+.*'
+$actual = (Get-FileHash armis-cli-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()
+if ($expected -eq $actual) { Write-Host "Checksum OK" -ForegroundColor Green } else { Write-Error "Checksum mismatch" }
+```
+
+</details>
 
 ### Verify SLSA Provenance (Supply Chain Security)
 
@@ -204,6 +300,19 @@ npm install -g @cyclonedx/cyclonedx-cli
 cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 ```
 
+<details>
+<summary>PowerShell equivalent</summary>
+
+```powershell
+# Download SBOM
+Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/latest/download/armis-cli-windows-amd64.zip.sbom.cdx.json" -OutFile sbom.cdx.json
+
+# View dependencies
+(Get-Content sbom.cdx.json | ConvertFrom-Json).components | Select-Object name, version | Format-Table
+```
+
+</details>
+
 **Learn more:**
 
 - [SLSA Framework](https://slsa.dev/)
@@ -216,9 +325,36 @@ cyclonedx-cli validate --input-file armis-cli-linux-amd64.tar.gz.sbom.cdx.json
 
 ### Set up authentication
 
+#### JWT Authentication (Recommended)
+
+Obtain client credentials from the VIPR external API screen in the Armis platform.
+
+```bash
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_CLIENT_ID = "your-client-id"
+$env:ARMIS_CLIENT_SECRET = "your-client-secret"
+```
+
+The tenant ID is automatically extracted from the JWT token — no need to set it separately.
+
+#### Basic Authentication (Legacy)
+
 ```bash
 export ARMIS_API_TOKEN="your-api-token"
 export ARMIS_TENANT_ID="your-tenant-id"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_API_TOKEN = "your-api-token"
+$env:ARMIS_TENANT_ID = "your-tenant-id"
 ```
 
 ### Scan a repository
@@ -242,8 +378,11 @@ armis-cli scan image nginx:latest
 #### Authentication Flags
 
 ```text
---token string          API token for authentication (env: ARMIS_API_TOKEN)
---tenant-id string      Tenant identifier (env: ARMIS_TENANT_ID)
+--client-id string      Client ID for JWT authentication (env: ARMIS_CLIENT_ID) [recommended]
+--client-secret string  Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET) [recommended]
+--region string         Armis cloud region (env: ARMIS_REGION)
+--token string          API token for Basic authentication (env: ARMIS_API_TOKEN) [legacy]
+--tenant-id string      Tenant identifier for Basic auth (env: ARMIS_TENANT_ID) [legacy]
 ```
 
 #### General Flags
@@ -266,17 +405,17 @@ armis-cli scan image nginx:latest
 Scans a local directory, creates a tarball, and uploads to Armis Cloud for analysis.
 
 ```bash
-armis-cli scan repo [path] --tenant-id [tenant-id]
+armis-cli scan repo [path]
 ```
 
 **Size Limit**: 2GB
 **Example**:
 
 ```bash
-armis-cli scan repo ./my-app --tenant-id my-tenant --format json --fail-on HIGH,CRITICAL
+armis-cli scan repo ./my-app --format json --fail-on HIGH,CRITICAL
 
 # Generate SBOM and VEX documents
-armis-cli scan repo ./my-app --tenant-id my-tenant --sbom --vex
+armis-cli scan repo ./my-app --sbom --vex
 ```
 
 ### Scan Container Image
@@ -284,8 +423,8 @@ armis-cli scan repo ./my-app --tenant-id my-tenant --sbom --vex
 Scans a container image (local or remote) or a tarball.
 
 ```bash
-armis-cli scan image [image-name] --tenant-id [tenant-id]
-armis-cli scan image --tarball [path-to-tarball] --tenant-id [tenant-id]
+armis-cli scan image [image-name]
+armis-cli scan image --tarball [path-to-tarball]
 ```
 
 **Size Limit**: 5GB
@@ -293,11 +432,11 @@ armis-cli scan image --tarball [path-to-tarball] --tenant-id [tenant-id]
 
 ```bash
 # Scan remote image
-armis-cli scan image nginx:latest --tenant-id my-tenant
+armis-cli scan image nginx:latest
 # Scan local image
-armis-cli scan image my-app:v1.0.0 --tenant-id my-tenant
+armis-cli scan image my-app:v1.0.0
 # Scan tarball
-armis-cli scan image --tarball ./image.tar --tenant-id my-tenant
+armis-cli scan image --tarball ./image.tar
 ```
 
 #### Pull Policy
@@ -371,6 +510,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   security-events: write
   pull-requests: write
 
@@ -400,8 +540,10 @@ jobs:
 
 **Required secrets:**
 
-- `api-token`: Armis API token for authentication
-- `tenant-id`: Tenant identifier for Armis Cloud
+- `api-token`: Armis API token for authentication (legacy — JWT support coming soon)
+- `tenant-id`: Tenant identifier for Armis Cloud (legacy — not needed with JWT)
+
+> **Note:** The reusable workflow currently accepts Basic auth secrets. For JWT authentication in CI, set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as environment variables directly in your workflow steps (see [Manual Installation](#option-3-manual-installation) below).
 
 #### Option 2: GitHub Action
 
@@ -415,6 +557,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
@@ -444,6 +587,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
@@ -452,10 +596,10 @@ jobs:
           curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
       - name: Scan Repository
         env:
-          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+          ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+          ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
         run: |
           armis-cli scan repo . \
-            --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
             --format sarif \
             --fail-on HIGH,CRITICAL \
             > results.sarif
@@ -475,10 +619,10 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
+    - armis-cli scan repo . --format json --fail-on CRITICAL
   variables:
-    ARMIS_API_TOKEN: $ARMIS_API_TOKEN
-    ARMIS_TENANT_ID: $ARMIS_TENANT_ID
+    ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
+    ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
 ```
 
 ### Jenkins
@@ -487,15 +631,15 @@ security-scan:
 pipeline {
     agent any
     environment {
-        ARMIS_API_TOKEN = credentials('armis-api-token')
-        ARMIS_TENANT_ID = credentials('armis-tenant-id')
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
     }
     stages {
         stage('Security Scan') {
             steps {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-                    armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format junit > scan-results.xml
+                    armis-cli scan repo . --format junit > scan-results.xml
                 '''
                 junit 'scan-results.xml'
             }
@@ -516,9 +660,10 @@ steps:
     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   displayName: 'Install Armis CLI'
 - script: |
-    armis-cli scan repo . --tenant-id "$(ARMIS_TENANT_ID)" --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
   env:
-    ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
+    ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+    ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
   displayName: 'Run Security Scan'
 - task: PublishTestResults@2
   inputs:
@@ -543,7 +688,7 @@ jobs:
       - run:
           name: Run Security Scan
           command: |
-            armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on HIGH,CRITICAL
+            armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
 workflows:
   version: 2
   scan:
@@ -563,19 +708,29 @@ pipelines:
         script:
           - apk add --no-cache curl bash
           - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-          - armis-cli scan repo . --tenant-id "$ARMIS_TENANT_ID" --format json --fail-on CRITICAL
+          - armis-cli scan repo . --format json --fail-on CRITICAL
 ```
 
 ---
 
 ## Environment Variables
 
-**Authentication:**
+**JWT Authentication (Recommended):**
 
 | Variable | Description |
 |----------|-------------|
-| `ARMIS_API_TOKEN` | API token for authentication |
-| `ARMIS_TENANT_ID` | Tenant identifier |
+| `ARMIS_CLIENT_ID` | Client ID for JWT authentication (from VIPR external API screen) |
+| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
+| `ARMIS_REGION` | Armis cloud region (equivalent to `--region` flag) |
+
+When using JWT authentication, the tenant ID is automatically extracted from the token.
+
+**Basic Authentication (Legacy):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_API_TOKEN` | API token for Basic authentication |
+| `ARMIS_TENANT_ID` | Tenant identifier (required only with Basic auth) |
 
 **General:**
 
@@ -592,8 +747,9 @@ pipelines:
   - Repositories: 2GB
   - Container Images: 5GB
 - **Authentication Security**:
-  - API tokens should be stored securely and never committed to version control
-  - Rotate tokens periodically
+  - Client credentials and API tokens should be stored securely and never committed to version control
+  - Use JWT authentication (client ID/secret) for production — it supports automatic token refresh and does not require a separate tenant ID
+  - Rotate credentials periodically
   - Credentials are never logged or exposed in output
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
@@ -634,7 +790,7 @@ pipelines:
 
 New versions are automatically built and published when version tags are pushed. Each release includes:
 
-- Pre-built binaries for macOS, Linux, and Windows (amd64 and arm64)
+- Pre-built binaries for macOS and Linux (amd64 and arm64) and Windows (amd64)
 - SHA256 checksums for verification
 - Automated changelog generation
 
@@ -651,6 +807,14 @@ make build
 ```
 
 The binary will be in `bin/armis-cli`.
+
+**Windows (without Make):**
+
+```powershell
+git clone https://github.com/ArmisSecurity/armis-cli.git
+cd armis-cli
+go build -o bin\armis-cli.exe ./cmd/armis-cli
+```
 
 ---
 

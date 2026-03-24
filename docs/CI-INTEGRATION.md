@@ -61,9 +61,9 @@ That's it! This will:
 # Install
 curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
 
-# Run scan
-export ARMIS_API_TOKEN="your-token"
-export ARMIS_TENANT_ID="your-tenant"
+# Run scan (JWT auth - recommended)
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
 armis-cli scan repo . --format sarif --fail-on CRITICAL
 ```
 
@@ -71,23 +71,34 @@ armis-cli scan repo . --format sarif --fail-on CRITICAL
 
 ## Authentication
 
-The Armis CLI authenticates using an API token and tenant identifier.
+The Armis CLI supports two authentication methods. JWT authentication is recommended.
 
-**Required credentials:**
+### JWT Authentication (Recommended)
+
+Obtain client credentials from the VIPR external API screen in the Armis platform.
+
+| Credential | Environment Variable | CLI Flag | Description |
+|------------|---------------------|----------|-------------|
+| Client ID | `ARMIS_CLIENT_ID` | `--client-id` | Client ID for JWT authentication |
+| Client Secret | `ARMIS_CLIENT_SECRET` | `--client-secret` | Client secret for JWT authentication |
+
+The tenant ID is automatically extracted from the JWT token — no need to set it separately.
+
+**Example:**
+
+```bash
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+
+armis-cli scan repo .
+```
+
+### Basic Authentication (Legacy)
 
 | Credential | Environment Variable | CLI Flag | Description |
 |------------|---------------------|----------|-------------|
 | API Token | `ARMIS_API_TOKEN` | `--token` | API token for authentication |
 | Tenant ID | `ARMIS_TENANT_ID` | `--tenant-id` | Tenant identifier |
-
-**Example:**
-
-```bash
-export ARMIS_API_TOKEN="your-api-token"
-export ARMIS_TENANT_ID="your-tenant-id"
-
-armis-cli scan repo .
-```
 
 ---
 
@@ -145,8 +156,10 @@ jobs:
 
 | Secret | Description |
 |--------|-------------|
-| `api-token` | Armis API token |
-| `tenant-id` | Tenant identifier for Armis Cloud |
+| `api-token` | Armis API token (Basic auth) |
+| `tenant-id` | Tenant identifier (Basic auth) |
+
+> **Note:** The reusable workflow currently accepts Basic auth secrets only. For JWT authentication (recommended), use [Option 3: Manual Installation](#option-3-manual-installation) with `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` environment variables.
 
 #### Required Permissions
 
@@ -176,7 +189,13 @@ permissions:
 
 ### Option 2: GitHub Action
 
-Use the action directly when you need more control over your workflow:
+Use the action directly when you need more control over your workflow.
+
+> **Note:** The GitHub Action currently supports Linux and macOS runners only. For Windows runners (`windows-latest`), use [Option 3: Manual Installation](#option-3-manual-installation) with the PowerShell install script:
+>
+> ```powershell
+> irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+> ```
 
 ```yaml
 name: Security Scan
@@ -258,10 +277,10 @@ jobs:
 
       - name: Run Security Scan
         env:
-          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+          ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+          ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
         run: |
           armis-cli scan repo . \
-            --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
             --format sarif \
             --fail-on HIGH,CRITICAL \
             > results.sarif
@@ -397,10 +416,10 @@ jobs:
 
       - name: Run Security Scan with SBOM/VEX
         env:
-          ARMIS_API_TOKEN: ${{ secrets.ARMIS_API_TOKEN }}
+          ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+          ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
         run: |
           armis-cli scan repo . \
-            --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
             --format sarif \
             --sbom --vex \
             --sbom-output ./artifacts/sbom.json \
@@ -532,8 +551,8 @@ security-scan:
   script:
     - armis-cli scan repo . --format json --fail-on CRITICAL
   variables:
-    ARMIS_API_TOKEN: $ARMIS_API_TOKEN
-    ARMIS_TENANT_ID: $ARMIS_TENANT_ID
+    ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
+    ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
 ```
 
 Configure credentials as [protected CI/CD variables](https://docs.gitlab.com/ee/ci/variables/#protected-cicd-variables).
@@ -547,8 +566,8 @@ pipeline {
     agent any
 
     environment {
-        ARMIS_API_TOKEN = credentials('armis-api-token')
-        ARMIS_TENANT_ID = credentials('armis-tenant-id')
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
     }
 
     stages {
@@ -576,6 +595,40 @@ pipeline {
 
 Configure credentials using [Jenkins Credentials](https://www.jenkins.io/doc/book/using/using-credentials/).
 
+#### Jenkins (Windows Agent)
+
+```groovy
+pipeline {
+    agent { label 'windows' }
+
+    environment {
+        ARMIS_CLIENT_ID = credentials('armis-client-id')
+        ARMIS_CLIENT_SECRET = credentials('armis-client-secret')
+    }
+
+    stages {
+        stage('Security Scan') {
+            steps {
+                powershell '''
+                    irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+                    armis-cli scan repo . `
+                        --format junit `
+                        --fail-on HIGH,CRITICAL `
+                        > scan-results.xml
+                '''
+                junit 'scan-results.xml'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'scan-results.xml', allowEmptyArchive: true
+        }
+    }
+}
+```
+
 ---
 
 ### Azure DevOps
@@ -588,7 +641,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  - group: armis-credentials  # Contains ARMIS_API_TOKEN and ARMIS_TENANT_ID
+  - group: armis-credentials  # Contains ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET
 
 steps:
   - script: |
@@ -602,8 +655,8 @@ steps:
         > $(Build.ArtifactStagingDirectory)/scan-results.xml
     displayName: 'Run Security Scan'
     env:
-      ARMIS_API_TOKEN: $(ARMIS_API_TOKEN)
-      ARMIS_TENANT_ID: $(ARMIS_TENANT_ID)
+      ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+      ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
 
   - task: PublishTestResults@2
     inputs:
@@ -613,6 +666,38 @@ steps:
 ```
 
 Configure secrets using [Variable Groups](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups).
+
+#### Azure DevOps (Windows Runner)
+
+```yaml
+trigger:
+  - main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - group: armis-credentials
+
+steps:
+  - powershell: |
+      irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
+
+      armis-cli scan repo . `
+        --format junit `
+        --fail-on HIGH,CRITICAL `
+        > $(Build.ArtifactStagingDirectory)\scan-results.xml
+    displayName: 'Install Armis CLI and Run Security Scan'
+    env:
+      ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
+      ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/scan-results.xml'
+    condition: always()
+```
 
 ---
 
@@ -643,7 +728,7 @@ workflows:
   security:
     jobs:
       - security-scan:
-          context: armis-credentials  # Contains ARMIS_API_TOKEN, ARMIS_TENANT_ID
+          context: armis-credentials  # Contains ARMIS_CLIENT_ID, ARMIS_CLIENT_SECRET
 ```
 
 Configure secrets using [Contexts](https://circleci.com/docs/contexts/).
@@ -675,7 +760,7 @@ pipelines:
             - armis-cli scan repo . --format json --fail-on CRITICAL
 ```
 
-Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variables](https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/).
+Configure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as [secured repository variables](https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/).
 
 ---
 
@@ -697,24 +782,25 @@ Configure `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` as [secured repository variabl
 #### "authentication required"
 
 - No valid authentication credentials were provided
-- Set `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` environment variables or secrets
+- Set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` for JWT auth (recommended), or `ARMIS_API_TOKEN` and `ARMIS_TENANT_ID` for legacy auth
 
 #### "tenant ID required"
 
-- You must provide `--tenant-id` along with `--token`
-- Set the `ARMIS_TENANT_ID` environment variable or secret
+- This only applies to Basic (legacy) authentication
+- Provide `--tenant-id` along with `--token`, or switch to JWT authentication (recommended) where tenant ID is extracted automatically
 
 #### "API token not set"
 
-- Ensure `ARMIS_API_TOKEN` is configured as a secret
+- If using JWT: ensure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` are configured as secrets
+- If using Basic auth: ensure `ARMIS_API_TOKEN` is configured as a secret
 - Check that the secret is accessible to the workflow/job
 - Verify the secret name matches exactly (case-sensitive)
 
 #### "Invalid token" or "Unauthorized"
 
-- Verify the token is valid and not expired
-- Check that the tenant ID matches the token's tenant
-- Ensure the token has sufficient permissions
+- Verify the credentials are valid and not expired
+- If using Basic auth, check that the tenant ID matches the token's tenant
+- Ensure the credentials have sufficient permissions
 
 ### Timeout Issues
 
@@ -753,10 +839,11 @@ The reusable workflow's "Check for Failures" step differentiates between:
 ### Secret Management
 
 - **Never commit credentials** to version control
+- Use **JWT authentication** (client ID/secret) for production — it supports automatic token refresh
 - Use **organization-level secrets** when possible for centralized management
 - Use **environment-specific credentials** for production vs development
-- Rotate API tokens periodically
-- Store `api-token` and `tenant-id` as separate secrets
+- Rotate credentials periodically
+- Store client ID and client secret as separate secrets
 
 ### Permissions
 

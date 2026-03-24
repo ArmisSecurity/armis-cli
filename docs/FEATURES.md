@@ -134,9 +134,11 @@ Generate SBOM and VEX as part of your CI pipeline:
 ```yaml
 # GitHub Actions example
 - name: Security Scan with SBOM
+  env:
+    ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+    ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
   run: |
     armis-cli scan repo . \
-      --tenant-id "${{ secrets.ARMIS_TENANT_ID }}" \
       --sbom --vex \
       --sbom-output ./artifacts/sbom.json \
       --vex-output ./artifacts/vex.json
@@ -288,15 +290,18 @@ armis-cli scan repo . \
 
 ### Environment Variables
 
-**Authentication (choose one method):**
+**Authentication:**
+
+JWT authentication is recommended. Obtain JWT credentials from the VIPR external API screen in the Armis platform.
 
 | Variable | Description |
 |----------|-------------|
-| `ARMIS_CLIENT_ID` | Client ID for JWT authentication |
-| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
-| `ARMIS_AUTH_ENDPOINT` | Authentication service endpoint URL |
-| `ARMIS_API_TOKEN` | API token for Basic authentication |
-| `ARMIS_TENANT_ID` | Tenant identifier (required for Basic auth only) |
+| `ARMIS_CLIENT_ID` | Client ID for JWT authentication (recommended) |
+| `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication (recommended) |
+| `ARMIS_API_TOKEN` | API token for Basic authentication (legacy) |
+| `ARMIS_TENANT_ID` | Tenant identifier (legacy, not needed with JWT) |
+| `ARMIS_API_URL` | Override base URL for Armis API and authentication (advanced) |
+| `ARMIS_REGION` | Authentication region override (advanced; corresponds to `--region` flag) |
 
 **General:**
 

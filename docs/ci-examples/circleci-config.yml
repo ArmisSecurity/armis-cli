@@ -1,24 +1,26 @@
+---
 version: 2.1
 
 jobs:
   security-scan:
     docker:
       - image: cimg/base@sha256:15eda1bafc1ec89dd277633d7fbe63b71a4572881685697b9f478d2f7a9a0c4d
-    
+
     steps:
       - checkout
-      
+
       - run:
           name: Install Armis CLI
           command: |
             curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-      
+
       - run:
           name: Run Security Scan
           command: |
             armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
           environment:
-            ARMIS_API_TOKEN: ${ARMIS_API_TOKEN}
+            ARMIS_CLIENT_ID: ${ARMIS_CLIENT_ID}
+            ARMIS_CLIENT_SECRET: ${ARMIS_CLIENT_SECRET}
 
 workflows:
   version: 2

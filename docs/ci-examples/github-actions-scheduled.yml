@@ -1,3 +1,4 @@
+---
 # GitHub Actions - Scheduled Security Scan
 #
 # This workflow runs comprehensive security scans on a schedule for ongoing monitoring.
@@ -8,7 +9,11 @@
 #   - Detecting vulnerabilities in dependencies (new CVEs)
 #   - Compliance reporting
 #
-# Required secrets:
+# Required secrets (JWT - recommended):
+#   - ARMIS_CLIENT_ID: Client ID from VIPR external API screen
+#   - ARMIS_CLIENT_SECRET: Client secret from VIPR external API screen
+#
+# Legacy secrets (Basic auth):
 #   - ARMIS_API_TOKEN: Your Armis API token
 #   - ARMIS_TENANT_ID: Your Armis tenant identifier
 

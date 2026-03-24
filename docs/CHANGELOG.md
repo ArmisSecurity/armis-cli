@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-03-15
+
+### Added
+
+- JWT authentication via `--client-id` / `--client-secret` is now the recommended authentication method, taking priority over `--token` when both are provided (#95)
+
+### Changed
+
+- Removed `--auth-endpoint` flag — JWT endpoint is now derived automatically from the API URL and region (#98)
+- Documentation updated to establish JWT as the recommended authentication method over Basic auth (#99)
+
+---
+
 ## [1.3.0] - 2026-03-08
 
 ### Added
@@ -231,7 +244,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.1.0...v1.2.0

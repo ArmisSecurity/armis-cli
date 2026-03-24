@@ -18,36 +18,46 @@ const (
 	maxResponseSize = 1 << 20 // 1MB
 )
 
+// AuthError represents an authentication failure with HTTP status context.
+// This allows callers to distinguish between different failure modes
+// (e.g., invalid credentials vs. region-specific rejection vs. server error).
+type AuthError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *AuthError) Error() string { return e.Message }
+
 // AuthClient handles authentication with an external auth service.
 type AuthClient struct {
-	endpoint   string
+	baseURL    string
 	httpClient *http.Client
 	debug      bool
 }
 
-// NewAuthClient creates a new authentication client for the given endpoint.
-// The endpoint must be a valid HTTPS URL (HTTP allowed only for localhost).
+// NewAuthClient creates a new authentication client for the given base URL.
+// The base URL must be a valid HTTPS URL (HTTP allowed only for localhost).
 // If debug is true, authentication failures will log detailed error information.
-func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
-	if endpoint == "" {
-		return nil, fmt.Errorf("auth endpoint is required")
+func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("API base URL is required for authentication")
 	}
 
-	parsedURL, err := url.Parse(endpoint)
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid endpoint URL: %w", err)
+		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 
 	// Require HTTPS for non-localhost
 	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost endpoint")
+			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
 		}
 	}
 
 	return &AuthClient{
-		endpoint: strings.TrimSuffix(endpoint, "/"),
+		baseURL: strings.TrimSuffix(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -57,51 +67,61 @@ func NewAuthClient(endpoint string, debug bool) (*AuthClient, error) {
 
 // authRequest is the request body for the authenticate endpoint.
 type authRequest struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"` //nolint:gosec // G117: This is a JSON field name for auth request, not a secret value
+	ClientID     string  `json:"client_id"`
+	ClientSecret string  `json:"client_secret"`    //nolint:gosec // G117: This is a JSON field name for auth request, not a secret value
+	Region       *string `json:"region,omitempty"` // Optional region hint from cache
 }
 
 // authResponse is the response from the authenticate endpoint.
 type authResponse struct {
-	Token string `json:"token"`
-	Error string `json:"error,omitempty"`
+	Token  string `json:"token"`
+	Region string `json:"region,omitempty"` // Discovered region for caching
+	Error  string `json:"error,omitempty"`
+}
+
+// AuthResult contains the authentication response with token and discovered region.
+type AuthResult struct {
+	Token  string
+	Region string
 }
 
 // Authenticate exchanges client credentials for a JWT token.
-// Calls POST /api/v1/authenticate with client_id and client_secret.
-func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret string) (string, error) {
+// Calls POST /api/v1/auth/token with client_id, client_secret, and optional region hint.
+// Returns the token and the discovered/confirmed region for caching.
+func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret string, regionHint *string) (*AuthResult, error) {
 	reqBody := authRequest{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		Region:       regionHint,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	authEndpoint := c.endpoint + "/api/v1/authenticate"
+	authEndpoint := c.baseURL + "/api/v1/auth/token"
 	req, err := http.NewRequestWithContext(ctx, "POST", authEndpoint, bytes.NewReader(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
-		return "", fmt.Errorf("authentication request failed: %w", err)
+		return nil, fmt.Errorf("authentication request failed: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	limitedReader := io.LimitReader(resp.Body, maxResponseSize)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("invalid credentials")
+		return nil, &AuthError{StatusCode: resp.StatusCode, Message: "invalid credentials"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -110,22 +130,25 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
 		}
 		// Don't include raw response body in error to prevent potential info leakage
-		return "", fmt.Errorf("authentication failed (status %d)", resp.StatusCode)
+		return nil, &AuthError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("authentication failed (status %d)", resp.StatusCode)}
 	}
 
 	var authResp authResponse
 	if err := json.Unmarshal(body, &authResp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if authResp.Error != "" {
 		// Don't include raw error content to prevent potential sensitive info leakage
-		return "", fmt.Errorf("authentication failed: server returned an error")
+		return nil, fmt.Errorf("authentication failed: server returned an error")
 	}
 
 	if authResp.Token == "" {
-		return "", fmt.Errorf("no token in response")
+		return nil, fmt.Errorf("no token in response")
 	}
 
-	return authResp.Token, nil
+	return &AuthResult{
+		Token:  authResp.Token,
+		Region: authResp.Region,
+	}, nil
 }
