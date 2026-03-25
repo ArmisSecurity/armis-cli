@@ -171,16 +171,40 @@ function Main {
         exit 1
     }
 
-    # Validate install directory is under user-writable locations
-    $allowedPrefixes = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE, $env:ProgramFiles)
+    # Validate install directory is under standard user-profile locations.
+    # Program Files is intentionally excluded — it requires admin privileges and
+    # writing there could enable DLL/EXE planting. Non-standard paths are allowed
+    # only with explicit interactive confirmation.
+    # Note: install.sh uses a different model (character-set + traversal deny-list)
+    # because Unix paths don't have canonical env-var-based user directories.
+    $allowedPrefixes = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE)
     $isAllowed = $false
     foreach ($prefix in $allowedPrefixes) {
-        if ($prefix -and $InstallDir.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not $prefix) { continue }
+        # Normalize prefix the same way $InstallDir was normalized above,
+        # then append trailing backslash to prevent prefix confusion
+        # (e.g., "LocalLow" matching "Local")
+        $prefix = [System.IO.Path]::GetFullPath($prefix)
+        $normalizedPrefix = $prefix.TrimEnd('\') + '\'
+        if ($InstallDir.StartsWith($normalizedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             $isAllowed = $true
             break
         }
     }
     if (-not $isAllowed) {
+        # In non-interactive contexts (e.g., irm ... | iex), Read-Host would hang
+        # or return empty. Detect this and fail immediately instead.
+        # Wrap in try/catch because [Console]::IsInputRedirected can throw in
+        # some hosts (ISE, remote sessions) where console handles are unavailable.
+        try {
+            $isInteractive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+        } catch {
+            $isInteractive = $false
+        }
+        if (-not $isInteractive) {
+            Write-Error "Install directory '$InstallDir' is outside standard user locations and cannot be confirmed in non-interactive mode. Use -InstallDir with a path under `$env:LOCALAPPDATA, `$env:APPDATA, or `$env:USERPROFILE."
+            exit 1
+        }
         Write-Warning "Install directory '$InstallDir' is outside standard user locations."
         $confirm = Read-Host "Continue? (y/N)"
         if ($confirm -ne 'y' -and $confirm -ne 'Y') {
