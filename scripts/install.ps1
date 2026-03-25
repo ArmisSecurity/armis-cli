@@ -178,7 +178,7 @@ function Main {
     # Note: install.sh uses a different model (character-set + traversal deny-list)
     # because Unix paths don't have canonical env-var-based user directories.
     $allowedPrefixes = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE)
-    $isAllowed = $false
+    $isAllowlisted = $false
     foreach ($prefix in $allowedPrefixes) {
         if (-not $prefix) { continue }
         # Normalize prefix the same way $InstallDir was normalized above,
@@ -187,11 +187,11 @@ function Main {
         $prefix = [System.IO.Path]::GetFullPath($prefix)
         $normalizedPrefix = $prefix.TrimEnd('\') + '\'
         if ($InstallDir.StartsWith($normalizedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $isAllowed = $true
+            $isAllowlisted = $true
             break
         }
     }
-    if (-not $isAllowed) {
+    if (-not $isAllowlisted) {
         # In non-interactive contexts (e.g., irm ... | iex), Read-Host would hang
         # or return empty. Detect this and fail immediately instead.
         # Wrap in try/catch because [Console]::IsInputRedirected can throw in
@@ -277,36 +277,49 @@ function Main {
 
         Copy-Item -Path $binarySource -Destination $binaryDest -Force
 
-        # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
-        if (-not (Test-CIEnvironment)) {
-            $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-            $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
-            if ($newUserPath -ne $currentPath) {
-                Write-Host "Adding to PATH..."
-                [Environment]::SetEnvironmentVariable(
-                    "Path",
-                    $newUserPath,
-                    "User"
-                )
+        # CWE-426: Only modify PATH for allowlisted directories. Non-standard
+        # paths (confirmed interactively) require the user to add them manually,
+        # preventing an attacker-influenced directory from being added to the
+        # search path.
+        if ($isAllowlisted) {
+            # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
+            if (-not (Test-CIEnvironment)) {
+                $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+                $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
+                if ($newUserPath -ne $currentPath) {
+                    Write-Host "Adding to PATH..."
+                    [Environment]::SetEnvironmentVariable(
+                        "Path",
+                        $newUserPath,
+                        "User"
+                    )
+                    $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
+                    Write-Host "Added $InstallDir to user PATH" -ForegroundColor Green
+                    Write-Host "   (Restart your terminal for PATH changes to take effect)"
+                }
+            } else {
                 $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
-                Write-Host "Added $InstallDir to user PATH" -ForegroundColor Green
-                Write-Host "   (Restart your terminal for PATH changes to take effect)"
             }
         } else {
-            $env:Path = Add-DirectoryToPath -ExistingPath $env:Path -Directory $InstallDir
+            Write-Host "   Note: '$InstallDir' was not added to PATH automatically (non-standard location)."
+            Write-Host "   Add it manually if needed: `$env:Path += `";$InstallDir`""
         }
 
         Write-Host ""
         Write-Host "Armis CLI installed successfully!" -ForegroundColor Green
 
-        # Show installed version
-        try {
-            $newVersion = & $binaryDest --version 2>$null | Select-Object -First 1
-            if ($newVersion) {
-                Write-Host "   Location: $binaryDest"
-                Write-Host "   Version:  $newVersion"
-            }
-        } catch {}
+        Write-Host "   Location: $binaryDest"
+        # CWE-78: Only execute the installed binary for version display when
+        # integrity verification was performed (checksums validated). Without
+        # verification, we cannot trust the binary content.
+        if ($Verify) {
+            try {
+                $newVersion = & $binaryDest --version 2>$null | Select-Object -First 1
+                if ($newVersion) {
+                    Write-Host "   Version:  $newVersion"
+                }
+            } catch {}
+        }
 
         Write-Host ""
         Write-Host "Run 'armis-cli --help' to get started"
