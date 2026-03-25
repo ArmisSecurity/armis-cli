@@ -222,6 +222,9 @@ choose_install_dir() {
     # Allow override via environment variable
     if [ -n "${INSTALL_DIR:-}" ]; then
         validate_install_dir "$INSTALL_DIR"
+        # Flag that the directory came from the env var so the installer
+        # can refuse sudo escalation for user-supplied paths (CWE-269).
+        INSTALL_DIR_FROM_ENV=1
         echo "$INSTALL_DIR"
         return
     fi
@@ -376,16 +379,11 @@ main() {
 
     TARGET_PATH="$INSTALL_DIR/$BINARY_NAME"
 
-    # Check if upgrading existing installation
-    EXISTING_VERSION=""
+    # Check if upgrading existing installation.
+    # CWE-78: Do NOT execute the pre-existing binary for version detection —
+    # an attacker could have planted a malicious binary at this path.
     if [ -f "$TARGET_PATH" ]; then
-        EXISTING_VERSION=$("$TARGET_PATH" --version 2>/dev/null | head -n1 || echo "")
-        if [ -n "$EXISTING_VERSION" ]; then
-            echo "📦 Upgrading existing installation..."
-            echo "   Current: $EXISTING_VERSION"
-        else
-            echo "📦 Replacing existing installation..."
-        fi
+        echo "📦 Replacing existing installation..."
     else
         echo "📦 Installing to $INSTALL_DIR..."
     fi
@@ -393,6 +391,12 @@ main() {
     if [ -w "$INSTALL_DIR" ]; then
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
+        # CWE-269: If the user explicitly set INSTALL_DIR via env var to a
+        # directory they cannot write to, refuse to escalate to sudo.
+        # Only the auto-detected fallback (/usr/local/bin) may use sudo.
+        if [ -n "${INSTALL_DIR_FROM_ENV:-}" ]; then
+            fail "Install directory '$INSTALL_DIR' is not writable and was set via INSTALL_DIR env var. Choose a directory you have write access to, or unset INSTALL_DIR to use the default."
+        fi
         echo "   (requires sudo privileges)"
         sudo -v || fail "sudo authentication failed"
         sudo mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH (sudo mv failed)"

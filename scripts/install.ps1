@@ -269,19 +269,10 @@ function Main {
         $binarySource = Join-Path $tmpDir $BinaryName
         $binaryDest = Join-Path $InstallDir $BinaryName
 
-        # Detect upgrade vs fresh install
+        # CWE-78: Do NOT execute the pre-existing binary for version detection —
+        # an attacker could have planted a malicious executable at this path.
         if (Test-Path $binaryDest) {
-            try {
-                $existingVersion = & $binaryDest --version 2>$null | Select-Object -First 1
-                if ($existingVersion) {
-                    Write-Host "Upgrading existing installation..."
-                    Write-Host "   Current: $existingVersion"
-                } else {
-                    Write-Host "Replacing existing installation..."
-                }
-            } catch {
-                Write-Host "Replacing existing installation..."
-            }
+            Write-Host "Replacing existing installation..."
         }
 
         Copy-Item -Path $binarySource -Destination $binaryDest -Force
