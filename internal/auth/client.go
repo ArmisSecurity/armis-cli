@@ -125,9 +125,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Log detailed error info when debug mode is enabled
+		// Log non-sensitive metadata when debug mode is enabled.
+		// Response body is intentionally excluded to prevent credential leakage (CWE-522).
 		if c.debug {
-			fmt.Fprintf(os.Stderr, "DEBUG: Auth failed with status %d, body: %s\n", resp.StatusCode, string(body))
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth failed: status=%d, content-type=%q, response-length=%d bytes\n", resp.StatusCode, resp.Header.Get("Content-Type"), len(body))
 		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return nil, &AuthError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("authentication failed (status %d)", resp.StatusCode)}
