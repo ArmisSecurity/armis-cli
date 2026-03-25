@@ -6,8 +6,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -416,6 +418,17 @@ func (s *Scanner) tarGzFiles(repoRoot string, files []string, writer io.Writer) 
 	return nil
 }
 
+// ErrSizeOverflow is returned when accumulated file sizes exceed math.MaxInt64.
+var ErrSizeOverflow = errors.New("total size overflow: exceeds maximum representable value")
+
+// safeAddSize adds fileSize to current, returning ErrSizeOverflow on int64 overflow.
+func safeAddSize(current, fileSize int64) (int64, error) {
+	if fileSize > 0 && current > math.MaxInt64-fileSize {
+		return 0, ErrSizeOverflow
+	}
+	return current + fileSize, nil
+}
+
 func calculateFilesSize(repoRoot string, files []string) (int64, error) {
 	var size int64
 	for _, relPath := range files {
@@ -431,7 +444,11 @@ func calculateFilesSize(repoRoot string, files []string) (int64, error) {
 			continue // Skip non-existent files
 		}
 		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-			size += info.Size()
+			var addErr error
+			size, addErr = safeAddSize(size, info.Size())
+			if addErr != nil {
+				return 0, fmt.Errorf("calculating files size: %w", addErr)
+			}
 		}
 	}
 	return size, nil
@@ -470,7 +487,11 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 		}
 
 		if !info.IsDir() {
-			size += info.Size()
+			var addErr error
+			size, addErr = safeAddSize(size, info.Size())
+			if addErr != nil {
+				return fmt.Errorf("calculating directory size: %w", addErr)
+			}
 		}
 		return nil
 	})
