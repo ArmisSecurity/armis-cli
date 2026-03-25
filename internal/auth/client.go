@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 const (
@@ -133,6 +135,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 			if len(debugBody) > maxDebugLen {
 				debugBody = debugBody[:maxDebugLen] + "... (truncated)"
 			}
+			debugBody = util.MaskSecretInMultiLineString(debugBody)
 			fmt.Fprintf(os.Stderr, "[DEBUG] Auth failed with status %d, response length: %d bytes\n%s\n", resp.StatusCode, len(body), debugBody)
 		}
 		// Don't include raw response body in error to prevent potential info leakage
