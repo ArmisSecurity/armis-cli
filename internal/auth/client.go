@@ -11,8 +11,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 const (
@@ -127,16 +125,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Log detailed error info when debug mode is enabled.
-		// Truncate body to avoid exposing large amounts of potentially sensitive data.
+		// Log non-sensitive metadata when debug mode is enabled.
+		// Response body is intentionally excluded to prevent credential leakage (CWE-522).
 		if c.debug {
-			debugBody := string(body)
-			const maxDebugLen = 512
-			if len(debugBody) > maxDebugLen {
-				debugBody = debugBody[:maxDebugLen] + "... (truncated)"
-			}
-			debugBody = util.MaskSecretInMultiLineString(debugBody)
-			fmt.Fprintf(os.Stderr, "[DEBUG] Auth failed with status %d, response length: %d bytes\n%s\n", resp.StatusCode, len(body), debugBody)
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth failed: status=%d, content-type=%q, response-length=%d bytes\n", resp.StatusCode, resp.Header.Get("Content-Type"), len(body))
 		}
 		// Don't include raw response body in error to prevent potential info leakage
 		return nil, &AuthError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("authentication failed (status %d)", resp.StatusCode)}
