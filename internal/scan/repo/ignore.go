@@ -2,6 +2,7 @@ package repo
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,8 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 		}
 
 		if !info.IsDir() && info.Name() == ".armisignore" {
-			if info.Size() > maxIgnoreFileSize {
-				return fmt.Errorf(".armisignore file too large (%d bytes, max %d): %s", info.Size(), maxIgnoreFileSize, path)
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf(".armisignore is a symlink (rejected): %s", path)
 			}
 			patterns, err := loadIgnoreFile(path, repoRoot)
 			if err != nil {
@@ -57,9 +58,20 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 }
 
 func loadIgnoreFile(ignoreFilePath, repoRoot string) ([]gitignore.Pattern, error) {
-	data, err := os.ReadFile(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
+	f, err := os.Open(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
 	if err != nil {
 		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only file
+
+	// Read up to maxIgnoreFileSize+1 to detect files exceeding the limit.
+	limited := io.LimitReader(f, maxIgnoreFileSize+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxIgnoreFileSize {
+		return nil, fmt.Errorf(".armisignore file too large (max %d bytes): %s", maxIgnoreFileSize, ignoreFilePath)
 	}
 
 	ignoreDir := filepath.Dir(ignoreFilePath)
