@@ -99,6 +99,30 @@ func TestLoadIgnorePatternsNested(t *testing.T) {
 	}
 }
 
+func TestLoadIgnorePatternsSymlinkRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a real file that the symlink will point to.
+	realFile := filepath.Join(tmpDir, "real-ignore")
+	if err := os.WriteFile(realFile, []byte("*.log\n"), 0600); err != nil {
+		t.Fatalf("Failed to create real ignore file: %v", err)
+	}
+
+	// Create a symlink named .armisignore pointing to the real file.
+	symlinkPath := filepath.Join(tmpDir, ".armisignore")
+	if err := os.Symlink(realFile, symlinkPath); err != nil {
+		t.Skipf("Symlink creation not supported: %v", err)
+	}
+
+	_, err := LoadIgnorePatterns(tmpDir)
+	if err == nil {
+		t.Fatal("expected error for symlinked .armisignore file")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected 'symlink' error, got: %v", err)
+	}
+}
+
 func TestLoadIgnorePatternsOversizedFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
