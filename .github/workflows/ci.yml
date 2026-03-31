@@ -86,6 +86,7 @@ jobs:
       - name: Post PR comment
         uses: actions/github-script@v8
         with:
+          retries: 3
           script: |
             const fs = require('fs');
             const summary = fs.readFileSync('coverage/coverage.txt', 'utf8');
