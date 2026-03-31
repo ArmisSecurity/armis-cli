@@ -1,12 +1,16 @@
 package repo
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
+
+// maxIgnoreFileSize is the maximum allowed size for a .armisignore file (1 MB).
+const maxIgnoreFileSize = 1 << 20
 
 // IgnoreMatcher matches files against ignore patterns.
 type IgnoreMatcher struct {
@@ -28,6 +32,9 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 		}
 
 		if !info.IsDir() && info.Name() == ".armisignore" {
+			if info.Size() > maxIgnoreFileSize {
+				return fmt.Errorf(".armisignore file too large (%d bytes, max %d): %s", info.Size(), maxIgnoreFileSize, path)
+			}
 			patterns, err := loadIgnoreFile(path, repoRoot)
 			if err != nil {
 				return err

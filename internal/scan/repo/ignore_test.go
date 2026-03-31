@@ -3,6 +3,7 @@ package repo
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,27 @@ func TestLoadIgnorePatternsNested(t *testing.T) {
 
 	if !matcher.Match("subdir/test.tmp", false) {
 		t.Error("Expected nested pattern to match")
+	}
+}
+
+func TestLoadIgnorePatternsOversizedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oversized := make([]byte, maxIgnoreFileSize+1)
+	for i := range oversized {
+		oversized[i] = 'a'
+	}
+
+	ignoreFile := filepath.Join(tmpDir, ".armisignore")
+	if err := os.WriteFile(ignoreFile, oversized, 0600); err != nil {
+		t.Fatalf("Failed to create oversized ignore file: %v", err)
+	}
+
+	_, err := LoadIgnorePatterns(tmpDir)
+	if err == nil {
+		t.Fatal("expected error for oversized .armisignore file")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected 'too large' error, got: %v", err)
 	}
 }
