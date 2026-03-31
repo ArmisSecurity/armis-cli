@@ -60,6 +60,12 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			// Disable redirects to prevent leaking client credentials (CWE-601).
+			// On 307/308 redirects, Go re-sends the POST body to the redirect target.
+			// The auth endpoint should never redirect; if it does, return the response as-is.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		debug: debug,
 	}, nil
