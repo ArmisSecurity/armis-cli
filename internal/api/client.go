@@ -183,7 +183,7 @@ func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uplo
 		RetryMax:     3,
 		RetryWaitMin: 1 * time.Second,
 		RetryWaitMax: 10 * time.Second,
-		Timeout:      60 * time.Second,
+		Timeout:      180 * time.Second,
 	})
 
 	uploadHTTPClient := httpclient.NewClient(httpclient.Config{
