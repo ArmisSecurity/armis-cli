@@ -23,13 +23,14 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
+const testScanID = "scan-123"
 const testSQLInjectionDescription = "SQL Injection vulnerability"
 
 func TestBuildScanResult(t *testing.T) {
 	t.Run("empty findings", func(t *testing.T) {
-		result := buildScanResult("scan-123", []model.NormalizedFinding{}, false, true)
+		result := buildScanResult(testScanID, []model.NormalizedFinding{}, false, true)
 
-		if result.ScanID != "scan-123" {
+		if result.ScanID != testScanID {
 			t.Errorf("ScanID = %s, want scan-123", result.ScanID)
 		}
 		if result.Status != "completed" {
@@ -1312,7 +1313,7 @@ func TestScan(t *testing.T) {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
 				// StartIngest
 				response := model.IngestUploadResponse{
-					ScanID:       "scan-123",
+					ScanID:       testScanID,
 					ArtifactType: "repo",
 					TenantID:     "tenant-456",
 					Filename:     "test-repo.tar.gz",
@@ -1325,7 +1326,7 @@ func TestScan(t *testing.T) {
 				response := model.IngestStatusResponse{
 					Data: []model.IngestStatusData{
 						{
-							ScanID:     "scan-123",
+							ScanID:     testScanID,
 							ScanStatus: "completed",
 						},
 					},
@@ -1339,7 +1340,7 @@ func TestScan(t *testing.T) {
 						TenantID: "tenant-456",
 						ScanResults: []model.ScanResultData{
 							{
-								ScanID: "scan-123",
+								ScanID: testScanID,
 								Findings: []model.NormalizedFinding{
 									{
 										NormalizedTask: model.NormalizedTask{
@@ -1384,7 +1385,7 @@ func TestScan(t *testing.T) {
 		}
 
 		// Verify result
-		if result.ScanID != "scan-123" {
+		if result.ScanID != testScanID {
 			t.Errorf("ScanID = %s, want scan-123", result.ScanID)
 		}
 		if result.Status != "completed" {
@@ -1472,7 +1473,7 @@ func TestScan(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			// Delay to ensure context cancellation takes effect
 			time.Sleep(100 * time.Millisecond)
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123"})
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
@@ -1500,11 +1501,11 @@ func TestScan(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
-				response := model.IngestUploadResponse{ScanID: "scan-123"}
+				response := model.IngestUploadResponse{ScanID: testScanID}
 				testutil.JSONResponse(t, w, http.StatusOK, response)
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
 				response := model.IngestStatusResponse{
-					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "completed"}},
+					Data: []model.IngestStatusData{{ScanID: testScanID, ScanStatus: "completed"}},
 				}
 				testutil.JSONResponse(t, w, http.StatusOK, response)
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
@@ -1529,7 +1530,7 @@ func TestScan(t *testing.T) {
 		if !errors.As(err, &incompleteErr) {
 			t.Errorf("expected ErrResultsIncomplete, got: %T: %v", err, err)
 		}
-		if incompleteErr.ScanID != "scan-123" {
+		if incompleteErr.ScanID != testScanID {
 			t.Errorf("ScanID = %s, want scan-123", incompleteErr.ScanID)
 		}
 	})
