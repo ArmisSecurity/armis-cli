@@ -38,6 +38,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	fetchRetryInterval    time.Duration
 	sbomVEXOpts           *scan.SBOMVEXOptions
 	pullPolicy            string // "always", "missing", "never"
 }
@@ -53,12 +54,19 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 		timeout:               timeout,
 		includeNonExploitable: includeNonExploitable,
 		pollInterval:          5 * time.Second,
+		fetchRetryInterval:    10 * time.Second,
 	}
 }
 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithFetchRetryInterval sets a custom retry interval for result fetching (used for testing).
+func (s *Scanner) WithFetchRetryInterval(d time.Duration) *Scanner {
+	s.fetchRetryInterval = d
 	return s
 }
 
@@ -175,9 +183,22 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
-	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+	var findings []model.NormalizedFinding
+	const maxFetchRetries = 5
+	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
+		findings, err = s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+		if err == nil {
+			break
+		}
+		if attempt < maxFetchRetries {
+			time.Sleep(s.fetchRetryInterval)
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch results: %w", err)
+		cli.PrintWarningf("Failed to retrieve results after %d attempts: %v", maxFetchRetries, err)
+		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
+		result := buildScanResult(scanID, nil, s.client.IsDebug(), s.includeNonExploitable)
+		return result, nil
 	}
 
 	// Handle SBOM/VEX downloads if requested

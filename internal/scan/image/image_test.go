@@ -742,14 +742,19 @@ func TestScanTarball(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).
+			WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
 
-		_, err = scanner.ScanTarball(context.Background(), tarballPath)
-		if err == nil {
-			t.Error("expected error on fetch results failure")
+		result, err := scanner.ScanTarball(context.Background(), tarballPath)
+		if err != nil {
+			t.Errorf("expected graceful degradation, got error: %v", err)
 		}
-		if !strings.Contains(err.Error(), "failed to fetch results") {
-			t.Errorf("unexpected error message: %v", err)
+		if result == nil {
+			t.Fatal("expected non-nil result on fetch failure with graceful degradation")
+		}
+		if len(result.Findings) != 0 {
+			t.Errorf("expected zero findings on fetch failure, got %d", len(result.Findings))
 		}
 	})
 
