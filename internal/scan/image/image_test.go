@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -742,14 +744,17 @@ func TestScanTarball(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).
+			WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
 
 		_, err = scanner.ScanTarball(context.Background(), tarballPath)
 		if err == nil {
-			t.Error("expected error on fetch results failure")
+			t.Fatal("expected ErrResultsIncomplete error")
 		}
-		if !strings.Contains(err.Error(), "failed to fetch results") {
-			t.Errorf("unexpected error message: %v", err)
+		var incompleteErr *output.ErrResultsIncomplete
+		if !errors.As(err, &incompleteErr) {
+			t.Errorf("expected ErrResultsIncomplete, got: %T: %v", err, err)
 		}
 	})
 

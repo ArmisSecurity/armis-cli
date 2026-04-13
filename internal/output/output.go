@@ -25,6 +25,17 @@ func (e *ErrFindingsExceeded) Error() string {
 	return "findings exceeded threshold"
 }
 
+// ErrResultsIncomplete indicates the scan completed on the server but the CLI
+// failed to retrieve results. This should result in a non-zero exit code so
+// CI pipelines do not silently pass when results are unavailable.
+type ErrResultsIncomplete struct {
+	ScanID string
+}
+
+func (e *ErrResultsIncomplete) Error() string {
+	return fmt.Sprintf("scan completed but results could not be retrieved (scan ID: %s)", e.ScanID)
+}
+
 // FormatOptions contains options for formatting scan results.
 type FormatOptions struct {
 	GroupBy          string

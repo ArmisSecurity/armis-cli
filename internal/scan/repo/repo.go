@@ -37,6 +37,7 @@ type Scanner struct {
 	timeout               time.Duration
 	includeNonExploitable bool
 	pollInterval          time.Duration
+	fetchRetryInterval    time.Duration
 	includeFiles          *FileList
 	sbomVEXOpts           *scan.SBOMVEXOptions
 }
@@ -52,12 +53,19 @@ func NewScanner(client *api.Client, noProgress bool, tenantID string, pageLimit 
 		timeout:               timeout,
 		includeNonExploitable: includeNonExploitable,
 		pollInterval:          5 * time.Second,
+		fetchRetryInterval:    10 * time.Second,
 	}
 }
 
 // WithPollInterval sets a custom poll interval for the scanner (used for testing).
 func (s *Scanner) WithPollInterval(d time.Duration) *Scanner {
 	s.pollInterval = d
+	return s
+}
+
+// WithFetchRetryInterval sets a custom retry interval for result fetching (used for testing).
+func (s *Scanner) WithFetchRetryInterval(d time.Duration) *Scanner {
+	s.fetchRetryInterval = d
 	return s
 }
 
@@ -219,9 +227,26 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fetchSpinner.Start()
 	defer fetchSpinner.Stop()
 
-	findings, err := s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+	var findings []model.NormalizedFinding
+	const maxFetchRetries = 5
+	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
+		findings, err = s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+		if err == nil {
+			break
+		}
+		if !isRetryableError(err) {
+			break
+		}
+		if attempt < maxFetchRetries {
+			fetchSpinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
+			time.Sleep(s.fetchRetryInterval)
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch results: %w", err)
+		fetchSpinner.Stop()
+		cli.PrintWarningf("Failed to retrieve results: %v", err)
+		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	fetchSpinner.Stop()
@@ -571,6 +596,17 @@ func isTestFile(name string) bool {
 	}
 
 	return false
+}
+
+// isRetryableError returns true for transient errors (timeouts, network errors,
+// 5xx server errors) and false for permanent errors (4xx, decode failures).
+func isRetryableError(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
+	}
+	// Timeout and network errors are retryable
+	return errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
