@@ -234,6 +234,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		if err == nil {
 			break
 		}
+		if !isRetryableError(err) {
+			break
+		}
 		if attempt < maxFetchRetries {
 			fetchSpinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
 			time.Sleep(s.fetchRetryInterval)
@@ -241,10 +244,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 	if err != nil {
 		fetchSpinner.Stop()
-		cli.PrintWarningf("Failed to retrieve results after %d attempts: %v", maxFetchRetries, err)
+		cli.PrintWarningf("Failed to retrieve results: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
-		result := buildScanResult(scanID, nil, s.client.IsDebug(), s.includeNonExploitable)
-		return result, nil
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	fetchSpinner.Stop()
@@ -594,6 +596,17 @@ func isTestFile(name string) bool {
 	}
 
 	return false
+}
+
+// isRetryableError returns true for transient errors (timeouts, network errors,
+// 5xx server errors) and false for permanent errors (4xx, decode failures).
+func isRetryableError(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
+	}
+	// Timeout and network errors are retryable
+	return errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {

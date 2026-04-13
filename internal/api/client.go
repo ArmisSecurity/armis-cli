@@ -19,6 +19,17 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// APIError represents an HTTP API error with a status code, allowing callers
+// to distinguish retryable (5xx, timeout) from permanent (4xx) errors.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Body)
+}
+
 // DownloadTimeout is the default timeout for downloading files from pre-signed URLs.
 const DownloadTimeout = 5 * time.Minute
 
@@ -536,7 +547,7 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
-		return nil, fmt.Errorf("fetch results failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))

@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -746,15 +748,13 @@ func TestScanTarball(t *testing.T) {
 			WithPollInterval(10 * time.Millisecond).
 			WithFetchRetryInterval(10 * time.Millisecond)
 
-		result, err := scanner.ScanTarball(context.Background(), tarballPath)
-		if err != nil {
-			t.Errorf("expected graceful degradation, got error: %v", err)
+		_, err = scanner.ScanTarball(context.Background(), tarballPath)
+		if err == nil {
+			t.Fatal("expected ErrResultsIncomplete error")
 		}
-		if result == nil {
-			t.Fatal("expected non-nil result on fetch failure with graceful degradation")
-		}
-		if len(result.Findings) != 0 {
-			t.Errorf("expected zero findings on fetch failure, got %d", len(result.Findings))
+		var incompleteErr *output.ErrResultsIncomplete
+		if !errors.As(err, &incompleteErr) {
+			t.Errorf("expected ErrResultsIncomplete, got: %T: %v", err, err)
 		}
 	})
 

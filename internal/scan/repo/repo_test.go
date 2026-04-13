@@ -18,6 +18,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -1487,6 +1488,49 @@ func TestScan(t *testing.T) {
 		_, err = scanner.Scan(ctx, tmpDir)
 		if err == nil {
 			t.Error("expected error when context is cancelled")
+		}
+	})
+
+	t.Run("returns ErrResultsIncomplete on fetch failure", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
+				response := model.IngestUploadResponse{ScanID: "scan-123"}
+				testutil.JSONResponse(t, w, http.StatusOK, response)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+				response := model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "completed"}},
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, response)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
+				testutil.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch results")
+			}
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).
+			WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
+
+		_, err = scanner.Scan(context.Background(), tmpDir)
+		if err == nil {
+			t.Fatal("expected ErrResultsIncomplete error")
+		}
+		var incompleteErr *output.ErrResultsIncomplete
+		if !errors.As(err, &incompleteErr) {
+			t.Errorf("expected ErrResultsIncomplete, got: %T: %v", err, err)
+		}
+		if incompleteErr.ScanID != "scan-123" {
+			t.Errorf("ScanID = %s, want scan-123", incompleteErr.ScanID)
 		}
 	})
 }

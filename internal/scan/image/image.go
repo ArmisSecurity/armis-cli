@@ -4,6 +4,7 @@ package image
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -183,6 +184,9 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
 
+	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Retrieving results...", s.noProgress)
+	fetchSpinner.Start()
+
 	var findings []model.NormalizedFinding
 	const maxFetchRetries = 5
 	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
@@ -190,15 +194,19 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		if err == nil {
 			break
 		}
+		if !isRetryableError(err) {
+			break
+		}
 		if attempt < maxFetchRetries {
+			fetchSpinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
 			time.Sleep(s.fetchRetryInterval)
 		}
 	}
+	fetchSpinner.Stop()
 	if err != nil {
-		cli.PrintWarningf("Failed to retrieve results after %d attempts: %v", maxFetchRetries, err)
+		cli.PrintWarningf("Failed to retrieve results: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
-		result := buildScanResult(scanID, nil, s.client.IsDebug(), s.includeNonExploitable)
-		return result, nil
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	// Handle SBOM/VEX downloads if requested
@@ -322,6 +330,16 @@ func determinePullBehavior(policy string, localExists bool) (shouldPull bool, er
 	default:
 		return false, fmt.Errorf("invalid pull policy %q: must be 'always', 'missing', or 'never'", policy)
 	}
+}
+
+// isRetryableError returns true for transient errors (timeouts, network errors,
+// 5xx server errors) and false for permanent errors (4xx, decode failures).
+func isRetryableError(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
+	}
+	return errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)
 }
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
