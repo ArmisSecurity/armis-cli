@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,8 +51,47 @@ func TestHasExistingEnv(t *testing.T) {
 	}
 }
 
+func TestFetchLatestRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tag_name":"v1.2.3","tarball_url":"https://api.github.com/repos/test/tarball/v1.2.3"}`)
+	}))
+	defer server.Close()
+
+	ci := &ClaudeInstaller{
+		httpClient:  server.Client(),
+		releasesURL: server.URL,
+	}
+
+	release, err := ci.fetchLatestRelease()
+	if err != nil {
+		t.Fatalf("fetchLatestRelease() error: %v", err)
+	}
+	if release.TagName != "v1.2.3" {
+		t.Errorf("TagName = %q, want %q", release.TagName, "v1.2.3")
+	}
+	if release.TarballURL == "" {
+		t.Error("TarballURL should not be empty")
+	}
+}
+
+func TestFetchLatestRelease_NoRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ci := &ClaudeInstaller{
+		httpClient:  server.Client(),
+		releasesURL: server.URL,
+	}
+
+	_, err := ci.fetchLatestRelease()
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
 func TestDownloadAndExtract(t *testing.T) {
-	// Create a test tarball matching GitHub's format
 	tarball := createTestTarball(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
@@ -59,33 +99,36 @@ func TestDownloadAndExtract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
 	ci := &ClaudeInstaller{
-		claudeDir:  dir,
+		claudeDir:  t.TempDir(),
 		httpClient: server.Client(),
 	}
 
-	// Override the archive URL by using a custom HTTP handler
-	// We test downloadAndExtract directly via the test server
-	destDir := filepath.Join(dir, "extract")
+	destDir := filepath.Join(ci.claudeDir, "extract")
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Patch the HTTP request to use our test server
-	origURL := archiveURL
-	_ = origURL // suppress unused warning — we test via the client directly
-
-	// Direct test of extraction
-	resp, err := ci.httpClient.Get(server.URL)
-	if err != nil {
-		t.Fatal(err)
+	if err := ci.downloadAndExtract(server.URL, destDir); err != nil {
+		t.Fatalf("downloadAndExtract() error: %v", err)
 	}
-	defer resp.Body.Close()
 
-	// Verify we got a response (integration test would go further)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	if _, err := os.Stat(filepath.Join(destDir, "server.py")); err != nil {
+		t.Error("server.py not extracted")
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "requirements.txt")); err != nil {
+		t.Error("requirements.txt not extracted")
+	}
+}
+
+func TestInstalledVersion(t *testing.T) {
+	ci := &ClaudeInstaller{}
+	if v := ci.InstalledVersion(); v != "" {
+		t.Errorf("InstalledVersion() = %q, want empty", v)
+	}
+	ci.installedVersion = "1.0.0"
+	if v := ci.InstalledVersion(); v != "1.0.0" {
+		t.Errorf("InstalledVersion() = %q, want %q", v, "1.0.0")
 	}
 }
 
@@ -118,7 +161,7 @@ func TestRegisterMarketplace(t *testing.T) {
 
 func TestRegisterPlugin(t *testing.T) {
 	dir := t.TempDir()
-	ci := &ClaudeInstaller{claudeDir: dir}
+	ci := &ClaudeInstaller{claudeDir: dir, installedVersion: "1.0.0"}
 	pluginsDir := filepath.Join(dir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -144,8 +187,36 @@ func TestRegisterPlugin(t *testing.T) {
 		t.Fatal("plugins key missing or wrong type")
 	}
 	key := pluginName + "@" + marketplaceName
-	if _, ok := plugins[key]; !ok {
-		t.Errorf("plugin %q not registered", key)
+	entries, ok := plugins[key].([]interface{})
+	if !ok || len(entries) == 0 {
+		t.Fatalf("plugin %q not registered", key)
+	}
+	entry := entries[0].(map[string]interface{})
+	if entry["version"] != "1.0.0" {
+		t.Errorf("version = %q, want %q", entry["version"], "1.0.0")
+	}
+}
+
+func TestGetInstalledVersion(t *testing.T) {
+	dir := t.TempDir()
+	ci := &ClaudeInstaller{claudeDir: dir}
+
+	if v := ci.GetInstalledVersion(); v != "" {
+		t.Errorf("GetInstalledVersion() = %q, want empty for missing file", v)
+	}
+
+	ci.installedVersion = "2.1.0"
+	pluginsDir := filepath.Join(dir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := filepath.Join(dir, "plugins", "cache", "test")
+	if err := ci.registerPlugin(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if v := ci.GetInstalledVersion(); v != "2.1.0" {
+		t.Errorf("GetInstalledVersion() = %q, want %q", v, "2.1.0")
 	}
 }
 
@@ -254,9 +325,40 @@ func searchString(s, substr string) bool {
 	return false
 }
 
+func TestDownloadAndExtractFlattensPrefix(t *testing.T) {
+	tarball := createTestTarball(t, true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Write(tarball)
+	}))
+	defer server.Close()
+
+	ci := &ClaudeInstaller{
+		claudeDir:  t.TempDir(),
+		httpClient: server.Client(),
+	}
+
+	destDir := filepath.Join(ci.claudeDir, "extract")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ci.downloadAndExtract(server.URL, destDir); err != nil {
+		t.Fatalf("downloadAndExtract() error: %v", err)
+	}
+
+	wantFiles := []string{"server.py", "requirements.txt"}
+	for _, f := range wantFiles {
+		if _, err := os.Stat(filepath.Join(destDir, f)); err != nil {
+			t.Errorf("expected file %q not found in extracted directory", f)
+		}
+	}
+}
+
 // createTestTarball creates a gzipped tarball matching GitHub's format:
 // top-level directory prefix like "org-repo-sha/" with files inside.
-func createTestTarball(t *testing.T) []byte {
+// If withPaxHeader is true, includes a pax_global_header like real GitHub tarballs.
+func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 	t.Helper()
 	var buf []byte
 
@@ -268,9 +370,17 @@ func createTestTarball(t *testing.T) []byte {
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
 
+	if len(withPaxHeader) > 0 && withPaxHeader[0] {
+		tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeXGlobalHeader,
+			Name:     "pax_global_header",
+			Size:     0,
+		})
+	}
+
 	// Add directory entry
 	tw.WriteHeader(&tar.Header{
-		Name:     "silk-security-armis-appsec-mcp-abc1234/",
+		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/",
 		Typeflag: tar.TypeDir,
 		Mode:     0o755,
 	})
@@ -278,7 +388,7 @@ func createTestTarball(t *testing.T) []byte {
 	// Add a Python file
 	content := []byte("print('hello')\n")
 	tw.WriteHeader(&tar.Header{
-		Name:     "silk-security-armis-appsec-mcp-abc1234/server.py",
+		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/server.py",
 		Typeflag: tar.TypeReg,
 		Mode:     0o644,
 		Size:     int64(len(content)),
@@ -288,7 +398,7 @@ func createTestTarball(t *testing.T) []byte {
 	// Add requirements.txt
 	reqs := []byte("mcp[cli]==1.25.0\nhttpx==0.28.1\n")
 	tw.WriteHeader(&tar.Header{
-		Name:     "silk-security-armis-appsec-mcp-abc1234/requirements.txt",
+		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/requirements.txt",
 		Typeflag: tar.TypeReg,
 		Mode:     0o644,
 		Size:     int64(len(reqs)),

@@ -22,18 +22,32 @@ The plugin adds AI-powered vulnerability scanning directly into Claude Code:
 After installation, set your credentials in the plugin's .env file
 and restart Claude Code.
 
-Source: https://github.com/silk-security/armis-appsec-mcp`,
+Source: https://github.com/ArmisSecurity/armis-appsec-mcp`,
 	Example: `  # Install the Claude Code plugin
-  armis-cli install claude`,
+  armis-cli install claude
+
+  # Check the installed plugin version
+  armis-cli install claude --version`,
 	RunE: runInstallClaude,
 }
 
 func init() {
 	installCmd.AddCommand(installClaudeCmd)
+	installClaudeCmd.Flags().Bool("version", false, "Print the installed plugin version and exit")
 }
 
 func runInstallClaude(cmd *cobra.Command, args []string) error {
 	installer := install.NewClaudeInstaller()
+
+	showVersion, _ := cmd.Flags().GetBool("version")
+	if showVersion {
+		v := installer.GetInstalledVersion()
+		if v == "" {
+			return fmt.Errorf("Armis AppSec plugin is not installed — run: armis-cli install claude")
+		}
+		fmt.Fprintf(os.Stderr, "Armis AppSec plugin v%s\n", v)
+		return nil
+	}
 
 	fmt.Fprintln(os.Stderr, "Installing Armis AppSec plugin for Claude Code...")
 
@@ -42,7 +56,7 @@ func runInstallClaude(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Plugin installed successfully!")
+	fmt.Fprintf(os.Stderr, "Plugin v%s installed successfully!\n", installer.InstalledVersion())
 	fmt.Fprintln(os.Stderr, "")
 
 	if !installer.HasExistingEnv() {

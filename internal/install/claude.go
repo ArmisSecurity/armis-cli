@@ -17,29 +17,44 @@ import (
 )
 
 const (
-	pluginRepo       = "silk-security/armis-appsec-mcp"
+	pluginRepo       = "ArmisSecurity/armis-appsec-mcp"
 	marketplaceName  = "armis-appsec-mcp"
 	pluginName       = "armis-appsec"
-	archiveURL       = "https://api.github.com/repos/" + pluginRepo + "/tarball/main"
+	releasesURL      = "https://api.github.com/repos/" + pluginRepo + "/releases/latest"
 	downloadTimeout  = 60 * time.Second
-	maxArchiveBytes  = 50 * 1024 * 1024 // 50 MB safety limit
+	maxArchiveBytes  = 50 * 1024 * 1024  // 50 MB safety limit
 	maxExtractedSize = 100 * 1024 * 1024 // 100 MB total extracted size
 	maxFileSize      = 10 * 1024 * 1024  // 10 MB per file
+	maxArchiveEntries = 10000            // max tar entries to prevent resource exhaustion
 )
+
+// githubRelease is the minimal structure from the GitHub releases API.
+type githubRelease struct {
+	TagName    string `json:"tag_name"`
+	TarballURL string `json:"tarball_url"`
+}
 
 // ClaudeInstaller installs the Armis AppSec MCP plugin for Claude Code.
 type ClaudeInstaller struct {
-	claudeDir string
-	httpClient *http.Client
+	claudeDir       string
+	httpClient      *http.Client
+	releasesURL     string
+	installedVersion string
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
 func NewClaudeInstaller() *ClaudeInstaller {
 	home, _ := os.UserHomeDir()
 	return &ClaudeInstaller{
-		claudeDir: filepath.Join(home, ".claude"),
-		httpClient: &http.Client{Timeout: downloadTimeout},
+		claudeDir:   filepath.Join(home, ".claude"),
+		httpClient:  &http.Client{Timeout: downloadTimeout},
+		releasesURL: releasesURL,
 	}
+}
+
+// InstalledVersion returns the version that was installed (available after Install).
+func (ci *ClaudeInstaller) InstalledVersion() string {
+	return ci.installedVersion
 }
 
 // Install downloads and installs the MCP plugin.
@@ -48,12 +63,18 @@ func (ci *ClaudeInstaller) Install() error {
 		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir)
 	}
 
+	release, err := ci.fetchLatestRelease()
+	if err != nil {
+		return fmt.Errorf("failed to fetch latest release: %w", err)
+	}
+	ci.installedVersion = strings.TrimPrefix(release.TagName, "v")
+
 	pluginDir := ci.pluginCacheDir()
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 
-	if err := ci.downloadAndExtract(pluginDir); err != nil {
+	if err := ci.downloadAndExtract(release.TarballURL, pluginDir); err != nil {
 		return fmt.Errorf("failed to download plugin: %w", err)
 	}
 
@@ -81,6 +102,38 @@ func (ci *ClaudeInstaller) pluginCacheDir() string {
 	return filepath.Join(ci.claudeDir, "plugins", "cache", marketplaceName, pluginName, "latest")
 }
 
+// GetInstalledVersion reads the installed plugin version from the registry.
+// Returns empty string if the plugin is not installed.
+func (ci *ClaudeInstaller) GetInstalledVersion() string {
+	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
+	b, err := os.ReadFile(instFile)
+	if err != nil {
+		return ""
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return ""
+	}
+	plugins, ok := data["plugins"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	key := pluginName + "@" + marketplaceName
+	entries, ok := plugins[key].([]interface{})
+	if !ok || len(entries) == 0 {
+		return ""
+	}
+	entry, ok := entries[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	v, _ := entry["version"].(string)
+	if v == "latest" {
+		return ""
+	}
+	return v
+}
+
 // HasExistingEnv checks whether credentials are already configured.
 func (ci *ClaudeInstaller) HasExistingEnv() bool {
 	envPath := filepath.Join(ci.pluginCacheDir(), ".env")
@@ -88,8 +141,42 @@ func (ci *ClaudeInstaller) HasExistingEnv() bool {
 	return err == nil
 }
 
-func (ci *ClaudeInstaller) downloadAndExtract(destDir string) error {
-	req, err := http.NewRequest("GET", archiveURL, nil)
+func (ci *ClaudeInstaller) fetchLatestRelease() (*githubRelease, error) {
+	req, err := http.NewRequest("GET", ci.releasesURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := ci.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying GitHub releases: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned HTTP %d — is there a published release?", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	var release githubRelease
+	if err := json.Unmarshal(body, &release); err != nil {
+		return nil, fmt.Errorf("parsing release: %w", err)
+	}
+
+	if release.TagName == "" || release.TarballURL == "" {
+		return nil, fmt.Errorf("release is missing tag or tarball URL")
+	}
+
+	return &release, nil
+}
+
+func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error {
+	req, err := http.NewRequest("GET", tarballURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -114,6 +201,7 @@ func (ci *ClaudeInstaller) downloadAndExtract(destDir string) error {
 
 	tr := tar.NewReader(gz)
 	var totalExtracted int64
+	var entryCount int
 	var prefix string
 
 	for {
@@ -123,6 +211,15 @@ func (ci *ClaudeInstaller) downloadAndExtract(destDir string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("reading archive: %w", err)
+		}
+
+		entryCount++
+		if entryCount > maxArchiveEntries {
+			return fmt.Errorf("archive exceeds %d entry limit", maxArchiveEntries)
+		}
+
+		if header.Typeflag == tar.TypeXGlobalHeader || header.Typeflag == tar.TypeXHeader {
+			continue
 		}
 
 		// GitHub tarballs have a top-level directory like "org-repo-sha/"
@@ -247,7 +344,7 @@ func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
 		map[string]interface{}{
 			"scope":       "user",
 			"installPath": pluginDir,
-			"version":     "latest",
+			"version":     ci.installedVersion,
 			"installedAt": now,
 			"lastUpdated": now,
 		},
