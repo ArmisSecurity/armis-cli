@@ -39,7 +39,10 @@ func init() {
 func runInstallClaude(cmd *cobra.Command, args []string) error {
 	installer := install.NewClaudeInstaller()
 
-	showVersion, _ := cmd.Flags().GetBool("version")
+	showVersion, err := cmd.Flags().GetBool("version")
+	if err != nil {
+		return fmt.Errorf("reading --version flag: %w", err)
+	}
 	if showVersion {
 		v := installer.GetInstalledVersion()
 		if v == "" {
@@ -60,7 +63,10 @@ func runInstallClaude(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(os.Stderr, "")
 
 	if !installer.HasExistingEnv() {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("determining home directory: %w", err)
+		}
 		envPath := home + "/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest/.env"
 		fmt.Fprintln(os.Stderr, "Next steps:")
 		fmt.Fprintf(os.Stderr, "  1. Set your credentials in %s:\n", envPath)

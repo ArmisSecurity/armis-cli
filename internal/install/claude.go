@@ -385,16 +385,21 @@ func writeJSON(path string, data interface{}) error {
 
 func findPython() string {
 	for _, name := range []string{"python3", "python"} {
-		path, err := exec.LookPath(name)
+		resolved, err := exec.LookPath(name)
 		if err != nil {
 			continue
 		}
-		out, err := exec.Command(path, "-c", "import sys; print(sys.version_info >= (3, 11))").Output()
+		// CWE-426: resolve symlinks and verify the path is absolute
+		resolved, err = filepath.EvalSymlinks(resolved)
+		if err != nil || !filepath.IsAbs(resolved) {
+			continue
+		}
+		out, err := exec.Command(resolved, "-c", "import sys; print(sys.version_info >= (3, 11))").Output() //nolint:gosec // resolved path validated above
 		if err != nil {
 			continue
 		}
 		if strings.TrimSpace(string(out)) == "True" {
-			return path
+			return resolved
 		}
 	}
 	return ""
