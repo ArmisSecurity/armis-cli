@@ -139,12 +139,13 @@ func (ci *ClaudeInstaller) downloadAndExtract(destDir string) error {
 			continue
 		}
 
-		// Security: prevent path traversal (CWE-22)
-		if strings.Contains(name, "..") {
+		// CWE-22: reject entries with path traversal components
+		clean := filepath.Clean(filepath.FromSlash(name))
+		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
 			continue
 		}
 
-		target := filepath.Join(destDir, filepath.FromSlash(name))
+		target := filepath.Join(destDir, clean)
 		if !strings.HasPrefix(target, destDir+string(os.PathSeparator)) && target != destDir {
 			continue
 		}
