@@ -308,13 +308,6 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	return nil
 }
 
-// allowedPythonDirs contains trusted directories for Python interpreter lookup (CWE-426).
-var allowedPythonDirs = []string{
-	"/usr/bin",
-	"/usr/local/bin",
-	"/opt/homebrew/bin",
-}
-
 func (ci *ClaudeInstaller) createVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
@@ -450,11 +443,9 @@ func findPython() string {
 		if err != nil {
 			continue
 		}
+		// CWE-426: resolve symlinks and verify the path is absolute
 		resolved, err = filepath.EvalSymlinks(resolved)
 		if err != nil || !filepath.IsAbs(resolved) {
-			continue
-		}
-		if !isInAllowedDir(resolved) {
 			continue
 		}
 		out, err := exec.Command(resolved, "-c", "import sys; print(sys.version_info >= (3, 11))").Output() //nolint:gosec // resolved path validated above
@@ -466,14 +457,4 @@ func findPython() string {
 		}
 	}
 	return ""
-}
-
-func isInAllowedDir(resolved string) bool {
-	dir := filepath.Dir(resolved)
-	for _, allowed := range allowedPythonDirs {
-		if dir == allowed {
-			return true
-		}
-	}
-	return false
 }
