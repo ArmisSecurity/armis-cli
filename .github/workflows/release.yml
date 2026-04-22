@@ -72,13 +72,13 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: "v2.2.2"
+          cosign-release: "v2.6.3"
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: latest
+          version: "~> v2.15"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
