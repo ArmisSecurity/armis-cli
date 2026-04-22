@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"time"
 )
+
+const githubAPIHost = "api.github.com"
 
 const (
 	pluginRepo       = "ArmisSecurity/armis-appsec-mcp"
@@ -36,10 +39,11 @@ type githubRelease struct {
 
 // ClaudeInstaller installs the Armis AppSec MCP plugin for Claude Code.
 type ClaudeInstaller struct {
-	claudeDir       string
-	httpClient      *http.Client
-	releasesURL     string
+	claudeDir        string
+	httpClient       *http.Client
+	releasesURL      string
 	installedVersion string
+	skipURLValidation bool // testing only: skip GitHub URL enforcement
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
@@ -60,7 +64,7 @@ func (ci *ClaudeInstaller) InstalledVersion() string {
 // Install downloads and installs the MCP plugin.
 func (ci *ClaudeInstaller) Install() error {
 	if _, err := os.Stat(ci.claudeDir); os.IsNotExist(err) {
-		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir)
+		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir) //nolint:staticcheck // proper noun
 	}
 
 	release, err := ci.fetchLatestRelease()
@@ -70,7 +74,7 @@ func (ci *ClaudeInstaller) Install() error {
 	ci.installedVersion = strings.TrimPrefix(release.TagName, "v")
 
 	pluginDir := ci.pluginCacheDir()
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 
@@ -106,7 +110,7 @@ func (ci *ClaudeInstaller) pluginCacheDir() string {
 // Returns empty string if the plugin is not installed.
 func (ci *ClaudeInstaller) GetInstalledVersion() string {
 	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
-	b, err := os.ReadFile(instFile)
+	b, err := os.ReadFile(filepath.Clean(instFile))
 	if err != nil {
 		return ""
 	}
@@ -142,6 +146,12 @@ func (ci *ClaudeInstaller) HasExistingEnv() bool {
 }
 
 func (ci *ClaudeInstaller) fetchLatestRelease() (*githubRelease, error) {
+	if !ci.skipURLValidation {
+		if err := validateGitHubURL(ci.releasesURL); err != nil {
+			return nil, fmt.Errorf("invalid releases URL: %w", err)
+		}
+	}
+
 	req, err := http.NewRequest("GET", ci.releasesURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -152,7 +162,7 @@ func (ci *ClaudeInstaller) fetchLatestRelease() (*githubRelease, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying GitHub releases: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned HTTP %d — is there a published release?", resp.StatusCode)
@@ -176,6 +186,12 @@ func (ci *ClaudeInstaller) fetchLatestRelease() (*githubRelease, error) {
 }
 
 func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error {
+	if !ci.skipURLValidation {
+		if err := validateGitHubURL(tarballURL); err != nil {
+			return fmt.Errorf("invalid tarball URL: %w", err)
+		}
+	}
+
 	req, err := http.NewRequest("GET", tarballURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
@@ -186,7 +202,7 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	if err != nil {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
@@ -197,7 +213,7 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	if err != nil {
 		return fmt.Errorf("decompressing archive: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	var totalExtracted int64
@@ -236,20 +252,32 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 			continue
 		}
 
-		// CWE-22: reject entries with path traversal components
+		// CWE-22: reject any entry containing path traversal sequences before cleaning
+		if strings.Contains(name, "..") {
+			continue
+		}
+
 		clean := filepath.Clean(filepath.FromSlash(name))
-		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+		if filepath.IsAbs(clean) {
 			continue
 		}
 
 		target := filepath.Join(destDir, clean)
-		if !strings.HasPrefix(target, destDir+string(os.PathSeparator)) && target != destDir {
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			continue
+		}
+		absDestDir, err := filepath.Abs(destDir)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(absTarget, absDestDir+string(os.PathSeparator)) && absTarget != absDestDir {
 			continue
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(absTarget, 0o750); err != nil {
 				return fmt.Errorf("creating directory %s: %w", name, err)
 			}
 		case tar.TypeReg:
@@ -260,22 +288,16 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 			if totalExtracted > maxExtractedSize {
 				return fmt.Errorf("extracted archive exceeds %d MB safety limit", maxExtractedSize/1024/1024)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(absTarget), 0o750); err != nil {
 				return fmt.Errorf("creating parent directory: %w", err)
 			}
-			perm := os.FileMode(header.Mode) & 0o755
-			if perm == 0 {
-				perm = 0o644
+			perm := os.FileMode(0o644)
+			if header.Mode&0o100 != 0 {
+				perm = 0o750
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-			if err != nil {
-				return fmt.Errorf("creating file %s: %w", name, err)
-			}
-			if _, err := io.Copy(f, io.LimitReader(tr, maxFileSize)); err != nil {
-				f.Close()
+			if err := extractFile(absTarget, tr, perm); err != nil {
 				return fmt.Errorf("writing file %s: %w", name, err)
 			}
-			f.Close()
 		}
 	}
 
@@ -286,14 +308,24 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	return nil
 }
 
+// allowedPythonDirs contains trusted directories for Python interpreter lookup (CWE-426).
+var allowedPythonDirs = []string{
+	"/usr/bin",
+	"/usr/local/bin",
+	"/opt/homebrew/bin",
+}
+
 func (ci *ClaudeInstaller) createVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
-		return fmt.Errorf("Python 3.11+ is required but not found in PATH")
+		return fmt.Errorf("Python 3.11+ is required but not found in PATH") //nolint:staticcheck // proper noun
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
-	if err := runCommand(python, "-m", "venv", venvDir); err != nil {
+	venvCmd := exec.Command(python, "-m", "venv", venvDir) //nolint:gosec // python validated by findPython allowlist
+	venvCmd.Stdout = os.Stderr
+	venvCmd.Stderr = os.Stderr
+	if err := venvCmd.Run(); err != nil {
 		return fmt.Errorf("creating venv: %w", err)
 	}
 
@@ -302,7 +334,10 @@ func (ci *ClaudeInstaller) createVenv(pluginDir string) error {
 		pip = filepath.Join(venvDir, "Scripts", "pip.exe")
 	}
 	reqsFile := filepath.Join(pluginDir, "requirements.txt")
-	if err := runCommand(pip, "install", "-q", "-r", reqsFile); err != nil {
+	pipCmd := exec.Command(pip, "install", "-q", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
+	pipCmd.Stdout = os.Stderr
+	pipCmd.Stderr = os.Stderr
+	if err := pipCmd.Run(); err != nil {
 		return fmt.Errorf("installing dependencies: %w", err)
 	}
 
@@ -312,7 +347,7 @@ func (ci *ClaudeInstaller) createVenv(pluginDir string) error {
 func (ci *ClaudeInstaller) registerMarketplace(pluginDir string) error {
 	mktsFile := filepath.Join(ci.claudeDir, "plugins", "known_marketplaces.json")
 	data := make(map[string]interface{})
-	if b, err := os.ReadFile(mktsFile); err == nil {
+	if b, err := os.ReadFile(filepath.Clean(mktsFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
 
@@ -328,7 +363,7 @@ func (ci *ClaudeInstaller) registerMarketplace(pluginDir string) error {
 func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
 	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
 	data := map[string]interface{}{"version": 2, "plugins": map[string]interface{}{}}
-	if b, err := os.ReadFile(instFile); err == nil {
+	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
 
@@ -356,7 +391,7 @@ func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
 func (ci *ClaudeInstaller) enablePlugin() error {
 	settingsFile := filepath.Join(ci.claudeDir, "settings.json")
 	data := make(map[string]interface{})
-	if b, err := os.ReadFile(settingsFile); err == nil {
+	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
 
@@ -372,15 +407,41 @@ func (ci *ClaudeInstaller) enablePlugin() error {
 	return writeJSON(settingsFile, data)
 }
 
+func validateGitHubURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("malformed URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("URL scheme must be https, got %q", u.Scheme)
+	}
+	if u.Host != githubAPIHost {
+		return fmt.Errorf("URL host must be %s, got %q", githubAPIHost, u.Host)
+	}
+	return nil
+}
+
+func extractFile(target string, r io.Reader, perm os.FileMode) error {
+	f, err := os.OpenFile(filepath.Clean(target), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm) //nolint:gosec // target validated by caller
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, io.LimitReader(r, maxFileSize)); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 func writeJSON(path string, data interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return os.WriteFile(filepath.Clean(path), append(b, '\n'), 0o600)
 }
 
 func findPython() string {
@@ -389,9 +450,11 @@ func findPython() string {
 		if err != nil {
 			continue
 		}
-		// CWE-426: resolve symlinks and verify the path is absolute
 		resolved, err = filepath.EvalSymlinks(resolved)
 		if err != nil || !filepath.IsAbs(resolved) {
+			continue
+		}
+		if !isInAllowedDir(resolved) {
 			continue
 		}
 		out, err := exec.Command(resolved, "-c", "import sys; print(sys.version_info >= (3, 11))").Output() //nolint:gosec // resolved path validated above
@@ -405,9 +468,13 @@ func findPython() string {
 	return ""
 }
 
-func runCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+func isInAllowedDir(resolved string) bool {
+	dir := filepath.Dir(resolved)
+	for _, allowed := range allowedPythonDirs {
+		if dir == allowed {
+			return true
+		}
+	}
+	return false
 }
+

@@ -4,13 +4,14 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+const testVersion = "1.0.0"
 
 func TestNewClaudeInstaller(t *testing.T) {
 	ci := NewClaudeInstaller()
@@ -40,10 +41,10 @@ func TestHasExistingEnv(t *testing.T) {
 	}
 
 	pluginDir := ci.pluginCacheDir()
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginDir, ".env"), []byte("TOKEN=x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, ".env"), []byte("PLACEHOLDER=test"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !ci.HasExistingEnv() {
@@ -52,14 +53,15 @@ func TestHasExistingEnv(t *testing.T) {
 }
 
 func TestFetchLatestRelease(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"tag_name":"v1.2.3","tarball_url":"https://api.github.com/repos/test/tarball/v1.2.3"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.3","tarball_url":"https://api.github.com/repos/test/tarball/v1.2.3"}`))
 	}))
 	defer server.Close()
 
 	ci := &ClaudeInstaller{
-		httpClient:  server.Client(),
-		releasesURL: server.URL,
+		httpClient:        server.Client(),
+		releasesURL:       server.URL,
+		skipURLValidation: true,
 	}
 
 	release, err := ci.fetchLatestRelease()
@@ -75,14 +77,15 @@ func TestFetchLatestRelease(t *testing.T) {
 }
 
 func TestFetchLatestRelease_NoRelease(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
 	ci := &ClaudeInstaller{
-		httpClient:  server.Client(),
-		releasesURL: server.URL,
+		httpClient:        server.Client(),
+		releasesURL:       server.URL,
+		skipURLValidation: true,
 	}
 
 	_, err := ci.fetchLatestRelease()
@@ -93,19 +96,20 @@ func TestFetchLatestRelease_NoRelease(t *testing.T) {
 
 func TestDownloadAndExtract(t *testing.T) {
 	tarball := createTestTarball(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
-		w.Write(tarball)
+		_, _ = w.Write(tarball)
 	}))
 	defer server.Close()
 
 	ci := &ClaudeInstaller{
-		claudeDir:  t.TempDir(),
-		httpClient: server.Client(),
+		claudeDir:         t.TempDir(),
+		httpClient:        server.Client(),
+		skipURLValidation: true,
 	}
 
 	destDir := filepath.Join(ci.claudeDir, "extract")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,9 +130,9 @@ func TestInstalledVersion(t *testing.T) {
 	if v := ci.InstalledVersion(); v != "" {
 		t.Errorf("InstalledVersion() = %q, want empty", v)
 	}
-	ci.installedVersion = "1.0.0"
-	if v := ci.InstalledVersion(); v != "1.0.0" {
-		t.Errorf("InstalledVersion() = %q, want %q", v, "1.0.0")
+	ci.installedVersion = testVersion
+	if v := ci.InstalledVersion(); v != testVersion {
+		t.Errorf("InstalledVersion() = %q, want %q", v, testVersion)
 	}
 }
 
@@ -136,7 +140,7 @@ func TestRegisterMarketplace(t *testing.T) {
 	dir := t.TempDir()
 	ci := &ClaudeInstaller{claudeDir: dir}
 	pluginsDir := filepath.Join(dir, "plugins")
-	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +149,7 @@ func TestRegisterMarketplace(t *testing.T) {
 		t.Fatalf("registerMarketplace() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(pluginsDir, "known_marketplaces.json"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(pluginsDir, "known_marketplaces.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,9 +165,9 @@ func TestRegisterMarketplace(t *testing.T) {
 
 func TestRegisterPlugin(t *testing.T) {
 	dir := t.TempDir()
-	ci := &ClaudeInstaller{claudeDir: dir, installedVersion: "1.0.0"}
+	ci := &ClaudeInstaller{claudeDir: dir, installedVersion: testVersion}
 	pluginsDir := filepath.Join(dir, "plugins")
-	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,7 +176,7 @@ func TestRegisterPlugin(t *testing.T) {
 		t.Fatalf("registerPlugin() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(pluginsDir, "installed_plugins.json"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(pluginsDir, "installed_plugins.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +196,8 @@ func TestRegisterPlugin(t *testing.T) {
 		t.Fatalf("plugin %q not registered", key)
 	}
 	entry := entries[0].(map[string]interface{})
-	if entry["version"] != "1.0.0" {
-		t.Errorf("version = %q, want %q", entry["version"], "1.0.0")
+	if entry["version"] != testVersion {
+		t.Errorf("version = %q, want %q", entry["version"], testVersion)
 	}
 }
 
@@ -207,7 +211,7 @@ func TestGetInstalledVersion(t *testing.T) {
 
 	ci.installedVersion = "2.1.0"
 	pluginsDir := filepath.Join(dir, "plugins")
-	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	pluginDir := filepath.Join(dir, "plugins", "cache", "test")
@@ -228,7 +232,7 @@ func TestEnablePlugin(t *testing.T) {
 		t.Fatalf("enablePlugin() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(dir, "settings.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +263,7 @@ func TestEnablePluginPreservesExistingSettings(t *testing.T) {
 		},
 	}
 	b, _ := json.MarshalIndent(existing, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +271,7 @@ func TestEnablePluginPreservesExistingSettings(t *testing.T) {
 		t.Fatalf("enablePlugin() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(dir, "settings.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,19 +331,20 @@ func searchString(s, substr string) bool {
 
 func TestDownloadAndExtractFlattensPrefix(t *testing.T) {
 	tarball := createTestTarball(t, true)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
-		w.Write(tarball)
+		_, _ = w.Write(tarball)
 	}))
 	defer server.Close()
 
 	ci := &ClaudeInstaller{
-		claudeDir:  t.TempDir(),
-		httpClient: server.Client(),
+		claudeDir:         t.TempDir(),
+		httpClient:        server.Client(),
+		skipURLValidation: true,
 	}
 
 	destDir := filepath.Join(ci.claudeDir, "extract")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -363,7 +368,7 @@ func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 	var buf []byte
 
 	tmpFile := filepath.Join(t.TempDir(), "test.tar.gz")
-	f, err := os.Create(tmpFile)
+	f, err := os.Create(filepath.Clean(tmpFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,45 +376,60 @@ func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 	tw := tar.NewWriter(gw)
 
 	if len(withPaxHeader) > 0 && withPaxHeader[0] {
-		tw.WriteHeader(&tar.Header{
+		if err := tw.WriteHeader(&tar.Header{
 			Typeflag: tar.TypeXGlobalHeader,
 			Name:     "pax_global_header",
 			Size:     0,
-		})
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Add directory entry
-	tw.WriteHeader(&tar.Header{
+	writeEntry := func(hdr *tar.Header, data []byte) {
+		t.Helper()
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if len(data) > 0 {
+			if _, err := tw.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	writeEntry(&tar.Header{
 		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/",
 		Typeflag: tar.TypeDir,
 		Mode:     0o755,
-	})
+	}, nil)
 
-	// Add a Python file
 	content := []byte("print('hello')\n")
-	tw.WriteHeader(&tar.Header{
+	writeEntry(&tar.Header{
 		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/server.py",
 		Typeflag: tar.TypeReg,
 		Mode:     0o644,
 		Size:     int64(len(content)),
-	})
-	tw.Write(content)
+	}, content)
 
-	// Add requirements.txt
 	reqs := []byte("mcp[cli]==1.25.0\nhttpx==0.28.1\n")
-	tw.WriteHeader(&tar.Header{
+	writeEntry(&tar.Header{
 		Name:     "ArmisSecurity-armis-appsec-mcp-abc1234/requirements.txt",
 		Typeflag: tar.TypeReg,
 		Mode:     0o644,
 		Size:     int64(len(reqs)),
-	})
-	tw.Write(reqs)
+	}, reqs)
 
-	tw.Close()
-	gw.Close()
-	f.Close()
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-	buf, err = os.ReadFile(tmpFile)
+	buf, err = os.ReadFile(filepath.Clean(tmpFile))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func runInstallClaude(cmd *cobra.Command, args []string) error {
 	if showVersion {
 		v := installer.GetInstalledVersion()
 		if v == "" {
-			return fmt.Errorf("Armis AppSec plugin is not installed — run: armis-cli install claude")
+			return fmt.Errorf("Armis AppSec plugin is not installed — run: armis-cli install claude") //nolint:staticcheck // proper noun
 		}
 		fmt.Fprintf(os.Stderr, "Armis AppSec plugin v%s\n", v)
 		return nil
