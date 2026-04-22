@@ -20,15 +20,15 @@ import (
 const githubAPIHost = "api.github.com"
 
 const (
-	pluginRepo       = "ArmisSecurity/armis-appsec-mcp"
-	marketplaceName  = "armis-appsec-mcp"
-	pluginName       = "armis-appsec"
-	releasesURL      = "https://api.github.com/repos/" + pluginRepo + "/releases/latest"
-	downloadTimeout  = 60 * time.Second
-	maxArchiveBytes  = 50 * 1024 * 1024  // 50 MB safety limit
-	maxExtractedSize = 100 * 1024 * 1024 // 100 MB total extracted size
-	maxFileSize      = 10 * 1024 * 1024  // 10 MB per file
-	maxArchiveEntries = 10000            // max tar entries to prevent resource exhaustion
+	pluginRepo        = "ArmisSecurity/armis-appsec-mcp"
+	marketplaceName   = "armis-appsec-mcp"
+	pluginName        = "armis-appsec"
+	releasesURL       = "https://api.github.com/repos/" + pluginRepo + "/releases/latest"
+	downloadTimeout   = 60 * time.Second
+	maxArchiveBytes   = 50 * 1024 * 1024  // 50 MB safety limit
+	maxExtractedSize  = 100 * 1024 * 1024 // 100 MB total extracted size
+	maxFileSize       = 10 * 1024 * 1024  // 10 MB per file
+	maxArchiveEntries = 10000             // max tar entries to prevent resource exhaustion
 )
 
 // githubRelease is the minimal structure from the GitHub releases API.
@@ -39,10 +39,10 @@ type githubRelease struct {
 
 // ClaudeInstaller installs the Armis AppSec MCP plugin for Claude Code.
 type ClaudeInstaller struct {
-	claudeDir        string
-	httpClient       *http.Client
-	releasesURL      string
-	installedVersion string
+	claudeDir         string
+	httpClient        *http.Client
+	releasesURL       string
+	installedVersion  string
 	skipURLValidation bool // testing only: skip GitHub URL enforcement
 }
 
@@ -477,4 +477,3 @@ func isInAllowedDir(resolved string) bool {
 	}
 	return false
 }
-

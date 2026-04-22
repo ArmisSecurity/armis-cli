@@ -24,9 +24,10 @@ func TestNewClaudeInstaller(t *testing.T) {
 }
 
 func TestPluginCacheDir(t *testing.T) {
-	ci := &ClaudeInstaller{claudeDir: "/home/test/.claude"}
+	base := filepath.Join("home", "test", ".claude")
+	ci := &ClaudeInstaller{claudeDir: base}
 	got := ci.pluginCacheDir()
-	want := "/home/test/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest"
+	want := filepath.Join(base, "plugins", "cache", "armis-appsec-mcp", "armis-appsec", "latest")
 	if got != want {
 		t.Errorf("pluginCacheDir() = %q, want %q", got, want)
 	}
