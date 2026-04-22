@@ -152,13 +152,13 @@ func (ci *ClaudeInstaller) fetchLatestRelease() (*githubRelease, error) {
 		}
 	}
 
-	req, err := http.NewRequest("GET", ci.releasesURL, nil)
+	req, err := http.NewRequest("GET", ci.releasesURL, nil) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	resp, err := ci.httpClient.Do(req)
+	resp, err := ci.httpClient.Do(req) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return nil, fmt.Errorf("querying GitHub releases: %w", err)
 	}
@@ -192,13 +192,13 @@ func (ci *ClaudeInstaller) downloadAndExtract(tarballURL, destDir string) error 
 		}
 	}
 
-	req, err := http.NewRequest("GET", tarballURL, nil)
+	req, err := http.NewRequest("GET", tarballURL, nil) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := ci.httpClient.Do(req)
+	resp, err := ci.httpClient.Do(req) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
