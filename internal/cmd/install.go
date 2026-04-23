@@ -9,7 +9,10 @@ var installCmd = &cobra.Command{
 	Short: "Install Armis integrations",
 	Long:  `Install Armis integrations for development tools.`,
 	Example: `  # Install the Claude Code MCP plugin
-  armis-cli install claude`,
+  armis-cli install claude
+
+  # Install the GitHub Copilot MCP server
+  armis-cli install copilot`,
 }
 
 func init() {
