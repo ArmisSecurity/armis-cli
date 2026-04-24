@@ -197,7 +197,7 @@ func TestRegisterZedFormat(t *testing.T) {
 func TestRegisterContinueCreatesDirectoryFile(t *testing.T) {
 	dir := t.TempDir()
 	mcpServersDir := filepath.Join(dir, "mcpServers")
-	if err := os.MkdirAll(mcpServersDir, 0o755); err != nil {
+	if err := os.MkdirAll(mcpServersDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	configFile := filepath.Join(mcpServersDir, "armis-appsec.json")

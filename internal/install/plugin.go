@@ -344,7 +344,7 @@ func writeEnvFromEnvironment(envPath string) bool {
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
 		return false
 	}
-	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil { // #nosec G703 - envPath is constructed from pluginDir + ".env"
 		return false
 	}
 	return true
