@@ -19,8 +19,9 @@ const (
 	EditorWindsurf EditorID = "windsurf"
 	EditorZed      EditorID = "zed"
 	EditorCline    EditorID = "cline"
-	EditorAmazonQ  EditorID = "amazonq"
-	EditorContinue EditorID = "continue"
+	EditorAmazonQ      EditorID = "amazonq"
+	EditorContinue     EditorID = "continue"
+	EditorAntigravity  EditorID = "antigravity"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -38,6 +39,7 @@ var AllEditors = []Editor{
 	{EditorCline, "Cline"},
 	{EditorAmazonQ, "Amazon Q"},
 	{EditorContinue, "Continue"},
+	{EditorAntigravity, "Antigravity"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -162,7 +164,7 @@ func defaultConfigPath(id EditorID) string {
 	case EditorWindsurf:
 		return homeDir(".codeium", "windsurf", "mcp_config.json")
 	case EditorContinue:
-		return homeDir(".continue", "config.json")
+		return homeDir(".continue", "mcpServers", "armis-appsec.json")
 	case EditorZed:
 		if runtime.GOOS == osWindows {
 			return ""
@@ -172,7 +174,9 @@ func defaultConfigPath(id EditorID) string {
 		return appSupportPath("Code", "User", "globalStorage",
 			"saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
 	case EditorAmazonQ:
-		return appSupportPath("amazon-q", "mcp.json")
+		return homeDir(".aws", "amazonq", "mcp.json")
+	case EditorAntigravity:
+		return homeDir(".gemini", "antigravity", "mcp_config.json")
 	}
 	return ""
 }
@@ -222,10 +226,8 @@ func registerEditor(id EditorID, pluginDir, configFile string) error {
 		return registerVSCodeFormat(pluginDir, configFile)
 	case EditorZed:
 		return registerZedFormat(pluginDir, configFile)
-	case EditorContinue:
-		return registerContinueFormat(pluginDir, configFile)
 	default:
-		// Cursor, Windsurf, Cline, Amazon Q all use mcpServers map
+		// Cursor, Windsurf, Cline, Amazon Q, Continue, Antigravity all use mcpServers map
 		return registerMCPServersFormat(pluginDir, configFile)
 	}
 }
@@ -284,30 +286,6 @@ func registerZedFormat(pluginDir, configFile string) error {
 	return writeJSON(configFile, data)
 }
 
-// registerContinueFormat handles {"mcpServers": [{name, command, args}]}.
-func registerContinueFormat(pluginDir, configFile string) error {
-	data := readJSONFileAsMap(configFile)
-
-	var servers []interface{}
-	if existing, ok := data["mcpServers"].([]interface{}); ok {
-		for _, s := range existing {
-			if entry, ok := s.(map[string]interface{}); ok {
-				if name, _ := entry["name"].(string); name == mcpServerName {
-					continue
-				}
-			}
-			servers = append(servers, s)
-		}
-	}
-	servers = append(servers, map[string]interface{}{
-		"name":    mcpServerName,
-		"command": venvPython(pluginDir),
-		"args":    []string{filepath.Join(pluginDir, "server.py")},
-	})
-	data["mcpServers"] = servers
-
-	return writeJSON(configFile, data)
-}
 
 func stdServerEntry(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{

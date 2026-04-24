@@ -87,7 +87,7 @@ func TestDetectedEditors(t *testing.T) {
 }
 
 func TestRegisterMCPServersFormat(t *testing.T) {
-	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ}
+	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ, EditorAntigravity, EditorContinue}
 	for _, id := range editors {
 		t.Run(string(id), func(t *testing.T) {
 			dir := t.TempDir()
@@ -194,9 +194,13 @@ func TestRegisterZedFormat(t *testing.T) {
 	}
 }
 
-func TestRegisterContinueFormat(t *testing.T) {
+func TestRegisterContinueCreatesDirectoryFile(t *testing.T) {
 	dir := t.TempDir()
-	configFile := filepath.Join(dir, "config.json")
+	mcpServersDir := filepath.Join(dir, "mcpServers")
+	if err := os.MkdirAll(mcpServersDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configFile := filepath.Join(mcpServersDir, "armis-appsec.json")
 	pluginDir := filepath.Join(dir, "plugin")
 
 	configPathOverrides = map[EditorID]string{EditorContinue: configFile}
@@ -213,66 +217,16 @@ func TestRegisterContinueFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	servers, ok := data["mcpServers"].([]interface{})
+	servers, ok := data["mcpServers"].(map[string]interface{})
 	if !ok {
-		t.Fatal("mcpServers key missing or not array")
+		t.Fatal("mcpServers key missing")
 	}
-	if len(servers) != 1 {
-		t.Fatalf("len(mcpServers) = %d, want 1", len(servers))
+	server, ok := servers[mcpServerName].(map[string]interface{})
+	if !ok {
+		t.Fatal("armis-appsec server not registered")
 	}
-	entry := servers[0].(map[string]interface{})
-	if entry["name"] != mcpServerName {
-		t.Errorf("name = %q, want %q", entry["name"], mcpServerName)
-	}
-}
-
-func TestRegisterContinueReplacesExisting(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "config.json")
-	pluginDir := filepath.Join(dir, "plugin")
-
-	existing := map[string]interface{}{
-		"mcpServers": []interface{}{
-			map[string]interface{}{
-				"name":    mcpServerName,
-				"command": "/old/python",
-			},
-			map[string]interface{}{
-				"name":    "other-server",
-				"command": "node",
-			},
-		},
-	}
-	b, _ := json.MarshalIndent(existing, "", "  ")
-	_ = os.WriteFile(configFile, b, 0o600)
-
-	configPathOverrides = map[EditorID]string{EditorContinue: configFile}
-	defer func() { configPathOverrides = nil }()
-
-	e, _ := EditorByID(EditorContinue)
-	if err := e.Register(pluginDir); err != nil {
-		t.Fatalf("Register() error: %v", err)
-	}
-
-	var data map[string]interface{}
-	b, _ = os.ReadFile(filepath.Clean(configFile))
-	_ = json.Unmarshal(b, &data)
-
-	servers := data["mcpServers"].([]interface{})
-	if len(servers) != 2 {
-		t.Fatalf("len(mcpServers) = %d, want 2", len(servers))
-	}
-
-	names := map[string]bool{}
-	for _, s := range servers {
-		entry := s.(map[string]interface{})
-		names[entry["name"].(string)] = true
-	}
-	if !names["other-server"] {
-		t.Error("existing other-server was lost")
-	}
-	if !names[mcpServerName] {
-		t.Error("armis-appsec not present")
+	if server["command"] != venvPython(pluginDir) {
+		t.Errorf("command = %q, want %q", server["command"], venvPython(pluginDir))
 	}
 }
 
