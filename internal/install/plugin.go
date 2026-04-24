@@ -326,6 +326,30 @@ func findPython() string {
 	return ""
 }
 
+// writeEnvFromEnvironment writes ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET to a .env
+// file if both are set in the current process environment. Returns true if the file
+// was written. Skips writing if the file already exists (to preserve user edits).
+func writeEnvFromEnvironment(envPath string) bool {
+	if _, err := os.Stat(envPath); err == nil {
+		return false
+	}
+
+	clientID := os.Getenv("ARMIS_CLIENT_ID")
+	clientSecret := os.Getenv("ARMIS_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return false
+	}
+
+	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
+		return false
+	}
+	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil {
+		return false
+	}
+	return true
+}
+
 // venvPython returns the path to the Python interpreter inside a venv.
 func venvPython(pluginDir string) string {
 	if runtime.GOOS == osWindows {

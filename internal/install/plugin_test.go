@@ -147,6 +147,74 @@ func TestValidateGitHubURL(t *testing.T) {
 	}
 }
 
+func TestWriteEnvFromEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+
+	t.Run("writes env when both vars set", func(t *testing.T) {
+		t.Setenv("ARMIS_CLIENT_ID", "test-id")
+		t.Setenv("ARMIS_CLIENT_SECRET", "test-secret")
+
+		if !writeEnvFromEnvironment(envPath) {
+			t.Fatal("writeEnvFromEnvironment() returned false, want true")
+		}
+
+		b, err := os.ReadFile(filepath.Clean(envPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(b)
+		if !searchString(content, "ARMIS_CLIENT_ID=test-id") {
+			t.Error("missing ARMIS_CLIENT_ID")
+		}
+		if !searchString(content, "ARMIS_CLIENT_SECRET=test-secret") {
+			t.Error("missing ARMIS_CLIENT_SECRET")
+		}
+
+		info, _ := os.Stat(envPath)
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("file permissions = %o, want 600", perm)
+		}
+	})
+
+	t.Run("skips when file exists", func(t *testing.T) {
+		t.Setenv("ARMIS_CLIENT_ID", "new-id")
+		t.Setenv("ARMIS_CLIENT_SECRET", "new-secret")
+
+		if writeEnvFromEnvironment(envPath) {
+			t.Error("writeEnvFromEnvironment() returned true for existing file")
+		}
+
+		b, _ := os.ReadFile(filepath.Clean(envPath))
+		if searchString(string(b), "new-id") {
+			t.Error("existing file was overwritten")
+		}
+	})
+
+	t.Run("skips when vars missing", func(t *testing.T) {
+		freshPath := filepath.Join(t.TempDir(), ".env")
+		t.Setenv("ARMIS_CLIENT_ID", "")
+		t.Setenv("ARMIS_CLIENT_SECRET", "")
+
+		if writeEnvFromEnvironment(freshPath) {
+			t.Error("writeEnvFromEnvironment() returned true with empty vars")
+		}
+		if _, err := os.Stat(freshPath); err == nil {
+			t.Error("file should not exist when vars are empty")
+		}
+	})
+
+	t.Run("skips when only one var set", func(t *testing.T) {
+		freshPath := filepath.Join(t.TempDir(), ".env")
+		t.Setenv("ARMIS_CLIENT_ID", "test-id")
+		t.Setenv("ARMIS_CLIENT_SECRET", "")
+
+		if writeEnvFromEnvironment(freshPath) {
+			t.Error("writeEnvFromEnvironment() returned true with only client ID")
+		}
+	})
+}
+
 // createTestTarball creates a gzipped tarball matching GitHub's format.
 func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 	t.Helper()

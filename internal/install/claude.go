@@ -57,11 +57,18 @@ func (ci *ClaudeInstaller) Install() error {
 		return fmt.Errorf("failed to enable plugin: %w", err)
 	}
 
+	writeEnvFromEnvironment(ci.EnvFilePath())
+
 	return nil
 }
 
 func (ci *ClaudeInstaller) pluginCacheDir() string {
 	return filepath.Join(ci.claudeDir, "plugins", "cache", marketplaceName, pluginName, "latest")
+}
+
+// EnvFilePath returns the path to the plugin's .env file.
+func (ci *ClaudeInstaller) EnvFilePath() string {
+	return filepath.Join(ci.pluginCacheDir(), ".env")
 }
 
 // GetInstalledVersion reads the installed plugin version from the registry.
@@ -97,8 +104,7 @@ func (ci *ClaudeInstaller) GetInstalledVersion() string {
 
 // HasExistingEnv checks whether credentials are already configured.
 func (ci *ClaudeInstaller) HasExistingEnv() bool {
-	envPath := filepath.Join(ci.pluginCacheDir(), ".env")
-	_, err := os.Stat(envPath)
+	_, err := os.Stat(ci.EnvFilePath())
 	return err == nil
 }
 
