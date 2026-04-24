@@ -14,14 +14,14 @@ const mcpServerName = "armis-appsec"
 type EditorID string
 
 const (
-	EditorVSCode   EditorID = "vscode"
-	EditorCursor   EditorID = "cursor"
-	EditorWindsurf EditorID = "windsurf"
-	EditorZed      EditorID = "zed"
-	EditorCline    EditorID = "cline"
-	EditorAmazonQ      EditorID = "amazonq"
-	EditorContinue     EditorID = "continue"
-	EditorAntigravity  EditorID = "antigravity"
+	EditorVSCode      EditorID = "vscode"
+	EditorCursor      EditorID = "cursor"
+	EditorWindsurf    EditorID = "windsurf"
+	EditorZed         EditorID = "zed"
+	EditorCline       EditorID = "cline"
+	EditorAmazonQ     EditorID = "amazonq"
+	EditorContinue    EditorID = "continue"
+	EditorAntigravity EditorID = "antigravity"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -285,7 +285,6 @@ func registerZedFormat(pluginDir, configFile string) error {
 
 	return writeJSON(configFile, data)
 }
-
 
 func stdServerEntry(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{

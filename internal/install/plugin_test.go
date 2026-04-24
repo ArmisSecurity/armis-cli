@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -171,9 +172,11 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 			t.Error("missing ARMIS_CLIENT_SECRET")
 		}
 
-		info, _ := os.Stat(envPath)
-		if perm := info.Mode().Perm(); perm != 0o600 {
-			t.Errorf("file permissions = %o, want 600", perm)
+		if runtime.GOOS != "windows" {
+			info, _ := os.Stat(envPath)
+			if perm := info.Mode().Perm(); perm != 0o600 {
+				t.Errorf("file permissions = %o, want 600", perm)
+			}
 		}
 	})
 
