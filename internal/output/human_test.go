@@ -50,7 +50,7 @@ func TestGroupFindingsByCWE(t *testing.T) {
 
 	for _, group := range groups {
 		switch group.Key {
-		case "CWE-79":
+		case "CWE-79": //nolint:goconst // test data repeated across package test files
 			cwe79Count = len(group.Findings)
 		case "CWE-89":
 			cwe89Count = len(group.Findings)
