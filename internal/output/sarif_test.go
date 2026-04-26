@@ -1211,3 +1211,184 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestStableRuleID(t *testing.T) {
+	tests := []struct {
+		name     string
+		finding  model.Finding
+		expected string
+	}{
+		{
+			name:     "CWE takes priority",
+			finding:  model.Finding{ID: "server-id-123", CWEs: []string{"CWE-79"}, CVEs: []string{"CVE-2023-1234"}, FindingCategory: "xss"},
+			expected: "CWE-79",
+		},
+		{
+			name:     "CVE when no CWE",
+			finding:  model.Finding{ID: "server-id-456", CVEs: []string{"CVE-2023-5678"}},
+			expected: "CVE-2023-5678",
+		},
+		{
+			name:     "FindingCategory when no CWE/CVE",
+			finding:  model.Finding{ID: "server-id-789", FindingCategory: "hardcoded-secret"},
+			expected: "hardcoded-secret",
+		},
+		{
+			name:     "falls back to finding.ID",
+			finding:  model.Finding{ID: "server-id-000"},
+			expected: "server-id-000",
+		},
+		{
+			name:     "empty CWE slice falls through",
+			finding:  model.Finding{ID: "fallback", CWEs: []string{}, CVEs: []string{"CVE-2024-1111"}},
+			expected: "CVE-2024-1111",
+		},
+		{
+			name:     "empty string CWE falls through",
+			finding:  model.Finding{ID: "fallback2", CWEs: []string{""}, CVEs: []string{"CVE-2024-2222"}},
+			expected: "CVE-2024-2222",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stableRuleID(tt.finding)
+			if got != tt.expected {
+				t.Errorf("stableRuleID() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestComputeFingerprint(t *testing.T) {
+	t.Run("deterministic", func(t *testing.T) {
+		fp1 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
+		fp2 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
+		if fp1 != fp2 {
+			t.Errorf("fingerprint not deterministic: %q != %q", fp1, fp2)
+		}
+	})
+
+	t.Run("uses snippet when available", func(t *testing.T) {
+		withSnippet := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
+		diffLine := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 99)
+		if withSnippet != diffLine {
+			t.Error("fingerprint should ignore startLine when snippet is present")
+		}
+	})
+
+	t.Run("falls back to startLine without snippet", func(t *testing.T) {
+		fp1 := computeFingerprint("CWE-79", "src/app.js", "", 10)
+		fp2 := computeFingerprint("CWE-79", "src/app.js", "", 20)
+		if fp1 == fp2 {
+			t.Error("fingerprint should differ when startLine differs and no snippet")
+		}
+	})
+
+	t.Run("different inputs produce different hashes", func(t *testing.T) {
+		fp1 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
+		fp2 := computeFingerprint("CWE-22", "src/app.js", "eval(input)", 10)
+		fp3 := computeFingerprint("CWE-79", "src/other.js", "eval(input)", 10)
+		if fp1 == fp2 {
+			t.Error("different ruleIDs should produce different fingerprints")
+		}
+		if fp1 == fp3 {
+			t.Error("different files should produce different fingerprints")
+		}
+	})
+
+	t.Run("returns hex-encoded SHA-256", func(t *testing.T) {
+		fp := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
+		if len(fp) != 64 {
+			t.Errorf("expected 64 hex chars, got %d", len(fp))
+		}
+	})
+}
+
+func TestBuildRulesStableCollapsing(t *testing.T) {
+	findings := []model.Finding{
+		{ID: "CWE-79_repo_111_file1_10_1_10_5", CWEs: []string{"CWE-79"}, Title: "XSS in file1", Severity: model.SeverityHigh},
+		{ID: "CWE-79_repo_222_file2_20_1_20_5", CWEs: []string{"CWE-79"}, Title: "XSS in file2", Severity: model.SeverityHigh},
+		{ID: "CWE-22_repo_333_file3_30_1_30_5", CWEs: []string{"CWE-22"}, Title: "Path traversal", Severity: model.SeverityMedium},
+	}
+
+	rules, ruleIndexMap := buildRules(findings)
+
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules (CWE-79, CWE-22), got %d", len(rules))
+	}
+
+	if rules[0].ID != "CWE-79" {
+		t.Errorf("first rule ID = %q, want CWE-79", rules[0].ID)
+	}
+	if rules[1].ID != "CWE-22" {
+		t.Errorf("second rule ID = %q, want CWE-22", rules[1].ID)
+	}
+
+	if idx, ok := ruleIndexMap["CWE-79"]; !ok || idx != 0 {
+		t.Errorf("CWE-79 ruleIndex = %d, ok = %v, want 0", idx, ok)
+	}
+	if idx, ok := ruleIndexMap["CWE-22"]; !ok || idx != 1 {
+		t.Errorf("CWE-22 ruleIndex = %d, ok = %v, want 1", idx, ok)
+	}
+}
+
+func TestSARIFFormatter_FindingIDAndFingerprints(t *testing.T) {
+	formatter := &SARIFFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-fingerprint",
+		Status: "completed",
+		Findings: []model.Finding{
+			{
+				ID:          "CWE-79_repo_12345_src/app.js_10_1_10_20",
+				Title:       "Cross-Site Scripting",
+				Description: "Reflected XSS vulnerability",
+				Severity:    model.SeverityHigh,
+				CWEs:        []string{"CWE-79"},
+				File:        "src/app.js",
+				StartLine:   10,
+				StartColumn: 1,
+				CodeSnippet: "document.write(input)",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	run := report.Runs[0]
+	if len(run.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(run.Results))
+	}
+
+	res := run.Results[0]
+
+	if res.RuleID != "CWE-79" {
+		t.Errorf("ruleId = %q, want CWE-79", res.RuleID)
+	}
+
+	if res.PartialFingerprints == nil {
+		t.Fatal("expected partialFingerprints to be set")
+	}
+	if fp, ok := res.PartialFingerprints["primaryLocationLineHash"]; !ok || fp == "" {
+		t.Error("expected primaryLocationLineHash to be non-empty")
+	}
+
+	if res.Properties == nil {
+		t.Fatal("expected properties to be set")
+	}
+	if res.Properties.FindingID != "CWE-79_repo_12345_src/app.js_10_1_10_20" {
+		t.Errorf("findingId = %q, want original server-assigned ID", res.Properties.FindingID)
+	}
+
+	if len(run.Tool.Driver.Rules) != 1 || run.Tool.Driver.Rules[0].ID != "CWE-79" {
+		t.Errorf("rule ID = %q, want CWE-79", run.Tool.Driver.Rules[0].ID)
+	}
+}

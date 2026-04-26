@@ -1,6 +1,8 @@
 package output
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,16 +64,18 @@ type sarifRuleProperties struct {
 }
 
 type sarifResult struct {
-	RuleID     string                 `json:"ruleId"`
-	RuleIndex  int                    `json:"ruleIndex"`
-	Level      string                 `json:"level"`
-	Message    sarifMessage           `json:"message"`
-	Locations  []sarifLocation        `json:"locations,omitempty"`
-	Fixes      []sarifFix             `json:"fixes,omitempty"`
-	Properties *sarifResultProperties `json:"properties,omitempty"`
+	RuleID              string                 `json:"ruleId"`
+	RuleIndex           int                    `json:"ruleIndex"`
+	Level               string                 `json:"level"`
+	Message             sarifMessage           `json:"message"`
+	Locations           []sarifLocation        `json:"locations,omitempty"`
+	PartialFingerprints map[string]string      `json:"partialFingerprints,omitempty"`
+	Fixes               []sarifFix             `json:"fixes,omitempty"`
+	Properties          *sarifResultProperties `json:"properties,omitempty"`
 }
 
 type sarifResultProperties struct {
+	FindingID   string                     `json:"findingId,omitempty"`
 	Severity    string                     `json:"severity"`
 	Type        string                     `json:"type,omitempty"`
 	CodeSnippet string                     `json:"codeSnippet,omitempty"`
@@ -192,6 +196,33 @@ func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	return encoder.Encode(report)
 }
 
+// stableRuleID derives a stable SARIF ruleId from a finding's classification.
+// Falls back through CWE → CVE → FindingCategory → finding.ID.
+func stableRuleID(finding model.Finding) string {
+	if len(finding.CWEs) > 0 && finding.CWEs[0] != "" {
+		return finding.CWEs[0]
+	}
+	if len(finding.CVEs) > 0 && finding.CVEs[0] != "" {
+		return finding.CVEs[0]
+	}
+	if finding.FindingCategory != "" {
+		return finding.FindingCategory
+	}
+	return finding.ID
+}
+
+// computeFingerprint produces a stable SHA-256 fingerprint for cross-run dedup.
+func computeFingerprint(ruleID, file, snippet string, startLine int) string {
+	var input string
+	if snippet != "" {
+		input = ruleID + ":" + file + ":" + snippet
+	} else {
+		input = ruleID + ":" + file + ":" + strconv.Itoa(startLine)
+	}
+	h := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(h[:])
+}
+
 // buildRules creates SARIF rules from findings, deduplicating by rule ID.
 // Returns the rules array and a map of rule ID to index.
 func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
@@ -199,10 +230,11 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	var rules []sarifRule
 
 	for _, finding := range findings {
-		if _, exists := ruleIndexMap[finding.ID]; !exists {
-			ruleIndexMap[finding.ID] = len(rules)
+		ruleID := stableRuleID(finding)
+		if _, exists := ruleIndexMap[ruleID]; !exists {
+			ruleIndexMap[ruleID] = len(rules)
 			rule := sarifRule{
-				ID: finding.ID,
+				ID: ruleID,
 				ShortDescription: sarifMessage{
 					Text: finding.Title,
 				},
@@ -267,14 +299,19 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	results := make([]sarifResult, 0, capacity)
 
 	for _, finding := range findings {
+		ruleID := stableRuleID(finding)
 		result := sarifResult{
-			RuleID:    finding.ID,
-			RuleIndex: ruleIndexMap[finding.ID],
+			RuleID:    ruleID,
+			RuleIndex: ruleIndexMap[ruleID],
 			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
 				Text: buildMessageText(finding.Title, finding.Description),
 			},
+			PartialFingerprints: map[string]string{
+				"primaryLocationLineHash": computeFingerprint(ruleID, finding.File, finding.CodeSnippet, finding.StartLine),
+			},
 			Properties: &sarifResultProperties{
+				FindingID:   finding.ID,
 				Severity:    string(finding.Severity),
 				Type:        string(finding.Type),
 				CodeSnippet: util.MaskSecretInLine(finding.CodeSnippet), // Defense-in-depth: always sanitize
