@@ -740,8 +740,13 @@ func TestGenerateHelpURI(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "CVE takes priority",
+			name:     "CWE takes priority over CVE",
 			finding:  model.Finding{CVEs: []string{"CVE-2023-1234"}, CWEs: []string{"CWE-89"}},
+			expected: "https://cwe.mitre.org/data/definitions/89.html",
+		},
+		{
+			name:     "CVE used when no CWE",
+			finding:  model.Finding{CVEs: []string{"CVE-2023-1234"}},
 			expected: "https://nvd.nist.gov/vuln/detail/CVE-2023-1234",
 		},
 		{
@@ -1248,6 +1253,21 @@ func TestStableRuleID(t *testing.T) {
 			finding:  model.Finding{ID: "fallback2", CWEs: []string{""}, CVEs: []string{"CVE-2024-2222"}},
 			expected: "CVE-2024-2222",
 		},
+		{
+			name:     "whitespace-only CWE falls through",
+			finding:  model.Finding{ID: "fallback3", CWEs: []string{"  "}, CVEs: []string{"CVE-2024-3333"}},
+			expected: "CVE-2024-3333",
+		},
+		{
+			name:     "multiple CWEs sorted deterministically",
+			finding:  model.Finding{ID: "multi", CWEs: []string{"CWE-89", "CWE-22", "CWE-79"}},
+			expected: "CWE-22",
+		},
+		{
+			name:     "multiple CVEs sorted deterministically",
+			finding:  model.Finding{ID: "multi-cve", CVEs: []string{"CVE-2024-9999", "CVE-2024-1111"}},
+			expected: "CVE-2024-1111",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1301,6 +1321,14 @@ func TestComputeFingerprint(t *testing.T) {
 		fp := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
 		if len(fp) != 64 {
 			t.Errorf("expected 64 hex chars, got %d", len(fp))
+		}
+	})
+
+	t.Run("no separator collision", func(t *testing.T) {
+		fp1 := computeFingerprint("CWE:7", "9", "snippet", 1)
+		fp2 := computeFingerprint("CWE", "7:9", "snippet", 1)
+		if fp1 == fp2 {
+			t.Error("length-prefixed encoding should prevent separator collision")
 		}
 	})
 }
