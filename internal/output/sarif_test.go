@@ -1268,6 +1268,11 @@ func TestStableRuleID(t *testing.T) {
 			finding:  model.Finding{ID: "multi-cve", CVEs: []string{"CVE-2024-9999", "CVE-2024-1111"}},
 			expected: "CVE-2024-1111",
 		},
+		{
+			name:     "whitespace-only FindingCategory falls through",
+			finding:  model.Finding{ID: "ws-category", FindingCategory: "  \t "},
+			expected: "ws-category",
+		},
 	}
 
 	for _, tt := range tests {

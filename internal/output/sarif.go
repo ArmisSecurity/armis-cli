@@ -222,8 +222,8 @@ func stableRuleID(finding model.Finding) string {
 	if v := firstNonEmpty(finding.CVEs); v != "" {
 		return v
 	}
-	if finding.FindingCategory != "" {
-		return finding.FindingCategory
+	if v := strings.TrimSpace(finding.FindingCategory); v != "" {
+		return v
 	}
 	return finding.ID
 }
@@ -327,14 +327,15 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	for _, finding := range findings {
 		ruleID := stableRuleID(finding)
 
-		// Sanitize file path early so the fingerprint and the emitted
-		// artifact URI use the same normalized value.
-		sanitizedFile := finding.File
-		sanitizeOK := false
+		// Resolve the file path once so the fingerprint and artifact URI
+		// always use the same value — including the placeholder on failure.
+		resolvedFile := finding.File
 		if finding.File != "" {
-			if s, err := util.SanitizePath(finding.File); err == nil {
-				sanitizedFile = s
-				sanitizeOK = true
+			if s, err := util.SanitizePath(finding.File); err != nil {
+				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err)
+				resolvedFile = fmt.Sprintf("unknown-%s", finding.ID)
+			} else {
+				resolvedFile = s
 			}
 		}
 
@@ -346,7 +347,7 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 				Text: buildMessageText(finding.Title, finding.Description),
 			},
 			PartialFingerprints: map[string]string{
-				"primaryLocationLineHash": computeFingerprint(ruleID, sanitizedFile, finding.CodeSnippet, finding.StartLine),
+				"primaryLocationLineHash": computeFingerprint(ruleID, resolvedFile, finding.CodeSnippet, finding.StartLine),
 			},
 			Properties: &sarifResultProperties{
 				FindingID:   finding.ID,
@@ -391,15 +392,10 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 		}
 
 		if finding.File != "" {
-			locationFile := sanitizedFile
-			if !sanitizeOK {
-				cli.PrintWarningf("could not sanitize file path for finding %s", finding.ID)
-				locationFile = fmt.Sprintf("unknown-%s", finding.ID)
-			}
 			location := sarifLocation{
 				PhysicalLocation: sarifPhysicalLocation{
 					ArtifactLocation: sarifArtifactLocation{
-						URI: locationFile,
+						URI: resolvedFile,
 					},
 				},
 			}
