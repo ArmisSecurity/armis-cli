@@ -156,10 +156,10 @@ func installTargets(targets []string) error {
 		case "devin":
 			fmt.Fprintln(os.Stderr, "Devin: MCP servers are configured via the Devin web UI.")
 			fmt.Fprintln(os.Stderr, "See: Settings → MCP Servers in your Devin dashboard.")
-			return nil
+			fmt.Fprintln(os.Stderr, "")
 		case "aider":
 			fmt.Fprintln(os.Stderr, "Aider does not support MCP servers.")
-			return nil
+			fmt.Fprintln(os.Stderr, "")
 		default:
 			id := install.EditorID(name)
 			if _, ok := install.EditorByID(id); !ok {
