@@ -22,6 +22,7 @@ const (
 	EditorAmazonQ     EditorID = "amazonq"
 	EditorContinue    EditorID = "continue"
 	EditorAntigravity EditorID = "antigravity"
+	EditorGemini      EditorID = "gemini"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -40,6 +41,7 @@ var AllEditors = []Editor{
 	{EditorAmazonQ, "Amazon Q"},
 	{EditorContinue, "Continue"},
 	{EditorAntigravity, "Antigravity"},
+	{EditorGemini, "Gemini CLI"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -177,6 +179,8 @@ func defaultConfigPath(id EditorID) string {
 		return homeDir(".aws", "amazonq", "mcp.json")
 	case EditorAntigravity:
 		return homeDir(".gemini", "antigravity", "mcp_config.json")
+	case EditorGemini:
+		return homeDir(".gemini", "settings.json")
 	}
 	return ""
 }

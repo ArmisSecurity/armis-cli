@@ -26,7 +26,9 @@ Supported editors:
   zed        Zed
   cline      Cline (VS Code extension)
   amazonq    Amazon Q Developer
-  continue   Continue
+  continue      Continue
+  antigravity   Antigravity
+  gemini        Gemini CLI
 
 Not auto-configurable (manual setup required):
   jetbrains  JetBrains IDEs (per-project .jb-mcp.json)

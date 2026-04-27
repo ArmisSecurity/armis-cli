@@ -76,6 +76,10 @@ func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 		return fmt.Errorf("failed to set up Python environment: %w", err)
 	}
 
+	if err := writeHelperScript(destDir); err != nil {
+		return fmt.Errorf("failed to write helper script: %w", err)
+	}
+
 	return nil
 }
 
@@ -348,6 +352,53 @@ func writeEnvFromEnvironment(envPath string) bool {
 		return false
 	}
 	return true
+}
+
+// writeHelperScript writes a standalone scan script that editors without
+// native MCP support (e.g. Copilot) can invoke to scan files directly.
+func writeHelperScript(pluginDir string) error {
+	scriptPath := filepath.Join(pluginDir, "scan_file.py")
+	script := `#!/usr/bin/env python3
+"""Scan a file for security vulnerabilities using the Armis AppSec scanner.
+
+Usage: python3 scan_file.py <file_path>
+
+This script calls the same scanning engine as the MCP server but can be
+invoked directly from editors that cannot call MCP tools natively.
+"""
+import os
+import sys
+
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _plugin_dir)
+
+from dotenv import load_dotenv
+
+_env_file = os.path.join(_plugin_dir, ".env")
+if os.path.isfile(_env_file):
+    load_dotenv(_env_file, override=False)
+
+from auth import init_auth
+from scanner_core import call_appsec_api, format_findings, parse_findings
+
+if len(sys.argv) != 2:
+    print("Usage: python3 scan_file.py <file_path>", file=sys.stderr)
+    sys.exit(1)
+
+file_path = os.path.abspath(sys.argv[1])
+if not os.path.isfile(file_path):
+    print(f"Error: {file_path} not found", file=sys.stderr)
+    sys.exit(1)
+
+init_auth()
+with open(file_path) as f:
+    code = f.read()
+
+raw = call_appsec_api(code)
+findings = parse_findings(raw)
+print(format_findings(findings, os.path.basename(file_path)))
+`
+	return os.WriteFile(filepath.Clean(scriptPath), []byte(script), 0o750) // #nosec G306 - script needs execute permission
 }
 
 // venvPython returns the path to the Python interpreter inside a venv.
