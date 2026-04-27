@@ -112,6 +112,39 @@ func TestDownloadAndExtractFlattensPrefix(t *testing.T) {
 	}
 }
 
+func TestDownloadAndExtractRejectsTraversal(t *testing.T) {
+	tarball := createTraversalTarball(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(tarball)
+	}))
+	defer server.Close()
+
+	pi := &PluginInstaller{
+		httpClient:        server.Client(),
+		skipURLValidation: true,
+	}
+
+	destDir := filepath.Join(t.TempDir(), "extract")
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pi.downloadAndExtract(server.URL, destDir); err != nil {
+		t.Fatalf("downloadAndExtract() error: %v", err)
+	}
+
+	// The legitimate file should be extracted
+	if _, err := os.Stat(filepath.Join(destDir, "safe.txt")); err != nil {
+		t.Error("safe.txt should be extracted")
+	}
+
+	// Traversal files must not escape destDir
+	if _, err := os.Stat(filepath.Join(destDir, "..", "escaped.txt")); err == nil {
+		t.Error("path traversal file escaped destDir")
+	}
+}
+
 func TestPluginInstalledVersion(t *testing.T) {
 	pi := newPluginInstaller()
 	if v := pi.InstalledVersion(); v != "" {
@@ -273,6 +306,62 @@ func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 		Mode:     0o644,
 		Size:     int64(len(reqs)),
 	}, reqs)
+
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	buf, err := os.ReadFile(filepath.Clean(tmpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buf
+}
+
+func createTraversalTarball(t *testing.T) []byte {
+	t.Helper()
+
+	tmpFile := filepath.Join(t.TempDir(), "traversal.tar.gz")
+	f, err := os.Create(filepath.Clean(tmpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	writeEntry := func(hdr *tar.Header, data []byte) {
+		t.Helper()
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if len(data) > 0 {
+			if _, err := tw.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	prefix := "repo-abc1234/"
+
+	writeEntry(&tar.Header{
+		Name: prefix, Typeflag: tar.TypeDir, Mode: 0o755,
+	}, nil)
+
+	safe := []byte("safe content\n")
+	writeEntry(&tar.Header{
+		Name: prefix + "safe.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(safe)),
+	}, safe)
+
+	evil := []byte("escaped\n")
+	writeEntry(&tar.Header{
+		Name: prefix + "../../escaped.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(evil)),
+	}, evil)
 
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)

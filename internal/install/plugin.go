@@ -188,12 +188,8 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 			continue
 		}
 
-		if strings.Contains(name, "..") {
-			continue
-		}
-
 		clean := filepath.Clean(filepath.FromSlash(name))
-		if filepath.IsAbs(clean) {
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			continue
 		}
 
