@@ -32,6 +32,13 @@ func main() {
 			cmd.PrintUpdateNotification()
 			os.Exit(findingsErr.ExitCode)
 		}
+		// Handle incomplete results (scan succeeded but results couldn't be fetched)
+		var incompleteErr *output.ErrResultsIncomplete
+		if errors.As(err, &incompleteErr) {
+			cli.PrintWarning(incompleteErr.Error())
+			cmd.PrintUpdateNotification()
+			os.Exit(2)
+		}
 		// Handle user cancellation (Ctrl+C) cleanly without printing error
 		if errors.Is(err, cmd.ErrScanCancelled) {
 			cmd.PrintUpdateNotification()
