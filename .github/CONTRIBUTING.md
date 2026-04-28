@@ -28,7 +28,7 @@ intentionally out of scope.
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.25 or later
 - [golangci-lint](https://golangci-lint.run/welcome/install/) v2.0+
 - Make
 
