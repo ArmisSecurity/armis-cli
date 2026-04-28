@@ -1,10 +1,13 @@
 package output
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -62,16 +65,18 @@ type sarifRuleProperties struct {
 }
 
 type sarifResult struct {
-	RuleID     string                 `json:"ruleId"`
-	RuleIndex  int                    `json:"ruleIndex"`
-	Level      string                 `json:"level"`
-	Message    sarifMessage           `json:"message"`
-	Locations  []sarifLocation        `json:"locations,omitempty"`
-	Fixes      []sarifFix             `json:"fixes,omitempty"`
-	Properties *sarifResultProperties `json:"properties,omitempty"`
+	RuleID              string                 `json:"ruleId"`
+	RuleIndex           int                    `json:"ruleIndex"`
+	Level               string                 `json:"level"`
+	Message             sarifMessage           `json:"message"`
+	Locations           []sarifLocation        `json:"locations,omitempty"`
+	PartialFingerprints map[string]string      `json:"partialFingerprints,omitempty"`
+	Fixes               []sarifFix             `json:"fixes,omitempty"`
+	Properties          *sarifResultProperties `json:"properties,omitempty"`
 }
 
 type sarifResultProperties struct {
+	FindingID   string                     `json:"findingId,omitempty"`
 	Severity    string                     `json:"severity"`
 	Type        string                     `json:"type,omitempty"`
 	CodeSnippet string                     `json:"codeSnippet,omitempty"`
@@ -192,6 +197,58 @@ func (f *SARIFFormatter) Format(result *model.ScanResult, w io.Writer) error {
 	return encoder.Encode(report)
 }
 
+// firstNonEmpty returns the lexicographically smallest non-empty, non-whitespace
+// value from a slice, ensuring deterministic selection regardless of API ordering.
+func firstNonEmpty(values []string) string {
+	var candidates []string
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			candidates = append(candidates, trimmed)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Strings(candidates)
+	return candidates[0]
+}
+
+// stableRuleID derives a stable SARIF ruleId from a finding's classification.
+// Falls back through CWE → CVE → FindingCategory → finding.ID.
+func stableRuleID(finding model.Finding) string {
+	if v := firstNonEmpty(finding.CWEs); v != "" {
+		return v
+	}
+	if v := firstNonEmpty(finding.CVEs); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(finding.FindingCategory); v != "" {
+		return v
+	}
+	return finding.ID
+}
+
+// computeFingerprint produces a stable SHA-256 fingerprint for cross-run dedup.
+// Uses length-prefixed fields to prevent separator collision between different tuples.
+func computeFingerprint(ruleID, file, snippet string, startLine int) string {
+	h := sha256.New()
+
+	writeField := func(name, value string) {
+		fmt.Fprintf(h, "%s:%d:", name, len(value)) //nolint:errcheck,gosec // hash.Write never returns an error
+		io.WriteString(h, value)                   //nolint:errcheck,gosec // hash.Write never returns an error
+	}
+
+	writeField("ruleID", ruleID)
+	writeField("file", file)
+	if snippet != "" {
+		writeField("snippet", snippet)
+	} else {
+		writeField("startLine", strconv.Itoa(startLine))
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // buildRules creates SARIF rules from findings, deduplicating by rule ID.
 // Returns the rules array and a map of rule ID to index.
 func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
@@ -199,10 +256,11 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	var rules []sarifRule
 
 	for _, finding := range findings {
-		if _, exists := ruleIndexMap[finding.ID]; !exists {
-			ruleIndexMap[finding.ID] = len(rules)
+		ruleID := stableRuleID(finding)
+		if _, exists := ruleIndexMap[ruleID]; !exists {
+			ruleIndexMap[ruleID] = len(rules)
 			rule := sarifRule{
-				ID: finding.ID,
+				ID: ruleID,
 				ShortDescription: sarifMessage{
 					Text: finding.Title,
 				},
@@ -267,14 +325,32 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	results := make([]sarifResult, 0, capacity)
 
 	for _, finding := range findings {
+		ruleID := stableRuleID(finding)
+
+		// Resolve the file path once so the fingerprint and artifact URI
+		// always use the same value — including the placeholder on failure.
+		resolvedFile := finding.File
+		if finding.File != "" {
+			if s, err := util.SanitizePath(finding.File); err != nil {
+				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err)
+				resolvedFile = fmt.Sprintf("unknown-%s", finding.ID)
+			} else {
+				resolvedFile = s
+			}
+		}
+
 		result := sarifResult{
-			RuleID:    finding.ID,
-			RuleIndex: ruleIndexMap[finding.ID],
+			RuleID:    ruleID,
+			RuleIndex: ruleIndexMap[ruleID],
 			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
 				Text: buildMessageText(finding.Title, finding.Description),
 			},
+			PartialFingerprints: map[string]string{
+				"primaryLocationLineHash": computeFingerprint(ruleID, resolvedFile, finding.CodeSnippet, finding.StartLine),
+			},
 			Properties: &sarifResultProperties{
+				FindingID:   finding.ID,
 				Severity:    string(finding.Severity),
 				Type:        string(finding.Type),
 				CodeSnippet: util.MaskSecretInLine(finding.CodeSnippet), // Defense-in-depth: always sanitize
@@ -316,17 +392,10 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 		}
 
 		if finding.File != "" {
-			// Sanitize file path to prevent path traversal in SARIF output
-			sanitizedFile, err := util.SanitizePath(finding.File)
-			if err != nil {
-				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err)
-				// Use finding ID to ensure unique placeholder paths in SARIF output
-				sanitizedFile = fmt.Sprintf("unknown-%s", finding.ID)
-			}
 			location := sarifLocation{
 				PhysicalLocation: sarifPhysicalLocation{
 					ArtifactLocation: sarifArtifactLocation{
-						URI: sanitizedFile,
+						URI: resolvedFile,
 					},
 				},
 			}
@@ -391,25 +460,22 @@ func severityToSecurityScore(severity model.Severity) string {
 	}
 }
 
-// generateHelpURI returns a documentation URL for the finding (CVE, CWE, or reference URL).
+// generateHelpURI returns a documentation URL for the finding.
+// Priority matches stableRuleID: CWE → CVE → reference URL.
 func generateHelpURI(finding model.Finding) string {
-	if len(finding.CVEs) > 0 {
-		return "https://nvd.nist.gov/vuln/detail/" + finding.CVEs[0]
-	}
-	if len(finding.CWEs) > 0 {
-		cweID := finding.CWEs[0]
+	if cweID := firstNonEmpty(finding.CWEs); cweID != "" {
 		var cweNum string
-		// Handle case-insensitive CWE prefix (e.g., "CWE-123", "cwe-123", or just "123")
 		if strings.HasPrefix(strings.ToUpper(cweID), "CWE-") {
 			cweNum = cweID[4:]
 		} else {
 			cweNum = cweID
 		}
-		// Validate CWE number is numeric before generating URL
 		if _, err := strconv.Atoi(cweNum); err == nil {
 			return "https://cwe.mitre.org/data/definitions/" + cweNum + ".html"
 		}
-		// Fall through to URL fallback if CWE number is invalid
+	}
+	if cve := firstNonEmpty(finding.CVEs); cve != "" {
+		return "https://nvd.nist.gov/vuln/detail/" + cve
 	}
 	if len(finding.URLs) > 0 {
 		return finding.URLs[0]
