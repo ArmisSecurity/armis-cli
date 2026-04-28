@@ -334,8 +334,8 @@ func (d *amazonQDetector) Detect(resolvedHome, homeDir string, platform Platform
 	return hasJetBrainsPlugin(resolvedHome, platform, homeDir, "amazon-q")
 }
 
-func (d *amazonQDetector) CheckMCP(_, _ string, _ Platform) bool {
-	return false
+func (d *amazonQDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
+	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".aws", "amazonq", "mcp.json"))
 }
 
 func (d *amazonQDetector) DetectVersion(resolvedHome, homeDir string, platform Platform) string {
@@ -368,5 +368,80 @@ func (d *junieDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool 
 }
 
 func (d *junieDetector) DetectVersion(_, _ string, _ Platform) string {
+	return ""
+}
+
+// --- Zed ---
+
+type zedDetector struct{}
+
+func (d *zedDetector) Name() AgentName { return AgentZed }
+
+func (d *zedDetector) Detect(resolvedHome, homeDir string, platform Platform) bool {
+	zedDir := platform.ZedConfigDir(homeDir)
+	if zedDir == "" {
+		return false
+	}
+	return dirExists(resolvedHome, zedDir)
+}
+
+func (d *zedDetector) CheckMCP(resolvedHome, homeDir string, platform Platform) bool {
+	zedDir := platform.ZedConfigDir(homeDir)
+	if zedDir == "" {
+		return false
+	}
+	return HasArmisMCPInZedSettings(resolvedHome, filepath.Join(zedDir, "settings.json"))
+}
+
+func (d *zedDetector) DetectVersion(_, _ string, _ Platform) string {
+	return ""
+}
+
+// --- Continue ---
+
+type continueDetector struct{}
+
+func (d *continueDetector) Name() AgentName { return AgentContinue }
+
+func (d *continueDetector) Detect(resolvedHome, homeDir string, _ Platform) bool {
+	return dirExists(resolvedHome, filepath.Join(homeDir, ".continue"))
+}
+
+func (d *continueDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
+	mcpDir := filepath.Join(homeDir, ".continue", "mcpServers")
+	if !isUnderDir(resolvedHome, mcpDir) {
+		return false
+	}
+	entries, err := os.ReadDir(mcpDir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if strings.Contains(strings.ToLower(entry.Name()), "armis") {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *continueDetector) DetectVersion(_, _ string, _ Platform) string {
+	return ""
+}
+
+// --- Gemini CLI ---
+
+type geminiCLIDetector struct{}
+
+func (d *geminiCLIDetector) Name() AgentName { return AgentGeminiCLI }
+
+func (d *geminiCLIDetector) Detect(resolvedHome, homeDir string, _ Platform) bool {
+	return fileExists(resolvedHome, filepath.Join(homeDir, ".gemini", "settings.json"))
+}
+
+func (d *geminiCLIDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
+	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".gemini", "settings.json"))
+}
+
+func (d *geminiCLIDetector) DetectVersion(_, _ string, _ Platform) string {
 	return ""
 }

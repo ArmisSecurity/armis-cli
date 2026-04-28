@@ -16,6 +16,9 @@ const (
 	AgentOpenHands         AgentName = "OpenHands"
 	AgentAmazonQ           AgentName = "AmazonQ"
 	AgentJunie             AgentName = "Junie"
+	AgentZed               AgentName = "Zed"
+	AgentContinue          AgentName = "Continue"
+	AgentGeminiCLI         AgentName = "GeminiCLI"
 )
 
 // AgentDetector detects the presence of a coding agent for a given user home directory.
@@ -42,5 +45,8 @@ func Registry() []AgentDetector {
 		&openHandsDetector{},
 		&amazonQDetector{},
 		&junieDetector{},
+		&zedDetector{},
+		&continueDetector{},
+		&geminiCLIDetector{},
 	}
 }

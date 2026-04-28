@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const armisMCPIdentifier = "armis-appsec-mcp"
+const armisMCPIdentifier = "armis-appsec"
 
 // mcpServerConfig is used to unmarshal MCP config files that have a top-level "mcpServers" key.
 // Used by Windsurf, Cursor, GitHub Copilot, and Google Antigravity.
@@ -55,6 +55,30 @@ func HasArmisMCPInClaudeSettings(resolvedHome, settingsPath string) bool {
 	}
 	for key, enabled := range settings.EnabledPlugins {
 		if enabled && strings.Contains(strings.ToLower(key), armisMCPIdentifier) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasArmisMCPInZedSettings checks if Zed's settings.json contains an armis MCP entry
+// in the context_servers key. settingsPath must resolve under resolvedHome.
+func HasArmisMCPInZedSettings(resolvedHome, settingsPath string) bool {
+	if !isUnderDir(resolvedHome, settingsPath) {
+		return false
+	}
+	data, err := os.ReadFile(settingsPath) //nolint:gosec // path validated by isUnderDir
+	if err != nil {
+		return false
+	}
+	var settings struct {
+		ContextServers map[string]json.RawMessage `json:"context_servers"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	for key := range settings.ContextServers {
+		if strings.Contains(strings.ToLower(key), armisMCPIdentifier) {
 			return true
 		}
 	}

@@ -13,6 +13,7 @@ type mockPlatform struct {
 	vsCodeConfigDir   string
 	cursorAppExists   bool
 	junieBinPaths     []string
+	zedConfigDir      string
 	isRoot            bool
 }
 
@@ -22,6 +23,7 @@ func (m *mockPlatform) JetBrainsPluginDirs(_ string) []string { return m.jetBrai
 func (m *mockPlatform) VSCodeUserConfigDir(_ string) string { return m.vsCodeConfigDir }
 func (m *mockPlatform) CursorAppExists(_ string) bool { return m.cursorAppExists }
 func (m *mockPlatform) JunieBinaryPaths(_ string) []string { return m.junieBinPaths }
+func (m *mockPlatform) ZedConfigDir(_ string) string { return m.zedConfigDir }
 func (m *mockPlatform) IsRoot() bool { return m.isRoot }
 
 func newMockPlatform(homeDir string) *mockPlatform {
@@ -721,6 +723,179 @@ func TestJunieDetector_CheckMCP(t *testing.T) {
 	}
 }
 
+func TestAmazonQDetector_CheckMCP(t *testing.T) {
+	d := &amazonQDetector{}
+	home := resolvedTempDir(t)
+	mcpDir := filepath.Join(home, ".aws", "amazonq")
+	mustMkdirAll(t, mcpDir)
+	mustWriteFile(t, filepath.Join(mcpDir, "mcp.json"),
+		`{"mcpServers":{"armis-appsec":{"command":"python3"}}}`)
+	p := newMockPlatform(home)
+	if !d.CheckMCP(home, home, p) {
+		t.Error("CheckMCP() should return true when armis MCP is configured")
+	}
+}
+
+// --- Zed Detector ---
+
+func TestZedDetector_Detect(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, home string, p *mockPlatform)
+		expected bool
+	}{
+		{
+			name: "zed config dir exists",
+			setup: func(t *testing.T, home string, p *mockPlatform) {
+				zedDir := filepath.Join(home, "zed-config")
+				mustMkdirAll(t, zedDir)
+				p.zedConfigDir = zedDir
+			},
+			expected: true,
+		},
+		{
+			name: "zed not supported on platform",
+			setup: func(_ *testing.T, _ string, p *mockPlatform) {
+				p.zedConfigDir = ""
+			},
+			expected: false,
+		},
+		{
+			name:     "nothing exists",
+			setup:    func(_ *testing.T, _ string, _ *mockPlatform) {},
+			expected: false,
+		},
+	}
+
+	d := &zedDetector{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := resolvedTempDir(t)
+			p := newMockPlatform(home)
+			tt.setup(t, home, p)
+			if got := d.Detect(home, home, p); got != tt.expected {
+				t.Errorf("Detect() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestZedDetector_CheckMCP(t *testing.T) {
+	d := &zedDetector{}
+	home := resolvedTempDir(t)
+	zedDir := filepath.Join(home, "zed-config")
+	mustMkdirAll(t, zedDir)
+	mustWriteFile(t, filepath.Join(zedDir, "settings.json"),
+		`{"context_servers":{"armis-appsec-mcp":{"command":{"path":"python3"}}}}`)
+	p := newMockPlatform(home)
+	p.zedConfigDir = zedDir
+	if !d.CheckMCP(home, home, p) {
+		t.Error("CheckMCP() should return true when armis MCP is in context_servers")
+	}
+}
+
+// --- Continue Detector ---
+
+func TestContinueDetector_Detect(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, home string)
+		expected bool
+	}{
+		{
+			name: "continue dir exists",
+			setup: func(t *testing.T, home string) {
+				mustMkdirAll(t, filepath.Join(home, ".continue"))
+			},
+			expected: true,
+		},
+		{
+			name:     "nothing exists",
+			setup:    func(_ *testing.T, _ string) {},
+			expected: false,
+		},
+	}
+
+	d := &continueDetector{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := resolvedTempDir(t)
+			tt.setup(t, home)
+			p := newMockPlatform(home)
+			if got := d.Detect(home, home, p); got != tt.expected {
+				t.Errorf("Detect() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestContinueDetector_CheckMCP(t *testing.T) {
+	d := &continueDetector{}
+	home := resolvedTempDir(t)
+	mcpDir := filepath.Join(home, ".continue", "mcpServers")
+	mustMkdirAll(t, mcpDir)
+	mustWriteFile(t, filepath.Join(mcpDir, "armis-appsec.json"), `{"command":"python3"}`)
+	p := newMockPlatform(home)
+	if !d.CheckMCP(home, home, p) {
+		t.Error("CheckMCP() should return true when armis MCP file exists in mcpServers dir")
+	}
+}
+
+// --- Gemini CLI Detector ---
+
+func TestGeminiCLIDetector_Detect(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, home string)
+		expected bool
+	}{
+		{
+			name: "gemini settings.json exists",
+			setup: func(t *testing.T, home string) {
+				mustMkdirAll(t, filepath.Join(home, ".gemini"))
+				mustWriteFile(t, filepath.Join(home, ".gemini", "settings.json"), "{}")
+			},
+			expected: true,
+		},
+		{
+			name: "gemini dir exists but no settings.json",
+			setup: func(t *testing.T, home string) {
+				mustMkdirAll(t, filepath.Join(home, ".gemini"))
+			},
+			expected: false,
+		},
+		{
+			name:     "nothing exists",
+			setup:    func(_ *testing.T, _ string) {},
+			expected: false,
+		},
+	}
+
+	d := &geminiCLIDetector{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := resolvedTempDir(t)
+			tt.setup(t, home)
+			p := newMockPlatform(home)
+			if got := d.Detect(home, home, p); got != tt.expected {
+				t.Errorf("Detect() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGeminiCLIDetector_CheckMCP(t *testing.T) {
+	d := &geminiCLIDetector{}
+	home := resolvedTempDir(t)
+	mustMkdirAll(t, filepath.Join(home, ".gemini"))
+	mustWriteFile(t, filepath.Join(home, ".gemini", "settings.json"),
+		`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
+	p := newMockPlatform(home)
+	if !d.CheckMCP(home, home, p) {
+		t.Error("CheckMCP() should return true when armis MCP is configured")
+	}
+}
+
 func TestRegistryReturnsAllAgents(t *testing.T) {
 	registry := Registry()
 	expected := map[AgentName]bool{
@@ -736,6 +911,9 @@ func TestRegistryReturnsAllAgents(t *testing.T) {
 		AgentOpenHands:         false,
 		AgentAmazonQ:           false,
 		AgentJunie:             false,
+		AgentZed:               false,
+		AgentContinue:          false,
+		AgentGeminiCLI:         false,
 	}
 	for _, d := range registry {
 		expected[d.Name()] = true

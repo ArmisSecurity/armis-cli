@@ -29,10 +29,13 @@ Supported editors:
   continue      Continue
   antigravity   Antigravity
   gemini        Gemini CLI
+  roocode       Roo Code
+  junie         Junie
 
 Not auto-configurable (manual setup required):
   jetbrains  JetBrains IDEs (per-project .jb-mcp.json)
   devin      Devin (cloud-based, configure via web UI)
+  openhands  OpenHands (cloud-based, configure via web UI)
   aider      Aider (no MCP support)`,
 	Example: `  # Install to all detected editors
   armis-cli install
@@ -156,6 +159,10 @@ func installTargets(targets []string) error {
 		case "devin":
 			fmt.Fprintln(os.Stderr, "Devin: MCP servers are configured via the Devin web UI.")
 			fmt.Fprintln(os.Stderr, "See: Settings → MCP Servers in your Devin dashboard.")
+			fmt.Fprintln(os.Stderr, "")
+		case "openhands":
+			fmt.Fprintln(os.Stderr, "OpenHands: MCP servers are configured via the web UI.")
+			fmt.Fprintln(os.Stderr, "See: Settings → MCP Servers in your OpenHands dashboard.")
 			fmt.Fprintln(os.Stderr, "")
 		case "aider":
 			fmt.Fprintln(os.Stderr, "Aider does not support MCP servers.")

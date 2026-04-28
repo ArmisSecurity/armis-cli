@@ -22,6 +22,9 @@ type Platform interface {
 	// JunieBinaryPaths returns platform-specific paths where the Junie binary may be installed.
 	JunieBinaryPaths(homeDir string) []string
 
+	// ZedConfigDir returns the Zed editor config directory for a given home.
+	ZedConfigDir(homeDir string) string
+
 	// IsRoot returns true if the current process has elevated privileges.
 	IsRoot() bool
 }

@@ -45,6 +45,10 @@ func (p *darwinPlatform) JunieBinaryPaths(homeDir string) []string {
 	}
 }
 
+func (p *darwinPlatform) ZedConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, "Library", "Application Support", "Zed")
+}
+
 func (p *darwinPlatform) IsRoot() bool {
 	return os.Getuid() == 0
 }

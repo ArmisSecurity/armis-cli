@@ -44,6 +44,10 @@ func (p *linuxPlatform) JunieBinaryPaths(homeDir string) []string {
 	}
 }
 
+func (p *linuxPlatform) ZedConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "Zed")
+}
+
 func (p *linuxPlatform) IsRoot() bool {
 	return os.Getuid() == 0
 }

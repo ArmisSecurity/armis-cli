@@ -47,6 +47,10 @@ func (p *windowsPlatform) JunieBinaryPaths(homeDir string) []string {
 	}
 }
 
+func (p *windowsPlatform) ZedConfigDir(_ string) string {
+	return ""
+}
+
 func (p *windowsPlatform) IsRoot() bool {
 	var sid *windows.SID
 	err := windows.AllocateAndInitializeSid(
