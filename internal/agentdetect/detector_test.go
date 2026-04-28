@@ -17,14 +17,14 @@ type mockPlatform struct {
 	isRoot            bool
 }
 
-func (m *mockPlatform) UserHomeDirs() ([]UserHome, error) { return m.users, nil }
-func (m *mockPlatform) VSCodeExtensionsDir(_ string) string { return m.vsCodeExtDir }
+func (m *mockPlatform) UserHomeDirs() ([]UserHome, error)     { return m.users, nil }
+func (m *mockPlatform) VSCodeExtensionsDir(_ string) string   { return m.vsCodeExtDir }
 func (m *mockPlatform) JetBrainsPluginDirs(_ string) []string { return m.jetBrainsPlugDirs }
-func (m *mockPlatform) VSCodeUserConfigDir(_ string) string { return m.vsCodeConfigDir }
-func (m *mockPlatform) CursorAppExists(_ string) bool { return m.cursorAppExists }
-func (m *mockPlatform) JunieBinaryPaths(_ string) []string { return m.junieBinPaths }
-func (m *mockPlatform) ZedConfigDir(_ string) string { return m.zedConfigDir }
-func (m *mockPlatform) IsRoot() bool { return m.isRoot }
+func (m *mockPlatform) VSCodeUserConfigDir(_ string) string   { return m.vsCodeConfigDir }
+func (m *mockPlatform) CursorAppExists(_ string) bool         { return m.cursorAppExists }
+func (m *mockPlatform) JunieBinaryPaths(_ string) []string    { return m.junieBinPaths }
+func (m *mockPlatform) ZedConfigDir(_ string) string          { return m.zedConfigDir }
+func (m *mockPlatform) IsRoot() bool                          { return m.isRoot }
 
 func newMockPlatform(homeDir string) *mockPlatform {
 	return &mockPlatform{
