@@ -23,6 +23,13 @@ func FormatPlain(result *ScanResult, w io.Writer) error {
 		if _, err := fmt.Fprintln(w, header); err != nil {
 			return err
 		}
+		if len(userResult.Agents) == 0 {
+			line := s.MutedText.Render("No agents detected")
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+			continue
+		}
 		agents := make([]string, 0, len(userResult.Agents))
 		for _, agent := range userResult.Agents {
 			mcpStatus := s.ErrorText.Render("MCP:false")
