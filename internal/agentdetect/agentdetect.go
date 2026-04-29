@@ -3,6 +3,7 @@ package agentdetect
 
 import (
 	"fmt"
+	"os"
 )
 
 // DetectedAgent represents a single detected agent for a specific user.
@@ -58,6 +59,7 @@ func (s *Scanner) Scan() (*ScanResult, error) {
 	for _, user := range users {
 		resolvedHome, err := resolvePath(user.HomeDir)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping user %s: %v\n", user.Username, err)
 			continue
 		}
 
