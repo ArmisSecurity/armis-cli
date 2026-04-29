@@ -76,9 +76,7 @@ func (s *Scanner) Scan() (*ScanResult, error) {
 			}
 			userResult.Agents = append(userResult.Agents, agent)
 		}
-		if len(userResult.Agents) > 0 {
-			result.Users = append(result.Users, userResult)
-		}
+		result.Users = append(result.Users, userResult)
 	}
 
 	return result, nil
