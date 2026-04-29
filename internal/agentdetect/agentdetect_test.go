@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 )
 
 func mustMkdirAll(t *testing.T, path string) {
@@ -137,6 +140,9 @@ func TestScanResult_FlatResults(t *testing.T) {
 }
 
 func TestFormatPlain(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+
 	result := &ScanResult{
 		Users: []UserResult{
 			{
@@ -176,6 +182,9 @@ func TestFormatPlain(t *testing.T) {
 }
 
 func TestFormatPlain_Empty(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+
 	result := &ScanResult{}
 	var buf bytes.Buffer
 	if err := FormatPlain(result, &buf); err != nil {

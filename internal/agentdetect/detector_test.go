@@ -831,14 +831,54 @@ func TestContinueDetector_Detect(t *testing.T) {
 
 func TestContinueDetector_CheckMCP(t *testing.T) {
 	d := &continueDetector{}
-	home := resolvedTempDir(t)
-	mcpDir := filepath.Join(home, ".continue", "mcpServers")
-	mustMkdirAll(t, mcpDir)
-	mustWriteFile(t, filepath.Join(mcpDir, "armis-appsec.json"), `{"command":"python3"}`)
-	p := newMockPlatform(home)
-	if !d.CheckMCP(home, home, p) {
-		t.Error("CheckMCP() should return true when armis MCP file exists in mcpServers dir")
-	}
+
+	t.Run("armis MCP in standard install file", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		mcpDir := filepath.Join(home, ".continue", "mcpServers")
+		mustMkdirAll(t, mcpDir)
+		mustWriteFile(t, filepath.Join(mcpDir, "armis-appsec.json"),
+			`{"mcpServers":{"armis-appsec":{"command":"python3"}}}`)
+		p := newMockPlatform(home)
+		if !d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return true when armis MCP config exists")
+		}
+	})
+
+	t.Run("armis MCP in custom filename", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		mcpDir := filepath.Join(home, ".continue", "mcpServers")
+		mustMkdirAll(t, mcpDir)
+		mustWriteFile(t, filepath.Join(mcpDir, "my-servers.json"),
+			`{"mcpServers":{"armis-appsec":{"command":"python3"}}}`)
+		p := newMockPlatform(home)
+		if !d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return true when armis MCP is in any JSON file")
+		}
+	})
+
+	t.Run("non-json file ignored", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		mcpDir := filepath.Join(home, ".continue", "mcpServers")
+		mustMkdirAll(t, mcpDir)
+		mustWriteFile(t, filepath.Join(mcpDir, "armis-appsec.json.bak"),
+			`{"mcpServers":{"armis-appsec":{"command":"python3"}}}`)
+		p := newMockPlatform(home)
+		if d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should ignore .bak files")
+		}
+	})
+
+	t.Run("json file without armis MCP", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		mcpDir := filepath.Join(home, ".continue", "mcpServers")
+		mustMkdirAll(t, mcpDir)
+		mustWriteFile(t, filepath.Join(mcpDir, "other.json"),
+			`{"mcpServers":{"some-other-server":{"command":"node"}}}`)
+		p := newMockPlatform(home)
+		if d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return false when no armis MCP entry exists")
+		}
+	})
 }
 
 // --- Gemini CLI Detector ---

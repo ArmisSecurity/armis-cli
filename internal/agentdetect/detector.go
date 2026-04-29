@@ -430,7 +430,10 @@ func (d *continueDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bo
 		return false
 	}
 	for _, entry := range entries {
-		if strings.Contains(strings.ToLower(entry.Name()), "armis") {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
+			continue
+		}
+		if HasArmisMCP(resolvedHome, filepath.Join(mcpDir, entry.Name())) {
 			return true
 		}
 	}
