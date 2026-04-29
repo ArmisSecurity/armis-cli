@@ -189,8 +189,8 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 		t.Setenv("ARMIS_CLIENT_ID", "test-id")
 		t.Setenv("ARMIS_CLIENT_SECRET", "test-secret")
 
-		if !writeEnvFromEnvironment(envPath) {
-			t.Fatal("writeEnvFromEnvironment() returned false, want true")
+		if err := writeEnvFromEnvironment(envPath); err != nil {
+			t.Fatalf("writeEnvFromEnvironment() returned error: %v", err)
 		}
 
 		b, err := os.ReadFile(filepath.Clean(envPath))
@@ -217,8 +217,8 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 		t.Setenv("ARMIS_CLIENT_ID", "new-id")
 		t.Setenv("ARMIS_CLIENT_SECRET", "new-secret")
 
-		if writeEnvFromEnvironment(envPath) {
-			t.Error("writeEnvFromEnvironment() returned true for existing file")
+		if err := writeEnvFromEnvironment(envPath); err != nil {
+			t.Errorf("writeEnvFromEnvironment() returned error for existing file: %v", err)
 		}
 
 		b, _ := os.ReadFile(filepath.Clean(envPath))
@@ -232,8 +232,8 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 		t.Setenv("ARMIS_CLIENT_ID", "")
 		t.Setenv("ARMIS_CLIENT_SECRET", "")
 
-		if writeEnvFromEnvironment(freshPath) {
-			t.Error("writeEnvFromEnvironment() returned true with empty vars")
+		if err := writeEnvFromEnvironment(freshPath); err != nil {
+			t.Errorf("writeEnvFromEnvironment() returned error with empty vars: %v", err)
 		}
 		if _, err := os.Stat(freshPath); err == nil {
 			t.Error("file should not exist when vars are empty")
@@ -245,8 +245,8 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 		t.Setenv("ARMIS_CLIENT_ID", "test-id")
 		t.Setenv("ARMIS_CLIENT_SECRET", "")
 
-		if writeEnvFromEnvironment(freshPath) {
-			t.Error("writeEnvFromEnvironment() returned true with only client ID")
+		if err := writeEnvFromEnvironment(freshPath); err != nil {
+			t.Errorf("writeEnvFromEnvironment() returned error with only client ID: %v", err)
 		}
 	})
 }

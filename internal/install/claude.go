@@ -57,7 +57,9 @@ func (ci *ClaudeInstaller) Install() error {
 		return fmt.Errorf("failed to enable plugin: %w", err)
 	}
 
-	writeEnvFromEnvironment(ci.EnvFilePath())
+	if err := writeEnvFromEnvironment(ci.EnvFilePath()); err != nil {
+		return fmt.Errorf("failed to write credentials: %w", err)
+	}
 
 	return nil
 }

@@ -134,7 +134,9 @@ func (ei *EditorInstaller) FetchPlugin() error {
 	if err := ei.plugin.FetchAndInstall(ei.pluginDir); err != nil {
 		return err
 	}
-	writeEnvFromEnvironment(ei.EnvFilePath())
+	if err := writeEnvFromEnvironment(ei.EnvFilePath()); err != nil {
+		return fmt.Errorf("failed to write credentials: %w", err)
+	}
 	versionFile := filepath.Join(ei.pluginDir, ".installed-version")
 	_ = os.WriteFile(filepath.Clean(versionFile), []byte(ei.plugin.InstalledVersion()), 0o600)
 	return nil
