@@ -19,12 +19,25 @@ func resolvePath(path string) (string, error) {
 
 // isUnderDir checks that target (after symlink resolution) is strictly under resolvedBase.
 // Returns false if the target cannot be resolved (e.g. does not exist).
+// Uses filepath.Rel instead of string prefix to handle case-insensitive paths on Windows.
 func isUnderDir(resolvedBase, target string) bool {
 	resolved, err := resolvePath(target)
 	if err != nil {
 		return false
 	}
-	return strings.HasPrefix(resolved, resolvedBase+string(filepath.Separator))
+
+	baseVol := filepath.VolumeName(resolvedBase)
+	resolvedVol := filepath.VolumeName(resolved)
+	if baseVol != "" && resolvedVol != "" && strings.EqualFold(baseVol, resolvedVol) {
+		resolved = baseVol + strings.TrimPrefix(resolved, resolvedVol)
+	}
+
+	rel, err := filepath.Rel(resolvedBase, resolved)
+	if err != nil {
+		return false
+	}
+
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // dirExists returns true if path exists, is a directory, and resolves under resolvedHome.
