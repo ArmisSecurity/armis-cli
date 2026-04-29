@@ -204,7 +204,7 @@ func (d *copilotDetector) Detect(resolvedHome, homeDir string, platform Platform
 
 func (d *copilotDetector) CheckMCP(resolvedHome, homeDir string, platform Platform) bool {
 	mcpPath := filepath.Join(platform.VSCodeUserConfigDir(homeDir), "mcp.json")
-	return HasArmisMCP(resolvedHome, mcpPath)
+	return HasArmisMCP(resolvedHome, mcpPath) || HasArmisMCPInVSCodeFormat(resolvedHome, mcpPath)
 }
 
 func (d *copilotDetector) DetectVersion(resolvedHome, homeDir string, platform Platform) string {
@@ -245,8 +245,10 @@ func (d *clineDetector) Detect(resolvedHome, homeDir string, platform Platform) 
 	return hasExtensionPrefix(resolvedHome, platform.VSCodeExtensionsDir(homeDir), "saoudrizwan.claude-dev")
 }
 
-func (d *clineDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
-	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".cline", "mcp_settings.json"))
+func (d *clineDetector) CheckMCP(resolvedHome, homeDir string, platform Platform) bool {
+	vsCodePath := filepath.Join(platform.VSCodeUserConfigDir(homeDir), "globalStorage",
+		"saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
+	return HasArmisMCP(resolvedHome, vsCodePath)
 }
 
 func (d *clineDetector) DetectVersion(resolvedHome, homeDir string, platform Platform) string {

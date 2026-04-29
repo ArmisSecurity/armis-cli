@@ -85,6 +85,33 @@ func HasArmisMCPInZedSettings(resolvedHome, settingsPath string) bool {
 	return false
 }
 
+// vsCodeMCPConfig represents VS Code's native MCP format with a top-level "servers" key.
+type vsCodeMCPConfig struct {
+	Servers map[string]json.RawMessage `json:"servers"`
+}
+
+// HasArmisMCPInVSCodeFormat checks if a VS Code mcp.json contains an armis entry
+// in the "servers" key (VS Code native format). configPath must resolve under resolvedHome.
+func HasArmisMCPInVSCodeFormat(resolvedHome, configPath string) bool {
+	if !isUnderDir(resolvedHome, configPath) {
+		return false
+	}
+	data, err := os.ReadFile(configPath) //nolint:gosec // path validated by isUnderDir
+	if err != nil {
+		return false
+	}
+	var config vsCodeMCPConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false
+	}
+	for key := range config.Servers {
+		if strings.Contains(strings.ToLower(key), armisMCPIdentifier) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasArmisMCPInData checks raw JSON data for the armis MCP identifier.
 // Works for both standard MCP configs and Claude Code settings by checking
 // if any key in mcpServers contains the armis identifier.

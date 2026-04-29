@@ -270,16 +270,32 @@ func TestCopilotDetector_Detect(t *testing.T) {
 
 func TestCopilotDetector_CheckMCP(t *testing.T) {
 	d := &copilotDetector{}
-	home := resolvedTempDir(t)
-	configDir := filepath.Join(home, ".config", "Code", "User")
-	mustMkdirAll(t, configDir)
-	mustWriteFile(t, filepath.Join(configDir, "mcp.json"),
-		`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
-	p := newMockPlatform(home)
-	p.vsCodeConfigDir = configDir
-	if !d.CheckMCP(home, home, p) {
-		t.Error("CheckMCP() should return true when armis MCP is configured")
-	}
+
+	t.Run("mcpServers format", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		configDir := filepath.Join(home, ".config", "Code", "User")
+		mustMkdirAll(t, configDir)
+		mustWriteFile(t, filepath.Join(configDir, "mcp.json"),
+			`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
+		p := newMockPlatform(home)
+		p.vsCodeConfigDir = configDir
+		if !d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return true for mcpServers format")
+		}
+	})
+
+	t.Run("vscode servers format", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		configDir := filepath.Join(home, ".config", "Code", "User")
+		mustMkdirAll(t, configDir)
+		mustWriteFile(t, filepath.Join(configDir, "mcp.json"),
+			`{"servers":{"armis-appsec":{"type":"stdio","command":"python3"}}}`)
+		p := newMockPlatform(home)
+		p.vsCodeConfigDir = configDir
+		if !d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return true for VS Code servers format")
+		}
+	})
 }
 
 // --- Cursor Detector ---
@@ -384,11 +400,14 @@ func TestClineDetector_Detect(t *testing.T) {
 func TestClineDetector_CheckMCP(t *testing.T) {
 	d := &clineDetector{}
 	home := resolvedTempDir(t)
-	clineDir := filepath.Join(home, ".cline")
-	mustMkdirAll(t, clineDir)
-	mustWriteFile(t, filepath.Join(clineDir, "mcp_settings.json"),
+	configDir := filepath.Join(home, ".config", "Code", "User")
+	settingsDir := filepath.Join(configDir, "globalStorage",
+		"saoudrizwan.claude-dev", "settings")
+	mustMkdirAll(t, settingsDir)
+	mustWriteFile(t, filepath.Join(settingsDir, "cline_mcp_settings.json"),
 		`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
 	p := newMockPlatform(home)
+	p.vsCodeConfigDir = configDir
 	if !d.CheckMCP(home, home, p) {
 		t.Error("CheckMCP() should return true when armis MCP is configured")
 	}
