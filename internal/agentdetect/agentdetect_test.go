@@ -85,8 +85,14 @@ func TestScanner_Scan_NoAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan() error: %v", err)
 	}
-	if len(result.Users) != 0 {
-		t.Errorf("expected 0 users with agents, got %d", len(result.Users))
+	if len(result.Users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(result.Users))
+	}
+	if result.Users[0].User != "bob" {
+		t.Errorf("expected user bob, got %s", result.Users[0].User)
+	}
+	if len(result.Users[0].Agents) != 0 {
+		t.Errorf("expected 0 agents, got %d", len(result.Users[0].Agents))
 	}
 }
 
@@ -178,6 +184,30 @@ func TestFormatPlain(t *testing.T) {
 	}
 	if !strings.Contains(output, "Copilot(MCP:false)") {
 		t.Error("expected 'Copilot(MCP:false)' in output")
+	}
+}
+
+func TestFormatPlain_NoAgentsForUser(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+
+	result := &ScanResult{
+		Users: []UserResult{
+			{User: "EmptyUser", Agents: nil},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := FormatPlain(result, &buf); err != nil {
+		t.Fatalf("FormatPlain() error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "user: EmptyUser") {
+		t.Errorf("expected 'user: EmptyUser' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "No agents detected") {
+		t.Errorf("expected 'No agents detected' in output, got:\n%s", out)
 	}
 }
 
