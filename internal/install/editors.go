@@ -23,6 +23,8 @@ const (
 	EditorContinue    EditorID = "continue"
 	EditorAntigravity EditorID = "antigravity"
 	EditorGemini      EditorID = "gemini"
+	EditorRooCode     EditorID = "roocode"
+	EditorJunie       EditorID = "junie"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -42,6 +44,8 @@ var AllEditors = []Editor{
 	{EditorContinue, "Continue"},
 	{EditorAntigravity, "Antigravity"},
 	{EditorGemini, "Gemini CLI"},
+	{EditorRooCode, "Roo Code"},
+	{EditorJunie, "Junie"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -183,6 +187,10 @@ func defaultConfigPath(id EditorID) string {
 		return homeDir(".gemini", "antigravity", "mcp_config.json")
 	case EditorGemini:
 		return homeDir(".gemini", "settings.json")
+	case EditorRooCode:
+		return homeDir(".roo-cline", "mcp_settings.json")
+	case EditorJunie:
+		return homeDir(".junie", "mcp", "mcp.json")
 	}
 	return ""
 }
