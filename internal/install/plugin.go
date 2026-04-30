@@ -329,10 +329,12 @@ func findPython() string {
 // writeEnvFromEnvironment writes ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET to a .env
 // file if both are set in the current process environment. Returns nil if the file
 // was written or if there is nothing to do (file exists or env vars unset).
-// Returns an error only if credentials are available but the write fails.
+// Returns an error if the file's existence cannot be determined or if the write fails.
 func writeEnvFromEnvironment(envPath string) error {
 	if _, err := os.Stat(envPath); err == nil {
 		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking env file: %w", err)
 	}
 
 	clientID := os.Getenv("ARMIS_CLIENT_ID")

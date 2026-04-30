@@ -249,6 +249,23 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 			t.Errorf("writeEnvFromEnvironment() returned error with only client ID: %v", err)
 		}
 	})
+
+	t.Run("returns error when stat fails for non-permission reasons", func(t *testing.T) {
+		t.Setenv("ARMIS_CLIENT_ID", "test-id")
+		t.Setenv("ARMIS_CLIENT_SECRET", "test-secret")
+
+		// Use a path inside a file (not a directory) to trigger a non-IsNotExist stat error
+		regularFile := filepath.Join(t.TempDir(), "not-a-dir")
+		if err := os.WriteFile(regularFile, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		badPath := filepath.Join(regularFile, ".env")
+
+		err := writeEnvFromEnvironment(badPath)
+		if err == nil {
+			t.Error("writeEnvFromEnvironment() should return error when stat fails unexpectedly")
+		}
+	})
 }
 
 // createTestTarball creates a gzipped tarball matching GitHub's format.
