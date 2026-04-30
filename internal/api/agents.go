@@ -55,5 +55,6 @@ func (c *Client) ReportAgentInventory(ctx context.Context, payload AgentInventor
 		return &APIError{StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
