@@ -156,26 +156,27 @@ var (
 	mdBlockquoteRegex = regexp.MustCompile(`(?m)^>\s*`)
 )
 
-// Compiled regexes for CWE/CVE ID normalization.
+// Compiled regexes for CWE/CVE ID normalization (case-insensitive).
 var (
-	cwePattern = regexp.MustCompile(`^(CWE-\d+)`)
-	cvePattern = regexp.MustCompile(`^(CVE-\d{4}-\d+)`)
+	cwePattern = regexp.MustCompile(`(?i)^(CWE-\d+)`)
+	cvePattern = regexp.MustCompile(`(?i)^(CVE-\d{4}-\d+)`)
 )
 
-// normalizeCWE extracts just the CWE identifier (e.g. "CWE-78") from a string
-// that may include a full title (e.g. "CWE-78: Improper Neutralization...").
+// normalizeCWE extracts just the CWE identifier from a string that may include
+// a full title (e.g. "CWE-78: Improper Neutralization...") and canonicalizes
+// to uppercase (e.g. "cwe-78" → "CWE-78").
 func normalizeCWE(s string) string {
 	if m := cwePattern.FindString(s); m != "" {
-		return m
+		return strings.ToUpper(m)
 	}
 	return s
 }
 
-// normalizeCVE extracts just the CVE identifier (e.g. "CVE-2024-1234") from a
-// string that may include a description suffix.
+// normalizeCVE extracts just the CVE identifier from a string that may include
+// a description suffix and canonicalizes to uppercase (e.g. "cve-2024-1234" → "CVE-2024-1234").
 func normalizeCVE(s string) string {
 	if m := cvePattern.FindString(s); m != "" {
-		return m
+		return strings.ToUpper(m)
 	}
 	return s
 }

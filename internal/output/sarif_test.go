@@ -1231,9 +1231,11 @@ func TestNormalizeCWE(t *testing.T) {
 		{"CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')", "CWE-78"},
 		{"CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag", "CWE-1004"},
 		{"CWE-79", "CWE-79"},
+		{"cwe-78", "CWE-78"},
+		{"cwe-78: lowercase with title", "CWE-78"},
+		{"Cwe-200: Mixed Case", "CWE-200"},
 		{"not-a-cwe", "not-a-cwe"},
 		{"", ""},
-		{"cwe-78: lowercase", "cwe-78: lowercase"},
 	}
 
 	for _, tt := range tests {
@@ -1254,6 +1256,9 @@ func TestNormalizeCVE(t *testing.T) {
 		{"CVE-2024-1234", "CVE-2024-1234"},
 		{"CVE-2024-1234: Some description", "CVE-2024-1234"},
 		{"CVE-2024-12345678", "CVE-2024-12345678"},
+		{"cve-2024-1234", "CVE-2024-1234"},
+		{"cve-2024-5678: lowercase with desc", "CVE-2024-5678"},
+		{"Cve-2024-9999: Mixed Case", "CVE-2024-9999"},
 		{"not-a-cve", "not-a-cve"},
 		{"", ""},
 	}
@@ -1298,6 +1303,16 @@ func TestStableRuleID(t *testing.T) {
 			name:     "CVE with description is normalized",
 			finding:  model.Finding{ID: "server-id-cve-desc", CVEs: []string{"CVE-2024-1234: Some vulnerability"}},
 			expected: "CVE-2024-1234",
+		},
+		{
+			name:     "lowercase CWE is canonicalized to uppercase",
+			finding:  model.Finding{ID: "server-id-lower-cwe", CWEs: []string{"cwe-78: os command injection"}},
+			expected: "CWE-78",
+		},
+		{
+			name:     "mixed-case CVE is canonicalized to uppercase",
+			finding:  model.Finding{ID: "server-id-mixed-cve", CVEs: []string{"Cve-2024-5678"}},
+			expected: "CVE-2024-5678",
 		},
 		{
 			name:     "FindingCategory when no CWE/CVE",
