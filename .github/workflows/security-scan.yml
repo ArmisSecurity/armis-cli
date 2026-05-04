@@ -23,5 +23,7 @@ jobs:
       scan-timeout: 120  # 2 hours
       build-from-source: false
     secrets:
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
