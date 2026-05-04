@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,5 +143,230 @@ func TestLoadIgnorePatternsOversizedFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("expected 'too large' error, got: %v", err)
+	}
+}
+
+func TestLoadArmisIgnore_MixedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	content := `# Mixed .armisignore file
+vendor/
+*.log
+node_modules/
+
+# Suppression directives
+cwe:798 -- Environment variables
+severity:LOW -- Team policy
+category:secrets
+rule:CKV_AWS_18 -- Required for pipeline
+
+# More path patterns
+docs/
+`
+	ignoreFile := filepath.Join(tmpDir, ".armisignore")
+	if err := os.WriteFile(ignoreFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create ignore file: %v", err)
+	}
+
+	matcher, config, err := LoadArmisIgnore(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", err)
+	}
+
+	// Verify path patterns work
+	if !matcher.Match("vendor/lib.go", false) {
+		t.Error("Expected vendor/lib.go to match path pattern")
+	}
+	if !matcher.Match("test.log", false) {
+		t.Error("Expected test.log to match path pattern")
+	}
+	if !matcher.Match("docs/readme.md", false) {
+		t.Error("Expected docs/readme.md to match path pattern")
+	}
+
+	// Verify directives were parsed
+	if config == nil {
+		t.Fatal("Expected non-nil SuppressionConfig")
+	}
+	if len(config.CWEs) != 1 {
+		t.Errorf("CWEs count = %d, want 1", len(config.CWEs))
+	} else {
+		if config.CWEs[0].Value != "798" {
+			t.Errorf("CWE value = %q, want %q", config.CWEs[0].Value, "798")
+		}
+		if config.CWEs[0].Reason != "Environment variables" {
+			t.Errorf("CWE reason = %q, want %q", config.CWEs[0].Reason, "Environment variables")
+		}
+	}
+	if len(config.Severities) != 1 {
+		t.Errorf("Severities count = %d, want 1", len(config.Severities))
+	} else if config.Severities[0].Value != "LOW" {
+		t.Errorf("Severity value = %q, want %q", config.Severities[0].Value, "LOW")
+	}
+	if len(config.Categories) != 1 {
+		t.Errorf("Categories count = %d, want 1", len(config.Categories))
+	} else if config.Categories[0].Value != "secrets" {
+		t.Errorf("Category value = %q, want %q", config.Categories[0].Value, "secrets")
+	}
+	if len(config.Rules) != 1 {
+		t.Errorf("Rules count = %d, want 1", len(config.Rules))
+	} else if config.Rules[0].Value != "CKV_AWS_18" {
+		t.Errorf("Rule value = %q, want %q", config.Rules[0].Value, "CKV_AWS_18")
+	}
+}
+
+func TestLoadArmisIgnore_NoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	matcher, config, err := LoadArmisIgnore(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", err)
+	}
+
+	if matcher == nil {
+		t.Fatal("Expected non-nil matcher")
+	}
+	if config != nil {
+		t.Error("Expected nil config when no .armisignore exists")
+	}
+}
+
+func TestLoadArmisIgnore_DirectivesOnlyFromRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root .armisignore with directives
+	rootContent := "cwe:798\n*.log\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, ".armisignore"), []byte(rootContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nested .armisignore with a directive-like line
+	subDir := filepath.Join(tmpDir, "subdir")
+	if err := os.MkdirAll(subDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	nestedContent := "cwe:79\n*.tmp\n"
+	if err := os.WriteFile(filepath.Join(subDir, ".armisignore"), []byte(nestedContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	matcher, config, err := LoadArmisIgnore(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", err)
+	}
+
+	// Root directive should be parsed
+	if config == nil {
+		t.Fatal("Expected non-nil config")
+	}
+	if len(config.CWEs) != 1 {
+		t.Fatalf("CWEs count = %d, want 1 (only root directives)", len(config.CWEs))
+	}
+	if config.CWEs[0].Value != "798" {
+		t.Errorf("CWE value = %q, want %q", config.CWEs[0].Value, "798")
+	}
+
+	// Nested "cwe:79" should be treated as a path pattern (not a directive)
+	// Path patterns from both files should work
+	if !matcher.Match("test.log", false) {
+		t.Error("Expected test.log to match root pattern")
+	}
+	if !matcher.Match("subdir/test.tmp", false) {
+		t.Error("Expected subdir/test.tmp to match nested pattern")
+	}
+}
+
+func TestLoadArmisIgnore_LineLimitTruncation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file with 1005 lines: 1000 path patterns + 5 directives after the limit
+	var lines []string
+	for i := range 1000 {
+		lines = append(lines, fmt.Sprintf("pattern_%d/", i))
+	}
+	// These directives should be truncated (beyond line 1000)
+	lines = append(lines, "cwe:798", "cwe:79", "cwe:89", "cwe:22", "cwe:502")
+
+	content := strings.Join(lines, "\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, ".armisignore"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, config, err := LoadArmisIgnore(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", err)
+	}
+
+	// Directives after line 1000 should not be parsed
+	if config != nil {
+		t.Errorf("Expected nil config (directives were beyond line limit), got %d CWEs", len(config.CWEs))
+	}
+}
+
+func TestLoadArmisIgnore_UTF8BOM(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// UTF-8 BOM + content
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	content := append(bom, []byte("cwe:798\nvendor/\n")...)
+	if err := os.WriteFile(filepath.Join(tmpDir, ".armisignore"), content, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	matcher, config, err := LoadArmisIgnore(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", err)
+	}
+
+	if config == nil {
+		t.Fatal("Expected non-nil config")
+	}
+	if len(config.CWEs) != 1 {
+		t.Fatalf("CWEs count = %d, want 1", len(config.CWEs))
+	}
+	if config.CWEs[0].Value != "798" {
+		t.Errorf("CWE value = %q, want %q", config.CWEs[0].Value, "798")
+	}
+	if !matcher.Match("vendor/lib.go", false) {
+		t.Error("Expected vendor/lib.go to match")
+	}
+}
+
+func TestLoadArmisIgnore_BackwardCompat(t *testing.T) {
+	// Verify LoadIgnorePatterns and LoadArmisIgnore produce identical matchers
+	tmpDir := t.TempDir()
+
+	content := "*.log\nnode_modules/\n!important.log\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, ".armisignore"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldMatcher, err := LoadIgnorePatterns(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadIgnorePatterns failed: %v", err)
+	}
+
+	newMatcher, _, newErr := LoadArmisIgnore(tmpDir)
+	if newErr != nil {
+		t.Fatalf("LoadArmisIgnore failed: %v", newErr)
+	}
+
+	paths := []struct {
+		path  string
+		isDir bool
+	}{
+		{"test.log", false},
+		{"important.log", false},
+		{"node_modules", true},
+		{"src/main.go", false},
+	}
+
+	for _, p := range paths {
+		oldResult := oldMatcher.Match(p.path, p.isDir)
+		newResult := newMatcher.Match(p.path, p.isDir)
+		if oldResult != newResult {
+			t.Errorf("Match(%q, %v): LoadIgnorePatterns=%v, LoadArmisIgnore=%v",
+				p.path, p.isDir, oldResult, newResult)
+		}
 	}
 }
