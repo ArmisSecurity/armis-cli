@@ -1,8 +1,6 @@
 package output
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -158,6 +156,31 @@ var (
 	mdBlockquoteRegex = regexp.MustCompile(`(?m)^>\s*`)
 )
 
+// Compiled regexes for CWE/CVE ID normalization (case-insensitive).
+var (
+	cwePattern = regexp.MustCompile(`(?i)^(CWE-\d+)`)
+	cvePattern = regexp.MustCompile(`(?i)^(CVE-\d{4}-\d+)`)
+)
+
+// normalizeCWE extracts just the CWE identifier from a string that may include
+// a full title (e.g. "CWE-78: Improper Neutralization...") and canonicalizes
+// to uppercase (e.g. "cwe-78" → "CWE-78").
+func normalizeCWE(s string) string {
+	if m := cwePattern.FindString(s); m != "" {
+		return strings.ToUpper(m)
+	}
+	return s
+}
+
+// normalizeCVE extracts just the CVE identifier from a string that may include
+// a description suffix and canonicalizes to uppercase (e.g. "cve-2024-1234" → "CVE-2024-1234").
+func normalizeCVE(s string) string {
+	if m := cvePattern.FindString(s); m != "" {
+		return strings.ToUpper(m)
+	}
+	return s
+}
+
 // stripMarkdown removes common markdown formatting to produce plain text.
 // Used to generate SARIF Help.Text from markdown content per SARIF 2.1.0 spec,
 // which requires Help.Text to be readable without markdown rendering.
@@ -214,39 +237,21 @@ func firstNonEmpty(values []string) string {
 }
 
 // stableRuleID derives a stable SARIF ruleId from a finding's classification.
+// Normalizes CWE/CVE identifiers to strip variable description text that the
+// backend may return differently between runs, ensuring GitHub Code Scanning
+// can match alerts across runs.
 // Falls back through CWE → CVE → FindingCategory → finding.ID.
 func stableRuleID(finding model.Finding) string {
 	if v := firstNonEmpty(finding.CWEs); v != "" {
-		return v
+		return normalizeCWE(v)
 	}
 	if v := firstNonEmpty(finding.CVEs); v != "" {
-		return v
+		return normalizeCVE(v)
 	}
 	if v := strings.TrimSpace(finding.FindingCategory); v != "" {
 		return v
 	}
 	return finding.ID
-}
-
-// computeFingerprint produces a stable SHA-256 fingerprint for cross-run dedup.
-// Uses length-prefixed fields to prevent separator collision between different tuples.
-func computeFingerprint(ruleID, file, snippet string, startLine int) string {
-	h := sha256.New()
-
-	writeField := func(name, value string) {
-		fmt.Fprintf(h, "%s:%d:", name, len(value)) //nolint:errcheck,gosec // hash.Write never returns an error
-		io.WriteString(h, value)                   //nolint:errcheck,gosec // hash.Write never returns an error
-	}
-
-	writeField("ruleID", ruleID)
-	writeField("file", file)
-	if snippet != "" {
-		writeField("snippet", snippet)
-	} else {
-		writeField("startLine", strconv.Itoa(startLine))
-	}
-
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 // buildRules creates SARIF rules from findings, deduplicating by rule ID.
@@ -345,9 +350,6 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			Level:     severityToSarifLevel(finding.Severity),
 			Message: sarifMessage{
 				Text: buildMessageText(finding.Title, finding.Description),
-			},
-			PartialFingerprints: map[string]string{
-				"primaryLocationLineHash": computeFingerprint(ruleID, resolvedFile, finding.CodeSnippet, finding.StartLine),
 			},
 			Properties: &sarifResultProperties{
 				FindingID:   finding.ID,
@@ -464,18 +466,19 @@ func severityToSecurityScore(severity model.Severity) string {
 // Priority matches stableRuleID: CWE → CVE → reference URL.
 func generateHelpURI(finding model.Finding) string {
 	if cweID := firstNonEmpty(finding.CWEs); cweID != "" {
+		normalized := normalizeCWE(cweID)
 		var cweNum string
-		if strings.HasPrefix(strings.ToUpper(cweID), "CWE-") {
-			cweNum = cweID[4:]
+		if strings.HasPrefix(strings.ToUpper(normalized), "CWE-") {
+			cweNum = normalized[4:]
 		} else {
-			cweNum = cweID
+			cweNum = normalized
 		}
 		if _, err := strconv.Atoi(cweNum); err == nil {
 			return "https://cwe.mitre.org/data/definitions/" + cweNum + ".html"
 		}
 	}
 	if cve := firstNonEmpty(finding.CVEs); cve != "" {
-		return "https://nvd.nist.gov/vuln/detail/" + cve
+		return "https://nvd.nist.gov/vuln/detail/" + normalizeCVE(cve)
 	}
 	if len(finding.URLs) > 0 {
 		return finding.URLs[0]
