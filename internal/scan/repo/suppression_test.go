@@ -49,18 +49,24 @@ func TestParseDirectiveLine(t *testing.T) {
 			wantIsDir: true,
 		},
 		{
+			name:      "cwe:0079 leading zeros normalized",
+			line:      "cwe:0079",
+			wantDir:   &SuppressionDirective{Type: DirectiveCWE, Value: "79"},
+			wantIsDir: true,
+		},
+		{
 			name:        "cwe:abc invalid",
 			line:        "cwe:abc",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "abc" ignored (must be a positive integer)`,
+			wantWarning: `invalid cwe value "abc" ignored (must be a non-negative integer)`,
 		},
 		{
 			name:        "cwe:-1 negative",
 			line:        "cwe:-1",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "-1" ignored (must be a positive integer)`,
+			wantWarning: `invalid cwe value "-1" ignored (must be a non-negative integer)`,
 		},
 		{
 			name:        "cwe:0 zero",
@@ -254,7 +260,7 @@ func TestParseDirectiveLine(t *testing.T) {
 			line:        "cwe:798-- not a reason",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "798-- not a reason" ignored (must be a positive integer)`,
+			wantWarning: `invalid cwe value "798-- not a reason" ignored (must be a non-negative integer)`,
 		},
 	}
 
@@ -367,25 +373,30 @@ func TestCategoryMapping(t *testing.T) {
 
 func TestValidateCWE(t *testing.T) {
 	tests := []struct {
-		value       string
-		wantValid   bool
-		wantWarning string
+		value          string
+		wantNormalized string
+		wantValid      bool
+		wantWarning    string
 	}{
-		{"798", true, ""},
-		{"79", true, ""},
-		{"1", true, ""},
-		{"0", true, "cwe:0 will never match any findings"},
-		{"-1", false, `invalid cwe value "-1" ignored (must be a positive integer)`},
-		{"abc", false, `invalid cwe value "abc" ignored (must be a positive integer)`},
-		{"", false, "empty cwe directive ignored"},
-		{"12.5", false, `invalid cwe value "12.5" ignored (must be a positive integer)`},
+		{"798", "798", true, ""},
+		{"79", "79", true, ""},
+		{"1", "1", true, ""},
+		{"0079", "79", true, ""},
+		{"0", "0", true, "cwe:0 will never match any findings"},
+		{"-1", "", false, `invalid cwe value "-1" ignored (must be a non-negative integer)`},
+		{"abc", "", false, `invalid cwe value "abc" ignored (must be a non-negative integer)`},
+		{"", "", false, "empty cwe directive ignored"},
+		{"12.5", "", false, `invalid cwe value "12.5" ignored (must be a non-negative integer)`},
 	}
 
 	for _, tt := range tests {
 		t.Run("cwe:"+tt.value, func(t *testing.T) {
-			valid, warning := validateCWE(tt.value)
+			normalized, valid, warning := validateCWE(tt.value)
 			if valid != tt.wantValid {
 				t.Errorf("validateCWE(%q) valid = %v, want %v", tt.value, valid, tt.wantValid)
+			}
+			if normalized != tt.wantNormalized {
+				t.Errorf("validateCWE(%q) normalized = %q, want %q", tt.value, normalized, tt.wantNormalized)
 			}
 			if warning != tt.wantWarning {
 				t.Errorf("validateCWE(%q) warning = %q, want %q", tt.value, warning, tt.wantWarning)

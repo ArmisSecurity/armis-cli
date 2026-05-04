@@ -68,17 +68,30 @@ func (c *SuppressionConfig) IsEmpty() bool {
 		len(c.Severities) == 0 && len(c.CWEs) == 0
 }
 
+// maxDirectivesPerType is the maximum number of directives stored per type.
+// This bounds memory usage even if a malicious .armisignore is provided.
+const maxDirectivesPerType = 100
+
 // Add appends a directive to the appropriate slice based on its type.
+// Directives beyond maxDirectivesPerType per type are silently dropped.
 func (c *SuppressionConfig) Add(d SuppressionDirective) {
 	switch d.Type {
 	case DirectiveRule:
-		c.Rules = append(c.Rules, d)
+		if len(c.Rules) < maxDirectivesPerType {
+			c.Rules = append(c.Rules, d)
+		}
 	case DirectiveCategory:
-		c.Categories = append(c.Categories, d)
+		if len(c.Categories) < maxDirectivesPerType {
+			c.Categories = append(c.Categories, d)
+		}
 	case DirectiveSeverity:
-		c.Severities = append(c.Severities, d)
+		if len(c.Severities) < maxDirectivesPerType {
+			c.Severities = append(c.Severities, d)
+		}
 	case DirectiveCWE:
-		c.CWEs = append(c.CWEs, d)
+		if len(c.CWEs) < maxDirectivesPerType {
+			c.CWEs = append(c.CWEs, d)
+		}
 	}
 }
 
@@ -142,11 +155,11 @@ func parseDirectiveLine(line string) (*SuppressionDirective, bool, string) {
 		return &SuppressionDirective{Type: DirectiveSeverity, Value: normalized, Reason: reason}, true, ""
 
 	case "cwe":
-		valid, warning := validateCWE(value)
+		normalized, valid, warning := validateCWE(value)
 		if !valid {
 			return nil, false, warning
 		}
-		return &SuppressionDirective{Type: DirectiveCWE, Value: value, Reason: reason}, true, warning
+		return &SuppressionDirective{Type: DirectiveCWE, Value: normalized, Reason: reason}, true, warning
 
 	default:
 		return nil, false, ""
@@ -166,21 +179,23 @@ func hasDirectivePrefix(line string) bool {
 }
 
 // validateCWE checks whether a CWE value string is a valid non-negative integer.
-// Returns (valid, warning). When valid is false the directive should be rejected.
+// Returns (normalized, valid, warning). The normalized value is the canonical integer
+// string (e.g. "0079" becomes "79"). When valid is false the directive should be rejected.
 // When valid is true but warning is non-empty, the directive is accepted with a warning.
-func validateCWE(value string) (bool, string) {
+func validateCWE(value string) (string, bool, string) {
 	if value == "" {
-		return false, "empty cwe directive ignored"
+		return "", false, "empty cwe directive ignored"
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
-		return false, fmt.Sprintf("invalid cwe value %q ignored (must be a positive integer)", value)
+		return "", false, fmt.Sprintf("invalid cwe value %q ignored (must be a non-negative integer)", value)
 	}
 	if n < 0 {
-		return false, fmt.Sprintf("invalid cwe value %q ignored (must be a positive integer)", value)
+		return "", false, fmt.Sprintf("invalid cwe value %q ignored (must be a non-negative integer)", value)
 	}
+	normalized := strconv.Itoa(n)
 	if n == 0 {
-		return true, "cwe:0 will never match any findings"
+		return normalized, true, "cwe:0 will never match any findings"
 	}
-	return true, ""
+	return normalized, true, ""
 }

@@ -21,7 +21,6 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // IgnoreMatcher matches files against ignore patterns.
 type IgnoreMatcher struct {
 	patterns []gitignore.Pattern
-	domain   []string
 }
 
 // LoadIgnorePatterns loads ignore patterns from .armisignore files in the repository.
@@ -80,10 +79,8 @@ func LoadArmisIgnore(repoRoot string) (*IgnoreMatcher, *SuppressionConfig, error
 		return nil, nil, err
 	}
 
-	domain := strings.Split(repoRoot, string(filepath.Separator))
 	matcher := &IgnoreMatcher{
 		patterns: allPatterns,
-		domain:   domain,
 	}
 
 	if config.IsEmpty() {
@@ -124,7 +121,8 @@ func parseArmisIgnoreFile(ignoreFilePath, repoRoot string, isRoot bool) ([]gitig
 		domain = strings.Split(relDir, string(filepath.Separator))
 	}
 
-	lines := strings.Split(string(data), "\n")
+	content := strings.TrimSuffix(string(data), "\n")
+	lines := strings.Split(content, "\n")
 
 	var warnings []string
 	if len(lines) > maxIgnoreFileLines {
@@ -141,15 +139,15 @@ func parseArmisIgnoreFile(ignoreFilePath, repoRoot string, isRoot bool) ([]gitig
 			continue
 		}
 
-		if isRoot {
+		if isRoot && hasDirectivePrefix(trimmed) {
 			directive, isDirective, warning := parseDirectiveLine(trimmed)
 			if warning != "" {
 				warnings = append(warnings, warning)
 			}
 			if isDirective {
 				directives = append(directives, *directive)
-				continue
 			}
+			continue
 		}
 
 		pattern := gitignore.ParsePattern(trimmed, domain)
