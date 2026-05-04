@@ -745,6 +745,11 @@ func TestGenerateHelpURI(t *testing.T) {
 			expected: "https://cwe.mitre.org/data/definitions/89.html",
 		},
 		{
+			name:     "CWE with full title is normalized",
+			finding:  model.Finding{CWEs: []string{"CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"}},
+			expected: "https://cwe.mitre.org/data/definitions/78.html",
+		},
+		{
 			name:     "CVE used when no CWE",
 			finding:  model.Finding{CVEs: []string{"CVE-2023-1234"}},
 			expected: "https://nvd.nist.gov/vuln/detail/CVE-2023-1234",
@@ -1217,6 +1222,52 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 	}
 }
 
+func TestNormalizeCWE(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"CWE-78", "CWE-78"},
+		{"CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')", "CWE-78"},
+		{"CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag", "CWE-1004"},
+		{"CWE-79", "CWE-79"},
+		{"not-a-cwe", "not-a-cwe"},
+		{"", ""},
+		{"cwe-78: lowercase", "cwe-78: lowercase"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeCWE(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizeCWE(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeCVE(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"CVE-2024-1234", "CVE-2024-1234"},
+		{"CVE-2024-1234: Some description", "CVE-2024-1234"},
+		{"CVE-2024-12345678", "CVE-2024-12345678"},
+		{"not-a-cve", "not-a-cve"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeCVE(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizeCVE(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestStableRuleID(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1229,9 +1280,24 @@ func TestStableRuleID(t *testing.T) {
 			expected: "CWE-79",
 		},
 		{
+			name:     "CWE full title is normalized",
+			finding:  model.Finding{ID: "server-id-cwe-full", CWEs: []string{"CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"}},
+			expected: "CWE-78",
+		},
+		{
+			name:     "multiple CWEs sorted then normalized",
+			finding:  model.Finding{ID: "multi-norm", CWEs: []string{"CWE-89: SQL Injection", "CWE-22: Path Traversal"}},
+			expected: "CWE-22",
+		},
+		{
 			name:     "CVE when no CWE",
 			finding:  model.Finding{ID: "server-id-456", CVEs: []string{"CVE-2023-5678"}},
 			expected: "CVE-2023-5678",
+		},
+		{
+			name:     "CVE with description is normalized",
+			finding:  model.Finding{ID: "server-id-cve-desc", CVEs: []string{"CVE-2024-1234: Some vulnerability"}},
+			expected: "CVE-2024-1234",
 		},
 		{
 			name:     "FindingCategory when no CWE/CVE",
@@ -1283,59 +1349,6 @@ func TestStableRuleID(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestComputeFingerprint(t *testing.T) {
-	t.Run("deterministic", func(t *testing.T) {
-		fp1 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
-		fp2 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
-		if fp1 != fp2 {
-			t.Errorf("fingerprint not deterministic: %q != %q", fp1, fp2)
-		}
-	})
-
-	t.Run("uses snippet when available", func(t *testing.T) {
-		withSnippet := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
-		diffLine := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 99)
-		if withSnippet != diffLine {
-			t.Error("fingerprint should ignore startLine when snippet is present")
-		}
-	})
-
-	t.Run("falls back to startLine without snippet", func(t *testing.T) {
-		fp1 := computeFingerprint("CWE-79", "src/app.js", "", 10)
-		fp2 := computeFingerprint("CWE-79", "src/app.js", "", 20)
-		if fp1 == fp2 {
-			t.Error("fingerprint should differ when startLine differs and no snippet")
-		}
-	})
-
-	t.Run("different inputs produce different hashes", func(t *testing.T) {
-		fp1 := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
-		fp2 := computeFingerprint("CWE-22", "src/app.js", "eval(input)", 10)
-		fp3 := computeFingerprint("CWE-79", "src/other.js", "eval(input)", 10)
-		if fp1 == fp2 {
-			t.Error("different ruleIDs should produce different fingerprints")
-		}
-		if fp1 == fp3 {
-			t.Error("different files should produce different fingerprints")
-		}
-	})
-
-	t.Run("returns hex-encoded SHA-256", func(t *testing.T) {
-		fp := computeFingerprint("CWE-79", "src/app.js", "eval(input)", 10)
-		if len(fp) != 64 {
-			t.Errorf("expected 64 hex chars, got %d", len(fp))
-		}
-	})
-
-	t.Run("no separator collision", func(t *testing.T) {
-		fp1 := computeFingerprint("CWE:7", "9", "snippet", 1)
-		fp2 := computeFingerprint("CWE", "7:9", "snippet", 1)
-		if fp1 == fp2 {
-			t.Error("length-prefixed encoding should prevent separator collision")
-		}
-	})
 }
 
 func TestBuildRulesStableCollapsing(t *testing.T) {
@@ -1407,11 +1420,8 @@ func TestSARIFFormatter_FindingIDAndFingerprints(t *testing.T) {
 		t.Errorf("ruleId = %q, want CWE-79", res.RuleID)
 	}
 
-	if res.PartialFingerprints == nil {
-		t.Fatal("expected partialFingerprints to be set")
-	}
-	if fp, ok := res.PartialFingerprints["primaryLocationLineHash"]; !ok || fp == "" {
-		t.Error("expected primaryLocationLineHash to be non-empty")
+	if res.PartialFingerprints != nil {
+		t.Errorf("expected partialFingerprints to be nil (delegated to upload-sarif action), got %v", res.PartialFingerprints)
 	}
 
 	if res.Properties == nil {
