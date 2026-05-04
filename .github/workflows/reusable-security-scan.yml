@@ -39,6 +39,10 @@ on:
         description: 'Comma-separated list of file paths to scan (relative to repository root)'
         type: string
         default: ''
+      region:
+        description: 'Armis cloud region for JWT authentication (overrides auto-discovery)'
+        type: string
+        default: ''
       build-from-source:
         description: 'Build CLI from source instead of downloading release (for testing scanner changes)'
         type: boolean
@@ -90,6 +94,7 @@ jobs:
           scan-target: ${{ inputs.scan-target }}
           client-id: ${{ secrets.client-id }}
           client-secret: ${{ secrets.client-secret }}
+          region: ${{ inputs.region }}
           api-token: ${{ secrets.api-token }}
           tenant-id: ${{ secrets.tenant-id }}
           format: sarif
