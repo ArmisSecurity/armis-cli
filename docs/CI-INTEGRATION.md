@@ -150,6 +150,7 @@ jobs:
 | `image-tarball` | string | | Path to image tarball (for image scans) |
 | `scan-timeout` | number | `60` | Scan timeout in minutes |
 | `include-files` | string | | Comma-separated list of file paths to scan (for targeted scanning) |
+| `region` | string | | Armis cloud region (overrides auto-discovery) |
 | `build-from-source` | boolean | `false` | Build CLI from source instead of release (for testing) |
 
 #### Required Secrets

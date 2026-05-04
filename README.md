@@ -537,6 +537,7 @@ jobs:
 | `image-tarball` | string | | Path to image tarball (for image scans) |
 | `scan-timeout` | number | `60` | Scan timeout in minutes |
 | `include-files` | string | | Comma-separated file paths to scan (for targeted scanning) |
+| `region` | string | | Armis cloud region (overrides auto-discovery) |
 
 **Required secrets:**
 
