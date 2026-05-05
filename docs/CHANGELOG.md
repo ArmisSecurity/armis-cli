@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.0] - 2026-05-05
+
+### Added
+
+- Agent detection `collect` subcommand for reporting detected AI coding agents to Armis Cloud inventory (#153)
+- Local AI agent discovery capability for detecting installed coding assistants
+
+### Fixed
+
+- SARIF rule IDs normalized to stable CWE/CVE identifiers, removing unstable fingerprints for consistent GitHub Code Scanning deduplication (#154)
+- Install script now surfaces credential write failures instead of silently swallowing errors (#151)
+- Release pipeline fixed by upgrading cosign-installer to v4 (v3 bootstrap binary was delisted) (#149)
+
+---
+
 ## [1.4.0] - 2026-03-15
 
 ### Added
@@ -244,7 +259,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
 [1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...v1.2.1
