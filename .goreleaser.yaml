@@ -124,7 +124,7 @@ release:
     cosign verify-blob \
       --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      --signature armis-cli-checksums.txt.sig \
+      --bundle armis-cli-checksums.txt.bundle \
       armis-cli-checksums.txt
     ```
   footer: |
@@ -143,10 +143,10 @@ signs:
     output: true
     args:
       - sign-blob
-      - "--output-signature=${signature}"
-      - "--bundle=${signature}.bundle"
+      - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"
+    signature: "${artifact}.bundle"
 
 # Homebrew tap updates are handled by a separate workflow in the homebrew-tap repo
 # that auto-detects new releases from this repository
