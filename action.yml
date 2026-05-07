@@ -195,17 +195,20 @@ runs:
           echo "Error: 'client-secret' provided without 'client-id'. Both are required for JWT authentication."
           exit 1
         fi
-        if [ -n "$ARMIS_API_TOKEN" ] && [ -z "$ARMIS_TENANT_ID" ]; then
-          echo "Error: 'api-token' provided without 'tenant-id'. Both are required for Basic authentication."
-          exit 1
-        fi
-        if [ -z "$ARMIS_API_TOKEN" ] && [ -n "$ARMIS_TENANT_ID" ]; then
-          echo "Error: 'tenant-id' provided without 'api-token'. Both are required for Basic authentication."
-          exit 1
-        fi
-        if [ -z "$ARMIS_CLIENT_ID" ] && [ -z "$ARMIS_API_TOKEN" ]; then
-          echo "Error: No authentication provided. Set 'client-id' + 'client-secret' (recommended) or 'api-token' + 'tenant-id' (legacy)."
-          exit 1
+        # Only validate Basic auth pairing when JWT is not configured (JWT takes precedence)
+        if [ -z "$ARMIS_CLIENT_ID" ]; then
+          if [ -n "$ARMIS_API_TOKEN" ] && [ -z "$ARMIS_TENANT_ID" ]; then
+            echo "Error: 'api-token' provided without 'tenant-id'. Both are required for Basic authentication."
+            exit 1
+          fi
+          if [ -z "$ARMIS_API_TOKEN" ] && [ -n "$ARMIS_TENANT_ID" ]; then
+            echo "Error: 'tenant-id' provided without 'api-token'. Both are required for Basic authentication."
+            exit 1
+          fi
+          if [ -z "$ARMIS_API_TOKEN" ]; then
+            echo "Error: No authentication provided. Set 'client-id' + 'client-secret' (recommended) or 'api-token' + 'tenant-id' (legacy)."
+            exit 1
+          fi
         fi
 
         # Validate scan-type to prevent injection
