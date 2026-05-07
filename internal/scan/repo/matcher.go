@@ -7,7 +7,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
-var cweIntPattern = regexp.MustCompile(`^CWE-(\d+)`)
+var cweIntPattern = regexp.MustCompile(`(?i)^CWE-(\d+)`)
 
 // categoryToFindingType maps .armisignore category directive values to FindingType.
 var categoryToFindingType = map[string]model.FindingType{
@@ -56,14 +56,16 @@ func MatchFinding(finding model.Finding, config *SuppressionConfig) MatchResult 
 
 // cweMatches checks if any of the finding's CWE identifiers match the directive value.
 // The directive value is a bare integer string (e.g. "89").
-// Finding CWEs may be in the format "CWE-89: Improper..." or just "89".
+// Finding CWEs may be in the format "CWE-89: Improper...", "cwe-89", or just "89".
+// Matching is case-insensitive and whitespace-tolerant.
 func cweMatches(findingCWEs []string, directiveValue string) bool {
 	for _, cwe := range findingCWEs {
-		if matches := cweIntPattern.FindStringSubmatch(cwe); len(matches) == 2 {
+		trimmed := strings.TrimSpace(cwe)
+		if matches := cweIntPattern.FindStringSubmatch(trimmed); len(matches) == 2 {
 			if matches[1] == directiveValue {
 				return true
 			}
-		} else if strings.TrimSpace(cwe) == directiveValue {
+		} else if trimmed == directiveValue {
 			return true
 		}
 	}

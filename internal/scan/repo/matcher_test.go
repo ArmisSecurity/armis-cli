@@ -155,6 +155,9 @@ func TestCweMatches(t *testing.T) {
 		{"invalid vs 89", []string{"invalid"}, "89", false},
 		{"empty cwes", []string{}, "89", false},
 		{"multiple cwes, second matches", []string{"CWE-20", "CWE-79"}, "79", true},
+		{"lowercase cwe-78 matches", []string{"cwe-78"}, "78", true},
+		{"mixed case Cwe-789 matches", []string{"Cwe-789"}, "789", true},
+		{"whitespace trimmed", []string{" CWE-89 "}, "89", true},
 	}
 
 	for _, tt := range tests {

@@ -30,6 +30,43 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 	return matcher, err
 }
 
+// LoadSuppressionConfig loads only suppression directives from the root .armisignore file
+// without walking the entire repository tree. Use this in targeted scan modes (--include-files,
+// --changed) where the IgnoreMatcher is not needed for tar filtering.
+func LoadSuppressionConfig(repoRoot string) (*SuppressionConfig, error) {
+	rootIgnorePath := filepath.Join(repoRoot, ".armisignore")
+
+	info, err := os.Lstat(rootIgnorePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf(".armisignore is a symlink (rejected): %s", rootIgnorePath)
+	}
+
+	_, directives, warnings, parseErr := parseArmisIgnoreFile(rootIgnorePath, repoRoot, true)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+
+	for _, w := range warnings {
+		cli.PrintWarningf(".armisignore: %s", w)
+	}
+
+	if len(directives) == 0 {
+		return nil, nil
+	}
+
+	config := NewSuppressionConfig()
+	for i := range directives {
+		config.Add(directives[i])
+	}
+	return config, nil
+}
+
 // LoadArmisIgnore loads both path patterns and suppression directives from .armisignore files.
 // Path patterns are collected from all .armisignore files (root and nested).
 // Suppression directives are only collected from the root .armisignore file.

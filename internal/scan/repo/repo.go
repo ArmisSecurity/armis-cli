@@ -102,15 +102,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	// Load .armisignore: suppression config applies in ALL scan modes,
-	// IgnoreMatcher only used in full-scan mode for tar filtering.
-	ignoreMatcher, suppressionConfig, err := LoadArmisIgnore(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
-	}
-
 	var size int64
 	var tarFunc func() error
+	var suppressionConfig *SuppressionConfig
 
 	pr, pw := io.Pipe()
 	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
@@ -121,7 +115,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	defer pr.Close() //nolint:errcheck
 
 	if s.includeFiles != nil {
-		// Targeted file scanning mode - scan only specified files
+		// Targeted file scanning mode — only load suppression directives from root
+		// .armisignore (no tree walk needed since IgnoreMatcher isn't used for tar).
+		var suppErr error
+		suppressionConfig, suppErr = LoadSuppressionConfig(absPath)
+		if suppErr != nil {
+			return nil, fmt.Errorf("failed to load suppression config: %w", suppErr)
+		}
+
 		existing, warnings := s.includeFiles.ValidateExistence()
 		for _, w := range warnings {
 			cli.PrintWarning(w)
@@ -142,7 +143,13 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			return s.tarGzFiles(absPath, existing, pw)
 		}
 	} else {
-		// Full directory scanning mode — ignoreMatcher loaded above
+		// Full directory scanning mode — walk tree for both ignore patterns and directives.
+		ignoreMatcher, suppCfg, loadErr := LoadArmisIgnore(absPath)
+		if loadErr != nil {
+			return nil, fmt.Errorf("failed to load ignore patterns: %w", loadErr)
+		}
+		suppressionConfig = suppCfg
+
 		var sizeErr error
 		size, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
 		if sizeErr != nil {

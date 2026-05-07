@@ -873,7 +873,8 @@ func renderFindings(w io.Writer, findings []model.Finding, opts FormatOptions) {
 func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	s := GetStyles()
 
-	// Show suppression label if finding is suppressed and --show-suppressed is active
+	// Show suppression label whenever a suppressed finding is rendered (callers
+	// are responsible for filtering suppressed findings when --show-suppressed is off).
 	if finding.Suppressed {
 		suppLabel := s.MutedText.Render("[SUPPRESSED]")
 		var reason string
