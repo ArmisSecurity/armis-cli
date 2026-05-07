@@ -401,3 +401,62 @@ func TestJSONFormatter_NilAndEmptyHandling(t *testing.T) {
 		}
 	})
 }
+
+func TestJSONFormatter_SuppressedFieldPresent(t *testing.T) {
+	formatter := &JSONFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-json-supp",
+		Findings: []model.Finding{
+			{
+				ID:         "supp-1",
+				Severity:   model.SeverityLow,
+				Title:      "Suppressed finding",
+				Suppressed: true,
+				SuppressionInfo: &model.SuppressionInfo{
+					Type:  "severity",
+					Value: "LOW",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"suppressed": true`) {
+		t.Error("expected suppressed:true in JSON output")
+	}
+	if !strings.Contains(output, `"suppression_info"`) {
+		t.Error("expected suppression_info in JSON output")
+	}
+}
+
+func TestJSONFormatter_NonSuppressedOmitsSuppressedField(t *testing.T) {
+	formatter := &JSONFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-json-nosupp",
+		Findings: []model.Finding{
+			{
+				ID:       "active-1",
+				Severity: model.SeverityHigh,
+				Title:    "Active finding",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, `"suppressed"`) {
+		t.Error("non-suppressed finding should not have 'suppressed' key (omitempty)")
+	}
+	if strings.Contains(output, `"suppression_info"`) {
+		t.Error("non-suppressed finding should not have 'suppression_info' key (omitempty)")
+	}
+}

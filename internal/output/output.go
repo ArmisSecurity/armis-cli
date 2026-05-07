@@ -43,6 +43,7 @@ type FormatOptions struct {
 	Debug            bool
 	SummaryTop       bool
 	FailOnSeverities []string // Severities that count as failures (for JUnit output)
+	ShowSuppressed   bool     // Show findings suppressed by .armisignore directives
 }
 
 // Formatter is the interface for formatting scan results in different output formats.
@@ -68,6 +69,7 @@ func GetFormatter(format string) (Formatter, error) {
 }
 
 // ShouldFail determines if the scan should fail based on the severity of findings.
+// Suppressed findings are excluded from the evaluation.
 func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
 	severityMap := make(map[string]bool)
 	for _, sev := range failOnSeverities {
@@ -75,12 +77,26 @@ func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
 	}
 
 	for _, finding := range result.Findings {
+		if finding.Suppressed {
+			continue
+		}
 		if severityMap[string(finding.Severity)] {
 			return true
 		}
 	}
 
 	return false
+}
+
+// FilterActiveFindings returns only non-suppressed findings.
+func FilterActiveFindings(findings []model.Finding) []model.Finding {
+	active := make([]model.Finding, 0, len(findings))
+	for _, f := range findings {
+		if !f.Suppressed {
+			active = append(active, f)
+		}
+	}
+	return active
 }
 
 // CheckExit returns an error if the scan should fail based on severity of findings.

@@ -26,6 +26,8 @@ func DeriveFindingType(hasCVEs bool, hasSecret bool, findingCategory string) mod
 		return model.FindingTypeMisconfig
 	case "SECRET":
 		return model.FindingTypeSecret
+	case "LICENSE_COMPLIANCE_RISK", "LICENSE":
+		return model.FindingTypeLicense
 	default:
 		return model.FindingTypeSCA
 	}

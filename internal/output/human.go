@@ -317,7 +317,12 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	}
 
 	// 5. Findings section
-	if len(result.Findings) > 0 {
+	displayFindings := result.Findings
+	if !opts.ShowSuppressed {
+		displayFindings = FilterActiveFindings(result.Findings)
+	}
+
+	if len(displayFindings) > 0 {
 		ew.write("\n")
 		sectionStyle := s.SectionTitle.
 			BorderStyle(lipgloss.NormalBorder()).
@@ -331,11 +336,27 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 
 		// 5. Individual findings
 		if opts.GroupBy != "" && opts.GroupBy != "none" {
-			groups := groupFindings(result.Findings, opts.GroupBy)
+			groups := groupFindings(displayFindings, opts.GroupBy)
 			renderGroupedFindings(w, groups, opts)
 		} else {
-			sortedFindings := sortFindingsBySeverity(result.Findings)
+			sortedFindings := sortFindingsBySeverity(displayFindings)
 			renderFindings(w, sortedFindings, opts)
+		}
+	}
+
+	// CRITICAL suppression warning
+	if result.Summary.Suppressed > 0 {
+		criticalSuppressed := 0
+		for _, f := range result.Findings {
+			if f.Suppressed && f.Severity == model.SeverityCritical {
+				criticalSuppressed++
+			}
+		}
+		if criticalSuppressed > 0 {
+			ew.write("\n")
+			ew.write("%s\n", s.WarningText.Render(
+				fmt.Sprintf("WARNING: %d CRITICAL %s suppressed by .armisignore",
+					criticalSuppressed, pluralize("finding", criticalSuppressed))))
 		}
 	}
 
@@ -681,11 +702,19 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	s := GetStyles()
 
 	total := result.Summary.Total
+	suppressed := result.Summary.Suppressed
 
 	// Handle edge case: no findings
-	if total == 0 {
+	if total == 0 && suppressed == 0 {
 		successStyle := s.SuccessText
 		ew.write("%s %s\n", IconSuccess, successStyle.Render("No issues found"))
+		return ew.err
+	}
+
+	if total == 0 && suppressed > 0 {
+		successStyle := s.SuccessText
+		ew.write("%s %s\n", IconSuccess, successStyle.Render(
+			fmt.Sprintf("No active issues (%d suppressed by .armisignore)", suppressed)))
 		return ew.err
 	}
 
@@ -707,11 +736,20 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 		}
 	}
 
-	// Format: "N issues  ·  X critical, Y high, Z medium"
-	ew.write("%s  %s  %s\n",
-		s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total))),
-		s.MutedText.Render("·"),
-		strings.Join(parts, s.MutedText.Render(", ")))
+	if suppressed > 0 {
+		// Format: "N issues (M suppressed by .armisignore)  ·  X critical, Y high"
+		ew.write("%s  %s  %s\n",
+			s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total)))+
+				s.MutedText.Render(fmt.Sprintf(" (%d suppressed by .armisignore)", suppressed)),
+			s.MutedText.Render("·"),
+			strings.Join(parts, s.MutedText.Render(", ")))
+	} else {
+		// Format: "N issues  ·  X critical, Y high, Z medium"
+		ew.write("%s  %s  %s\n",
+			s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total))),
+			s.MutedText.Render("·"),
+			strings.Join(parts, s.MutedText.Render(", ")))
+	}
 
 	return ew.err
 }
@@ -740,6 +778,12 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	if result.Summary.FilteredNonExploitable > 0 {
 		filtered := s.MutedText.Render(fmt.Sprintf("(%d filtered as non-exploitable)", result.Summary.FilteredNonExploitable))
 		content.WriteString(filtered + "\n")
+	}
+
+	// Suppressed count if any
+	if result.Summary.Suppressed > 0 {
+		suppressed := s.MutedText.Render(fmt.Sprintf("(%d suppressed by .armisignore)", result.Summary.Suppressed))
+		content.WriteString(suppressed + "\n")
 	}
 
 	// Severity breakdown - minimal inline format with colored dots
@@ -828,6 +872,23 @@ func renderFindings(w io.Writer, findings []model.Finding, opts FormatOptions) {
 
 func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	s := GetStyles()
+
+	// Show suppression label if finding is suppressed and --show-suppressed is active
+	if finding.Suppressed {
+		suppLabel := s.MutedText.Render("[SUPPRESSED]")
+		var reason string
+		if finding.SuppressionInfo != nil {
+			reason = fmt.Sprintf("%s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
+			if finding.SuppressionInfo.Reason != "" {
+				reason += " -- " + finding.SuppressionInfo.Reason
+			}
+		}
+		if reason != "" {
+			_, _ = fmt.Fprintf(w, "%s %s\n", suppLabel, s.MutedText.Render(reason))
+		} else {
+			_, _ = fmt.Fprintf(w, "%s\n", suppLabel)
+		}
+	}
 
 	// Severity (bold colored text) + Title on same line
 	sevStyle := s.GetSeverityText(finding.Severity)

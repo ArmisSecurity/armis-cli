@@ -119,6 +119,20 @@ func TestDeriveFindingType(t *testing.T) {
 			findingCategory: "CODE_PACKAGE_VULNERABILITY",
 			want:            model.FindingTypeVulnerability,
 		},
+		{
+			name:            "LICENSE_COMPLIANCE_RISK category results in license",
+			hasCVEs:         false,
+			hasSecret:       false,
+			findingCategory: "LICENSE_COMPLIANCE_RISK",
+			want:            model.FindingTypeLicense,
+		},
+		{
+			name:            "lowercase license category results in license",
+			hasCVEs:         false,
+			hasSecret:       false,
+			findingCategory: "license",
+			want:            model.FindingTypeLicense,
+		},
 	}
 
 	for _, tt := range tests {

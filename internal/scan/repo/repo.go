@@ -102,9 +102,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
+	// Load .armisignore: suppression config applies in ALL scan modes,
+	// IgnoreMatcher only used in full-scan mode for tar filtering.
+	ignoreMatcher, suppressionConfig, err := LoadArmisIgnore(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+	}
+
 	var size int64
 	var tarFunc func() error
-	var ignoreMatcher *IgnoreMatcher
 
 	pr, pw := io.Pipe()
 	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
@@ -125,10 +131,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
 		}
 
-		var err error
-		size, err = calculateFilesSize(absPath, existing)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate files size: %w", err)
+		var sizeErr error
+		size, sizeErr = calculateFilesSize(absPath, existing)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate files size: %w", sizeErr)
 		}
 
 		tarFunc = func() error {
@@ -136,16 +142,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			return s.tarGzFiles(absPath, existing, pw)
 		}
 	} else {
-		// Full directory scanning mode (existing behavior)
-		var err error
-		ignoreMatcher, err = LoadIgnorePatterns(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
-		}
-
-		size, err = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+		// Full directory scanning mode — ignoreMatcher loaded above
+		var sizeErr error
+		size, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate directory size: %w", sizeErr)
 		}
 
 		tarFunc = func() error {
@@ -261,6 +262,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+
+	if suppressionConfig != nil && !suppressionConfig.IsEmpty() {
+		suppCount := ApplySuppression(result.Findings, suppressionConfig)
+		if suppCount > 0 {
+			result.Summary = recomputeSummary(result.Findings, suppCount, result.Summary.FilteredNonExploitable)
+		}
+	}
+
 	return result, nil
 }
 

@@ -69,8 +69,14 @@ type sarifResult struct {
 	Message             sarifMessage           `json:"message"`
 	Locations           []sarifLocation        `json:"locations,omitempty"`
 	PartialFingerprints map[string]string      `json:"partialFingerprints,omitempty"`
+	Suppressions        []sarifSuppression     `json:"suppressions,omitempty"`
 	Fixes               []sarifFix             `json:"fixes,omitempty"`
 	Properties          *sarifResultProperties `json:"properties,omitempty"`
+}
+
+type sarifSuppression struct {
+	Kind          string `json:"kind"`
+	Justification string `json:"justification,omitempty"`
 }
 
 type sarifResultProperties struct {
@@ -391,6 +397,17 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			if finding.Validation.ValidatedSeverity != nil {
 				result.Properties.Validation.ValidatedSeverity = *finding.Validation.ValidatedSeverity
 			}
+		}
+
+		if finding.Suppressed && finding.SuppressionInfo != nil {
+			justification := fmt.Sprintf(".armisignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
+			if finding.SuppressionInfo.Reason != "" {
+				justification += " -- " + finding.SuppressionInfo.Reason
+			}
+			result.Suppressions = []sarifSuppression{{
+				Kind:          "inSource",
+				Justification: justification,
+			}}
 		}
 
 		if finding.File != "" {

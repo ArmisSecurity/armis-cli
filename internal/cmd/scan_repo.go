@@ -18,6 +18,9 @@ import (
 // changedRef holds the value for the --changed flag (repo-specific, not shared with scan image).
 var changedRef string
 
+// showSuppressed controls whether findings suppressed by .armisignore are displayed.
+var showSuppressed bool
+
 var scanRepoCmd = &cobra.Command{
 	Use:   "repo [path]",
 	Short: "Scan a local repository",
@@ -175,6 +178,7 @@ var scanRepoCmd = &cobra.Command{
 			Debug:            debug,
 			SummaryTop:       summaryTop,
 			FailOnSeverities: failOnSeverities,
+			ShowSuppressed:   showSuppressed,
 		}
 
 		if err := formatter.FormatWithOptions(result, outputCfg.Writer, opts); err != nil {
@@ -188,6 +192,8 @@ var scanRepoCmd = &cobra.Command{
 func init() {
 	scanRepoCmd.Flags().StringSliceVar(&includeFiles, "include-files", nil,
 		"Comma-separated list of file paths to include in scan (relative to repository root)")
+	scanRepoCmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false,
+		"Show findings suppressed by .armisignore directives")
 	scanRepoCmd.Flags().StringVar(&changedRef, "changed", "",
 		"Scan only git-changed files: --changed for uncommitted, "+
 			"--changed=staged for staged only, --changed=REF for changes vs a branch/tag "+
