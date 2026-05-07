@@ -255,19 +255,3 @@ func TestRecomputeSummary(t *testing.T) {
 		t.Errorf("BySeverity[LOW] = %d, want 0", summary.BySeverity[model.SeverityLow])
 	}
 }
-
-func TestFilterActiveFindings(t *testing.T) {
-	findings := []model.Finding{
-		{ID: "1", Suppressed: false},
-		{ID: "2", Suppressed: true},
-		{ID: "3", Suppressed: false},
-	}
-
-	active := filterActiveFindings(findings)
-	if len(active) != 2 {
-		t.Fatalf("filterActiveFindings returned %d findings, want 2", len(active))
-	}
-	if active[0].ID != "1" || active[1].ID != "3" {
-		t.Errorf("unexpected active findings: %v", active)
-	}
-}

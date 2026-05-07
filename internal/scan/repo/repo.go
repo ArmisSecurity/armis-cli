@@ -146,7 +146,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		// Full directory scanning mode — walk tree for both ignore patterns and directives.
 		ignoreMatcher, suppCfg, loadErr := LoadArmisIgnore(absPath)
 		if loadErr != nil {
-			return nil, fmt.Errorf("failed to load ignore patterns: %w", loadErr)
+			return nil, fmt.Errorf("failed to load .armisignore: %w", loadErr)
 		}
 		suppressionConfig = suppCfg
 
@@ -532,6 +532,9 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 			size, addErr = safeAddSize(size, info.Size())
 			if addErr != nil {
 				return fmt.Errorf("calculating directory size: %w", addErr)
+			}
+			if size > MaxRepoSize {
+				return fmt.Errorf("directory size exceeds maximum allowed size (%d bytes)", MaxRepoSize)
 			}
 		}
 		return nil

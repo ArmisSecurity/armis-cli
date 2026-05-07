@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/charmbracelet/lipgloss"
@@ -344,7 +345,7 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 		}
 	}
 
-	// CRITICAL suppression warning
+	// CRITICAL suppression warning — emitted to stderr so it doesn't pollute stdout
 	if result.Summary.Suppressed > 0 {
 		criticalSuppressed := 0
 		for _, f := range result.Findings {
@@ -353,10 +354,8 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 			}
 		}
 		if criticalSuppressed > 0 {
-			ew.write("\n")
-			ew.write("%s\n", s.WarningText.Render(
-				fmt.Sprintf("WARNING: %d CRITICAL %s suppressed by .armisignore",
-					criticalSuppressed, pluralize("finding", criticalSuppressed))))
+			cli.PrintWarningf("%d CRITICAL %s suppressed by .armisignore",
+				criticalSuppressed, pluralize("finding", criticalSuppressed))
 		}
 	}
 

@@ -119,14 +119,3 @@ func recomputeSummary(findings []model.Finding, suppressed int, filteredNonExplo
 
 	return summary
 }
-
-// filterActiveFindings returns only non-suppressed findings.
-func filterActiveFindings(findings []model.Finding) []model.Finding {
-	active := make([]model.Finding, 0, len(findings))
-	for _, f := range findings {
-		if !f.Suppressed {
-			active = append(active, f)
-		}
-	}
-	return active
-}

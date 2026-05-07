@@ -34,6 +34,9 @@ func LoadIgnorePatterns(repoRoot string) (*IgnoreMatcher, error) {
 // without walking the entire repository tree. Use this in targeted scan modes (--include-files,
 // --changed) where the IgnoreMatcher is not needed for tar filtering.
 func LoadSuppressionConfig(repoRoot string) (*SuppressionConfig, error) {
+	if !filepath.IsAbs(repoRoot) {
+		return nil, fmt.Errorf("repoRoot must be an absolute path, got: %s", repoRoot)
+	}
 	rootIgnorePath := filepath.Join(filepath.Clean(repoRoot), ".armisignore") // #nosec G304
 
 	info, err := os.Lstat(rootIgnorePath)

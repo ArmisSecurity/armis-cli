@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1102,16 +1103,32 @@ func TestHumanFormatter_CriticalSuppressionWarning(t *testing.T) {
 		},
 	}
 
+	// Capture stderr to verify the warning goes there (not stdout)
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
 	formatter := &HumanFormatter{}
 	var buf bytes.Buffer
 	err := formatter.FormatWithOptions(result, &buf, FormatOptions{})
 	if err != nil {
+		os.Stderr = oldStderr
 		t.Fatalf("FormatWithOptions failed: %v", err)
 	}
 
-	output := buf.String()
-	if !strings.Contains(output, "WARNING: 1 CRITICAL finding suppressed by .armisignore") {
-		t.Errorf("expected CRITICAL suppression warning, got:\n%s", output)
+	_ = w.Close()
+	var stderrBuf bytes.Buffer
+	_, _ = io.Copy(&stderrBuf, r)
+	os.Stderr = oldStderr
+
+	stderrOutput := stderrBuf.String()
+	if !strings.Contains(stderrOutput, "1 CRITICAL finding suppressed by .armisignore") {
+		t.Errorf("expected CRITICAL suppression warning on stderr, got:\n%s", stderrOutput)
+	}
+
+	stdoutOutput := buf.String()
+	if strings.Contains(stdoutOutput, "CRITICAL finding suppressed") {
+		t.Errorf("CRITICAL suppression warning should not appear on stdout")
 	}
 }
 
