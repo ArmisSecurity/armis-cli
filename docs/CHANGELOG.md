@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.0] - 2026-05-11
+
+### Added
+
+- JWT authentication support for the GitHub Action with `client-id`, `client-secret`, and `region` inputs as the recommended auth method (#155)
+- Suppression directive parsing in `.armisignore` for finding-level filtering by rule, category, severity, and CWE (#157)
+
+---
+
 ## [1.7.0] - 2026-05-05
 
 ### Added
@@ -259,7 +268,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
 [1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...v1.3.0
