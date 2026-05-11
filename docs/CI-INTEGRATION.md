@@ -44,8 +44,8 @@ jobs:
   scan:
     uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 That's it! This will:
@@ -133,8 +133,8 @@ jobs:
       fail-on: 'CRITICAL,HIGH'
       pr-comment: true
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 #### Input Reference
@@ -150,16 +150,17 @@ jobs:
 | `image-tarball` | string | | Path to image tarball (for image scans) |
 | `scan-timeout` | number | `60` | Scan timeout in minutes |
 | `include-files` | string | | Comma-separated list of file paths to scan (for targeted scanning) |
+| `region` | string | | Armis cloud region (overrides auto-discovery) |
 | `build-from-source` | boolean | `false` | Build CLI from source instead of release (for testing) |
 
 #### Required Secrets
 
 | Secret | Description |
 |--------|-------------|
-| `api-token` | Armis API token (Basic auth) |
-| `tenant-id` | Tenant identifier (Basic auth) |
-
-> **Note:** The reusable workflow currently accepts Basic auth secrets only. For JWT authentication (recommended), use [Option 3: Manual Installation](#option-3-manual-installation) with `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` environment variables.
+| `client-id` | Client ID for JWT authentication (recommended) |
+| `client-secret` | Client secret for JWT authentication (recommended) |
+| `api-token` | Armis API token (legacy fallback) |
+| `tenant-id` | Tenant identifier (legacy fallback, not needed with JWT) |
 
 #### Required Permissions
 
@@ -214,8 +215,8 @@ jobs:
         uses: ArmisSecurity/armis-cli@main
         with:
           scan-type: repo
-          api-token: ${{ secrets.ARMIS_API_TOKEN }}
-          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+          client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
           format: sarif
           output-file: results.sarif
           fail-on: HIGH,CRITICAL
@@ -233,8 +234,11 @@ jobs:
 |-------|----------|---------|-------------|
 | `scan-type` | Yes | | Type of scan: `repo` or `image` |
 | `scan-target` | No | `.` | Path for repo, image name for image scan |
-| `api-token` | Yes | | Armis API token |
-| `tenant-id` | Yes | | Tenant identifier |
+| `client-id` | No* | | Client ID for JWT authentication (recommended) |
+| `client-secret` | No* | | Client secret for JWT authentication (recommended) |
+| `region` | No | | Armis cloud region for JWT authentication |
+| `api-token` | No* | | Armis API token (legacy) |
+| `tenant-id` | No* | | Tenant identifier (legacy, not needed with JWT) |
 | `format` | No | `sarif` | Output format: `human`, `json`, `sarif`, `junit` |
 | `fail-on` | No | `CRITICAL` | Severity levels to fail on |
 | `exit-code` | No | `1` | Exit code when failing |
@@ -244,6 +248,8 @@ jobs:
 | `scan-timeout` | No | `60` | Timeout in minutes |
 | `include-files` | No | | Comma-separated file paths to scan |
 | `build-from-source` | No | `false` | Build from source (testing) |
+
+\* One authentication method is required: either `client-id` + `client-secret` (recommended) or `api-token` + `tenant-id` (legacy).
 
 #### Action Outputs
 
@@ -340,8 +346,8 @@ jobs:
       fail-on: 'CRITICAL,HIGH'
       include-files: ${{ needs.get-changed-files.outputs.files }}
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 **Key points:**
@@ -377,8 +383,8 @@ jobs:
       upload-artifact: true
       scan-timeout: 120        # Allow more time for full scan
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 **Key points:**
@@ -477,8 +483,8 @@ jobs:
         with:
           scan-type: image
           scan-target: myapp:${{ github.sha }}
-          api-token: ${{ secrets.ARMIS_API_TOKEN }}
-          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+          client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
           format: sarif
           output-file: image-results.sarif
           fail-on: CRITICAL,HIGH
@@ -525,8 +531,8 @@ For images built in a previous job or CI step:
   with:
     scan-type: image
     image-tarball: image.tar
-    api-token: ${{ secrets.ARMIS_API_TOKEN }}
-    tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+    client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+    client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 ---

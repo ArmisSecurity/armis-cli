@@ -520,8 +520,8 @@ jobs:
     with:
       fail-on: CRITICAL,HIGH
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
 **Available inputs:**
@@ -537,13 +537,14 @@ jobs:
 | `image-tarball` | string | | Path to image tarball (for image scans) |
 | `scan-timeout` | number | `60` | Scan timeout in minutes |
 | `include-files` | string | | Comma-separated file paths to scan (for targeted scanning) |
+| `region` | string | | Armis cloud region (overrides auto-discovery) |
 
 **Required secrets:**
 
-- `api-token`: Armis API token for authentication (legacy — JWT support coming soon)
-- `tenant-id`: Tenant identifier for Armis Cloud (legacy — not needed with JWT)
+- `client-id`: Client ID for JWT authentication (from VIPR external API screen)
+- `client-secret`: Client secret for JWT authentication
 
-> **Note:** The reusable workflow currently accepts Basic auth secrets. For JWT authentication in CI, set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as environment variables directly in your workflow steps (see [Manual Installation](#option-3-manual-installation) below).
+> **Legacy:** For backward compatibility, `api-token` and `tenant-id` secrets are also accepted.
 
 #### Option 2: GitHub Action
 
@@ -564,8 +565,8 @@ jobs:
       - uses: ArmisSecurity/armis-cli@main
         with:
           scan-type: repo
-          api-token: ${{ secrets.ARMIS_API_TOKEN }}
-          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+          client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
           format: sarif
           output-file: results.sarif
           fail-on: HIGH,CRITICAL

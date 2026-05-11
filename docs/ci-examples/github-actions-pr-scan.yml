@@ -71,5 +71,5 @@ jobs:
       fail-on: 'CRITICAL,HIGH'
       include-files: ${{ needs.get-changed-files.outputs.files }}
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}

@@ -58,5 +58,7 @@ jobs:
       # PR comment only makes sense for pull_request events
       pr-comment: ${{ github.event_name == 'pull_request' }}
     secrets:
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
       api-token: ${{ secrets.ARMIS_API_TOKEN }}
       tenant-id: ${{ secrets.ARMIS_TENANT_ID }}

@@ -8,10 +8,11 @@
 #   - PR comments with severity breakdown
 #   - Artifact storage
 #
-# Required secrets:
-#   The reusable workflow currently accepts Basic auth secrets (api-token/tenant-id).
-#   For JWT authentication (recommended), use manual installation instead.
+# Required secrets (JWT - recommended):
+#   - ARMIS_CLIENT_ID: Client ID from VIPR external API screen
+#   - ARMIS_CLIENT_SECRET: Client secret from VIPR external API screen
 #
+# Legacy secrets (Basic auth):
 #   - ARMIS_API_TOKEN: Your Armis API token
 #   - ARMIS_TENANT_ID: Your Armis tenant identifier
 
@@ -50,5 +51,5 @@ jobs:
       # scan-timeout: 60                 # Timeout in minutes (default: 60)
       # include-files: ''                # Comma-separated file paths for targeted scanning
     secrets:
-      api-token: ${{ secrets.ARMIS_API_TOKEN }}
-      tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+      client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+      client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}

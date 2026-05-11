@@ -14,12 +14,22 @@ inputs:
     description: 'Target to scan (path for repo, image name for image scan)'
     required: false
     default: '.'
+  client-id:
+    description: 'Client ID for JWT authentication (recommended)'
+    required: false
+  client-secret:
+    description: 'Client secret for JWT authentication (recommended)'
+    required: false
+  region:
+    description: 'Armis cloud region for JWT authentication'
+    required: false
+    default: ''
   api-token:
-    description: 'Armis API token for authentication'
-    required: true
+    description: 'Armis API token for Basic authentication (legacy)'
+    required: false
   tenant-id:
-    description: 'Tenant identifier for Armis Cloud'
-    required: true
+    description: 'Tenant identifier for Armis Cloud (legacy, not needed with JWT)'
+    required: false
   format:
     description: 'Output format: human, json, sarif, junit'
     required: false
@@ -151,8 +161,11 @@ runs:
       id: scan
       shell: bash
       env:
-        ARMIS_API_TOKEN: ${{ inputs.api-token }}
-        ARMIS_TENANT_ID: ${{ inputs.tenant-id }}
+        INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
+        INPUT_REGION: ${{ inputs.region }}
+        INPUT_API_TOKEN: ${{ inputs.api-token }}
+        INPUT_TENANT_ID: ${{ inputs.tenant-id }}
         SCAN_TYPE: ${{ inputs.scan-type }}
         SCAN_TARGET: ${{ inputs.scan-target }}
         OUTPUT_FORMAT: ${{ inputs.format }}
@@ -166,6 +179,38 @@ runs:
       run: |
         set +e
 
+        # Set ARMIS_* env vars only when inputs are non-empty (avoids overriding job/step-level env)
+        if [ -n "$INPUT_CLIENT_ID" ]; then export ARMIS_CLIENT_ID="$INPUT_CLIENT_ID"; fi
+        if [ -n "$INPUT_CLIENT_SECRET" ]; then export ARMIS_CLIENT_SECRET="$INPUT_CLIENT_SECRET"; fi
+        if [ -n "$INPUT_REGION" ]; then export ARMIS_REGION="$INPUT_REGION"; fi
+        if [ -n "$INPUT_API_TOKEN" ]; then export ARMIS_API_TOKEN="$INPUT_API_TOKEN"; fi
+        if [ -n "$INPUT_TENANT_ID" ]; then export ARMIS_TENANT_ID="$INPUT_TENANT_ID"; fi
+
+        # Validate authentication: require JWT (client-id + client-secret) OR Basic (api-token + tenant-id)
+        if [ -n "$ARMIS_CLIENT_ID" ] && [ -z "$ARMIS_CLIENT_SECRET" ]; then
+          echo "Error: 'client-id' provided without 'client-secret'. Both are required for JWT authentication."
+          exit 1
+        fi
+        if [ -z "$ARMIS_CLIENT_ID" ] && [ -n "$ARMIS_CLIENT_SECRET" ]; then
+          echo "Error: 'client-secret' provided without 'client-id'. Both are required for JWT authentication."
+          exit 1
+        fi
+        # Only validate Basic auth pairing when JWT is not configured (JWT takes precedence)
+        if [ -z "$ARMIS_CLIENT_ID" ]; then
+          if [ -n "$ARMIS_API_TOKEN" ] && [ -z "$ARMIS_TENANT_ID" ]; then
+            echo "Error: 'api-token' provided without 'tenant-id'. Both are required for Basic authentication."
+            exit 1
+          fi
+          if [ -z "$ARMIS_API_TOKEN" ] && [ -n "$ARMIS_TENANT_ID" ]; then
+            echo "Error: 'tenant-id' provided without 'api-token'. Both are required for Basic authentication."
+            exit 1
+          fi
+          if [ -z "$ARMIS_API_TOKEN" ]; then
+            echo "Error: No authentication provided. Set 'client-id' + 'client-secret' (recommended) or 'api-token' + 'tenant-id' (legacy)."
+            exit 1
+          fi
+        fi
+
         # Validate scan-type to prevent injection
         if [[ "$SCAN_TYPE" != "repo" && "$SCAN_TYPE" != "image" ]]; then
           echo "Error: Invalid scan-type '$SCAN_TYPE'. Must be 'repo' or 'image'."
@@ -174,7 +219,9 @@ runs:
 
         # Build command arguments array for safe execution
         SCAN_ARGS=("scan" "$SCAN_TYPE" "$SCAN_TARGET")
-        SCAN_ARGS+=("--tenant-id" "$ARMIS_TENANT_ID")
+        if [ -n "$ARMIS_TENANT_ID" ] && [ -z "$ARMIS_CLIENT_ID" ]; then
+          SCAN_ARGS+=("--tenant-id" "$ARMIS_TENANT_ID")
+        fi
         SCAN_ARGS+=("--format" "$OUTPUT_FORMAT")
 
         if [ -n "$FAIL_ON" ]; then

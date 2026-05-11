@@ -39,17 +39,27 @@ on:
         description: 'Comma-separated list of file paths to scan (relative to repository root)'
         type: string
         default: ''
+      region:
+        description: 'Armis cloud region for JWT authentication (overrides auto-discovery)'
+        type: string
+        default: ''
       build-from-source:
         description: 'Build CLI from source instead of downloading release (for testing scanner changes)'
         type: boolean
         default: false
     secrets:
+      client-id:
+        description: 'Client ID for JWT authentication (recommended)'
+        required: false
+      client-secret:
+        description: 'Client secret for JWT authentication (recommended)'
+        required: false
       api-token:
-        description: 'Armis API token for authentication'
-        required: true
+        description: 'Armis API token for Basic authentication (legacy)'
+        required: false
       tenant-id:
-        description: 'Tenant identifier for Armis Cloud'
-        required: true
+        description: 'Tenant identifier for Armis Cloud (legacy, not needed with JWT)'
+        required: false
 
 # Top-level permissions define the maximum permissions available to this workflow.
 # Job-level permissions further restrict as needed.
@@ -82,6 +92,9 @@ jobs:
         with:
           scan-type: ${{ inputs.scan-type }}
           scan-target: ${{ inputs.scan-target }}
+          client-id: ${{ secrets.client-id }}
+          client-secret: ${{ secrets.client-secret }}
+          region: ${{ inputs.region }}
           api-token: ${{ secrets.api-token }}
           tenant-id: ${{ secrets.tenant-id }}
           format: sarif
