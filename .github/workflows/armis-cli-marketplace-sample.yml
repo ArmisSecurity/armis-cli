@@ -1,15 +1,17 @@
+---
 name: Armis GitHub Action Marketplace Sample
 
 on:
   workflow_dispatch:
   push:
-    branches: [ test-marketplace ]
+    branches: [test-marketplace]
 
 permissions:
   contents: read
 
 jobs:
-  scan:
+  scan-jwt:
+    name: Scan with JWT (recommended)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -17,5 +19,19 @@ jobs:
       - name: Run Armis CLI Action from Marketplace
         uses: ArmisSecurity/armis-cli-action@v1
         with:
-          api_token: ${{ secrets.ARMIS_API_TOKEN }}
-          args: scan --help
+          client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+          client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
+          args: scan repo .
+
+  scan-basic:
+    name: Scan with Basic auth (legacy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Run Armis CLI Action from Marketplace
+        uses: ArmisSecurity/armis-cli-action@v1
+        with:
+          api-token: ${{ secrets.ARMIS_API_TOKEN }}
+          tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
+          args: scan repo .

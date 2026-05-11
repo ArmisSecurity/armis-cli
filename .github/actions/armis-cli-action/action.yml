@@ -1,3 +1,4 @@
+---
 name: 'Armis CLI Action'
 # NOTE: This action supports Linux and macOS runners only.
 # For Windows runners, use the PowerShell install script directly:
@@ -5,11 +6,24 @@ name: 'Armis CLI Action'
 description: 'Run the Armis CLI in your workflow (Linux/macOS only)'
 author: 'ArmisSecurity'
 inputs:
-  api_token:
-    description: 'Armis API token (required)'
-    required: true
+  client-id:
+    description: 'Client ID for JWT authentication (recommended)'
+    required: false
+  client-secret:
+    description: 'Client secret for JWT authentication (recommended)'
+    required: false
+  region:
+    description: 'Armis cloud region for JWT authentication'
+    required: false
+    default: ''
+  api-token:
+    description: 'Armis API token for Basic authentication (legacy)'
+    required: false
+  tenant-id:
+    description: 'Tenant identifier (legacy, not needed with JWT)'
+    required: false
   args:
-    description: 'Arguments to pass to the CLI (optional)'
+    description: 'Arguments to pass to the CLI'
     required: false
 runs:
   using: 'composite'
@@ -30,6 +44,15 @@ runs:
       shell: bash
       env:
         ARMIS_ARGS: ${{ inputs.args }}
-        ARMIS_API_TOKEN: ${{ inputs.api_token }}
+        INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
+        INPUT_REGION: ${{ inputs.region }}
+        INPUT_API_TOKEN: ${{ inputs.api-token }}
+        INPUT_TENANT_ID: ${{ inputs.tenant-id }}
       run: |
-        ./armis-cli $ARMIS_ARGS --token "$ARMIS_API_TOKEN"
+        if [ -n "$INPUT_CLIENT_ID" ]; then export ARMIS_CLIENT_ID="$INPUT_CLIENT_ID"; fi
+        if [ -n "$INPUT_CLIENT_SECRET" ]; then export ARMIS_CLIENT_SECRET="$INPUT_CLIENT_SECRET"; fi
+        if [ -n "$INPUT_REGION" ]; then export ARMIS_REGION="$INPUT_REGION"; fi
+        if [ -n "$INPUT_API_TOKEN" ]; then export ARMIS_API_TOKEN="$INPUT_API_TOKEN"; fi
+        if [ -n "$INPUT_TENANT_ID" ]; then export ARMIS_TENANT_ID="$INPUT_TENANT_ID"; fi
+        ./armis-cli $ARMIS_ARGS
