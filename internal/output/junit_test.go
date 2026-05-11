@@ -205,3 +205,79 @@ func TestJUnitFormatter_FormatWithOptions(t *testing.T) {
 		t.Fatalf("Expected 1 test suite, got %d", len(suites.Suites))
 	}
 }
+
+func TestJUnitFormatter_SuppressedFindingsExcluded(t *testing.T) {
+	formatter := &JUnitFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-junit-supp",
+		Findings: []model.Finding{
+			{
+				ID:       "active-1",
+				Severity: model.SeverityCritical,
+				Title:    "Active Critical",
+				Type:     model.FindingTypeVulnerability,
+			},
+			{
+				ID:         "supp-1",
+				Severity:   model.SeverityLow,
+				Title:      "Suppressed Low",
+				Type:       model.FindingTypeSCA,
+				Suppressed: true,
+			},
+			{
+				ID:         "supp-2",
+				Severity:   model.SeverityHigh,
+				Title:      "Suppressed High",
+				Type:       model.FindingTypeSecret,
+				Suppressed: true,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := formatter.Format(result, &buf)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var suites junitTestSuites
+	if err := xml.Unmarshal(buf.Bytes(), &suites); err != nil {
+		t.Fatalf("Failed to decode JUnit XML: %v", err)
+	}
+
+	suite := suites.Suites[0]
+	if suite.Tests != 1 {
+		t.Errorf("Tests count = %d, want 1 (only active findings)", suite.Tests)
+	}
+	if len(suite.Cases) != 1 {
+		t.Fatalf("Cases count = %d, want 1", len(suite.Cases))
+	}
+	if suite.Cases[0].Name != "Active Critical" {
+		t.Errorf("Case name = %q, want %q", suite.Cases[0].Name, "Active Critical")
+	}
+}
+
+func TestJUnitFormatter_AllSuppressedEmptyOutput(t *testing.T) {
+	formatter := &JUnitFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-junit-allsupp",
+		Findings: []model.Finding{
+			{
+				ID:         "supp-1",
+				Severity:   model.SeverityLow,
+				Title:      "Suppressed",
+				Suppressed: true,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "Suppressed") {
+		t.Error("suppressed finding should not appear in JUnit output")
+	}
+}

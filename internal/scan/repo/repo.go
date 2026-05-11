@@ -104,7 +104,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	var size int64
 	var tarFunc func() error
-	var ignoreMatcher *IgnoreMatcher
+	var suppressionConfig *SuppressionConfig
 
 	pr, pw := io.Pipe()
 	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
@@ -115,7 +115,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	defer pr.Close() //nolint:errcheck
 
 	if s.includeFiles != nil {
-		// Targeted file scanning mode - scan only specified files
+		// Targeted file scanning mode — only load suppression directives from root
+		// .armisignore (no tree walk needed since IgnoreMatcher isn't used for tar).
+		var suppErr error
+		suppressionConfig, suppErr = LoadSuppressionConfig(absPath)
+		if suppErr != nil {
+			return nil, fmt.Errorf("failed to load suppression config: %w", suppErr)
+		}
+
 		existing, warnings := s.includeFiles.ValidateExistence()
 		for _, w := range warnings {
 			cli.PrintWarning(w)
@@ -125,10 +132,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
 		}
 
-		var err error
-		size, err = calculateFilesSize(absPath, existing)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate files size: %w", err)
+		var sizeErr error
+		size, sizeErr = calculateFilesSize(absPath, existing)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate files size: %w", sizeErr)
 		}
 
 		tarFunc = func() error {
@@ -136,16 +143,17 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			return s.tarGzFiles(absPath, existing, pw)
 		}
 	} else {
-		// Full directory scanning mode (existing behavior)
-		var err error
-		ignoreMatcher, err = LoadIgnorePatterns(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load ignore patterns: %w", err)
+		// Full directory scanning mode — walk tree for both ignore patterns and directives.
+		ignoreMatcher, suppCfg, loadErr := LoadArmisIgnore(absPath)
+		if loadErr != nil {
+			return nil, fmt.Errorf("failed to load .armisignore: %w", loadErr)
 		}
+		suppressionConfig = suppCfg
 
-		size, err = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate directory size: %w", err)
+		var sizeErr error
+		size, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate directory size: %w", sizeErr)
 		}
 
 		tarFunc = func() error {
@@ -261,6 +269,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+
+	if suppressionConfig != nil && !suppressionConfig.IsEmpty() {
+		suppCount := ApplySuppression(result.Findings, suppressionConfig)
+		if suppCount > 0 {
+			result.Summary = recomputeSummary(result.Findings, suppCount, result.Summary.FilteredNonExploitable)
+		}
+	}
+
 	return result, nil
 }
 
@@ -516,6 +532,9 @@ func calculateDirSize(path string, includeTests bool, ignoreMatcher *IgnoreMatch
 			size, addErr = safeAddSize(size, info.Size())
 			if addErr != nil {
 				return fmt.Errorf("calculating directory size: %w", addErr)
+			}
+			if size > MaxRepoSize {
+				return fmt.Errorf("directory size exceeds maximum allowed size (%d bytes)", MaxRepoSize)
 			}
 		}
 		return nil

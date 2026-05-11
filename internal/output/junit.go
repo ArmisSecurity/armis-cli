@@ -61,15 +61,16 @@ func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 }
 
 func (f *JUnitFormatter) formatWithSeverities(result *model.ScanResult, w io.Writer, failOnSeverities []string) error {
+	activeFindings := FilterActiveFindings(result.Findings)
 	suites := junitTestSuites{
 		Suites: []junitTestSuite{
 			{
 				Name:     "Armis Security Scan",
-				Tests:    len(result.Findings),
-				Failures: countFailuresWithSeverities(result.Findings, failOnSeverities),
+				Tests:    len(activeFindings),
+				Failures: countFailuresWithSeverities(activeFindings, failOnSeverities),
 				Errors:   0,
 				Time:     "0",
-				Cases:    convertToJUnitCasesWithSeverities(result.Findings, failOnSeverities),
+				Cases:    convertToJUnitCasesWithSeverities(activeFindings, failOnSeverities),
 			},
 		},
 	}

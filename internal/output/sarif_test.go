@@ -1450,3 +1450,79 @@ func TestSARIFFormatter_FindingIDAndFingerprints(t *testing.T) {
 		t.Errorf("rule ID = %q, want CWE-79", run.Tool.Driver.Rules[0].ID)
 	}
 }
+
+func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
+	formatter := &SARIFFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-supp",
+		Findings: []model.Finding{
+			{
+				ID:         "supp-1",
+				Severity:   model.SeverityLow,
+				Title:      "Test finding",
+				File:       "main.go",
+				Suppressed: true,
+				SuppressionInfo: &model.SuppressionInfo{
+					Type:   "severity",
+					Value:  "LOW",
+					Reason: "accepted risk",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("JSON parse failed: %v", err)
+	}
+
+	if len(report.Runs[0].Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(report.Runs[0].Results))
+	}
+
+	res := report.Runs[0].Results[0]
+	if len(res.Suppressions) != 1 {
+		t.Fatalf("expected 1 suppression, got %d", len(res.Suppressions))
+	}
+	if res.Suppressions[0].Kind != "inSource" {
+		t.Errorf("suppression kind = %q, want %q", res.Suppressions[0].Kind, "inSource")
+	}
+	if res.Suppressions[0].Justification != ".armisignore severity:LOW -- accepted risk" {
+		t.Errorf("justification = %q", res.Suppressions[0].Justification)
+	}
+}
+
+func TestSARIF_NonSuppressedFindingNoSuppressionsKey(t *testing.T) {
+	formatter := &SARIFFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-nosupp",
+		Findings: []model.Finding{
+			{
+				ID:       "active-1",
+				Severity: model.SeverityHigh,
+				Title:    "Active finding",
+				File:     "main.go",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("JSON parse failed: %v", err)
+	}
+
+	res := report.Runs[0].Results[0]
+	if len(res.Suppressions) != 0 {
+		t.Errorf("non-suppressed finding should have no suppressions, got %d", len(res.Suppressions))
+	}
+}

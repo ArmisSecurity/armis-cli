@@ -274,6 +274,50 @@ func TestCheckExit_StdoutSyncError(t *testing.T) {
 	}
 }
 
+func TestShouldFail_SkipsSuppressedCritical(t *testing.T) {
+	result := &model.ScanResult{
+		Findings: []model.Finding{
+			{Severity: model.SeverityCritical, Suppressed: true},
+			{Severity: model.SeverityLow},
+		},
+	}
+
+	if ShouldFail(result, []string{"CRITICAL"}) {
+		t.Error("ShouldFail should skip suppressed CRITICAL findings")
+	}
+}
+
+func TestShouldFail_MixedSuppressedAndActive(t *testing.T) {
+	result := &model.ScanResult{
+		Findings: []model.Finding{
+			{Severity: model.SeverityCritical, Suppressed: true},
+			{Severity: model.SeverityHigh},
+		},
+	}
+
+	if ShouldFail(result, []string{"CRITICAL"}) {
+		t.Error("ShouldFail should not trigger on suppressed CRITICAL when only active HIGH exists")
+	}
+	if !ShouldFail(result, []string{"HIGH"}) {
+		t.Error("ShouldFail should trigger on active HIGH")
+	}
+}
+
+func TestFilterActiveFindings(t *testing.T) {
+	findings := []model.Finding{
+		{ID: "1", Suppressed: false},
+		{ID: "2", Suppressed: true},
+		{ID: "3", Suppressed: false},
+	}
+	active := FilterActiveFindings(findings)
+	if len(active) != 2 {
+		t.Fatalf("FilterActiveFindings returned %d, want 2", len(active))
+	}
+	if active[0].ID != "1" || active[1].ID != "3" {
+		t.Errorf("unexpected active IDs: %s, %s", active[0].ID, active[1].ID)
+	}
+}
+
 // TestSyncColors_Enabled verifies that SyncColors enables styling when cli colors are enabled.
 func TestSyncColors_Enabled(t *testing.T) {
 	// Enable colors via cli package

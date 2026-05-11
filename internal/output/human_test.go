@@ -1,6 +1,8 @@
 package output
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1009,4 +1011,188 @@ func TestMaskFixForDisplay(t *testing.T) {
 
 func ptrString(s string) *string {
 	return &s
+}
+
+func TestRenderBriefStatus_WithSuppressed(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		Summary: model.Summary{
+			Total:      3,
+			BySeverity: map[model.Severity]int{model.SeverityHigh: 2, model.SeverityMedium: 1},
+			Suppressed: 2,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := renderBriefStatus(&buf, result); err != nil {
+		t.Fatalf("renderBriefStatus failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "3 issues") {
+		t.Errorf("expected '3 issues', got %q", output)
+	}
+	if !strings.Contains(output, "2 suppressed by .armisignore") {
+		t.Errorf("expected suppression info, got %q", output)
+	}
+}
+
+func TestRenderBriefStatus_ZeroSuppressedUnchangedFormat(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		Summary: model.Summary{
+			Total:      2,
+			BySeverity: map[model.Severity]int{model.SeverityHigh: 2},
+			Suppressed: 0,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := renderBriefStatus(&buf, result); err != nil {
+		t.Fatalf("renderBriefStatus failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "suppressed") {
+		t.Errorf("should not mention suppression when count is 0, got %q", output)
+	}
+}
+
+func TestRenderSummaryDashboard_ShowsSuppressionLine(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		Summary: model.Summary{
+			Total:      5,
+			BySeverity: map[model.Severity]int{model.SeverityHigh: 5},
+			Suppressed: 3,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := renderSummaryDashboard(&buf, result); err != nil {
+		t.Fatalf("renderSummaryDashboard failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "3 suppressed by .armisignore") {
+		t.Errorf("expected suppression line in dashboard, got %q", output)
+	}
+}
+
+func TestHumanFormatter_CriticalSuppressionWarning(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		ScanID: "test-warn",
+		Status: "completed",
+		Summary: model.Summary{
+			Total:      1,
+			BySeverity: map[model.Severity]int{model.SeverityLow: 1},
+			Suppressed: 1,
+		},
+		Findings: []model.Finding{
+			{ID: "a", Severity: model.SeverityLow, Title: "Active Low"},
+			{ID: "b", Severity: model.SeverityCritical, Title: "Suppressed Crit", Suppressed: true},
+		},
+	}
+
+	// Capture stderr to verify the warning goes there (not stdout)
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	formatter := &HumanFormatter{}
+	var buf bytes.Buffer
+	err := formatter.FormatWithOptions(result, &buf, FormatOptions{})
+	if err != nil {
+		os.Stderr = oldStderr
+		t.Fatalf("FormatWithOptions failed: %v", err)
+	}
+
+	_ = w.Close()
+	var stderrBuf bytes.Buffer
+	_, _ = io.Copy(&stderrBuf, r)
+	os.Stderr = oldStderr
+
+	stderrOutput := stderrBuf.String()
+	if !strings.Contains(stderrOutput, "1 CRITICAL finding suppressed by .armisignore") {
+		t.Errorf("expected CRITICAL suppression warning on stderr, got:\n%s", stderrOutput)
+	}
+
+	stdoutOutput := buf.String()
+	if strings.Contains(stdoutOutput, "CRITICAL finding suppressed") {
+		t.Errorf("CRITICAL suppression warning should not appear on stdout")
+	}
+}
+
+func TestHumanFormatter_NoCriticalNoWarning(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		ScanID: "test-nowarn",
+		Status: "completed",
+		Summary: model.Summary{
+			Total:      1,
+			BySeverity: map[model.Severity]int{model.SeverityHigh: 1},
+			Suppressed: 1,
+		},
+		Findings: []model.Finding{
+			{ID: "a", Severity: model.SeverityHigh, Title: "Active High"},
+			{ID: "b", Severity: model.SeverityLow, Title: "Suppressed Low", Suppressed: true},
+		},
+	}
+
+	formatter := &HumanFormatter{}
+	var buf bytes.Buffer
+	err := formatter.FormatWithOptions(result, &buf, FormatOptions{})
+	if err != nil {
+		t.Fatalf("FormatWithOptions failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "WARNING") {
+		t.Errorf("should not show CRITICAL warning when no CRITICAL suppressed, got:\n%s", output)
+	}
+}
+
+func TestHumanFormatter_ShowSuppressedFalse_HidesSuppressedFindings(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		ScanID: "test-hide",
+		Status: "completed",
+		Summary: model.Summary{
+			Total:      1,
+			BySeverity: map[model.Severity]int{model.SeverityHigh: 1},
+			Suppressed: 1,
+		},
+		Findings: []model.Finding{
+			{ID: "active", Severity: model.SeverityHigh, Title: "Active Finding"},
+			{ID: "hidden", Severity: model.SeverityLow, Title: "Hidden Finding", Suppressed: true},
+		},
+	}
+
+	formatter := &HumanFormatter{}
+	var buf bytes.Buffer
+	err := formatter.FormatWithOptions(result, &buf, FormatOptions{ShowSuppressed: false})
+	if err != nil {
+		t.Fatalf("FormatWithOptions failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "Hidden Finding") {
+		t.Errorf("suppressed finding should not appear when ShowSuppressed=false")
+	}
+	if !strings.Contains(output, "Active Finding") {
+		t.Errorf("active finding should appear")
+	}
 }

@@ -33,6 +33,13 @@ const (
 	FindingTypeMisconfig FindingType = "MISCONFIG"
 )
 
+// SuppressionInfo describes why a finding was suppressed by .armisignore.
+type SuppressionInfo struct {
+	Type   string `json:"type"`             // "severity", "category", "cwe", "rule"
+	Value  string `json:"value"`            // the directive value that matched
+	Reason string `json:"reason,omitempty"` // user-provided reason from " -- " delimiter
+}
+
 // Finding represents a single security finding from a scan.
 type Finding struct {
 	ID                      string             `json:"id"`
@@ -58,6 +65,8 @@ type Finding struct {
 	OWASPCategories         []OWASPCategory    `json:"owasp_categories,omitempty"`
 	LongDescriptionMarkdown string             `json:"long_description_markdown,omitempty"`
 	URLs                    []string           `json:"urls,omitempty"`
+	Suppressed              bool               `json:"suppressed,omitempty"`
+	SuppressionInfo         *SuppressionInfo   `json:"suppression_info,omitempty"`
 }
 
 // ScanResult represents the complete result of a security scan.
@@ -77,6 +86,7 @@ type Summary struct {
 	ByType                 map[FindingType]int `json:"by_type"`
 	ByCategory             map[string]int      `json:"by_category"`
 	FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
+	Suppressed             int                 `json:"suppressed,omitempty"`
 }
 
 // IngestUploadResponse represents the response from uploading a scan artifact.
