@@ -12,6 +12,7 @@ permissions:
 jobs:
   scan-jwt:
     name: Scan with JWT (recommended)
+    if: vars.AUTH_MODE != 'basic'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,6 +26,7 @@ jobs:
 
   scan-basic:
     name: Scan with Basic auth (legacy)
+    if: vars.AUTH_MODE == 'basic'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

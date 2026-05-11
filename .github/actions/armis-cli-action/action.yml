@@ -55,4 +55,5 @@ runs:
         if [ -n "$INPUT_REGION" ]; then export ARMIS_REGION="$INPUT_REGION"; fi
         if [ -n "$INPUT_API_TOKEN" ]; then export ARMIS_API_TOKEN="$INPUT_API_TOKEN"; fi
         if [ -n "$INPUT_TENANT_ID" ]; then export ARMIS_TENANT_ID="$INPUT_TENANT_ID"; fi
-        ./armis-cli $ARMIS_ARGS
+        IFS=' ' read -ra CLI_ARGS <<< "$ARMIS_ARGS"
+        ./armis-cli "${CLI_ARGS[@]}"
