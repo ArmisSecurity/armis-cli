@@ -1466,6 +1466,7 @@ func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
 					Type:   "severity",
 					Value:  "LOW",
 					Reason: "accepted risk",
+					Source: "armisignore",
 				},
 			},
 		},
@@ -1489,10 +1490,53 @@ func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
 	if len(res.Suppressions) != 1 {
 		t.Fatalf("expected 1 suppression, got %d", len(res.Suppressions))
 	}
+	if res.Suppressions[0].Kind != "external" {
+		t.Errorf("suppression kind = %q, want %q", res.Suppressions[0].Kind, "external")
+	}
+	if res.Suppressions[0].Justification != ".armisignore severity:LOW -- accepted risk" {
+		t.Errorf("justification = %q", res.Suppressions[0].Justification)
+	}
+}
+
+func TestSARIF_InlineSuppressedFindingUsesInSourceKind(t *testing.T) {
+	formatter := &SARIFFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-inline-supp",
+		Findings: []model.Finding{
+			{
+				ID:         "inline-1",
+				Severity:   model.SeverityHigh,
+				Title:      "Inline suppressed",
+				File:       "main.py",
+				Suppressed: true,
+				SuppressionInfo: &model.SuppressionInfo{
+					Type:   "cwe",
+					Value:  "798",
+					Reason: "test token",
+					Source: "inline",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("JSON parse failed: %v", err)
+	}
+
+	res := report.Runs[0].Results[0]
+	if len(res.Suppressions) != 1 {
+		t.Fatalf("expected 1 suppression, got %d", len(res.Suppressions))
+	}
 	if res.Suppressions[0].Kind != "inSource" {
 		t.Errorf("suppression kind = %q, want %q", res.Suppressions[0].Kind, "inSource")
 	}
-	if res.Suppressions[0].Justification != ".armisignore severity:LOW -- accepted risk" {
+	if res.Suppressions[0].Justification != "armis:ignore cwe:798 -- test token" {
 		t.Errorf("justification = %q", res.Suppressions[0].Justification)
 	}
 }

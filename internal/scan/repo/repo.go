@@ -277,6 +277,13 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 	}
 
+	// Inline armis:ignore comment suppression (runs on non-suppressed findings only)
+	inlineSuppCount := ApplyInlineSuppression(result.Findings, absPath)
+	if inlineSuppCount > 0 {
+		totalSuppressed := countSuppressed(result.Findings)
+		result.Summary = recomputeSummary(result.Findings, totalSuppressed, result.Summary.FilteredNonExploitable)
+	}
+
 	return result, nil
 }
 

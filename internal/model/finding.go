@@ -33,11 +33,12 @@ const (
 	FindingTypeMisconfig FindingType = "MISCONFIG"
 )
 
-// SuppressionInfo describes why a finding was suppressed by .armisignore.
+// SuppressionInfo describes why a finding was suppressed.
 type SuppressionInfo struct {
-	Type   string `json:"type"`             // "severity", "category", "cwe", "rule"
+	Type   string `json:"type"`             // "severity", "category", "cwe", "rule", "inline"
 	Value  string `json:"value"`            // the directive value that matched
-	Reason string `json:"reason,omitempty"` // user-provided reason from " -- " delimiter
+	Reason string `json:"reason,omitempty"` // user-provided reason
+	Source string `json:"source,omitempty"` // "armisignore" or "inline"
 }
 
 // Finding represents a single security finding from a scan.
