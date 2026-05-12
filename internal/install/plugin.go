@@ -343,6 +343,7 @@ func writeEnvFromEnvironment(envPath string) error {
 		return nil
 	}
 
+	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
 	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
 		return fmt.Errorf("creating env directory: %w", err)

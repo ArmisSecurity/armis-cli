@@ -55,6 +55,7 @@ jobs:
       fail-on: ${{ github.event_name == 'pull_request' && 'CRITICAL' || '' }}
       include-files: ${{ needs.get-changed-files.outputs.files }}
       build-from-source: false
+      category: armis-pr-scan
       # PR comment only makes sense for pull_request events
       pr-comment: ${{ github.event_name == 'pull_request' }}
     secrets:

@@ -1,0 +1,5 @@
+# .armisignore - Armis security scan configuration
+#
+# Path patterns (gitignore syntax) - exclude from scanning
+**/testdata/**
+**/testutil/**

@@ -293,6 +293,7 @@ type jwtClaims struct {
 // 2. The backend validates the signature server-side for all API requests
 // 3. This function only extracts claims for local caching/refresh logic
 //
+// armis:ignore cwe:287 reason:JWT signature verification delegated to server; CLI only extracts claims for caching
 // #nosec G104 -- JWT signature verification delegated to backend
 func parseJWTClaims(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")
