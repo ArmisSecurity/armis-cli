@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.1] - 2026-05-11
+
+### Added
+
+- Client-side finding suppression via `.armisignore` directives — findings matching severity, category, CWE, or rule patterns are excluded from `--fail-on` evaluation and human/JUnit output, with proper suppression metadata in SARIF and JSON (#162)
+- `--show-suppressed` flag to include suppressed findings in output (#162)
+
+### Changed
+
+- GitHub Action updated to use JWT authentication as default, removing unused Basic auth secrets from scan workflows (#164)
+
+### Fixed
+
+- `LICENSE_COMPLIANCE_RISK` findings now correctly classified as LICENSE type (#162)
+
+---
+
 ## [1.8.0] - 2026-05-11
 
 ### Added
@@ -268,7 +285,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
 [1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0
