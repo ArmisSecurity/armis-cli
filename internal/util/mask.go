@@ -111,12 +111,12 @@ func MaskSecretInLine(line string) string {
 		return line
 	}
 
+	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	// Defense against ReDoS (CWE-770): skip regex processing for extremely long lines
 	if len(line) > maxLineLength {
 		return line
 	}
 
-	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	result := line
 
 	for _, pattern := range secretPatterns {

@@ -53,7 +53,9 @@ jobs:
       #   authentication CLI implementations.
       # Push to main: Don't fail (code already merged, just visibility)
       fail-on: ${{ github.event_name == 'pull_request' && 'CRITICAL' || '' }}
-      include-files: ${{ needs.get-changed-files.outputs.files }}
+      # PRs: scan only changed files for faster feedback
+      # Push to main: full scan so SARIF upload can close stale alerts in this category
+      include-files: ${{ github.event_name == 'pull_request' && needs.get-changed-files.outputs.files || '' }}
       build-from-source: false
       category: armis-pr-scan
       # PR comment only makes sense for pull_request events

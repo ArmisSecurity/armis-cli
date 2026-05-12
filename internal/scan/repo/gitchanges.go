@@ -119,6 +119,7 @@ func gitRepoRoot(path string) (string, error) {
 		return resolved, nil
 	}
 
+	// armis:ignore cwe:22 reason:repoRoot from git rev-parse --show-toplevel; filepath.Clean applied above
 	return repoRoot, nil
 }
 

@@ -37,6 +37,7 @@ func LoadSuppressionConfig(repoRoot string) (*SuppressionConfig, error) {
 	if !filepath.IsAbs(repoRoot) {
 		return nil, fmt.Errorf("repoRoot must be an absolute path, got: %s", repoRoot)
 	}
+	// armis:ignore cwe:73 reason:filepath.Join with hardcoded ".armisignore" filename; repoRoot validated as absolute above
 	rootIgnorePath := filepath.Join(filepath.Clean(repoRoot), ".armisignore") // #nosec G304
 
 	info, err := os.Lstat(rootIgnorePath)

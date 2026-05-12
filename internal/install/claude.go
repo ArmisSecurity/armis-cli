@@ -79,6 +79,7 @@ func (ci *ClaudeInstaller) EnvFilePath() string {
 // GetInstalledVersion reads the installed plugin version from the registry.
 func (ci *ClaudeInstaller) GetInstalledVersion() string {
 	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
 	b, err := os.ReadFile(filepath.Clean(instFile))
 	if err != nil {
 		return ""
@@ -116,6 +117,7 @@ func (ci *ClaudeInstaller) HasExistingEnv() bool {
 func (ci *ClaudeInstaller) registerMarketplace(pluginDir string) error {
 	mktsFile := filepath.Join(ci.claudeDir, "plugins", "known_marketplaces.json")
 	data := make(map[string]interface{})
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
 	if b, err := os.ReadFile(filepath.Clean(mktsFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
@@ -132,6 +134,7 @@ func (ci *ClaudeInstaller) registerMarketplace(pluginDir string) error {
 func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
 	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
 	data := map[string]interface{}{"version": 2, "plugins": map[string]interface{}{}}
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
 	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
@@ -160,6 +163,7 @@ func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
 func (ci *ClaudeInstaller) enablePlugin() error {
 	settingsFile := filepath.Join(ci.claudeDir, "settings.json")
 	data := make(map[string]interface{})
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
 	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}

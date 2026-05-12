@@ -310,6 +310,7 @@ func stdServerEntry(pluginDir string) map[string]interface{} {
 
 func readJSONFileAsMap(path string) map[string]interface{} {
 	data := make(map[string]interface{})
+	// armis:ignore cwe:22 reason:path is constructed from filepath.Join with known base dirs; filepath.Clean applied
 	if b, err := os.ReadFile(filepath.Clean(path)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
