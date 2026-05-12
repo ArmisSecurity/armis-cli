@@ -1,0 +1,10 @@
+# .armisignore - Armis security scan configuration
+#
+# Finding-level suppression directives (categorical)
+# Format: type:value -- reason
+
+# CLI must handle OAuth client credentials and JWT tokens by design
+cwe:522 -- CLI auth must handle credentials; stored with 0600 permissions, masked in output
+
+# JWT claim parsing without signature verification is intentional (server validates)
+cwe:287 -- CLI delegates JWT signature verification to server by design

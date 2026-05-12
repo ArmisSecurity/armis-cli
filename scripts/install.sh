@@ -47,7 +47,7 @@ validate_install_dir() {
     # Disallow parent directory traversal segments like "../" or "/../" or "/.."
     # This allows valid paths with ".." in filenames (e.g., /opt/app..v1/bin)
     case "$dir" in
-        */../*|../*|*/..|/..)
+        */../*|../*|*/..)
             echo "Error: Install directory cannot contain parent directory segment '..': $dir" >&2
             exit 1
             ;;
@@ -71,7 +71,7 @@ validate_install_dir() {
 
             # Disallow parent directory traversal segments in the normalized path
             case "$normalized_dir" in
-                */../*|../*|*/..|/..)
+                */../*|../*|*/..)
                     echo "Error: Normalized install directory cannot contain parent directory segment '..': $normalized_dir" >&2
                     exit 1
                     ;;
@@ -105,7 +105,7 @@ detect_arch() {
 download_file() {
     local url="$1"
     local output="$2"
-    
+
     if command -v curl > /dev/null 2>&1; then
         curl -fsSL "$url" -o "$output"
     elif command -v wget > /dev/null 2>&1; then
@@ -131,16 +131,17 @@ is_in_path() {
 
 add_to_path() {
     local dir="$1"
-    local shell_name=$(basename "$SHELL")
+    local shell_name
+    shell_name=$(basename "$SHELL")
     local rc_file=""
     local path_line="export PATH=\"$dir:\$PATH\""
-    
+
     # Skip in CI/CD environments
     if is_ci_environment; then
         echo "ℹ️  CI/CD environment detected, skipping PATH modification"
         return 0
     fi
-    
+
     # Detect shell config file
     case "$shell_name" in
         zsh)
@@ -163,25 +164,25 @@ add_to_path() {
             return 1
             ;;
     esac
-    
+
     # Check if already in config file
     if [ -f "$rc_file" ] && grep -q "$dir" "$rc_file" 2>/dev/null; then
         echo "ℹ️  PATH already configured in $rc_file"
         return 0
     fi
-    
+
     # Add to config file
     echo ""
     echo "📝 Adding $dir to PATH in $rc_file..."
-    
+
     # Create config file directory if it doesn't exist (for fish)
     mkdir -p "$(dirname "$rc_file")" 2>/dev/null || true
-    
+
     echo "$path_line" >> "$rc_file" || {
         echo "❌ Failed to update $rc_file"
         return 1
     }
-    
+
     echo "✅ PATH updated in $rc_file"
     return 0
 }
@@ -221,21 +222,21 @@ choose_install_dir() {
         echo "$INSTALL_DIR"
         return
     fi
-    
+
     # Strategy: Prefer directories already in PATH to avoid shell restart
-    
+
     # 1. Check if /usr/local/bin is writable (common on macOS with Homebrew)
     if [ -d "$SYSTEM_BIN" ] && [ -w "$SYSTEM_BIN" ]; then
         echo "$SYSTEM_BIN"
         return
     fi
-    
+
     # 2. Check if ~/.local/bin exists and is already in PATH
     if [ -d "$USER_BIN" ] && is_in_path "$USER_BIN"; then
         echo "$USER_BIN"
         return
     fi
-    
+
     # 3. Try to create ~/.local/bin if it doesn't exist
     if [ ! -d "$USER_BIN" ] && mkdir -p "$USER_BIN" 2>/dev/null; then
         if is_in_path "$USER_BIN"; then
@@ -243,7 +244,7 @@ choose_install_dir() {
             return
         fi
     fi
-    
+
     # 4. Fall back to /usr/local/bin (will require sudo if not writable)
     echo "$SYSTEM_BIN"
 }
@@ -252,12 +253,12 @@ verify_checksums() {
     local archive_file="$1"
     local checksums_file="$2"
     local checksums_sig="$3"
-    
+
     if [ "$VERIFY" != "true" ]; then
         echo "⚠️  Skipping verification (VERIFY=false)"
         return 0
     fi
-    
+
     if command -v cosign > /dev/null 2>&1; then
         echo "🔐 Verifying signature with cosign..."
         if cosign verify-blob \
@@ -273,17 +274,17 @@ verify_checksums() {
         echo "ℹ️  cosign not found, verifying checksums only"
         echo "   Install cosign for full signature verification: https://docs.sigstore.dev/cosign/installation/"
     fi
-    
+
     echo "🔍 Verifying checksums..."
-    
+
     local expected_checksum
     expected_checksum=$(awk -v filename="$(basename "$archive_file")" '$2 == filename {print $1}' "$checksums_file")
-    
+
     if [ -z "$expected_checksum" ]; then
         echo "⚠️  Could not find checksum for $(basename "$archive_file") in checksums file"
         return 1
     fi
-    
+
     local actual_checksum
     if command -v sha256sum > /dev/null 2>&1 && sha256sum --version > /dev/null 2>&1; then
         actual_checksum=$(sha256sum "$archive_file" | awk '{print $1}')
@@ -294,14 +295,14 @@ verify_checksums() {
         echo "   Install sha256sum or shasum and try again."
         return 1
     fi
-    
+
     if [ "$expected_checksum" != "$actual_checksum" ]; then
         echo "❌ Checksum verification failed!"
         echo "   Expected: $expected_checksum"
         echo "   Got:      $actual_checksum"
         return 1
     fi
-    
+
     echo "✓ Checksums verified successfully"
 }
 
@@ -332,46 +333,46 @@ main() {
     else
         BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
     fi
-    
+
     ARCHIVE_NAME="${BINARY_NAME}-${OS}-${ARCH}.tar.gz"
     if [ "$OS" = "windows" ]; then
         ARCHIVE_NAME="${BINARY_NAME}-${OS}-${ARCH}.zip"
     fi
-    
+
     TMP_DIR=$(mktemp -d) || { echo "Error: Failed to create temporary directory" >&2; exit 1; }
     trap 'rm -rf "$TMP_DIR"' EXIT
-    
+
     ARCHIVE_FILE="$TMP_DIR/$ARCHIVE_NAME"
     CHECKSUMS_FILE="$TMP_DIR/${BINARY_NAME}-checksums.txt"
     CHECKSUMS_SIG="$TMP_DIR/${BINARY_NAME}-checksums.txt.sig"
-    
+
     echo "📦 Downloading $ARCHIVE_NAME..."
     download_file "$BASE_URL/$ARCHIVE_NAME" "$ARCHIVE_FILE"
-    
+
     echo "📥 Downloading checksums..."
     download_file "$BASE_URL/${BINARY_NAME}-checksums.txt" "$CHECKSUMS_FILE"
     download_file "$BASE_URL/${BINARY_NAME}-checksums.txt.sig" "$CHECKSUMS_SIG" || true
-    
+
     echo ""
     verify_checksums "$ARCHIVE_FILE" "$CHECKSUMS_FILE" "$CHECKSUMS_SIG"
     echo ""
-    
+
     echo "📂 Extracting archive..."
     if [ "$OS" = "windows" ]; then
         unzip -q "$ARCHIVE_FILE" -d "$TMP_DIR"
     else
         tar -xzf "$ARCHIVE_FILE" -C "$TMP_DIR"
     fi
-    
+
     BINARY_FILE="$TMP_DIR/$BINARY_NAME"
     if [ "$OS" = "windows" ]; then
         BINARY_FILE="${BINARY_FILE}.exe"
     fi
-    
+
     chmod +x "$BINARY_FILE"
 
     TARGET_PATH="$INSTALL_DIR/$BINARY_NAME"
-    
+
     # Check if upgrading existing installation
     EXISTING_VERSION=""
     if [ -f "$TARGET_PATH" ]; then
@@ -385,35 +386,37 @@ main() {
     else
         echo "📦 Installing to $INSTALL_DIR..."
     fi
-    
+
     if [ -w "$INSTALL_DIR" ]; then
+        # armis:ignore cwe:73 -- validate_install_dir() enforces character allowlist and absolute path
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
         echo "   (requires sudo privileges)"
         sudo -v || fail "sudo authentication failed"
         sudo mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH (sudo mv failed)"
     fi
-    
+
     if [ -w "$TARGET_PATH" ]; then
+        # armis:ignore cwe:285 -- installer must set executable permission on installed binary
         chmod +x "$TARGET_PATH" 2>/dev/null || true
     else
         sudo chmod +x "$TARGET_PATH" 2>/dev/null || true
     fi
-    
+
     [ -f "$TARGET_PATH" ] || fail "Install appeared to succeed, but $TARGET_PATH does not exist"
 
     # Get installed version
     INSTALLED_VERSION=$("$TARGET_PATH" --version 2>/dev/null | head -n1 || echo "unknown")
-    
+
     echo ""
     echo "✅ Armis CLI installed successfully!"
     echo "   Location: $TARGET_PATH"
     echo "   Version: $INSTALLED_VERSION"
     echo ""
-    
+
     # Refresh command hash table for current shell
     hash -r 2>/dev/null || rehash 2>/dev/null || true
-    
+
     # Check if command is now available
     if command -v "$BINARY_NAME" >/dev/null 2>&1; then
         # Success! Command is in PATH and discoverable
@@ -434,14 +437,15 @@ main() {
         # Command not in PATH yet
         echo "⚠️  Installation complete, but '$BINARY_NAME' is not in your PATH yet."
         echo ""
-        
+
         if ! is_in_path "$INSTALL_DIR"; then
             # Need to add to PATH
             if add_to_path "$INSTALL_DIR"; then
                 echo ""
                 echo "📋 To use $BINARY_NAME, you need to reload your shell configuration:"
                 echo ""
-                local shell_name=$(basename "$SHELL")
+                local shell_name
+                shell_name=$(basename "$SHELL")
                 case "$shell_name" in
                     zsh)
                         echo "   source ~/.zshrc"

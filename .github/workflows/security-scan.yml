@@ -22,6 +22,7 @@ jobs:
       upload-artifact: true
       scan-timeout: 120  # 2 hours
       build-from-source: false
+      category: armis-scheduled-scan
     secrets:
       client-id: ${{ secrets.ARMIS_CLIENT_ID }}
       client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}

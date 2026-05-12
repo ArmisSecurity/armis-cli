@@ -47,6 +47,10 @@ on:
         description: 'Build CLI from source instead of downloading release (for testing scanner changes)'
         type: boolean
         default: false
+      category:
+        description: 'Category for GitHub Code Scanning SARIF upload (use unique values per workflow to prevent alert reopening)'
+        type: string
+        default: 'armis-security-scan'
     secrets:
       client-id:
         description: 'Client ID for JWT authentication (recommended)'
@@ -257,7 +261,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: armis-results.sarif
-          category: armis-security-scan
+          category: ${{ inputs.category }}
 
       - name: Upload SARIF as Artifact
         if: always() && inputs.upload-artifact

@@ -34,6 +34,7 @@ var scanImageCmd = &cobra.Command{
 
 		// Validate tarball path exists before making network calls
 		if tarballPath != "" {
+			// armis:ignore cwe:22 -- tarballPath sanitized via util.SanitizePath() before use
 			info, err := os.Stat(tarballPath)
 			if err != nil {
 				if os.IsNotExist(err) {
