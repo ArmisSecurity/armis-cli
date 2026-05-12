@@ -77,6 +77,7 @@ func LoadSuppressionConfig(repoRoot string) (*SuppressionConfig, error) {
 func LoadArmisIgnore(repoRoot string) (*IgnoreMatcher, *SuppressionConfig, error) {
 	var allPatterns []gitignore.Pattern
 	config := NewSuppressionConfig()
+	// armis:ignore cwe:73 reason:filepath.Join with hardcoded ".armisignore" filename; repoRoot is from validated CLI arg
 	rootIgnorePath := filepath.Join(repoRoot, ".armisignore")
 
 	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
@@ -132,6 +133,7 @@ func LoadArmisIgnore(repoRoot string) (*IgnoreMatcher, *SuppressionConfig, error
 // parseArmisIgnoreFile reads and parses a single .armisignore file.
 // When isRoot is true, directive lines are parsed and returned.
 // When isRoot is false, directive-like lines are still treated as path patterns (backward compat).
+// armis:ignore cwe:73 reason:ignoreFilePath constructed internally via filepath.Walk, not user-controlled
 func parseArmisIgnoreFile(ignoreFilePath, repoRoot string, isRoot bool) ([]gitignore.Pattern, []SuppressionDirective, []string, error) {
 	f, err := os.Open(ignoreFilePath) // #nosec G304 - ignore file path is constructed internally
 	if err != nil {

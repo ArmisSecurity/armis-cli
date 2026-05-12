@@ -21,6 +21,7 @@ type ClaudeInstaller struct {
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
 func NewClaudeInstaller() *ClaudeInstaller {
+	// armis:ignore cwe:253 reason:UserHomeDir error yields empty string; filepath.Join("", ".claude") is a safe fallback
 	home, _ := os.UserHomeDir()
 	return &ClaudeInstaller{
 		claudeDir: filepath.Join(home, ".claude"),

@@ -176,6 +176,7 @@ func (s *Spinner) Start() {
 	s.mu.Unlock()
 
 	if s.disabled || IsCI() {
+		// armis:ignore cwe:253 reason:fmt.Fprintf to stderr; return value not actionable for log-style output
 		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", message, startTime.Format("15:04:05"))
 		return
 	}
@@ -205,6 +206,7 @@ func (s *Spinner) Start() {
 	s.cancel = cancel
 	s.mu.Unlock()
 
+	// armis:ignore cwe:401 reason:goroutine has proper lifecycle via doneChan + cancel; stopped by Spinner.Stop()
 	go func() {
 		defer close(s.doneChan)
 		defer cancel() // Ensure context is canceled when goroutine exits

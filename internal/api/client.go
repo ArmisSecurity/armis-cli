@@ -238,6 +238,7 @@ func (c *Client) setAuthHeader(ctx context.Context, req *http.Request) error {
 	scheme := strings.ToLower(req.URL.Scheme)
 
 	// Require HTTPS for non-localhost hosts to protect credentials
+	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement)
 	// #nosec G402 -- Localhost exception intentional for local development/testing
 	if host != hostLocalhost && host != hostLoopbackIP && scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)

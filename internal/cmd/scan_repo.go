@@ -105,6 +105,7 @@ var scanRepoCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to resolve path: %w", err)
 			}
+			// armis:ignore cwe:22 reason:absPath resolved via filepath.Abs() on line 104; ParseFileList validates paths via SafeJoinPath
 			fileList, err := repo.ParseFileList(absPath, includeFiles)
 			if err != nil {
 				return fmt.Errorf("invalid --include-files: %w", err)

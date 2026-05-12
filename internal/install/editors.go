@@ -138,6 +138,7 @@ func (ei *EditorInstaller) FetchPlugin() error {
 	if err := ei.plugin.FetchAndInstall(ei.pluginDir); err != nil {
 		return err
 	}
+	// armis:ignore cwe:522 reason:delegates to writeEnvFromEnvironment which writes with 0600 permissions
 	if err := writeEnvFromEnvironment(ei.EnvFilePath()); err != nil {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}

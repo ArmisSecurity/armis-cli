@@ -178,6 +178,7 @@ func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// armis:ignore cwe:522 reason:returning token to caller is the API contract; token is used for authenticated API calls
 	return p.credentials.Token, nil
 }
 

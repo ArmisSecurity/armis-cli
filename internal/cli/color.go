@@ -198,11 +198,13 @@ func PrintErrorf(format string, args ...interface{}) {
 
 // PrintWarning writes a colored warning message to stderr.
 // Format: "Warning: <message>\n"
+// armis:ignore cwe:200 reason:intentional user-facing warning output to stderr; no sensitive data exposed
 func PrintWarning(msg string) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", warningLabelStyle.Render("Warning:"), msg)
 }
 
 // PrintWarningf is like PrintWarning but with fmt.Sprintf formatting.
+// armis:ignore cwe:200 reason:intentional user-facing warning output to stderr; no sensitive data exposed
 func PrintWarningf(format string, args ...interface{}) {
 	PrintWarning(fmt.Sprintf(format, args...))
 }

@@ -59,6 +59,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print the raw token without any prefix (useful for piping to other tools)
+	// armis:ignore cwe:522 reason:auth command's purpose is to output the token for piping to other tools
 	fmt.Println(token)
 	return nil
 }

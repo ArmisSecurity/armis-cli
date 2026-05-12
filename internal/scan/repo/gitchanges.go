@@ -225,6 +225,7 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 		// filepath.Clean must be called before ToSlash as it operates on native separators.
 		cleanP := filepath.Clean(p)
 		slashP := filepath.ToSlash(cleanP)
+		// armis:ignore cwe:22 reason:filepath.Clean + HasPrefix IS the traversal prevention (this code is the mitigation)
 		if strings.HasPrefix(slashP, prefix) {
 			rel := strings.TrimPrefix(slashP, prefix)
 			if rel != "" {

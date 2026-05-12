@@ -78,7 +78,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		if err != nil {
 			return entry
 		}
-		defer f.Close() //nolint:errcheck
+		defer f.Close() //nolint:errcheck // armis:ignore cwe:253 reason:Close on read-only file; error is not actionable
 
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

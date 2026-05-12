@@ -50,6 +50,7 @@ func SanitizePath(p string) (string, error) {
 // after creation by a malicious symlink or directory structure.
 func SafeJoinPath(basePath, relativePath string) (string, error) {
 	// Verify base path is an existing directory
+	// armis:ignore cwe:367 reason:TOCTOU on Stat is acceptable; this is a defense-in-depth check, not the sole security boundary
 	info, err := os.Stat(basePath)
 	if err != nil {
 		return "", fmt.Errorf("cannot access base path: %w", err)
