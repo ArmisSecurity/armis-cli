@@ -167,6 +167,48 @@ func TestParseInlineComment(t *testing.T) {
 			want:     &InlineDirective{Rule: "CKV_AWS_18", Severity: "HIGH", CWE: "798"},
 		},
 		{
+			name:     "prefix inside backtick string rejected",
+			line:     "x := `// armis:ignore`",
+			prefixes: []string{"//"},
+			want:     nil,
+		},
+		{
+			name:     "real comment after backtick string accepted",
+			line:     "x := `value` // armis:ignore cwe:79",
+			prefixes: []string{"//"},
+			want:     &InlineDirective{CWE: "79"},
+		},
+		{
+			name:     "tabs between params handled",
+			line:     "# armis:ignore\tcategory:sast\tcwe:79",
+			prefixes: []string{"#"},
+			want:     &InlineDirective{Category: "sast", CWE: "79"},
+		},
+		{
+			name:     "multiple spaces between params handled",
+			line:     "# armis:ignore  category:sast   cwe:79",
+			prefixes: []string{"#"},
+			want:     &InlineDirective{Category: "sast", CWE: "79"},
+		},
+		{
+			name:     "unknown key only - returns nil",
+			line:     "# armis:ignore catgory:sast",
+			prefixes: []string{"#"},
+			want:     nil,
+		},
+		{
+			name:     "unknown key with valid key - keeps valid",
+			line:     "# armis:ignore catgory:sast cwe:79",
+			prefixes: []string{"#"},
+			want:     &InlineDirective{CWE: "79"},
+		},
+		{
+			name:     "block comment in JS",
+			line:     "/* armis:ignore cwe:79 */",
+			prefixes: []string{"//", "/*"},
+			want:     &InlineDirective{CWE: "79"},
+		},
+		{
 			name:     "leading whitespace",
 			line:     "    // armis:ignore severity:CRITICAL",
 			prefixes: []string{"//"},

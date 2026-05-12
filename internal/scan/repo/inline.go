@@ -33,20 +33,21 @@ var commentPrefixes = map[string][]string{
 	".yaml": {"#"}, ".yml": {"#"}, ".tf": {"#"}, ".toml": {"#"}, ".r": {"#"},
 	".dockerfile": {"#"},
 
-	".js": {"//"}, ".ts": {"//"}, ".jsx": {"//"}, ".tsx": {"//"}, ".java": {"//"},
-	".c": {"//"}, ".h": {"//"}, ".cpp": {"//"}, ".hpp": {"//"}, ".cs": {"//"},
-	".go": {"//"}, ".rs": {"//"}, ".swift": {"//"}, ".kt": {"//"}, ".scala": {"//"},
-	".dart": {"//"}, ".groovy": {"//"},
+	".js": {"//", "/*"}, ".ts": {"//", "/*"}, ".jsx": {"//", "/*"}, ".tsx": {"//", "/*"},
+	".java": {"//", "/*"}, ".c": {"//", "/*"}, ".h": {"//", "/*"},
+	".cpp": {"//", "/*"}, ".hpp": {"//", "/*"}, ".cs": {"//", "/*"},
+	".go": {"//"}, ".rs": {"//"}, ".swift": {"//", "/*"}, ".kt": {"//", "/*"},
+	".scala": {"//", "/*"}, ".dart": {"//", "/*"}, ".groovy": {"//", "/*"},
 
-	".php": {"//", "#"},
+	".php": {"//", "#", "/*"},
 
-	".sql": {"--"}, ".lua": {"--"}, ".hs": {"--"},
+	".sql": {"--", "/*"}, ".lua": {"--"}, ".hs": {"--"},
 
 	".ini": {";"}, ".cfg": {";"},
 
 	".html": {"<!--"}, ".xml": {"<!--"}, ".svg": {"<!--"},
 
-	".css": {"/*"}, ".scss": {"/*"}, ".less": {"/*"},
+	".css": {"/*"}, ".scss": {"/*", "//"}, ".less": {"/*", "//"},
 }
 
 var inlineDirectivePrefix = regexp.MustCompile(`(?i)armis:ignore\b`)
@@ -80,6 +81,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		defer f.Close() //nolint:errcheck
 
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			entry.lines = append(entry.lines, scanner.Text())
 		}
@@ -183,10 +185,12 @@ func parseInlineComment(line string, prefixes []string) *InlineDirective {
 }
 
 // findCommentStart finds the first occurrence of prefix that is not inside a
-// quoted string. Returns -1 if not found or only found inside quotes.
+// quoted string (single, double, or backtick). Returns -1 if not found or
+// only found inside quotes.
 func findCommentStart(line, prefix string) int {
 	inSingle := false
 	inDouble := false
+	inBacktick := false
 	escaped := false
 
 	for i := 0; i <= len(line)-len(prefix); i++ {
@@ -196,20 +200,24 @@ func findCommentStart(line, prefix string) int {
 			escaped = false
 			continue
 		}
-		if ch == '\\' {
+		if ch == '\\' && !inBacktick {
 			escaped = true
 			continue
 		}
-		if ch == '\'' && !inDouble {
+		if ch == '\'' && !inDouble && !inBacktick {
 			inSingle = !inSingle
 			continue
 		}
-		if ch == '"' && !inSingle {
+		if ch == '"' && !inSingle && !inBacktick {
 			inDouble = !inDouble
 			continue
 		}
+		if ch == '`' && !inSingle && !inDouble {
+			inBacktick = !inBacktick
+			continue
+		}
 
-		if !inSingle && !inDouble && line[i:i+len(prefix)] == prefix {
+		if !inSingle && !inDouble && !inBacktick && line[i:i+len(prefix)] == prefix {
 			return i
 		}
 	}
@@ -218,6 +226,7 @@ func findCommentStart(line, prefix string) int {
 
 // parseDirectiveParams extracts key:value pairs from the text after "armis:ignore".
 // Parameters may appear in any order. "reason:" captures the rest of the line.
+// Returns nil if params are provided but none are recognized (likely a typo).
 func parseDirectiveParams(text string) *InlineDirective {
 	d := &InlineDirective{}
 
@@ -231,46 +240,45 @@ func parseDirectiveParams(text string) *InlineDirective {
 		return d
 	}
 
-	// Parse key:value pairs; "reason:" is special - it consumes the rest
-	for remainder != "" {
-		remainder = strings.TrimSpace(remainder)
-		if remainder == "" {
-			break
-		}
+	// Handle "reason:" as rest-of-line before field splitting
+	lower := strings.ToLower(remainder)
+	if idx := strings.Index(lower, "reason:"); idx != -1 {
+		d.Reason = strings.TrimSpace(remainder[idx+7:])
+		remainder = strings.TrimSpace(remainder[:idx])
+	}
 
-		// Check for reason: which consumes everything after it
-		lower := strings.ToLower(remainder)
-		if strings.HasPrefix(lower, "reason:") {
-			d.Reason = strings.TrimSpace(remainder[7:])
-			break
-		}
+	hasParams := false
+	recognized := false
 
-		// Try to match key:value
-		parts := strings.SplitN(remainder, " ", 2)
-		token := parts[0]
-		if len(parts) > 1 {
-			remainder = parts[1]
-		} else {
-			remainder = ""
-		}
-
+	tokens := strings.Fields(remainder)
+	for _, token := range tokens {
 		colonIdx := strings.Index(token, ":")
 		if colonIdx == -1 {
 			continue
 		}
+		hasParams = true
 		key := strings.ToLower(token[:colonIdx])
 		value := token[colonIdx+1:]
 
 		switch key {
 		case string(DirectiveCategory):
 			d.Category = strings.ToLower(value)
+			recognized = true
 		case string(DirectiveRule):
 			d.Rule = value
+			recognized = true
 		case string(DirectiveCWE):
 			d.CWE = value
+			recognized = true
 		case string(DirectiveSeverity):
 			d.Severity = strings.ToUpper(value)
+			recognized = true
 		}
+	}
+
+	// If params were provided but none recognized, treat as invalid directive
+	if hasParams && !recognized && d.Reason == "" {
+		return nil
 	}
 
 	return d
