@@ -400,12 +400,19 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 		}
 
 		if finding.Suppressed && finding.SuppressionInfo != nil {
-			justification := fmt.Sprintf(".armisignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
+			kind := "external"
+			var justification string
+			if finding.SuppressionInfo.Source == suppressionSourceInline {
+				kind = "inSource"
+				justification = fmt.Sprintf("armis:ignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
+			} else {
+				justification = fmt.Sprintf(".armisignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
+			}
 			if finding.SuppressionInfo.Reason != "" {
 				justification += " -- " + finding.SuppressionInfo.Reason
 			}
 			result.Suppressions = []sarifSuppression{{
-				Kind:          "inSource",
+				Kind:          kind,
 				Justification: justification,
 			}}
 		}

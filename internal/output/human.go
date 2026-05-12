@@ -354,7 +354,7 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 			}
 		}
 		if criticalSuppressed > 0 {
-			cli.PrintWarningf("%d CRITICAL %s suppressed by .armisignore",
+			cli.PrintWarningf("%d CRITICAL %s suppressed",
 				criticalSuppressed, pluralize("finding", criticalSuppressed))
 		}
 	}
@@ -694,6 +694,34 @@ func pluralize(word string, count int) string {
 	return word + "s"
 }
 
+// suppressionSummaryText builds a human-readable summary splitting counts by source.
+// Example: "3 suppressed by .armisignore, 2 by inline comments"
+func suppressionSummaryText(findings []model.Finding) string {
+	var armisignore, inline int
+	for _, f := range findings {
+		if !f.Suppressed {
+			continue
+		}
+		if f.SuppressionInfo != nil && f.SuppressionInfo.Source == suppressionSourceInline {
+			inline++
+		} else {
+			armisignore++
+		}
+	}
+
+	var parts []string
+	if armisignore > 0 {
+		parts = append(parts, fmt.Sprintf("%d suppressed by .armisignore", armisignore))
+	}
+	if inline > 0 {
+		parts = append(parts, fmt.Sprintf("%d suppressed by inline comments", inline))
+	}
+	if len(parts) == 0 {
+		return "0 suppressed"
+	}
+	return strings.Join(parts, ", ")
+}
+
 // renderBriefStatus renders a concise one-line summary of findings count by severity.
 // Example output: "Found 5 issues: 2 critical, 1 high, 2 medium"
 func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
@@ -713,7 +741,7 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	if total == 0 && suppressed > 0 {
 		successStyle := s.SuccessText
 		ew.write("%s %s\n", IconSuccess, successStyle.Render(
-			fmt.Sprintf("No active issues (%d suppressed by .armisignore)", suppressed)))
+			fmt.Sprintf("No active issues (%s)", suppressionSummaryText(result.Findings))))
 		return ew.err
 	}
 
@@ -736,10 +764,10 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	}
 
 	if suppressed > 0 {
-		// Format: "N issues (M suppressed by .armisignore)  ·  X critical, Y high"
+		// Format: "N issues (M suppressed by .armisignore, K by inline comments)  ·  X critical, Y high"
 		ew.write("%s  %s  %s\n",
 			s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total)))+
-				s.MutedText.Render(fmt.Sprintf(" (%d suppressed by .armisignore)", suppressed)),
+				s.MutedText.Render(fmt.Sprintf(" (%s)", suppressionSummaryText(result.Findings))),
 			s.MutedText.Render("·"),
 			strings.Join(parts, s.MutedText.Render(", ")))
 	} else {
@@ -781,7 +809,7 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 
 	// Suppressed count if any
 	if result.Summary.Suppressed > 0 {
-		suppressed := s.MutedText.Render(fmt.Sprintf("(%d suppressed by .armisignore)", result.Summary.Suppressed))
+		suppressed := s.MutedText.Render(fmt.Sprintf("(%s)", suppressionSummaryText(result.Findings)))
 		content.WriteString(suppressed + "\n")
 	}
 
@@ -875,7 +903,11 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 	// Show suppression label whenever a suppressed finding is rendered (callers
 	// are responsible for filtering suppressed findings when --show-suppressed is off).
 	if finding.Suppressed {
-		suppLabel := s.MutedText.Render("[SUPPRESSED]")
+		label := "[SUPPRESSED]"
+		if finding.SuppressionInfo != nil && finding.SuppressionInfo.Source == suppressionSourceInline {
+			label = "[SUPPRESSED by armis:ignore]"
+		}
+		suppLabel := s.MutedText.Render(label)
 		var reason string
 		if finding.SuppressionInfo != nil {
 			reason = fmt.Sprintf("%s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)

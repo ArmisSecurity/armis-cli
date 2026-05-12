@@ -8,6 +8,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+const suppressionSourceInline = "inline"
+
 // Package-level variables for testability
 var (
 	stdoutSyncer           = func() error { return os.Stdout.Sync() }

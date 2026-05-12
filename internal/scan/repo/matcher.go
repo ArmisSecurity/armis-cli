@@ -88,6 +88,7 @@ func ApplySuppression(findings []model.Finding, config *SuppressionConfig) int {
 				Type:   string(result.Directive.Type),
 				Value:  result.Directive.Value,
 				Reason: result.Directive.Reason,
+				Source: "armisignore",
 			}
 			suppressed++
 		}
