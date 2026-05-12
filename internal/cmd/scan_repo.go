@@ -37,7 +37,7 @@ var scanRepoCmd = &cobra.Command{
 		repoPath := args[0]
 
 		// Validate path exists and is a directory before making network calls
-		// armis:ignore cwe:22 -- repoPath resolved to absolute via filepath.Abs() before use
+		// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
 		info, err := os.Stat(repoPath)
 		if err != nil {
 			if os.IsNotExist(err) {

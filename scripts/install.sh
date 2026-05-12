@@ -388,7 +388,7 @@ main() {
     fi
 
     if [ -w "$INSTALL_DIR" ]; then
-        # armis:ignore cwe:73 -- validate_install_dir() enforces character allowlist and absolute path
+        # armis:ignore cwe:73 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
         echo "   (requires sudo privileges)"
@@ -397,7 +397,7 @@ main() {
     fi
 
     if [ -w "$TARGET_PATH" ]; then
-        # armis:ignore cwe:285 -- installer must set executable permission on installed binary
+        # armis:ignore cwe:285 reason:installer must set executable permission on installed binary
         chmod +x "$TARGET_PATH" 2>/dev/null || true
     else
         sudo chmod +x "$TARGET_PATH" 2>/dev/null || true
