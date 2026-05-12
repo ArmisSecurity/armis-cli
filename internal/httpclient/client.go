@@ -42,7 +42,11 @@ func NewClient(cfg Config) *Client {
 		cfg.RetryWaitMax = 10 * time.Second
 	}
 
-	httpClient := &http.Client{}
+	httpClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("redirects are not allowed (attempted redirect to %s)", req.URL.Host)
+		},
+	}
 	if !cfg.DisableTimeout {
 		httpClient.Timeout = cfg.Timeout
 	}
