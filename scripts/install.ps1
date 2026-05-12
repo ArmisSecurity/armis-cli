@@ -250,6 +250,7 @@ function Main {
             $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
             if ($newUserPath -ne $currentPath) {
                 Write-Host "Adding to PATH..."
+                # armis:ignore cwe:426 reason:installer adds its own validated InstallDir to user PATH; standard installer pattern
                 [Environment]::SetEnvironmentVariable(
                     "Path",
                     $newUserPath,

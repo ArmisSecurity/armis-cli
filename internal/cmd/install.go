@@ -77,7 +77,10 @@ func showInstalledVersions() error {
 	ei := install.NewEditorInstaller()
 	v := ei.GetInstalledVersion()
 
-	ci := install.NewClaudeInstaller()
+	ci, err := install.NewClaudeInstaller()
+	if err != nil {
+		return fmt.Errorf("failed to initialize Claude installer: %w", err)
+	}
 	cv := ci.GetInstalledVersion()
 
 	if v == "" && cv == "" {
@@ -116,8 +119,11 @@ func installAll() error {
 		}
 	}
 
-	ci := install.NewClaudeInstaller()
-	if err := ci.Install(); err != nil {
+	ci, ciErr := install.NewClaudeInstaller()
+	if ciErr != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
+		failed = append(failed, "Claude Code")
+	} else if err := ci.Install(); err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", err)
 		failed = append(failed, "Claude Code")
 	} else {
@@ -200,7 +206,10 @@ func installTargets(targets []string) error {
 	}
 
 	if hasClaude {
-		ci := install.NewClaudeInstaller()
+		ci, ciErr := install.NewClaudeInstaller()
+		if ciErr != nil {
+			return fmt.Errorf("Claude Code installation failed: %w", ciErr) //nolint:staticcheck // proper noun
+		}
 		fmt.Fprintln(os.Stderr, "Installing Armis AppSec plugin for Claude Code...")
 		if err := ci.Install(); err != nil {
 			return fmt.Errorf("Claude Code installation failed: %w", err) //nolint:staticcheck // proper noun

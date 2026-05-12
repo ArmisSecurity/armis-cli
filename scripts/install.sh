@@ -254,6 +254,7 @@ verify_checksums() {
     local checksums_file="$2"
     local checksums_sig="$3"
 
+    # armis:ignore cwe:494 reason:VERIFY defaults to true; explicit opt-out for environments without cosign/sha256sum
     if [ "$VERIFY" != "true" ]; then
         echo "⚠️  Skipping verification (VERIFY=false)"
         return 0
@@ -358,6 +359,7 @@ main() {
     echo ""
 
     echo "📂 Extracting archive..."
+    # armis:ignore cwe:22 reason:ARCHIVE_FILE is downloaded from verified GitHub release URL; TMP_DIR is mktemp -d
     if [ "$OS" = "windows" ]; then
         unzip -q "$ARCHIVE_FILE" -d "$TMP_DIR"
     else
@@ -387,6 +389,7 @@ main() {
         echo "📦 Installing to $INSTALL_DIR..."
     fi
 
+    # armis:ignore cwe:367 reason:TOCTOU between writable-check and mv is acceptable for installer; no security boundary crossed
     if [ -w "$INSTALL_DIR" ]; then
         # armis:ignore cwe:73 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"

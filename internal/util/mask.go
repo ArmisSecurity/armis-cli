@@ -116,6 +116,7 @@ func MaskSecretInLine(line string) string {
 		return line
 	}
 
+	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	result := line
 
 	for _, pattern := range secretPatterns {

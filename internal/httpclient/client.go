@@ -42,7 +42,11 @@ func NewClient(cfg Config) *Client {
 		cfg.RetryWaitMax = 10 * time.Second
 	}
 
-	httpClient := &http.Client{}
+	httpClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("redirects are not allowed (attempted redirect to %s)", req.URL.Host)
+		},
+	}
 	if !cfg.DisableTimeout {
 		httpClient.Timeout = cfg.Timeout
 	}
@@ -69,6 +73,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			req.Body = newBody
 		}
 
+		// armis:ignore cwe:918 reason:URL validated by api.Client caller (HTTPS enforced, no redirects)
 		resp, err = c.httpClient.Do(req) //nolint:gosec // G704: URL is from API client, validated before use
 		if err != nil {
 			// Close response body if present to prevent resource leaks

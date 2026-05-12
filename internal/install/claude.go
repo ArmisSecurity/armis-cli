@@ -20,12 +20,15 @@ type ClaudeInstaller struct {
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
-func NewClaudeInstaller() *ClaudeInstaller {
-	home, _ := os.UserHomeDir()
+func NewClaudeInstaller() (*ClaudeInstaller, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
 	return &ClaudeInstaller{
 		claudeDir: filepath.Join(home, ".claude"),
 		plugin:    newPluginInstaller(),
-	}
+	}, nil
 }
 
 // InstalledVersion returns the version that was installed (available after Install).

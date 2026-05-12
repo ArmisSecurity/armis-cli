@@ -198,7 +198,9 @@ func PrintErrorf(format string, args ...interface{}) {
 
 // PrintWarning writes a colored warning message to stderr.
 // Format: "Warning: <message>\n"
+// armis:ignore cwe:200 reason:intentional user-facing warning output to stderr; message masked via MaskSecretInLine
 func PrintWarning(msg string) {
+	msg = util.MaskSecretInLine(msg)
 	fmt.Fprintf(os.Stderr, "%s %s\n", warningLabelStyle.Render("Warning:"), msg)
 }
 
