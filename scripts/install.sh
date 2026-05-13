@@ -363,6 +363,7 @@ main() {
     if [ "$OS" = "windows" ]; then
         unzip -q "$ARCHIVE_FILE" -d "$TMP_DIR"
     else
+        # armis:ignore cwe:22 reason:ARCHIVE_FILE downloaded from verified GitHub release URL with checksum; TMP_DIR is mktemp -d
         tar -xzf "$ARCHIVE_FILE" -C "$TMP_DIR"
     fi
 
@@ -386,14 +387,14 @@ main() {
             echo "📦 Replacing existing installation..."
         fi
     else
-        # armis:ignore cwe:367 reason:TOCTOU on fi-to-mv path is benign for local installer; no security boundary crossed
+        # armis:ignore cwe:367 reason:TOCTOU between if-block and mv is benign for local installer; no security boundary crossed
         echo "📦 Installing to $INSTALL_DIR..."
     fi
 
     # armis:ignore cwe:367 reason:TOCTOU between writable-check and mv is acceptable for installer; no security boundary crossed
     if [ -w "$INSTALL_DIR" ]; then
-        # armis:ignore cwe:367 reason:mv after writable-check; acceptable TOCTOU for local installer binary placement
         # armis:ignore cwe:73 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
+        # armis:ignore cwe:367 reason:mv after writable-check; acceptable TOCTOU for local installer binary placement
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
         echo "   (requires sudo privileges)"
@@ -401,8 +402,8 @@ main() {
         sudo mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH (sudo mv failed)"
     fi
 
+    # armis:ignore cwe:367 reason:TOCTOU between writable-check and chmod; acceptable for local installer
     if [ -w "$TARGET_PATH" ]; then
-        # armis:ignore cwe:367 reason:chmod after writable-check; acceptable TOCTOU for local installer
         # armis:ignore cwe:285 reason:installer must set executable permission on installed binary
         chmod +x "$TARGET_PATH" 2>/dev/null || true
     else
