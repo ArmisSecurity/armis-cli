@@ -217,7 +217,9 @@ func (s *Spinner) Start() {
 		// even when --color=never. This matches clearLine() which uses \033[K.
 		hideCursor := isTerminalWriter(s.writer)
 		if hideCursor {
+			// armis:ignore cwe:253 reason:fmt.Fprint to terminal for cursor control; return value not actionable
 			_, _ = fmt.Fprint(s.writer, cursorHide)
+			// armis:ignore cwe:253 reason:deferred fmt.Fprint for cursor restore; return value not actionable
 			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
 		}
 
@@ -237,11 +239,11 @@ func (s *Spinner) Start() {
 		for {
 			select {
 			case <-s.stopChan:
-				// Explicit stop requested
+				// armis:ignore cwe:253 reason:fmt.Fprint to terminal for line clearing; return value not actionable
 				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ctx.Done():
-				// Context canceled or timeout reached
+				// armis:ignore cwe:253 reason:fmt.Fprint to terminal for line clearing; return value not actionable
 				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ticker.C:
@@ -254,8 +256,10 @@ func (s *Spinner) Start() {
 				text := styles.SpinnerText.Render(msg)
 				if s.showTimer {
 					timer := styles.SpinnerTimer.Render("[" + formatDuration(elapsed) + "]")
+					// armis:ignore cwe:253 reason:fmt.Fprintf to terminal for spinner output; return value not actionable
 					_, _ = fmt.Fprintf(s.writer, "%s%s %s %s", clearLine(), char, text, timer)
 				} else {
+					// armis:ignore cwe:253 reason:fmt.Fprintf to terminal for spinner output; return value not actionable
 					_, _ = fmt.Fprintf(s.writer, "%s%s %s", clearLine(), char, text)
 				}
 				i++
