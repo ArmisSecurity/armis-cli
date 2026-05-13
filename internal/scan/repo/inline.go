@@ -146,11 +146,11 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 				if trimmed == "" {
 					continue
 				}
-				if d := parseInlineComment(above, prefixes); d != nil {
-					directive = d
+				if !isCommentLine(trimmed, prefixes) {
 					break
 				}
-				if !isCommentLine(trimmed, prefixes) {
+				if d := parseInlineComment(above, prefixes); d != nil {
+					directive = d
 					break
 				}
 			}

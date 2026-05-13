@@ -415,6 +415,20 @@ func TestApplyInlineSuppression(t *testing.T) {
 		}
 	})
 
+	t.Run("inline directive on code line above does not suppress finding below", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\nx := 1 // armis:ignore cwe:79\nvar y = unsafe(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (end-of-line directive on code line should not suppress lines below), got %d", count)
+		}
+	})
+
 	t.Run("scans through blank lines", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:22\n\nvar path = readFile(input)\n")
