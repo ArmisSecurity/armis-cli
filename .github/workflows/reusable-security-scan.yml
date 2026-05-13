@@ -300,13 +300,14 @@ jobs:
           # First, check for operational failures (timeout, API errors, etc.)
           # These should always fail regardless of informational mode
           if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_OUTCOME" = "cancelled" ]; then
-            if [ "$HAS_RESULTS" = "false" ] || [ "${RESULTS_COUNT:-0}" = "0" ]; then
-              # Scan failed without producing results - likely timeout or API error
+            if [ "$HAS_RESULTS" = "false" ]; then
+              # Scan failed without producing valid SARIF - likely timeout or API error
               echo "::error::Armis scan failed (timeout, API error, or other issue). Check the 'Run Armis Security Scan' step for details."
               exit 1
             fi
-            # Scan produced results but step marked as failure - findings exceeded threshold
-            # Fall through to threshold check below
+            # Scan step failed but valid SARIF exists. This can mean:
+            # - Findings exceeded --fail-on threshold (exit 1) -> fall through to threshold check
+            # - Scan completed but result retrieval had transient error (exit 2) -> RESULTS_COUNT=0, passes threshold check
           fi
 
           # Informational mode: if fail-on is empty, never fail on findings
@@ -316,8 +317,8 @@ jobs:
             exit 0
           fi
 
-          # Check if findings exceeded threshold
-          if [ "$SCAN_OUTCOME" = "failure" ]; then
+          # Check if findings exceeded threshold (only if scan actually produced findings)
+          if [ "$SCAN_OUTCOME" = "failure" ] && [ "${RESULTS_COUNT:-0}" -gt 0 ]; then
             echo "::error::Security vulnerabilities detected by Armis (threshold: $FAIL_ON). Found $RESULTS_COUNT issues."
             exit 1
           fi

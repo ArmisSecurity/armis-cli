@@ -130,7 +130,7 @@ func MaskSecretInLine(line string) string {
 			// For patterns with prefix + value (3+ capture groups), mask just the value (submatches[2])
 			if len(submatches) >= 3 {
 				value := submatches[2]
-				// Skip common literals that aren't secrets
+				// armis:ignore cwe:522 reason:skipping common literals (true/false/null) is intentional; these aren't credentials
 				if commonLiterals[strings.ToLower(value)] {
 					return match
 				}

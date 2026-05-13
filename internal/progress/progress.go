@@ -221,7 +221,7 @@ func (s *Spinner) Start() {
 			_, _ = fmt.Fprint(s.writer, cursorHide)
 			// armis:ignore cwe:253 reason:deferred fmt.Fprint for cursor restore; return value not actionable
 			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
-		}
+		} // armis:ignore cwe:253
 
 		spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		i := 0

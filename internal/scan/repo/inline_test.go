@@ -373,6 +373,104 @@ func TestApplyInlineSuppression(t *testing.T) {
 		}
 	})
 
+	t.Run("suppresses finding with comment 2 lines above", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:770\n// some other comment\nvar data = readAll()\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-770"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 suppressed (comment 2 lines above), got %d", count)
+		}
+	})
+
+	t.Run("suppresses finding with comment 3 lines above through stacked comments", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:22\n// #nosec G304\n// nolint:gosec\nvar path = readFile(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 5, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 suppressed (comment 3 lines above through stacked comments), got %d", count)
+		}
+	})
+
+	t.Run("stops scanning upward at non-comment code line", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79\nvar x = 1\n// unrelated comment\nvar y = unsafe(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 5, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (code line breaks upward scan), got %d", count)
+		}
+	})
+
+	t.Run("inline directive on code line above does not suppress finding below", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\nx := 1 // armis:ignore cwe:79\nvar y = unsafe(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (end-of-line directive on code line should not suppress lines below), got %d", count)
+		}
+	})
+
+	t.Run("scans through blank lines", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:22\n\nvar path = readFile(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (blank line skipped), got %d", count)
+		}
+	})
+
+	t.Run("suppresses finding with directive exactly 5 lines above (max window)", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79\n// c1\n// c2\n// c3\n// c4\nvar x = unsafe(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 7, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (directive at exactly 5-line max window), got %d", count)
+		}
+	})
+
+	t.Run("does not suppress finding with directive 6 lines above (beyond window)", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79\n// c1\n// c2\n// c3\n// c4\n// c5\nvar x = unsafe(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 8, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (directive beyond 5-line window), got %d", count)
+		}
+	})
+
 	t.Run("skips findings already suppressed by armisignore", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "main.py", "# armis:ignore\npassword = 'x'\n")

@@ -246,6 +246,7 @@ func (pi *PluginInstaller) createVenv(pluginDir string) error {
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
+	// armis:ignore cwe:94 reason:python path from findPython allowlist (python3/python only); args are hardcoded
 	venvCmd := exec.Command(python, "-m", "venv", venvDir) //nolint:gosec // python validated by findPython allowlist
 	venvCmd.Stdout = os.Stderr
 	venvCmd.Stderr = os.Stderr
@@ -345,9 +346,11 @@ func writeEnvFromEnvironment(envPath string) error {
 
 	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
 	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+	// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
 		return fmt.Errorf("creating env directory: %w", err)
 	}
+	// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
 	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil { // #nosec G703 - envPath is constructed from pluginDir + ".env"
 		return fmt.Errorf("writing env file: %w", err)
 	}
