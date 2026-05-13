@@ -220,7 +220,7 @@ func (s *Spinner) Start() {
 			// armis:ignore cwe:253 reason:fmt.Fprint to terminal for cursor control; return value not actionable
 			_, _ = fmt.Fprint(s.writer, cursorHide)
 			// armis:ignore cwe:253 reason:deferred fmt.Fprint for cursor restore; return value not actionable
-			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
+			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }() // armis:ignore cwe:253
 		}
 
 		spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

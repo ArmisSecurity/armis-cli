@@ -105,6 +105,7 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	// Create parent directories if needed
 	dir := filepath.Dir(cleanPath)
 	if dir != "" && dir != "." {
+		// armis:ignore cwe:770 reason:MkdirAll depth bounded by user-specified output path; not recursive input
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create output directory %s: %w", dir, err)
 		}

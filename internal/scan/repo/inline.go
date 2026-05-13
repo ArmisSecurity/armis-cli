@@ -133,17 +133,25 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 			continue
 		}
 
-		// Check the finding line itself and the line above
-		linesToCheck := []string{fl.lines[lineIdx]}
-		if lineIdx > 0 {
-			linesToCheck = append(linesToCheck, fl.lines[lineIdx-1])
-		}
-
+		// Check the finding line itself, then scan upward through comment/blank lines
+		// (up to 5 lines above) to find a matching armis:ignore directive.
 		var directive *InlineDirective
-		for _, line := range linesToCheck {
-			if d := parseInlineComment(line, prefixes); d != nil {
-				directive = d
-				break
+		if d := parseInlineComment(fl.lines[lineIdx], prefixes); d != nil {
+			directive = d
+		} else {
+			for offset := 1; offset <= 5 && lineIdx-offset >= 0; offset++ {
+				above := fl.lines[lineIdx-offset]
+				trimmed := strings.TrimSpace(above)
+				if trimmed == "" {
+					continue
+				}
+				if d := parseInlineComment(above, prefixes); d != nil {
+					directive = d
+					break
+				}
+				if !isCommentLine(trimmed, prefixes) {
+					break
+				}
 			}
 		}
 
@@ -187,6 +195,16 @@ func parseInlineComment(line string, prefixes []string) *InlineDirective {
 		return d
 	}
 	return nil
+}
+
+// isCommentLine returns true if the trimmed line starts with any of the given comment prefixes.
+func isCommentLine(trimmed string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(trimmed, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // findCommentStart finds the first occurrence of prefix that is not inside a
