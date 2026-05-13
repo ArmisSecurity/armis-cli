@@ -14,6 +14,7 @@ import (
 
 const (
 	maxInlineFileSize   = 10 * 1024 * 1024 // 10MB
+	maxScanLinesAbove   = 5
 	suppressionInline   = "inline"
 	suppressionTypeCWE  = "cwe"
 	suppressionTypeRule = "rule"
@@ -139,7 +140,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		if d := parseInlineComment(fl.lines[lineIdx], prefixes); d != nil {
 			directive = d
 		} else {
-			for offset := 1; offset <= 5 && lineIdx-offset >= 0; offset++ {
+			for offset := 1; offset <= maxScanLinesAbove && lineIdx-offset >= 0; offset++ {
 				above := fl.lines[lineIdx-offset]
 				trimmed := strings.TrimSpace(above)
 				if trimmed == "" {

@@ -27,8 +27,8 @@ type ScanResult struct {
 
 // FlatResults returns all DetectedAgent entries in a flat slice (for JSON output).
 func (r *ScanResult) FlatResults() []DetectedAgent {
-	// armis:ignore cwe:770 reason:bounded by number of OS users; only iterates pre-scanned results in memory
 	var results []DetectedAgent
+	// armis:ignore cwe:770 reason:bounded by number of OS users; only iterates pre-scanned results in memory
 	for _, u := range r.Users {
 		results = append(results, u.Agents...)
 	}
