@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.2] - 2026-05-13
+
+### Added
+
+- Inline `armis:ignore` comment suppression — suppress findings directly in source code with parameterized matching by category, rule, CWE, or severity; supports all major comment syntaxes with security-hardened parsing (#170)
+
+### Fixed
+
+- Recurring findings no longer reopen on the GitHub Code Scanning tab — separated PR and scheduled scan SARIF categories (#171)
+- `PrintWarning` now masks secrets consistently with `PrintError` (#172)
+- HTTP client disallows redirects to strengthen SSRF protection (#172)
+- Inline suppression file handle errors properly propagated instead of suppressed (#172)
+- Stale Code Scanning alerts now close correctly when findings are suppressed via inline directives (#173)
+
+---
+
 ## [1.8.1] - 2026-05-11
 
 ### Added
@@ -285,7 +301,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
