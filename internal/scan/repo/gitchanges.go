@@ -218,6 +218,12 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 		prefix += "/"
 	}
 
+	// Resolve symlinks on scanPath so containment checks compare real paths (CWE-22).
+	resolvedScanPath, err := filepath.EvalSymlinks(scanPath)
+	if err != nil {
+		resolvedScanPath = scanPath
+	}
+
 	var filtered []string
 	for _, p := range changedPaths {
 		// Normalize path components (e.g., "subdir/../secret" -> "../secret")
@@ -228,6 +234,16 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 		if strings.HasPrefix(slashP, prefix) {
 			rel := strings.TrimPrefix(slashP, prefix)
 			if rel != "" {
+				// Resolve symlinks to reject paths that escape scanPath (CWE-22).
+				// Only reject when resolution succeeds and proves escape; if the file
+				// doesn't exist on disk (common for deleted files), the string-based
+				// prefix check above is sufficient since Clean already rejected "..".
+				absCandidate := filepath.Join(repoRoot, p)
+				if resolved, err := filepath.EvalSymlinks(absCandidate); err == nil {
+					if !strings.HasPrefix(resolved, resolvedScanPath+string(filepath.Separator)) && resolved != resolvedScanPath {
+						continue
+					}
+				}
 				filtered = append(filtered, rel)
 			}
 		}
