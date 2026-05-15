@@ -424,10 +424,18 @@ func TestFilterToScanPath_SymlinkEscape(t *testing.T) {
 	scanPath := filepath.Join(repoRoot, "src")
 	outsideDir := filepath.Join(tmpDir, "outside")
 
-	os.MkdirAll(scanPath, 0o755)
-	os.MkdirAll(outsideDir, 0o755)
-	os.WriteFile(filepath.Join(scanPath, "legit.go"), []byte("package main"), 0o644)
-	os.WriteFile(filepath.Join(outsideDir, "leaked.go"), []byte("leaked"), 0o644)
+	if err := os.MkdirAll(scanPath, 0o750); err != nil {
+		t.Fatalf("failed to create scan path: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o750); err != nil {
+		t.Fatalf("failed to create outside dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scanPath, "legit.go"), []byte("package main"), 0o600); err != nil {
+		t.Fatalf("failed to write legit.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "leaked.go"), []byte("leaked"), 0o600); err != nil {
+		t.Fatalf("failed to write leaked.go: %v", err)
+	}
 
 	// Create symlink: repo/src/evil -> outside/
 	evilLink := filepath.Join(scanPath, "evil")
