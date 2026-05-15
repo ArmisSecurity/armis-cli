@@ -413,6 +413,54 @@ func TestFilterToScanPath(t *testing.T) {
 	}
 }
 
+func TestFilterToScanPath_SymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Structure:
+	// tmpDir/repo/src/legit.go      (real file)
+	// tmpDir/repo/src/evil/         (symlink -> tmpDir/outside/)
+	// tmpDir/outside/leaked.go      (file outside repo)
+	repoRoot := filepath.Join(tmpDir, "repo")
+	scanPath := filepath.Join(repoRoot, "src")
+	outsideDir := filepath.Join(tmpDir, "outside")
+
+	if err := os.MkdirAll(scanPath, 0o750); err != nil {
+		t.Fatalf("failed to create scan path: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o750); err != nil {
+		t.Fatalf("failed to create outside dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scanPath, "legit.go"), []byte("package main"), 0o600); err != nil {
+		t.Fatalf("failed to write legit.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "leaked.go"), []byte("leaked"), 0o600); err != nil {
+		t.Fatalf("failed to write leaked.go: %v", err)
+	}
+
+	// Create symlink: repo/src/evil -> outside/
+	evilLink := filepath.Join(scanPath, "evil")
+	if err := os.Symlink(outsideDir, evilLink); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	changedPaths := []string{
+		"src/legit.go",       // legitimate file inside scan path
+		"src/evil/leaked.go", // traverses via symlink to outside
+	}
+
+	filtered, err := filterToScanPath(repoRoot, scanPath, changedPaths)
+	if err != nil {
+		t.Fatalf("filterToScanPath error: %v", err)
+	}
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 result, got %d: %v", len(filtered), filtered)
+	}
+	if filtered[0] != "legit.go" {
+		t.Errorf("expected 'legit.go', got %q", filtered[0])
+	}
+}
+
 func TestValidateRef(t *testing.T) {
 	tests := []struct {
 		name      string
