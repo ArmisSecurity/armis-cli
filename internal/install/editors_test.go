@@ -87,7 +87,7 @@ func TestDetectedEditors(t *testing.T) {
 }
 
 func TestRegisterMCPServersFormat(t *testing.T) {
-	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ, EditorAntigravity, EditorContinue, EditorGemini}
+	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ, EditorAntigravity, EditorContinue, EditorGemini, EditorClaudeDesktop}
 	for _, id := range editors {
 		t.Run(string(id), func(t *testing.T) {
 			dir := t.TempDir()

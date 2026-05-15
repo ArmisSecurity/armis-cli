@@ -14,17 +14,18 @@ const mcpServerName = "armis-appsec"
 type EditorID string
 
 const (
-	EditorVSCode      EditorID = "vscode"
-	EditorCursor      EditorID = "cursor"
-	EditorWindsurf    EditorID = "windsurf"
-	EditorZed         EditorID = "zed"
-	EditorCline       EditorID = "cline"
-	EditorAmazonQ     EditorID = "amazonq"
-	EditorContinue    EditorID = "continue"
-	EditorAntigravity EditorID = "antigravity"
-	EditorGemini      EditorID = "gemini"
-	EditorRooCode     EditorID = "roocode"
-	EditorJunie       EditorID = "junie"
+	EditorVSCode        EditorID = "vscode"
+	EditorCursor        EditorID = "cursor"
+	EditorWindsurf      EditorID = "windsurf"
+	EditorZed           EditorID = "zed"
+	EditorCline         EditorID = "cline"
+	EditorAmazonQ       EditorID = "amazonq"
+	EditorContinue      EditorID = "continue"
+	EditorAntigravity   EditorID = "antigravity"
+	EditorGemini        EditorID = "gemini"
+	EditorRooCode       EditorID = "roocode"
+	EditorJunie         EditorID = "junie"
+	EditorClaudeDesktop EditorID = "claude-desktop"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -46,6 +47,7 @@ var AllEditors = []Editor{
 	{EditorGemini, "Gemini CLI"},
 	{EditorRooCode, "Roo Code"},
 	{EditorJunie, "Junie"},
+	{EditorClaudeDesktop, "Claude Desktop"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -192,6 +194,11 @@ func defaultConfigPath(id EditorID) string {
 		return homeDir(".roo-cline", "mcp_settings.json")
 	case EditorJunie:
 		return homeDir(".junie", "mcp", "mcp.json")
+	case EditorClaudeDesktop:
+		if runtime.GOOS == "linux" {
+			return ""
+		}
+		return appSupportPath("Claude", "claude_desktop_config.json")
 	}
 	return ""
 }

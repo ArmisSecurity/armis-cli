@@ -18,19 +18,20 @@ With no arguments, installs the plugin and registers it in all detected editors.
 Specify one or more editor names to target specific tools.
 
 Supported editors:
-  claude     Claude Code (uses plugin system)
-  vscode     VS Code / GitHub Copilot
-  copilot    Alias for vscode
-  cursor     Cursor
-  windsurf   Windsurf (Codeium)
-  zed        Zed
-  cline      Cline (VS Code extension)
-  amazonq    Amazon Q Developer
-  continue      Continue
-  antigravity   Antigravity
-  gemini        Gemini CLI
-  roocode       Roo Code
-  junie         Junie
+  claude          Claude Code (uses plugin system)
+  claude-desktop  Claude Desktop app (macOS/Windows)
+  vscode          VS Code / GitHub Copilot
+  copilot         Alias for vscode
+  cursor          Cursor
+  windsurf        Windsurf (Codeium)
+  zed             Zed
+  cline           Cline (VS Code extension)
+  amazonq         Amazon Q Developer
+  continue        Continue
+  antigravity     Antigravity
+  gemini          Gemini CLI
+  roocode         Roo Code
+  junie           Junie
 
 Not auto-configurable (manual setup required):
   jetbrains  JetBrains IDEs (per-project .jb-mcp.json)
