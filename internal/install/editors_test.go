@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -32,6 +33,25 @@ func TestEditorConfigPath(t *testing.T) {
 		if !filepath.IsAbs(p) {
 			t.Errorf("%s config path %q is not absolute", e.Name, p)
 		}
+	}
+}
+
+func TestClaudeDesktopUnsupportedOS(t *testing.T) {
+	e, ok := EditorByID(EditorClaudeDesktop)
+	if !ok {
+		t.Fatal("EditorByID(EditorClaudeDesktop) not found")
+	}
+	if runtime.GOOS == osDarwin || runtime.GOOS == osWindows {
+		if e.ConfigPath() == "" {
+			t.Errorf("ConfigPath() unexpectedly empty on %s", runtime.GOOS)
+		}
+		return
+	}
+	if got := e.ConfigPath(); got != "" {
+		t.Errorf("ConfigPath() on %s = %q, want empty (Claude Desktop only ships on macOS/Windows)", runtime.GOOS, got)
+	}
+	if e.IsDetected() {
+		t.Errorf("IsDetected() on %s = true, want false", runtime.GOOS)
 	}
 }
 

@@ -195,7 +195,7 @@ func defaultConfigPath(id EditorID) string {
 	case EditorJunie:
 		return homeDir(".junie", "mcp", "mcp.json")
 	case EditorClaudeDesktop:
-		if runtime.GOOS == "linux" {
+		if runtime.GOOS != osDarwin && runtime.GOOS != osWindows {
 			return ""
 		}
 		return appSupportPath("Claude", "claude_desktop_config.json")
@@ -214,13 +214,13 @@ func homeDir(parts ...string) string {
 func appSupportPath(parts ...string) string {
 	var base string
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return ""
 		}
 		base = filepath.Join(home, "Library", "Application Support")
-	case "linux":
+	case osLinux:
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()
@@ -249,13 +249,13 @@ func registerEditor(id EditorID, pluginDir, configFile string) error {
 	case EditorZed:
 		return registerZedFormat(pluginDir, configFile)
 	default:
-		// Cursor, Windsurf, Cline, Amazon Q, Continue, Antigravity all use mcpServers map
+		// Shared by the standard mcpServers editors.
 		return registerMCPServersFormat(pluginDir, configFile)
 	}
 }
 
 // registerMCPServersFormat handles {"mcpServers": {"name": {command, args}}}.
-// Used by Cursor, Windsurf, Cline, Amazon Q, JetBrains.
+// Shared by the standard mcpServers editors (and JetBrains via RegisterJetBrains).
 func registerMCPServersFormat(pluginDir, configFile string) error {
 	data := readJSONFileAsMap(configFile)
 
