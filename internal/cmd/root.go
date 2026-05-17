@@ -114,20 +114,22 @@ var rootCmd = &cobra.Command{
 
 		output.SyncColors()
 
-		// Resolve credentials from environment when not provided via flags
-		if token == "" {
+		// Resolve credentials from environment when not explicitly provided via flags.
+		// Using cmd.Flags().Changed() ensures that an explicit --flag="" can override
+		// an env var (i.e. intentionally clear a credential).
+		if !cmd.Flags().Changed("token") {
 			token = os.Getenv("ARMIS_API_TOKEN")
 		}
-		if tenantID == "" {
+		if !cmd.Flags().Changed("tenant-id") {
 			tenantID = os.Getenv("ARMIS_TENANT_ID")
 		}
-		if clientID == "" {
+		if !cmd.Flags().Changed("client-id") {
 			clientID = os.Getenv("ARMIS_CLIENT_ID")
 		}
-		if clientSecret == "" {
+		if !cmd.Flags().Changed("client-secret") {
 			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
 		}
-		if region == "" {
+		if !cmd.Flags().Changed("region") {
 			region = os.Getenv("ARMIS_REGION")
 		}
 
