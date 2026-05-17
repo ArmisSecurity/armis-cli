@@ -114,6 +114,23 @@ var rootCmd = &cobra.Command{
 
 		output.SyncColors()
 
+		// Resolve credentials from environment when not provided via flags
+		if token == "" {
+			token = os.Getenv("ARMIS_API_TOKEN")
+		}
+		if tenantID == "" {
+			tenantID = os.Getenv("ARMIS_TENANT_ID")
+		}
+		if clientID == "" {
+			clientID = os.Getenv("ARMIS_CLIENT_ID")
+		}
+		if clientSecret == "" {
+			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
+		}
+		if region == "" {
+			region = os.Getenv("ARMIS_REGION")
+		}
+
 		// Warn if the removed ARMIS_AUTH_ENDPOINT env var is set
 		if os.Getenv("ARMIS_AUTH_ENDPOINT") != "" {
 			cli.PrintWarning("ARMIS_AUTH_ENDPOINT is no longer supported. " +
@@ -164,13 +181,13 @@ func init() {
 	SetupHelp(rootCmd)
 
 	// Legacy Basic authentication
-	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", os.Getenv("ARMIS_API_TOKEN"), "API token for Basic authentication (env: ARMIS_API_TOKEN)")
-	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
+	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", "", "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 
 	// JWT authentication
-	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
-	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&region, "region", os.Getenv("ARMIS_REGION"), "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
+	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", "", "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
+	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", "", "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
+	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")

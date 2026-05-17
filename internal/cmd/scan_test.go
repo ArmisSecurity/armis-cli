@@ -102,10 +102,17 @@ func TestScanRepoCmd(t *testing.T) {
 
 	t.Run("repo command fails without token", func(t *testing.T) {
 		token = ""
+		clientID = ""
+		clientSecret = ""
 		tenantID = "test-tenant"
 		useDev = true
+		t.Setenv("ARMIS_API_TOKEN", "")
+		t.Setenv("ARMIS_CLIENT_ID", "")
+		t.Setenv("ARMIS_CLIENT_SECRET", "")
 		defer func() {
 			token = ""
+			clientID = ""
+			clientSecret = ""
 			tenantID = ""
 			useDev = false
 		}()
@@ -122,10 +129,17 @@ func TestScanRepoCmd(t *testing.T) {
 
 	t.Run("repo command fails without tenant ID", func(t *testing.T) {
 		token = testToken
+		clientID = ""
+		clientSecret = ""
 		tenantID = ""
 		useDev = true
+		t.Setenv("ARMIS_TENANT_ID", "")
+		t.Setenv("ARMIS_CLIENT_ID", "")
+		t.Setenv("ARMIS_CLIENT_SECRET", "")
 		defer func() {
 			token = ""
+			clientID = ""
+			clientSecret = ""
 			tenantID = ""
 			useDev = false
 		}()
