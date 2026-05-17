@@ -14,17 +14,18 @@ const mcpServerName = "armis-appsec"
 type EditorID string
 
 const (
-	EditorVSCode      EditorID = "vscode"
-	EditorCursor      EditorID = "cursor"
-	EditorWindsurf    EditorID = "windsurf"
-	EditorZed         EditorID = "zed"
-	EditorCline       EditorID = "cline"
-	EditorAmazonQ     EditorID = "amazonq"
-	EditorContinue    EditorID = "continue"
-	EditorAntigravity EditorID = "antigravity"
-	EditorGemini      EditorID = "gemini"
-	EditorRooCode     EditorID = "roocode"
-	EditorJunie       EditorID = "junie"
+	EditorVSCode        EditorID = "vscode"
+	EditorCursor        EditorID = "cursor"
+	EditorWindsurf      EditorID = "windsurf"
+	EditorZed           EditorID = "zed"
+	EditorCline         EditorID = "cline"
+	EditorAmazonQ       EditorID = "amazonq"
+	EditorContinue      EditorID = "continue"
+	EditorAntigravity   EditorID = "antigravity"
+	EditorGemini        EditorID = "gemini"
+	EditorRooCode       EditorID = "roocode"
+	EditorJunie         EditorID = "junie"
+	EditorClaudeDesktop EditorID = "claude-desktop"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -46,6 +47,7 @@ var AllEditors = []Editor{
 	{EditorGemini, "Gemini CLI"},
 	{EditorRooCode, "Roo Code"},
 	{EditorJunie, "Junie"},
+	{EditorClaudeDesktop, "Claude Desktop"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -192,6 +194,11 @@ func defaultConfigPath(id EditorID) string {
 		return homeDir(".roo-cline", "mcp_settings.json")
 	case EditorJunie:
 		return homeDir(".junie", "mcp", "mcp.json")
+	case EditorClaudeDesktop:
+		if runtime.GOOS != osDarwin && runtime.GOOS != osWindows {
+			return ""
+		}
+		return appSupportPath("Claude", "claude_desktop_config.json")
 	}
 	return ""
 }
@@ -207,13 +214,13 @@ func homeDir(parts ...string) string {
 func appSupportPath(parts ...string) string {
 	var base string
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return ""
 		}
 		base = filepath.Join(home, "Library", "Application Support")
-	case "linux":
+	case osLinux:
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()
@@ -242,13 +249,13 @@ func registerEditor(id EditorID, pluginDir, configFile string) error {
 	case EditorZed:
 		return registerZedFormat(pluginDir, configFile)
 	default:
-		// Cursor, Windsurf, Cline, Amazon Q, Continue, Antigravity all use mcpServers map
+		// Shared by the standard mcpServers editors.
 		return registerMCPServersFormat(pluginDir, configFile)
 	}
 }
 
 // registerMCPServersFormat handles {"mcpServers": {"name": {command, args}}}.
-// Used by Cursor, Windsurf, Cline, Amazon Q, JetBrains.
+// Shared by the standard mcpServers editors (and JetBrains via RegisterJetBrains).
 func registerMCPServersFormat(pluginDir, configFile string) error {
 	data := readJSONFileAsMap(configFile)
 

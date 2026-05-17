@@ -19,7 +19,11 @@ import (
 
 const githubAPIHost = "api.github.com"
 
-const osWindows = "windows"
+const (
+	osWindows = "windows"
+	osDarwin  = "darwin"
+	osLinux   = "linux"
+)
 
 const (
 	pluginRepo        = "ArmisSecurity/armis-appsec-mcp"
