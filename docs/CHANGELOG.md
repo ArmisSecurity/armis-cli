@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.4] - 2026-05-18
+
+### Added
+
+- Claude Desktop app as an install target for the `install` command (#179)
+
+### Fixed
+
+- Secrets no longer leak in `--help` output when default values contain credentials (#180)
+
+---
+
 ## [1.8.3] - 2026-05-13
 
 ### Changed
@@ -309,7 +321,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.3...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...HEAD
+[1.8.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...v1.8.1
