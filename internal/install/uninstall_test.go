@@ -171,6 +171,7 @@ func TestRemovePluginFilesKeepCredentials(t *testing.T) {
 func TestDeregisterClaude(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	claudeDir := filepath.Join(home, ".claude")
 	pluginsDir := filepath.Join(claudeDir, "plugins")
