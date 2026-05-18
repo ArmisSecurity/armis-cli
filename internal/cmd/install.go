@@ -110,15 +110,18 @@ func installAll(force bool) error {
 	fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
 	if err := ei.FetchPlugin(force); err != nil {
 		if errors.Is(err, install.ErrAlreadyCurrent) {
-			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already installed and up to date.\n", ei.InstalledVersion())
-			fmt.Fprintln(os.Stderr, "Use --force to reinstall.")
-			return nil
+			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
+		} else {
+			return fmt.Errorf("download failed: %w", err)
 		}
-		return fmt.Errorf("download failed: %w", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
 	}
-	fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
 
-	manifest := install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+	manifest := install.ReadManifest(ei.PluginDir())
+	if manifest == nil {
+		manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+	}
 
 	detected := install.DetectedEditors()
 	var registered []string
