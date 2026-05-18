@@ -71,6 +71,11 @@ func (ci *ClaudeInstaller) pluginCacheDir() string {
 	return filepath.Join(ci.claudeDir, "plugins", "cache", marketplaceName, pluginName, "latest")
 }
 
+// PluginCacheDir returns the Claude Code plugin cache directory (for manifest recording).
+func (ci *ClaudeInstaller) PluginCacheDir() string {
+	return ci.pluginCacheDir()
+}
+
 // EnvFilePath returns the path to the plugin's .env file.
 func (ci *ClaudeInstaller) EnvFilePath() string {
 	return filepath.Join(ci.pluginCacheDir(), ".env")

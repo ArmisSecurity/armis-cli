@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -134,9 +135,26 @@ func (ei *EditorInstaller) HasExistingEnv() bool {
 	return err == nil
 }
 
+// ErrAlreadyCurrent is returned when the installed version matches the latest release.
+var ErrAlreadyCurrent = errors.New("already up to date")
+
 // FetchPlugin downloads and sets up the plugin (venv + deps), writes credentials
 // from the environment, and records the installed version.
-func (ei *EditorInstaller) FetchPlugin() error {
+// If force is false and the installed version matches the latest, returns ErrAlreadyCurrent.
+func (ei *EditorInstaller) FetchPlugin(force ...bool) error {
+	shouldForce := len(force) > 0 && force[0]
+
+	if !shouldForce {
+		current := ei.GetInstalledVersion()
+		if current != "" {
+			latest, err := ei.plugin.LatestVersion()
+			if err == nil && current == latest {
+				ei.plugin.installedVersion = current
+				return ErrAlreadyCurrent
+			}
+		}
+	}
+
 	if err := ei.plugin.FetchAndInstall(ei.pluginDir); err != nil {
 		return err
 	}

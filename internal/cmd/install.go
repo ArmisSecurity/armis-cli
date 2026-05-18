@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -55,6 +56,7 @@ Not auto-configurable (manual setup required):
 func init() {
 	rootCmd.AddCommand(installCmd)
 	installCmd.Flags().Bool("version", false, "Print the installed plugin version and exit")
+	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -67,11 +69,16 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return showInstalledVersions()
 	}
 
-	if len(args) == 0 {
-		return installAll()
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("reading --force flag: %w", err)
 	}
 
-	return installTargets(args)
+	if len(args) == 0 {
+		return installAll(force)
+	}
+
+	return installTargets(args, force)
 }
 
 func showInstalledVersions() error {
@@ -97,14 +104,21 @@ func showInstalledVersions() error {
 	return nil
 }
 
-func installAll() error {
+func installAll(force bool) error {
 	ei := install.NewEditorInstaller()
 
 	fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
-	if err := ei.FetchPlugin(); err != nil {
+	if err := ei.FetchPlugin(force); err != nil {
+		if errors.Is(err, install.ErrAlreadyCurrent) {
+			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already installed and up to date.\n", ei.InstalledVersion())
+			fmt.Fprintln(os.Stderr, "Use --force to reinstall.")
+			return nil
+		}
 		return fmt.Errorf("download failed: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
+
+	manifest := install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
 
 	detected := install.DetectedEditors()
 	var registered []string
@@ -117,6 +131,7 @@ func installAll() error {
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 			registered = append(registered, e.Name)
+			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 		}
 	}
 
@@ -130,6 +145,11 @@ func installAll() error {
 	} else {
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code\n")
 		registered = append(registered, "Claude Code")
+		manifest.SetClaude(ci.PluginCacheDir())
+	}
+
+	if err := install.WriteManifest(manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 	}
 
 	fmt.Fprintln(os.Stderr, "")
@@ -148,7 +168,7 @@ func installAll() error {
 	return nil
 }
 
-func installTargets(targets []string) error {
+func installTargets(targets []string, force bool) error {
 	hasClaude := false
 	var editorIDs []install.EditorID
 
@@ -189,18 +209,35 @@ func installTargets(targets []string) error {
 	if needsSharedPlugin {
 		ei = install.NewEditorInstaller()
 		fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
-		if err := ei.FetchPlugin(); err != nil {
-			return fmt.Errorf("download failed: %w", err)
+		if err := ei.FetchPlugin(force); err != nil {
+			if errors.Is(err, install.ErrAlreadyCurrent) {
+				fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
+			} else {
+				return fmt.Errorf("download failed: %w", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
 		}
-		fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
+
+		manifest := install.ReadManifest(ei.PluginDir())
+		if manifest == nil {
+			manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+		}
 
 		for _, id := range editorIDs {
-			e, _ := install.EditorByID(id)
+			e, ok := install.EditorByID(id)
+			if !ok {
+				continue
+			}
 			if err := e.Register(ei.PluginDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
+				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 			}
+		}
+		if err := install.WriteManifest(manifest); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 		}
 		fmt.Fprintln(os.Stderr, "")
 		printCredentialStatus(ei)
