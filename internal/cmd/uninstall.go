@@ -119,6 +119,14 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ VS Code\n")
 			}
+		case "jetbrains":
+			fmt.Fprintln(os.Stderr, "  ⚠ JetBrains: Remove .jb-mcp.json from your project root manually.")
+		case "devin":
+			fmt.Fprintln(os.Stderr, "  ⚠ Devin: Remove the MCP server via the Devin web UI.")
+		case "openhands":
+			fmt.Fprintln(os.Stderr, "  ⚠ OpenHands: Remove the MCP server via the OpenHands web UI.")
+		case "aider":
+			fmt.Fprintln(os.Stderr, "  ⚠ Aider: No MCP configuration to remove.")
 		default:
 			id := install.EditorID(name)
 			e, ok := install.EditorByID(id)

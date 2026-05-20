@@ -141,10 +141,8 @@ var ErrAlreadyCurrent = errors.New("already up to date")
 // FetchPlugin downloads and sets up the plugin (venv + deps), writes credentials
 // from the environment, and records the installed version.
 // If force is false and the installed version matches the latest, returns ErrAlreadyCurrent.
-func (ei *EditorInstaller) FetchPlugin(force ...bool) error {
-	shouldForce := len(force) > 0 && force[0]
-
-	if !shouldForce {
+func (ei *EditorInstaller) FetchPlugin(force bool) error {
+	if !force {
 		current := ei.GetInstalledVersion()
 		if current != "" {
 			latest, err := ei.plugin.LatestVersion()

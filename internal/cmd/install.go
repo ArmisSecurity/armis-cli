@@ -121,6 +121,8 @@ func installAll(force bool) error {
 	manifest := install.ReadManifest(ei.PluginDir())
 	if manifest == nil {
 		manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+	} else {
+		manifest.PluginVersion = ei.InstalledVersion()
 	}
 
 	detected := install.DetectedEditors()
@@ -225,6 +227,8 @@ func installTargets(targets []string, force bool) error {
 		manifest := install.ReadManifest(ei.PluginDir())
 		if manifest == nil {
 			manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+		} else {
+			manifest.PluginVersion = ei.InstalledVersion()
 		}
 
 		for _, id := range editorIDs {
@@ -257,6 +261,16 @@ func installTargets(targets []string, force bool) error {
 		}
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
 		fmt.Fprintln(os.Stderr, "")
+
+		pluginDir := install.NewEditorInstaller().PluginDir()
+		manifest := install.ReadManifest(pluginDir)
+		if manifest == nil {
+			manifest = install.NewManifest(pluginDir, ci.InstalledVersion())
+		}
+		manifest.SetClaude(ci.PluginCacheDir())
+		if err := install.WriteManifest(manifest); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
+		}
 
 		if ci.HasExistingEnv() {
 			fmt.Fprintln(os.Stderr, "Credentials configured. Restart Claude Code to pick up the updated plugin.")

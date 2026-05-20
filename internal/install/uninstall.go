@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,11 +53,15 @@ func (u *Uninstaller) DeregisterEditor(id EditorID) error {
 	return deregisterEditor(id, configFile)
 }
 
-// DeregisterAllEditors removes armis-appsec from all editors, using the manifest
-// if available, otherwise scanning all known editor paths.
+// DeregisterAllEditors removes armis-appsec from all editors. Uses manifest
+// entries first, then scans remaining known editor paths to catch registrations
+// that predate manifest tracking.
 func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []string) {
-	if u.manifest != nil && len(u.manifest.Editors) > 0 {
+	handled := make(map[EditorID]bool)
+
+	if u.manifest != nil {
 		for id, entry := range u.manifest.Editors {
+			handled[id] = true
 			e, ok := EditorByID(id)
 			name := string(id)
 			if ok {
@@ -68,10 +73,12 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 				deregistered = append(deregistered, name)
 			}
 		}
-		return
 	}
 
 	for _, e := range AllEditors {
+		if handled[e.ID] {
+			continue
+		}
 		configFile := e.ConfigPath()
 		if configFile == "" {
 			continue
@@ -112,7 +119,7 @@ func (u *Uninstaller) DeregisterClaude() error {
 		return fmt.Errorf("settings cleanup: %w", err)
 	}
 
-	// armis:ignore cwe:22 reason:cacheDir is filepath.Join of ~/.claude + hardcoded "plugins/cache/armis-appsec-mcp"; no user input
+	// armis:ignore cwe:22 reason:cacheDir is filepath.Join of ~/.claude + compile-time constant marketplaceName; no user input
 	cacheDir := filepath.Join(claudeDir, "plugins", "cache", marketplaceName)
 	if _, err := os.Stat(cacheDir); err == nil {
 		if err := os.RemoveAll(cacheDir); err != nil {
@@ -160,6 +167,8 @@ func (u *Uninstaller) editorConfigPath(id EditorID, e Editor) string {
 		if entry, ok := u.manifest.Editors[id]; ok {
 			return entry.ConfigFile // armis:ignore cwe:73 reason:manifest written by our install with paths from ConfigPath(); not external input
 		}
+		// Editor not in manifest — still check its default path so we catch
+		// registrations that predate manifest tracking.
 	}
 	return e.ConfigPath()
 }
@@ -236,6 +245,9 @@ func removeContinueFile(configFile string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
 	}
+	if !hasArmisEntry(EditorContinue, configFile) {
+		return nil
+	}
 	return os.Remove(configFile)
 }
 
@@ -257,7 +269,10 @@ func removeFromSettings(claudeDir string) error {
 func removeJSONKey(path, key string) error {
 	data, err := readAndParseJSON(path)
 	if err != nil {
-		return nil // skip if file doesn't exist or can't be parsed
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 	}
 	if _, exists := data[key]; !exists {
 		return nil
@@ -269,7 +284,10 @@ func removeJSONKey(path, key string) error {
 func removeNestedJSONKey(path, parentKey, childKey string) error {
 	data, err := readAndParseJSON(path)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 	}
 	parent, ok := data[parentKey].(map[string]interface{})
 	if !ok {
@@ -321,8 +339,20 @@ func writeJSONAtomic(path string, data interface{}) error {
 	}
 	b = append(b, '\n')
 
-	tmp := path + ".armis-tmp"
-	if err := os.WriteFile(filepath.Clean(tmp), b, 0o600); err != nil {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {

@@ -2,8 +2,10 @@ package install
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -31,14 +33,23 @@ type ManifestClaude struct {
 }
 
 // ManifestPath returns the path to the manifest file for the given plugin directory.
+// It validates that the resolved path stays within pluginDir to prevent path traversal.
 func ManifestPath(pluginDir string) string {
-	return filepath.Join(pluginDir, ".manifest.json")
+	clean := filepath.Clean(filepath.Join(pluginDir, ".manifest.json"))
+	base := filepath.Clean(pluginDir) + string(filepath.Separator)
+	if !strings.HasPrefix(clean, base) {
+		return ""
+	}
+	return clean
 }
 
 // ReadManifest loads an existing manifest, returning nil if none exists or it cannot be parsed.
 func ReadManifest(pluginDir string) *Manifest {
 	path := ManifestPath(pluginDir)
-	b, err := os.ReadFile(filepath.Clean(path))
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // path validated by ManifestPath against traversal
 	if err != nil {
 		return nil
 	}
@@ -51,7 +62,11 @@ func ReadManifest(pluginDir string) *Manifest {
 
 // WriteManifest persists the manifest to the plugin directory.
 func WriteManifest(m *Manifest) error {
-	return writeJSON(ManifestPath(m.PluginDir), m)
+	path := ManifestPath(m.PluginDir)
+	if path == "" {
+		return fmt.Errorf("invalid plugin directory path")
+	}
+	return writeJSON(path, m)
 }
 
 // NewManifest creates a fresh manifest for the given plugin directory and version.

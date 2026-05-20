@@ -117,13 +117,34 @@ func TestDeregisterMissingFile(t *testing.T) {
 func TestRemoveContinueFile(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "armis-appsec.json")
-	mustWriteJSON(t, configFile, map[string]interface{}{"mcpServers": map[string]interface{}{}})
+	mustWriteJSON(t, configFile, map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"armis-appsec": map[string]interface{}{"command": "/bin/python"},
+		},
+	})
 
 	if err := removeContinueFile(configFile); err != nil {
 		t.Fatalf("removeContinueFile() error: %v", err)
 	}
 	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
 		t.Error("file should be deleted")
+	}
+}
+
+func TestRemoveContinueFileNoArmisEntry(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "other.json")
+	mustWriteJSON(t, configFile, map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"other-server": map[string]interface{}{"command": "/bin/other"},
+		},
+	})
+
+	if err := removeContinueFile(configFile); err != nil {
+		t.Fatalf("removeContinueFile() error: %v", err)
+	}
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Error("file without armis entry should NOT be deleted")
 	}
 }
 
