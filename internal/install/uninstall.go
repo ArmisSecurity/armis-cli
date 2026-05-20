@@ -152,7 +152,7 @@ func (u *Uninstaller) RemovePluginFiles(keepCredentials bool) error {
 			if err := os.MkdirAll(u.pluginDir, 0o750); err != nil {
 				return err
 			}
-			return os.WriteFile(filepath.Clean(envPath), envContent, 0o600)
+			return os.WriteFile(filepath.Clean(envPath), envContent, 0o600) //nolint:gosec // envPath is pluginDir + ".env" constant
 		}
 		return nil
 	}
@@ -348,15 +348,15 @@ func writeJSONAtomic(path string, data interface{}) error {
 
 	if _, err := f.Write(b); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
 		return err
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := os.Rename(tmp, path); err != nil { //nolint:gosec // tmp from CreateTemp, path from caller-validated editor configs
+		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
 		return err
 	}
 	return nil
