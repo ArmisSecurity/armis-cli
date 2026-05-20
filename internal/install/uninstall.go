@@ -67,6 +67,10 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 			if ok {
 				name = e.Name
 			}
+			has, _ := hasArmisEntry(id, entry.ConfigFile)
+			if !has {
+				continue
+			}
 			if err := deregisterFromFile(id, entry.ConfigFile); err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", name, err))
 			} else {
@@ -86,7 +90,12 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 		if _, err := os.Stat(configFile); os.IsNotExist(err) {
 			continue
 		}
-		if hasArmisEntry(e.ID, configFile) {
+		has, err := hasArmisEntry(e.ID, configFile)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: cannot read config: %v", e.Name, err))
+			continue
+		}
+		if has {
 			if err := deregisterEditor(e.ID, configFile); err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", e.Name, err))
 			} else {
@@ -133,6 +142,9 @@ func (u *Uninstaller) DeregisterClaude() error {
 // RemovePluginFiles deletes the shared plugin directory.
 // If keepCredentials is true, the .env file is preserved (moved out and back).
 func (u *Uninstaller) RemovePluginFiles(keepCredentials bool) error {
+	if u.pluginDir == "" || !filepath.IsAbs(u.pluginDir) {
+		return fmt.Errorf("invalid plugin directory: must be an absolute path")
+	}
 	if _, err := os.Stat(u.pluginDir); os.IsNotExist(err) {
 		return nil
 	}
@@ -245,7 +257,11 @@ func removeContinueFile(configFile string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
 	}
-	if !hasArmisEntry(EditorContinue, configFile) {
+	has, err := hasArmisEntry(EditorContinue, configFile)
+	if err != nil {
+		return fmt.Errorf("checking continue config: %w", err)
+	}
+	if !has {
 		return nil
 	}
 	return os.Remove(configFile)
@@ -301,21 +317,24 @@ func removeNestedJSONKey(path, parentKey, childKey string) error {
 	return writeJSONAtomic(path, data)
 }
 
-func hasArmisEntry(id EditorID, configFile string) bool {
+func hasArmisEntry(id EditorID, configFile string) (bool, error) {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return false
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	switch id {
 	case EditorVSCode:
 		servers, ok := data["servers"].(map[string]interface{})
-		return ok && servers[mcpServerName] != nil
+		return ok && servers[mcpServerName] != nil, nil
 	case EditorZed:
 		servers, ok := data["context_servers"].(map[string]interface{})
-		return ok && servers[mcpServerName] != nil
+		return ok && servers[mcpServerName] != nil, nil
 	default:
 		servers, ok := data["mcpServers"].(map[string]interface{})
-		return ok && servers[mcpServerName] != nil
+		return ok && servers[mcpServerName] != nil, nil
 	}
 }
 

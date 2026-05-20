@@ -33,10 +33,18 @@ type ManifestClaude struct {
 }
 
 // ManifestPath returns the path to the manifest file for the given plugin directory.
-// It validates that the resolved path stays within pluginDir to prevent path traversal.
+// It validates that the resolved path stays within pluginDir to prevent path traversal,
+// resolving symlinks to prevent bypass via symlinked components.
 func ManifestPath(pluginDir string) string {
-	clean := filepath.Clean(filepath.Join(pluginDir, ".manifest.json"))
-	base := filepath.Clean(pluginDir) + string(filepath.Separator)
+	if pluginDir == "" || !filepath.IsAbs(pluginDir) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(pluginDir))
+	if err != nil {
+		resolved = filepath.Clean(pluginDir)
+	}
+	clean := filepath.Join(resolved, ".manifest.json")
+	base := resolved + string(filepath.Separator)
 	if !strings.HasPrefix(clean, base) {
 		return ""
 	}
@@ -60,13 +68,16 @@ func ReadManifest(pluginDir string) *Manifest {
 	return &m
 }
 
-// WriteManifest persists the manifest to the plugin directory.
+// WriteManifest persists the manifest to the plugin directory atomically.
 func WriteManifest(m *Manifest) error {
 	path := ManifestPath(m.PluginDir)
 	if path == "" {
 		return fmt.Errorf("invalid plugin directory path")
 	}
-	return writeJSON(path, m)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	return writeJSONAtomic(path, m)
 }
 
 // NewManifest creates a fresh manifest for the given plugin directory and version.

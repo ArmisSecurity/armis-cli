@@ -155,7 +155,9 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 				manifest.RemoveEditor(install.EditorID(name))
 			}
 		}
-		_ = install.WriteManifest(manifest)
+		if err := install.WriteManifest(manifest); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Could not update install manifest: %v\n", err)
+		}
 	}
 
 	fmt.Fprintln(os.Stderr, "\nPlugin files kept (other editors may still use them).")

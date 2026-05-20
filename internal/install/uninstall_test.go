@@ -254,7 +254,11 @@ func TestHasArmisEntry(t *testing.T) {
 		mustWriteJSON(t, f, map[string]interface{}{
 			"mcpServers": map[string]interface{}{"armis-appsec": map[string]interface{}{}},
 		})
-		if !hasArmisEntry(EditorCursor, f) {
+		has, err := hasArmisEntry(EditorCursor, f)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
 			t.Error("should detect armis-appsec in mcpServers")
 		}
 	})
@@ -264,7 +268,11 @@ func TestHasArmisEntry(t *testing.T) {
 		mustWriteJSON(t, f, map[string]interface{}{
 			"mcpServers": map[string]interface{}{"other": map[string]interface{}{}},
 		})
-		if hasArmisEntry(EditorCursor, f) {
+		has, err := hasArmisEntry(EditorCursor, f)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if has {
 			t.Error("should not detect armis-appsec")
 		}
 	})
@@ -274,8 +282,33 @@ func TestHasArmisEntry(t *testing.T) {
 		mustWriteJSON(t, f, map[string]interface{}{
 			"servers": map[string]interface{}{"armis-appsec": map[string]interface{}{}},
 		})
-		if !hasArmisEntry(EditorVSCode, f) {
+		has, err := hasArmisEntry(EditorVSCode, f)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
 			t.Error("should detect in servers format")
+		}
+	})
+
+	t.Run("malformed JSON returns error", func(t *testing.T) {
+		f := filepath.Join(dir, "bad.json")
+		if err := os.WriteFile(f, []byte("{invalid"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := hasArmisEntry(EditorCursor, f)
+		if err == nil {
+			t.Error("expected error for malformed JSON")
+		}
+	})
+
+	t.Run("missing file returns false without error", func(t *testing.T) {
+		has, err := hasArmisEntry(EditorCursor, filepath.Join(dir, "nonexistent.json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if has {
+			t.Error("missing file should return false")
 		}
 	})
 }
