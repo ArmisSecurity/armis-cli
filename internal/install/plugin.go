@@ -246,7 +246,7 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 func (pi *PluginInstaller) createVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
-		return fmt.Errorf("Python 3.11+ is required but not found in PATH") //nolint:staticcheck // proper noun
+		return fmt.Errorf("Python 3.11+ is required but not found in PATH (tried python3.13, python3.12, python3.11, python3, python)") //nolint:staticcheck // proper noun
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
@@ -311,7 +311,7 @@ func writeJSON(path string, data interface{}) error {
 }
 
 func findPython() string {
-	for _, name := range []string{"python3", "python"} {
+	for _, name := range []string{"python3.13", "python3.12", "python3.11", "python3", "python"} {
 		resolved, err := exec.LookPath(name)
 		if err != nil {
 			continue
