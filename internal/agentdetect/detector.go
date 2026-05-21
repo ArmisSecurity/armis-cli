@@ -32,6 +32,7 @@ func isUnderDir(resolvedBase, target string) bool {
 		resolved = baseVol + strings.TrimPrefix(resolved, resolvedVol)
 	}
 
+	// armis:ignore cwe:22 reason:isUnderDir IS the containment check; Rel used to verify path stays within base
 	rel, err := filepath.Rel(resolvedBase, resolved)
 	if err != nil {
 		return false

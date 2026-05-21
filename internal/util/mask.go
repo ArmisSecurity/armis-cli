@@ -111,8 +111,8 @@ func MaskSecretInLine(line string) string {
 		return line
 	}
 
-	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	// armis:ignore cwe:770 reason:maxLineLength bounds input size; this IS the resource control
+	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	if len(line) > maxLineLength {
 		return line // armis:ignore cwe:522
 	}

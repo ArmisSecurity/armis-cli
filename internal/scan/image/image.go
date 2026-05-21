@@ -117,7 +117,7 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 
 // ScanTarball scans a container image from a tarball file.
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
-	// Validate path for defense-in-depth (CLI layer also validates)
+	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; rejects invalid paths before use
 	sanitizedPath, err := util.SanitizePath(tarballPath)
 	if err != nil {
 		return nil, fmt.Errorf("invalid tarball path: %w", err)
@@ -280,6 +280,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	return nil
 }
 
+// armis:ignore cwe:426 reason:exec.Command uses hardcoded binary names ("docker", "podman"); no untrusted path
 func isDockerAvailable() bool {
 	cmd := exec.Command("docker", "version")
 	if err := cmd.Run(); err == nil {
@@ -294,6 +295,7 @@ func isDockerAvailable() bool {
 	return false
 }
 
+// armis:ignore cwe:426 reason:dockerBinary is a hardcoded constant ("docker"); no untrusted search path
 func getDockerCommand() string {
 	cmd := exec.Command(dockerBinary, "version")
 	if err := cmd.Run(); err == nil {
@@ -311,6 +313,7 @@ func validateDockerCommand(cmd string) error {
 }
 
 // imageExistsLocally checks if the image is available in the local container runtime.
+// armis:ignore cwe:78 reason:dockerCmd from findDockerBinary allowlist; imageName validated by validateImageName
 func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
 	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
 	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect

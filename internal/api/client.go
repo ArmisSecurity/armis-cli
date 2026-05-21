@@ -269,7 +269,7 @@ type StatusCallback func(status model.IngestStatusData)
 
 // StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
-	// Validate upload size for defense-in-depth
+	// armis:ignore cwe:770 reason:this IS the resource exhaustion prevention; MaxUploadSize bounds upload size
 	if opts.Size > MaxUploadSize {
 		return "", fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
 	}
