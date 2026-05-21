@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -164,15 +165,13 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	return nil
 }
 
-// armis:ignore cwe:770 reason:reads single line from stdin (user confirmation prompt); bounded by terminal line buffer
 func confirm(prompt string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
-	reader := bufio.NewReader(os.Stdin)
-	// armis:ignore cwe:770 reason:reads single line from stdin; bounded by terminal line buffer
-	line, err := reader.ReadString('\n')
-	if err != nil {
+	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))
+	if !scanner.Scan() {
 		return false
 	}
+	line := scanner.Text()
 	answer := strings.TrimSpace(strings.ToLower(line))
 	return answer == "y" || answer == "yes"
 }

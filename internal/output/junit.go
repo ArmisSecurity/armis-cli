@@ -60,8 +60,10 @@ func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	return f.formatWithSeverities(result, w, severities)
 }
 
-// armis:ignore cwe:476 reason:result is never nil per Formatter interface contract; callers always pass scan output
 func (f *JUnitFormatter) formatWithSeverities(result *model.ScanResult, w io.Writer, failOnSeverities []string) error {
+	if result == nil {
+		result = &model.ScanResult{}
+	}
 	activeFindings := FilterActiveFindings(result.Findings)
 	suites := junitTestSuites{
 		Suites: []junitTestSuite{

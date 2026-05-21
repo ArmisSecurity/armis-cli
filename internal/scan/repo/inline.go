@@ -20,26 +20,30 @@ const (
 	suppressionTypeRule = "rule"
 )
 
-// funcSigByExt maps file extensions to the function signature prefixes valid
-// for that language. This prevents false matches like Go's `fn := ...` being
-// treated as a Rust function declaration.
+// funcSigByExt maps file extensions to the function/method signature prefixes
+// valid for that language. Only unambiguous declaration keywords are included;
+// prefixes like "public "/"private " are excluded because they also match
+// field/property declarations and would cause false transparency.
 var funcSigByExt = map[string][]string{
-	".go":         {"func "},
-	".py":         {"def ", "class "},
-	".rb":         {"def ", "class "},
-	".js":         {"function "},
-	".ts":         {"function "},
-	".jsx":        {"function "},
-	".tsx":        {"function "},
-	".php":        {"function "},
-	".rs":         {"fn ", "pub fn "},
-	".java":       {"public ", "private ", "protected "},
-	".kt":         {"fun "},
-	".scala":      {"def "},
-	".swift":      {"func "},
-	".cs":         {"public ", "private ", "protected "},
-	".dart":       {"void ", "Future "},
-	".dockerfile": {},
+	".go":    {"func "},
+	".py":    {"def "},
+	".rb":    {"def "},
+	".js":    {"function "},
+	".ts":    {"function "},
+	".jsx":   {"function "},
+	".tsx":   {"function "},
+	".php":   {"function "},
+	".rs":    {"fn ", "pub fn "},
+	".kt":    {"fun "},
+	".scala": {"def "},
+	".swift": {"func "},
+}
+
+// classKeywordExts are extensions where `class` is a language keyword for
+// type declarations (not a valid identifier prefix).
+var classKeywordExts = map[string]bool{
+	".py": true, ".rb": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
+	".java": true, ".kt": true, ".scala": true, ".cs": true, ".dart": true,
 }
 
 // InlineDirective represents a parsed armis:ignore comment.
@@ -245,17 +249,13 @@ func isCommentLine(trimmed string, prefixes []string) bool {
 // findings in the body. Detection is extension-aware to avoid false matches
 // (e.g., `fn := ...` in Go is not a Rust function declaration).
 func isFuncSignature(trimmed, ext string) bool {
-	sigPrefixes, ok := funcSigByExt[ext]
-	if !ok {
-		return false
-	}
+	sigPrefixes := funcSigByExt[ext]
 	for _, prefix := range sigPrefixes {
 		if strings.HasPrefix(trimmed, prefix) {
 			return true
 		}
 	}
-	// class declarations (JS/TS/Java/Python): require paren, brace, or colon
-	if strings.HasPrefix(trimmed, "class ") && containsAny(trimmed, '(', '{', ':') {
+	if classKeywordExts[ext] && strings.HasPrefix(trimmed, "class ") && containsAny(trimmed, '(', '{', ':') {
 		return true
 	}
 	return false
