@@ -20,15 +20,26 @@ const (
 	suppressionTypeRule = "rule"
 )
 
-// funcSigPrefixes are line prefixes that unambiguously introduce a function or
-// method scope. Only prefixes that cannot start a non-declaration statement are
-// included here; class declarations are handled separately with a heuristic check.
-var funcSigPrefixes = []string{
-	"func ",     // Go
-	"def ",      // Python, Ruby
-	"function ", // JS, PHP
-	"pub fn ",   // Rust
-	"fn ",       // Rust
+// funcSigByExt maps file extensions to the function signature prefixes valid
+// for that language. This prevents false matches like Go's `fn := ...` being
+// treated as a Rust function declaration.
+var funcSigByExt = map[string][]string{
+	".go":         {"func "},
+	".py":         {"def ", "class "},
+	".rb":         {"def ", "class "},
+	".js":         {"function "},
+	".ts":         {"function "},
+	".jsx":        {"function "},
+	".tsx":        {"function "},
+	".php":        {"function "},
+	".rs":         {"fn ", "pub fn "},
+	".java":       {"public ", "private ", "protected "},
+	".kt":         {"fun "},
+	".scala":      {"def "},
+	".swift":      {"func "},
+	".cs":         {"public ", "private ", "protected "},
+	".dart":       {"void ", "Future "},
+	".dockerfile": {},
 }
 
 // InlineDirective represents a parsed armis:ignore comment.
@@ -164,7 +175,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 					continue
 				}
 				if !isCommentLine(trimmed, prefixes) {
-					if !isFuncSignature(trimmed) {
+					if !isFuncSignature(trimmed, ext) {
 						break
 					}
 					continue
@@ -229,15 +240,21 @@ func isCommentLine(trimmed string, prefixes []string) bool {
 }
 
 // isFuncSignature returns true if the trimmed line looks like a function/method
-// declaration. These lines are treated as transparent during upward scanning so
-// that a directive above a function signature applies to findings in the body.
-func isFuncSignature(trimmed string) bool {
-	for _, prefix := range funcSigPrefixes {
+// declaration for the given file extension. These lines are treated as transparent
+// during upward scanning so that a directive above a function signature applies to
+// findings in the body. Detection is extension-aware to avoid false matches
+// (e.g., `fn := ...` in Go is not a Rust function declaration).
+func isFuncSignature(trimmed, ext string) bool {
+	sigPrefixes, ok := funcSigByExt[ext]
+	if !ok {
+		return false
+	}
+	for _, prefix := range sigPrefixes {
 		if strings.HasPrefix(trimmed, prefix) {
 			return true
 		}
 	}
-	// class declarations: require paren, brace, or colon (class Foo(Base): / class Foo { / class Foo:)
+	// class declarations (JS/TS/Java/Python): require paren, brace, or colon
 	if strings.HasPrefix(trimmed, "class ") && containsAny(trimmed, '(', '{', ':') {
 		return true
 	}
