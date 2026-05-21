@@ -1116,6 +1116,7 @@ func getGitBlame(repoPath, file string, line int, debug bool) *GitBlameInfo {
 		return nil
 	}
 
+	// armis:ignore cwe:22 reason:SafeJoinPath IS the path traversal prevention; rejects invalid paths
 	filePath, err := util.SafeJoinPath(repoPath, file)
 	if err != nil {
 		if debug {

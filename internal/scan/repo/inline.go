@@ -91,6 +91,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		}
 
 		// armis:ignore cwe:22 reason:filePath constructed via SafeJoinPath which rejects traversal attempts
+		// armis:ignore cwe:367 reason:stat-then-open race is benign; worst case reads a changed file, no security impact
 		f, err := os.Open(filePath) // #nosec G304 - path validated via SafeJoinPath
 		if err != nil {
 			return entry

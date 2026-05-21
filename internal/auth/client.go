@@ -48,7 +48,7 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 
-	// Require HTTPS for non-localhost
+	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
 	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {

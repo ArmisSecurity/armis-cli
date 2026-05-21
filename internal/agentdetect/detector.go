@@ -41,6 +41,7 @@ func isUnderDir(resolvedBase, target string) bool {
 }
 
 // dirExists returns true if path exists, is a directory, and resolves under resolvedHome.
+// armis:ignore cwe:22 reason:path validated by isUnderDir which ensures it resolves under resolvedHome
 func dirExists(resolvedHome, path string) bool {
 	if !isUnderDir(resolvedHome, path) {
 		return false
