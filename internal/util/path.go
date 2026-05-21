@@ -27,6 +27,7 @@ func SanitizePath(p string) (string, error) {
 		}
 	}
 
+	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; Clean + Abs + traversal check below
 	cleaned := filepath.Clean(p)
 
 	if cleaned == "" {

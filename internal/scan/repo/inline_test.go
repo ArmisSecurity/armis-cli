@@ -515,6 +515,48 @@ func TestApplyInlineSuppression(t *testing.T) {
 		}
 	})
 
+	t.Run("scans through JS function keyword to find directive above", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "app.js", "// armis:ignore cwe:78\nfunction execCommand(cmd) {\n  child_process.exec(cmd);\n}\n")
+
+		findings := []model.Finding{
+			{File: "app.js", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-78"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (directive above JS function keyword), got %d", count)
+		}
+	})
+
+	t.Run("scans through class declaration to find directive above", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "app.py", "# armis:ignore cwe:94\nclass CommandRunner(BaseRunner):\n    def run(self, cmd):\n        os.system(cmd)\n")
+
+		findings := []model.Finding{
+			{File: "app.py", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-94"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (directive above class declaration), got %d", count)
+		}
+	})
+
+	t.Run("class without brace/colon/paren is not treated as signature", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "app.py", "# armis:ignore cwe:78\nclass_name = 'foo'\nos.system(class_name)\n")
+
+		findings := []model.Finding{
+			{File: "app.py", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-78"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (class_name is not a class declaration), got %d", count)
+		}
+	})
+
 	t.Run("suppresses finding with directive exactly 5 lines above (max window)", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79\n// c1\n// c2\n// c3\n// c4\nvar x = unsafe(input)\n")

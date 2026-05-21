@@ -151,6 +151,7 @@ func (u *Uninstaller) RemovePluginFiles(keepCredentials bool) error {
 
 	if keepCredentials {
 		envPath := filepath.Join(u.pluginDir, ".env")
+		// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
 		envContent, err := os.ReadFile(filepath.Clean(envPath))
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("reading credentials: %w", err)

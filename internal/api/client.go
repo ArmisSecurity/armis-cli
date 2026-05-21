@@ -238,7 +238,7 @@ func (c *Client) setAuthHeader(ctx context.Context, req *http.Request) error {
 	scheme := strings.ToLower(req.URL.Scheme)
 
 	// Require HTTPS for non-localhost hosts to protect credentials
-	// armis:ignore cwe:918 reason:host comes from request URL being sent; HTTPS check prevents credential leakage
+	// armis:ignore cwe:918 reason:request URL is constructed from operator-configured base URL, not external input
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement)
 	if host != hostLocalhost && host != hostLoopbackIP && scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)

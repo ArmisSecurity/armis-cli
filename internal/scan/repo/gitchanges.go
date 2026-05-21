@@ -69,6 +69,7 @@ func GitChangedFiles(scanPath string, opts ChangedOptions) (*FileList, error) {
 	}
 
 	// Get changed files based on mode
+	// armis:ignore cwe:770 reason:git output bounded by repository size; repoRoot validated by caller
 	var changedPaths []string
 	switch opts.Mode {
 	case ChangedModeUncommitted:

@@ -22,8 +22,7 @@ const (
 
 // funcSigPrefixes are line prefixes that unambiguously introduce a function or
 // method scope. Only prefixes that cannot start a non-declaration statement are
-// included here. Ambiguous keywords (public, private, static, async) are handled
-// separately with additional validation in isFuncSignature.
+// included here; class declarations are handled separately with a heuristic check.
 var funcSigPrefixes = []string{
 	"func ",     // Go
 	"def ",      // Python, Ruby
@@ -238,7 +237,7 @@ func isFuncSignature(trimmed string) bool {
 			return true
 		}
 	}
-	// class declarations: require opening brace or colon (class Foo { / class Foo:)
+	// class declarations: require paren, brace, or colon (class Foo(Base): / class Foo { / class Foo:)
 	if strings.HasPrefix(trimmed, "class ") && containsAny(trimmed, '(', '{', ':') {
 		return true
 	}

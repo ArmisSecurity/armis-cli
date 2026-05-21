@@ -46,6 +46,7 @@ func dirExists(resolvedHome, path string) bool {
 	if !isUnderDir(resolvedHome, path) {
 		return false
 	}
+	// armis:ignore cwe:22 reason:path validated by isUnderDir containment check above
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }

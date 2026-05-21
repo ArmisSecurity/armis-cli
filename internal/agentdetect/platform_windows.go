@@ -44,9 +44,10 @@ func (p *windowsPlatform) CursorAppExists(homeDir string) bool {
 	return err == nil
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *windowsPlatform) JunieBinaryPaths(homeDir string) []string {
 	return []string{
-		filepath.Join(homeDir, "AppData", "Local", "Programs", "Junie", "junie.exe"),
+		filepath.Join(homeDir, "AppData", "Local", "Programs", "Junie", "junie.exe"), // armis:ignore cwe:22
 	}
 }
 
