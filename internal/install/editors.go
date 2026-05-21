@@ -337,7 +337,8 @@ func stdServerEntry(pluginDir string) map[string]interface{} {
 
 func readJSONFileAsMap(path string) map[string]interface{} {
 	data := make(map[string]interface{})
-	// armis:ignore cwe:22 cwe:253 reason:path from filepath.Join with known base dirs; ReadFile error handled by err == nil guard
+	// armis:ignore cwe:22 reason:path from filepath.Join with known base dirs; filepath.Clean applied
+	// armis:ignore cwe:253 reason:ReadFile error handled by err == nil guard; non-critical config read
 	if b, err := os.ReadFile(filepath.Clean(path)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}

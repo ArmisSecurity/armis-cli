@@ -20,21 +20,16 @@ const (
 	suppressionTypeRule = "rule"
 )
 
-// funcSigPrefixes are line prefixes that introduce a function/method scope.
-// The upward scan treats these as transparent: a directive above a function
-// signature applies to findings inside the function body.
+// funcSigPrefixes are line prefixes that unambiguously introduce a function or
+// method scope. Only prefixes that cannot start a non-declaration statement are
+// included here. Ambiguous keywords (public, private, static, async) are handled
+// separately with additional validation in isFuncSignature.
 var funcSigPrefixes = []string{
-	"func ",      // Go
-	"def ",       // Python, Ruby
-	"class ",     // Python, JS, TS, Java
-	"function ",  // JS, PHP
-	"pub fn ",    // Rust
-	"fn ",        // Rust
-	"public ",    // Java, C#
-	"private ",   // Java, C#
-	"protected ", // Java, C#
-	"static ",    // Java, C#
-	"async ",     // JS/TS async functions
+	"func ",     // Go
+	"def ",      // Python, Ruby
+	"function ", // JS, PHP
+	"pub fn ",   // Rust
+	"fn ",       // Rust
 }
 
 // InlineDirective represents a parsed armis:ignore comment.
@@ -240,6 +235,21 @@ func isFuncSignature(trimmed string) bool {
 	for _, prefix := range funcSigPrefixes {
 		if strings.HasPrefix(trimmed, prefix) {
 			return true
+		}
+	}
+	// class declarations: require opening brace or colon (class Foo { / class Foo:)
+	if strings.HasPrefix(trimmed, "class ") && containsAny(trimmed, '(', '{', ':') {
+		return true
+	}
+	return false
+}
+
+func containsAny(s string, chars ...byte) bool {
+	for i := range s {
+		for _, c := range chars {
+			if s[i] == c {
+				return true
+			}
 		}
 	}
 	return false
