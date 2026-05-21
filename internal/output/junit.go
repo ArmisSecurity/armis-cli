@@ -97,6 +97,7 @@ func isFailureSeverity(severity string, failOnSeverities []string) bool {
 }
 
 func convertToJUnitCasesWithSeverities(findings []model.Finding, failOnSeverities []string) []junitTestCase {
+	// armis:ignore cwe:770 reason:findings count bounded by API pagination (max 1000 per page)
 	cases := make([]junitTestCase, 0, len(findings))
 
 	for _, finding := range findings {

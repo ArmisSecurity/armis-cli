@@ -225,6 +225,7 @@ func filterToScanPath(repoRoot, scanPath string, changedPaths []string) ([]strin
 		resolvedScanPath = scanPath
 	}
 
+	// armis:ignore cwe:22 reason:this loop IS the path traversal prevention (Clean + HasPrefix + EvalSymlinks)
 	var filtered []string
 	for _, p := range changedPaths {
 		// Normalize path components (e.g., "subdir/../secret" -> "../secret")

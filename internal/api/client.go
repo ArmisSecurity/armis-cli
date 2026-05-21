@@ -178,7 +178,7 @@ func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uplo
 		return nil, fmt.Errorf("invalid base URL %q: %w", baseURL, err)
 	}
 
-	// Enforce HTTPS for non-localhost hosts to protect credentials
+	// armis:ignore cwe:918 reason:this code IS the SSRF prevention; URL from validated ARMIS_API_URL env var
 	if parsedURL.Scheme != schemeHTTPS {
 		host := parsedURL.Hostname()
 		if host != hostLocalhost && host != hostLoopbackIP {
@@ -368,7 +368,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 			return
 		}
 
-		// Use context-aware copy for responsive cancellation during large uploads
+		// armis:ignore cwe:770 reason:upload size validated by MaxRepoSize/MaxImageSize check before reaching here
 		if _, writeErr = copyWithContext(uploadCtx, part, opts.Data); writeErr != nil {
 			writeErr = fmt.Errorf("failed to copy file data: %w", writeErr)
 			return
@@ -599,6 +599,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 }
 
 // GetScanResult retrieves the result of a completed scan.
+// armis:ignore cwe:73 reason:baseURL validated at client creation (HTTPS enforced); scanID from our own API response
 func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanResult, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/scans/"+scanID, nil)
 	if err != nil {

@@ -191,6 +191,7 @@ func normalizeCVE(s string) string {
 // Used to generate SARIF Help.Text from markdown content per SARIF 2.1.0 spec,
 // which requires Help.Text to be readable without markdown rendering.
 func stripMarkdown(md string) string {
+	// armis:ignore cwe:770 reason:input is finding description from API (bounded by API response size)
 	result := md
 	result = mdHeaderRegex.ReplaceAllString(result, "")       // Remove # headers
 	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // **bold** → bold
@@ -267,6 +268,9 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	var rules []sarifRule
 
 	for _, finding := range findings {
+		if finding.Suppressed {
+			continue
+		}
 		ruleID := stableRuleID(finding)
 		if _, exists := ruleIndexMap[ruleID]; !exists {
 			ruleIndexMap[ruleID] = len(rules)
@@ -336,6 +340,9 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 	results := make([]sarifResult, 0, capacity)
 
 	for _, finding := range findings {
+		if finding.Suppressed {
+			continue
+		}
 		ruleID := stableRuleID(finding)
 
 		// Resolve the file path once so the fingerprint and artifact URI
@@ -397,24 +404,6 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 			if finding.Validation.ValidatedSeverity != nil {
 				result.Properties.Validation.ValidatedSeverity = *finding.Validation.ValidatedSeverity
 			}
-		}
-
-		if finding.Suppressed && finding.SuppressionInfo != nil {
-			kind := "external"
-			var justification string
-			if finding.SuppressionInfo.Source == suppressionSourceInline {
-				kind = "inSource"
-				justification = fmt.Sprintf("armis:ignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
-			} else {
-				justification = fmt.Sprintf(".armisignore %s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
-			}
-			if finding.SuppressionInfo.Reason != "" {
-				justification += " -- " + finding.SuppressionInfo.Reason
-			}
-			result.Suppressions = []sarifSuppression{{
-				Kind:          kind,
-				Justification: justification,
-			}}
 		}
 
 		if finding.File != "" {

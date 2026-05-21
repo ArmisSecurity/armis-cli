@@ -251,8 +251,9 @@ func (pi *PluginInstaller) createVenv(pluginDir string) error {
 
 	venvDir := filepath.Join(pluginDir, ".venv")
 	// armis:ignore cwe:94 reason:python path from findPython allowlist (python3/python only); args are hardcoded
+	// armis:ignore cwe:78 reason:python binary from findPython allowlist; all args are hardcoded literals
 	venvCmd := exec.Command(python, "-m", "venv", venvDir) //nolint:gosec // python validated by findPython allowlist
-	venvCmd.Stdout = os.Stderr
+	venvCmd.Stdout = os.Stderr                             // armis:ignore cwe:78 reason:part of venvCmd above
 	venvCmd.Stderr = os.Stderr
 	if err := venvCmd.Run(); err != nil {
 		return fmt.Errorf("creating venv: %w", err)
@@ -263,6 +264,8 @@ func (pi *PluginInstaller) createVenv(pluginDir string) error {
 		pip = filepath.Join(venvDir, "Scripts", "pip.exe")
 	}
 	reqsFile := filepath.Join(pluginDir, "requirements.txt")
+	// armis:ignore cwe:78 reason:pip binary from our own venv directory; args are hardcoded literals
+	// armis:ignore cwe:94 reason:pip binary from our own venv; reqsFile is hardcoded "requirements.txt"
 	pipCmd := exec.Command(pip, "install", "-q", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
 	pipCmd.Stdout = os.Stderr
 	pipCmd.Stderr = os.Stderr
@@ -320,6 +323,8 @@ func findPython() string {
 		if err != nil || !filepath.IsAbs(resolved) {
 			continue
 		}
+		// armis:ignore cwe:94 reason:resolved path from hardcoded allowlist (python3/python); -c arg is a hardcoded literal
+		// armis:ignore cwe:78 reason:resolved path from hardcoded allowlist; args are hardcoded literals
 		out, err := exec.Command(resolved, "-c", "import sys; print(sys.version_info >= (3, 11))").Output() //nolint:gosec // resolved path validated above
 		if err != nil {
 			continue
@@ -355,6 +360,7 @@ func writeEnvFromEnvironment(envPath string) error {
 		return fmt.Errorf("creating env directory: %w", err)
 	}
 	// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
+	// armis:ignore cwe:522 reason:credentials written to 0600 file in user-local plugin dir; required for MCP server auth
 	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil { // #nosec G703 - envPath is constructed from pluginDir + ".env"
 		return fmt.Errorf("writing env file: %w", err)
 	}

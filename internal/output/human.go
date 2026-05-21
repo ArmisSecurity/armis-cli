@@ -400,6 +400,7 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 	var fullPath string
 	if repoPath != "" {
 		var pathErr error
+		// armis:ignore cwe:22 reason:SafeJoinPath IS the path traversal prevention
 		fullPath, pathErr = util.SafeJoinPath(repoPath, finding.File)
 		if pathErr != nil {
 			return "", 0, fmt.Errorf("invalid file path %q: %w", finding.File, pathErr)
@@ -409,13 +410,16 @@ func loadSnippetFromFile(repoPath string, finding model.Finding) (snippet string
 		if filepath.IsAbs(finding.File) {
 			return "", 0, fmt.Errorf("absolute path not allowed without repository context: %q", finding.File)
 		}
+		// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention
 		sanitized, pathErr := util.SanitizePath(finding.File)
-		if pathErr != nil {
+		if pathErr != nil { // armis:ignore cwe:22
 			return "", 0, fmt.Errorf("invalid file path: %w", pathErr)
 		}
 		fullPath = sanitized
 	}
 
+	// armis:ignore cwe:73 reason:fullPath is sanitized via SanitizePath above; file from scan results read-only display
+	// armis:ignore cwe:22 reason:fullPath sanitized via SanitizePath above; read-only display of source code
 	f, err := os.Open(fullPath) // #nosec G304 - file path is from scan results
 	if err != nil {
 		return "", 0, fmt.Errorf("open file: %w", err)

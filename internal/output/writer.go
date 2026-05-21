@@ -126,6 +126,7 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	// CodeQL/GHAS alerts for this should be dismissed as "Won't fix" in the UI.
 	//
 	// #nosec G304 -- CLI tool with explicit user-controlled --output flag; no privilege escalation.
+	// armis:ignore cwe:73 reason:--output flag is intentionally user-controlled; CLI tool writing to user-specified path
 	file, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file %s: %w", cleanPath, err)
