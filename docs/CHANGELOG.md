@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.0] - 2026-05-21
+
+### Added
+
+- `uninstall` command for cleanly removing installed plugins, with manifest tracking and upgrade detection (#182)
+
+### Fixed
+
+- Suppressed findings are now excluded from SARIF output, allowing GitHub Code Scanning alerts to auto-close when findings are suppressed via `.armisignore` or inline directives (#185)
+- Python binary discovery now probes versioned names (`python3.11`, `python3.12`, etc.) in addition to `python3` and `python`, resolving install failures on systems without a generic `python3` symlink (#184)
+
+---
+
 ## [1.8.4] - 2026-05-18
 
 ### Added
@@ -321,7 +334,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...v1.9.0
 [1.8.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...v1.8.2
