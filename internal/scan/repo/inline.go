@@ -71,6 +71,8 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		entry := &fileLines{}
 		cache[filePath] = entry
 
+		// armis:ignore cwe:476 reason:err checked on same line; info is nil only when err != nil
+		// armis:ignore cwe:367 reason:stat-then-open race is benign; worst case is reading a changed file, no security impact
 		info, err := os.Stat(filePath)
 		if err != nil || info.IsDir() || info.Size() > maxInlineFileSize {
 			return entry

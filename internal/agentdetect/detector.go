@@ -54,6 +54,7 @@ func fileExists(resolvedHome, path string) bool {
 	if !isUnderDir(resolvedHome, path) {
 		return false
 	}
+	// armis:ignore cwe:22 reason:path already validated by isUnderDir containment check above
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
@@ -85,6 +86,7 @@ func findExtensionVersion(resolvedHome, extDir, prefix string) string {
 	if !isUnderDir(resolvedHome, extDir) {
 		return ""
 	}
+	// armis:ignore cwe:770 reason:reading extensions dir entries; bounded by installed IDE extensions count
 	entries, err := os.ReadDir(extDir)
 	if err != nil {
 		return ""
@@ -103,8 +105,8 @@ func findExtensionVersion(resolvedHome, extDir, prefix string) string {
 	return ""
 }
 
-// armis:ignore cwe:770 reason:reads single package.json file; size bounded by filesystem
 func readVersionFromPackageJSON(path string) string {
+	// armis:ignore cwe:770 reason:reads single package.json file; size bounded by filesystem
 	data, err := os.ReadFile(path) //nolint:gosec // path validated by caller via isUnderDir
 	if err != nil {
 		return ""

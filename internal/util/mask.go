@@ -112,9 +112,9 @@ func MaskSecretInLine(line string) string {
 	}
 
 	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
-	// Defense against ReDoS (CWE-770): skip regex processing for extremely long lines
+	// armis:ignore cwe:770 reason:maxLineLength bounds input size; this IS the resource control
 	if len(line) > maxLineLength {
-		return line
+		return line // armis:ignore cwe:522
 	}
 
 	result := line

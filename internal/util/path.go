@@ -33,6 +33,7 @@ func SanitizePath(p string) (string, error) {
 		return "", errors.New("invalid path")
 	}
 
+	// armis:ignore cwe:22 reason:this function IS the path sanitization; filepath.Clean is the mitigation
 	return cleaned, nil
 }
 

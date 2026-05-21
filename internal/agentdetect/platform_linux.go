@@ -21,6 +21,7 @@ func (p *linuxPlatform) UserHomeDirs() ([]UserHome, error) {
 	return currentUserOnly()
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *linuxPlatform) VSCodeExtensionsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".vscode", "extensions")
 }
@@ -44,6 +45,7 @@ func (p *linuxPlatform) JunieBinaryPaths(homeDir string) []string {
 	}
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *linuxPlatform) ZedConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".config", "Zed")
 }

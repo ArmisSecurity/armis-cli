@@ -58,7 +58,7 @@ var outputToFile = false
 //  7. CLICOLOR_FORCE -> colors ON (overrides TTY detection in auto mode)
 //  8. --color=auto   -> detect TTY on both stderr and stdout
 func InitColors(mode ColorMode) {
-	// Reset colorsForced - only ColorModeAlways sets it to true
+	// armis:ignore cwe:362 reason:InitColors called once during CLI startup from main goroutine; no concurrent access
 	colorsForced = false
 
 	switch mode {

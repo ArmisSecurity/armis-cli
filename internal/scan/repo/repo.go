@@ -112,6 +112,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	// 1. PipeReader.Close() rarely returns meaningful errors
 	// 2. The critical close is PipeWriter.Close() which signals EOF to the reader
 	// 3. Any actual read errors will surface through the main error flow
+	// armis:ignore cwe:253 reason:PipeReader.Close rarely returns meaningful errors; critical close is PipeWriter
 	defer pr.Close() //nolint:errcheck
 
 	if s.includeFiles != nil {
@@ -176,6 +177,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		// to prevent resource leaks if context is already canceled.
 		select {
 		case <-ctx.Done():
+			// armis:ignore cwe:253 reason:pw.Close error not actionable in cancellation path; purpose is to unblock reader
 			pw.Close() //nolint:errcheck,gosec // Close pipe to unblock StartIngest
 			errChan <- ctx.Err()
 			return
@@ -353,9 +355,7 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 			if err != nil {
 				return err
 			}
-			// Close error is intentionally ignored: for read-only files, Close() errors are
-			// extremely rare (typically only on NFS with errors deferred until close).
-			// The io.Copy error below catches any actual read failures.
+			// armis:ignore cwe:253 reason:Close error on read-only file is non-actionable; io.Copy catches read failures
 			defer file.Close() //nolint:errcheck
 
 			if _, err := io.Copy(tarWriter, file); err != nil {
@@ -487,6 +487,7 @@ func calculateFilesSize(repoRoot string, files []string) (int64, error) {
 			continue // Skip paths outside repository
 		}
 
+		// armis:ignore cwe:22 reason:absPath already validated by isPathContained above
 		info, err := os.Stat(absPath)
 		if err != nil {
 			continue // Skip non-existent files

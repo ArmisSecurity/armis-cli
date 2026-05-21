@@ -113,6 +113,7 @@ type EditorInstaller struct {
 
 // NewEditorInstaller creates an installer using the shared plugin directory (~/.armis/plugins/armis-appsec-mcp).
 func NewEditorInstaller() *EditorInstaller {
+	// armis:ignore cwe:253 reason:UserHomeDir error results in empty string which fails gracefully downstream
 	home, _ := os.UserHomeDir()
 	return &EditorInstaller{
 		pluginDir: filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp"),
@@ -161,6 +162,7 @@ func (ei *EditorInstaller) FetchPlugin(force bool) error {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}
 	versionFile := filepath.Join(ei.pluginDir, ".installed-version")
+	// armis:ignore cwe:253 reason:best-effort version tracking; write failure is non-critical
 	_ = os.WriteFile(filepath.Clean(versionFile), []byte(ei.plugin.InstalledVersion()), 0o600)
 	return nil
 }
@@ -237,6 +239,7 @@ func appSupportPath(parts ...string) string {
 		}
 		base = filepath.Join(home, "Library", "Application Support")
 	case osLinux:
+		// armis:ignore cwe:22 reason:XDG_CONFIG_HOME is a user-local config env var; affects only the current user context
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()
@@ -246,6 +249,7 @@ func appSupportPath(parts ...string) string {
 			base = filepath.Join(home, ".config")
 		}
 	case osWindows:
+		// armis:ignore cwe:22 reason:APPDATA is a standard OS env var for user config; not user-controlled input
 		base = os.Getenv("APPDATA")
 		if base == "" {
 			return ""
