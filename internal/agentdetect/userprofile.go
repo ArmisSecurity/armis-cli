@@ -28,6 +28,7 @@ func enumerateUserDirs(baseDir string, skipSet map[string]bool) ([]UserHome, err
 		if skipSet[name] {
 			continue
 		}
+		// armis:ignore cwe:770 reason:bounded by number of OS user directories under /home or /Users
 		users = append(users, UserHome{
 			Username: name,
 			HomeDir:  filepath.Join(baseDir, name),
@@ -53,8 +54,8 @@ func currentUserOnly() ([]UserHome, error) {
 // The baseDir is the JetBrains config root (e.g., ~/Library/Application Support/JetBrains).
 // armis:ignore cwe:22 reason:baseDir from platform-specific hardcoded paths; glob pattern has fixed structure
 func globJetBrainsPluginDirs(baseDir string) []string {
-	// armis:ignore cwe:22 reason:baseDir from platform-specific hardcoded paths; glob pattern has fixed structure
 	pattern := filepath.Join(baseDir, "*", "plugins")
+	// armis:ignore cwe:22 reason:baseDir from platform-specific hardcoded paths; glob pattern has fixed structure
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil

@@ -114,7 +114,7 @@ type EditorInstaller struct {
 // NewEditorInstaller creates an installer using the shared plugin directory (~/.armis/plugins/armis-appsec-mcp).
 func NewEditorInstaller() *EditorInstaller {
 	// armis:ignore cwe:253 reason:UserHomeDir error results in empty string which fails gracefully downstream
-	home, _ := os.UserHomeDir()
+	home, _ := os.UserHomeDir() //nolint:errcheck // armis:ignore cwe:253
 	return &EditorInstaller{
 		pluginDir: filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp"),
 		plugin:    newPluginInstaller(),
