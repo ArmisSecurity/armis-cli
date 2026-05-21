@@ -223,7 +223,7 @@ func appSupportPath(parts ...string) string {
 		}
 		base = filepath.Join(home, "Library", "Application Support")
 	case osLinux:
-		// armis:ignore cwe:22 reason:XDG_CONFIG_HOME is a standard freedesktop env var; not user-controlled input
+		// armis:ignore cwe:22 reason:XDG_CONFIG_HOME is a user-local config env var; affects only the current user context
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()

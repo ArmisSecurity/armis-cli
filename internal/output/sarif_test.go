@@ -1492,6 +1492,10 @@ func TestSARIF_SuppressedFindingExcludedFromResults(t *testing.T) {
 		t.Fatalf("expected 1 result (suppressed excluded), got %d", len(report.Runs[0].Results))
 	}
 
+	if len(report.Runs[0].Tool.Driver.Rules) != 1 {
+		t.Fatalf("expected 1 rule (suppressed excluded), got %d", len(report.Runs[0].Tool.Driver.Rules))
+	}
+
 	res := report.Runs[0].Results[0]
 	if res.Properties.FindingID != "active-1" {
 		t.Errorf("expected active finding, got %q", res.Properties.FindingID)
