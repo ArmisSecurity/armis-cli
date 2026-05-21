@@ -83,7 +83,7 @@ func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 
 // Scan scans a repository at the given path.
 func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, error) {
-	// Validate path to prevent path traversal
+	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; rejects invalid paths before further use
 	if _, err := util.SanitizePath(path); err != nil {
 		return nil, fmt.Errorf("invalid repository path: %w", err)
 	}
@@ -140,6 +140,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 
 		tarFunc = func() error {
+			// armis:ignore cwe:253 reason:pw.Close signals EOF to pipe reader; error not actionable in deferred cleanup
 			defer pw.Close() //nolint:errcheck // signals EOF to reader
 			return s.tarGzFiles(absPath, existing, pw)
 		}

@@ -133,6 +133,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, fmt.Errorf("tarball size (%d bytes) exceeds maximum allowed size (%d bytes)", info.Size(), MaxImageSize)
 	}
 
+	// armis:ignore cwe:22 reason:tarballPath validated by os.Stat above and size-checked; user-provided CLI arg for their own files
 	file, err := os.Open(tarballPath) // #nosec G304 - tarball path is user-provided input
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tarball: %w", err)
@@ -255,6 +256,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
 
+		// armis:ignore cwe:94 reason:dockerCmd is from findDockerBinary (hardcoded names); imageName validated by validateImageName()
 		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
 		pullCmd.Stdout = os.Stderr
 		pullCmd.Stderr = os.Stderr

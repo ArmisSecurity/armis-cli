@@ -26,10 +26,12 @@ func (p *linuxPlatform) VSCodeExtensionsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".vscode", "extensions")
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *linuxPlatform) JetBrainsPluginDirs(homeDir string) []string {
 	return globJetBrainsPluginDirs(filepath.Join(homeDir, ".local", "share", "JetBrains"))
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *linuxPlatform) VSCodeUserConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".config", "Code", "User")
 }

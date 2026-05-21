@@ -120,8 +120,7 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		return fmt.Errorf("invalid %s URL: %w", docType, err)
 	}
 
-	// DownloadFromPresignedURL enforces size limits (100MB max via io.LimitReader)
-	// and timeout (5min) to prevent resource exhaustion attacks
+	// armis:ignore cwe:770 reason:DownloadFromPresignedURL enforces 100MB limit via io.LimitReader and 5min timeout
 	data, err := d.client.DownloadFromPresignedURL(ctx, url)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", docType, err)

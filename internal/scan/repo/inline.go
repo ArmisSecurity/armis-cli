@@ -20,6 +20,23 @@ const (
 	suppressionTypeRule = "rule"
 )
 
+// funcSigPrefixes are line prefixes that introduce a function/method scope.
+// The upward scan treats these as transparent: a directive above a function
+// signature applies to findings inside the function body.
+var funcSigPrefixes = []string{
+	"func ",      // Go
+	"def ",       // Python, Ruby
+	"class ",     // Python, JS, TS, Java
+	"function ",  // JS, PHP
+	"pub fn ",    // Rust
+	"fn ",        // Rust
+	"public ",    // Java, C#
+	"private ",   // Java, C#
+	"protected ", // Java, C#
+	"static ",    // Java, C#
+	"async ",     // JS/TS async functions
+}
+
 // InlineDirective represents a parsed armis:ignore comment.
 type InlineDirective struct {
 	Category string
@@ -33,7 +50,7 @@ type InlineDirective struct {
 var commentPrefixes = map[string][]string{
 	".py": {"#"}, ".rb": {"#"}, ".sh": {"#"}, ".bash": {"#"}, ".zsh": {"#"},
 	".yaml": {"#"}, ".yml": {"#"}, ".tf": {"#"}, ".toml": {"#"}, ".r": {"#"},
-	".dockerfile": {"#"},
+	".dockerfile": {"#"}, ".ps1": {"#"},
 
 	".js": {"//", "/*"}, ".ts": {"//", "/*"}, ".jsx": {"//", "/*"}, ".tsx": {"//", "/*"},
 	".java": {"//", "/*"}, ".c": {"//", "/*"}, ".h": {"//", "/*"},
@@ -78,6 +95,7 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 			return entry
 		}
 
+		// armis:ignore cwe:22 reason:filePath constructed via SafeJoinPath which rejects traversal attempts
 		f, err := os.Open(filePath) // #nosec G304 - path validated via SafeJoinPath
 		if err != nil {
 			return entry
@@ -138,6 +156,8 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 
 		// Check the finding line itself, then scan upward through comment/blank lines
 		// (up to 5 lines above) to find a matching armis:ignore directive.
+		// Function/method signatures are treated as transparent — a directive above
+		// a function declaration applies to findings in the function body.
 		var directive *InlineDirective
 		if d := parseInlineComment(fl.lines[lineIdx], prefixes); d != nil {
 			directive = d
@@ -149,7 +169,10 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 					continue
 				}
 				if !isCommentLine(trimmed, prefixes) {
-					break
+					if !isFuncSignature(trimmed) {
+						break
+					}
+					continue
 				}
 				if d := parseInlineComment(above, prefixes); d != nil {
 					directive = d
@@ -204,6 +227,18 @@ func parseInlineComment(line string, prefixes []string) *InlineDirective {
 func isCommentLine(trimmed string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(trimmed, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFuncSignature returns true if the trimmed line looks like a function/method
+// declaration. These lines are treated as transparent during upward scanning so
+// that a directive above a function signature applies to findings in the body.
+func isFuncSignature(trimmed string) bool {
+	for _, prefix := range funcSigPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
 			return true
 		}
 	}

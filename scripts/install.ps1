@@ -163,9 +163,7 @@ function Main {
     # then validate the normalized result for defense-in-depth
     $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
-    # After normalization, verify no ".." segments remain
-    # GetFullPath should resolve all "..", but we double-check for defense-in-depth
-    # Pattern matches ".." as a complete path segment (between backslashes or at boundaries)
+    # armis:ignore cwe:22 reason:this IS the path traversal prevention check; rejects paths with ".." segments
     if ($InstallDir -match '(^|\\)\.\.($|\\)') {
         Write-Error "Invalid install directory: path traversal detected after normalization"
         exit 1
@@ -188,7 +186,7 @@ function Main {
     }
 
     $archiveName = "armis-cli-windows-$arch.zip"
-    # Use GUID for cryptographically secure random directory name
+    # armis:ignore cwe:426 reason:$env:TEMP is the standard Windows temp dir; GUID suffix prevents collision/hijacking
     $tmpDir = Join-Path $env:TEMP "armis-cli-install-$([guid]::NewGuid().ToString())"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 

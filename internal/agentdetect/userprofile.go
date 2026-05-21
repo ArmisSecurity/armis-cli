@@ -53,6 +53,7 @@ func currentUserOnly() ([]UserHome, error) {
 // The baseDir is the JetBrains config root (e.g., ~/Library/Application Support/JetBrains).
 // armis:ignore cwe:22 reason:baseDir from platform-specific hardcoded paths; glob pattern has fixed structure
 func globJetBrainsPluginDirs(baseDir string) []string {
+	// armis:ignore cwe:22 reason:baseDir from platform-specific hardcoded paths; glob pattern has fixed structure
 	pattern := filepath.Join(baseDir, "*", "plugins")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {

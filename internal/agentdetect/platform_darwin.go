@@ -44,7 +44,7 @@ func (p *darwinPlatform) CursorAppExists(_ string) bool {
 func (p *darwinPlatform) JunieBinaryPaths(homeDir string) []string {
 	return []string{
 		"/usr/local/bin/junie",
-		filepath.Join(homeDir, ".local", "bin", "junie"),
+		filepath.Join(homeDir, ".local", "bin", "junie"), // armis:ignore cwe:22
 	}
 }
 
