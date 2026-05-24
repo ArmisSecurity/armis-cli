@@ -32,6 +32,7 @@ func isUnderDir(resolvedBase, target string) bool {
 		resolved = baseVol + strings.TrimPrefix(resolved, resolvedVol)
 	}
 
+	// armis:ignore cwe:22 reason:isUnderDir IS the containment check; Rel used to verify path stays within base
 	rel, err := filepath.Rel(resolvedBase, resolved)
 	if err != nil {
 		return false
@@ -41,10 +42,12 @@ func isUnderDir(resolvedBase, target string) bool {
 }
 
 // dirExists returns true if path exists, is a directory, and resolves under resolvedHome.
+// armis:ignore cwe:22 reason:path validated by isUnderDir which ensures it resolves under resolvedHome
 func dirExists(resolvedHome, path string) bool {
 	if !isUnderDir(resolvedHome, path) {
 		return false
 	}
+	// armis:ignore cwe:22 reason:path validated by isUnderDir containment check above
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
@@ -54,6 +57,7 @@ func fileExists(resolvedHome, path string) bool {
 	if !isUnderDir(resolvedHome, path) {
 		return false
 	}
+	// armis:ignore cwe:22 reason:path already validated by isUnderDir containment check above
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
@@ -64,6 +68,7 @@ func hasExtensionPrefix(resolvedHome, extDir, prefix string) bool {
 	if !isUnderDir(resolvedHome, extDir) {
 		return false
 	}
+	// armis:ignore cwe:770 reason:reads bounded directory (e.g. ~/.vscode/extensions); extDir validated via isUnderDir above
 	entries, err := os.ReadDir(extDir)
 	if err != nil {
 		return false
@@ -79,10 +84,12 @@ func hasExtensionPrefix(resolvedHome, extDir, prefix string) bool {
 
 // findExtensionVersion looks for a package.json in an extension directory matching the prefix
 // and extracts the version field. extDir must resolve under resolvedHome.
+// armis:ignore cwe:770 reason:reads bounded directory (~/.vscode/extensions); entry count limited by local filesystem
 func findExtensionVersion(resolvedHome, extDir, prefix string) string {
 	if !isUnderDir(resolvedHome, extDir) {
 		return ""
 	}
+	// armis:ignore cwe:770 reason:reading extensions dir entries; bounded by installed IDE extensions count
 	entries, err := os.ReadDir(extDir)
 	if err != nil {
 		return ""
@@ -102,6 +109,7 @@ func findExtensionVersion(resolvedHome, extDir, prefix string) string {
 }
 
 func readVersionFromPackageJSON(path string) string {
+	// armis:ignore cwe:770 reason:reads single package.json file; size bounded by filesystem
 	data, err := os.ReadFile(path) //nolint:gosec // path validated by caller via isUnderDir
 	if err != nil {
 		return ""
@@ -427,6 +435,7 @@ func (d *continueDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bo
 	if !isUnderDir(resolvedHome, mcpDir) {
 		return false
 	}
+	// armis:ignore cwe:770 reason:reads bounded directory (~/.continue/mcpServers); entry count limited by local filesystem
 	entries, err := os.ReadDir(mcpDir)
 	if err != nil {
 		return false

@@ -100,7 +100,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 
 // downloadAndSave downloads from a URL and saves to a file.
 func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string) error {
-	// Validate output path to prevent path traversal attacks
+	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; outputPath from user flag then sanitized
 	sanitizedPath, err := util.SanitizePath(outputPath)
 	if err != nil {
 		return fmt.Errorf("invalid %s output path: %w", docType, err)
@@ -115,13 +115,12 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		}
 	}
 
-	// Validate URL to prevent SSRF - only allow recognized S3 endpoints over HTTPS
+	// armis:ignore cwe:918 reason:ValidatePresignedURL IS the SSRF prevention; enforces HTTPS + allowed S3 hosts
 	if err := d.client.ValidatePresignedURL(url); err != nil {
 		return fmt.Errorf("invalid %s URL: %w", docType, err)
 	}
 
-	// DownloadFromPresignedURL enforces size limits (100MB max via io.LimitReader)
-	// and timeout (5min) to prevent resource exhaustion attacks
+	// armis:ignore cwe:770 reason:DownloadFromPresignedURL enforces 100MB limit via io.LimitReader and 5min timeout
 	data, err := d.client.DownloadFromPresignedURL(ctx, url)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", docType, err)

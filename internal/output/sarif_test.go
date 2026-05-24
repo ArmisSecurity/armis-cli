@@ -1451,7 +1451,7 @@ func TestSARIFFormatter_FindingIDAndFingerprints(t *testing.T) {
 	}
 }
 
-func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
+func TestSARIF_SuppressedFindingExcludedFromResults(t *testing.T) {
 	formatter := &SARIFFormatter{}
 	result := &model.ScanResult{
 		ScanID: "test-supp",
@@ -1459,14 +1459,21 @@ func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
 			{
 				ID:         "supp-1",
 				Severity:   model.SeverityLow,
-				Title:      "Test finding",
+				Title:      "Suppressed finding",
 				File:       "main.go",
 				Suppressed: true,
 				SuppressionInfo: &model.SuppressionInfo{
 					Type:   "severity",
 					Value:  "LOW",
 					Reason: "accepted risk",
+					Source: "armisignore",
 				},
+			},
+			{
+				ID:       "active-1",
+				Severity: model.SeverityHigh,
+				Title:    "Active finding",
+				File:     "main.go",
 			},
 		},
 	}
@@ -1482,18 +1489,55 @@ func TestSARIF_SuppressedFindingHasSuppressionsArray(t *testing.T) {
 	}
 
 	if len(report.Runs[0].Results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(report.Runs[0].Results))
+		t.Fatalf("expected 1 result (suppressed excluded), got %d", len(report.Runs[0].Results))
+	}
+
+	if len(report.Runs[0].Tool.Driver.Rules) != 1 {
+		t.Fatalf("expected 1 rule (suppressed excluded), got %d", len(report.Runs[0].Tool.Driver.Rules))
 	}
 
 	res := report.Runs[0].Results[0]
-	if len(res.Suppressions) != 1 {
-		t.Fatalf("expected 1 suppression, got %d", len(res.Suppressions))
+	if res.Properties.FindingID != "active-1" {
+		t.Errorf("expected active finding, got %q", res.Properties.FindingID)
 	}
-	if res.Suppressions[0].Kind != "inSource" {
-		t.Errorf("suppression kind = %q, want %q", res.Suppressions[0].Kind, "inSource")
+}
+
+func TestSARIF_AllSuppressedFindingsProducesEmptyResults(t *testing.T) {
+	formatter := &SARIFFormatter{}
+	result := &model.ScanResult{
+		ScanID: "test-inline-supp",
+		Findings: []model.Finding{
+			{
+				ID:         "inline-1",
+				Severity:   model.SeverityHigh,
+				Title:      "Inline suppressed",
+				File:       "main.py",
+				Suppressed: true,
+				SuppressionInfo: &model.SuppressionInfo{
+					Type:   "cwe",
+					Value:  "798",
+					Reason: "test token",
+					Source: "inline",
+				},
+			},
+		},
 	}
-	if res.Suppressions[0].Justification != ".armisignore severity:LOW -- accepted risk" {
-		t.Errorf("justification = %q", res.Suppressions[0].Justification)
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	var report sarifReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("JSON parse failed: %v", err)
+	}
+
+	if len(report.Runs[0].Results) != 0 {
+		t.Fatalf("expected 0 results (all suppressed), got %d", len(report.Runs[0].Results))
+	}
+	if len(report.Runs[0].Tool.Driver.Rules) != 0 {
+		t.Errorf("expected 0 rules (all suppressed), got %d", len(report.Runs[0].Tool.Driver.Rules))
 	}
 }
 

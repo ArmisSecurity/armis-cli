@@ -34,6 +34,8 @@ var scanImageCmd = &cobra.Command{
 
 		// Validate tarball path exists before making network calls
 		if tarballPath != "" {
+			// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path sanitized via util.SanitizePath() before filesystem write
+			// armis:ignore cwe:367 reason:TOCTOU benign here; tarball read later via docker/podman, not direct open after stat
 			info, err := os.Stat(tarballPath)
 			if err != nil {
 				if os.IsNotExist(err) {

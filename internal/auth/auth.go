@@ -178,6 +178,7 @@ func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// armis:ignore cwe:522 reason:returning token to caller is the API contract; token is used for authenticated API calls
 	return p.credentials.Token, nil
 }
 
@@ -293,6 +294,8 @@ type jwtClaims struct {
 // 2. The backend validates the signature server-side for all API requests
 // 3. This function only extracts claims for local caching/refresh logic
 //
+// armis:ignore cwe:287 reason:JWT signature verification delegated to server; CLI only extracts claims for caching
+// armis:ignore cwe:327 reason:no cryptographic operations; base64-decodes JWT payload for claim extraction only
 // #nosec G104 -- JWT signature verification delegated to backend
 func parseJWTClaims(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")

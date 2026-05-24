@@ -30,6 +30,7 @@ func FormatPlain(result *ScanResult, w io.Writer) error {
 			}
 			continue
 		}
+		// armis:ignore cwe:770 reason:bounded by API response page size (max 1000 agents per user)
 		agents := make([]string, 0, len(userResult.Agents))
 		for _, agent := range userResult.Agents {
 			mcpStatus := s.ErrorText.Render("MCP:false")

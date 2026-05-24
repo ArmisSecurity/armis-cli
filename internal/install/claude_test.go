@@ -10,7 +10,10 @@ import (
 const testVersion = "1.0.0"
 
 func TestNewClaudeInstaller(t *testing.T) {
-	ci := NewClaudeInstaller()
+	ci, err := NewClaudeInstaller()
+	if err != nil {
+		t.Fatalf("NewClaudeInstaller() error: %v", err)
+	}
 	if ci.claudeDir == "" {
 		t.Fatal("claudeDir should not be empty")
 	}

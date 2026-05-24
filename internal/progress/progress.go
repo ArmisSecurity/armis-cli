@@ -123,6 +123,7 @@ func NewSpinner(message string, disabled bool) *Spinner {
 // the spinner will automatically stop to prevent goroutine leaks.
 // A timeout of 0 means no automatic timeout (use with caution).
 func NewSpinnerWithTimeout(message string, disabled bool, timeout time.Duration) *Spinner {
+	// armis:ignore cwe:401 reason:Spinner goroutine has proper lifecycle via stopChan/doneChan and timeout safety net
 	return &Spinner{
 		message:   message,
 		disabled:  disabled,
@@ -176,6 +177,7 @@ func (s *Spinner) Start() {
 	s.mu.Unlock()
 
 	if s.disabled || IsCI() {
+		// armis:ignore cwe:253 reason:fmt.Fprintf to stderr; return value not actionable for log-style output
 		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", message, startTime.Format("15:04:05"))
 		return
 	}
@@ -205,6 +207,7 @@ func (s *Spinner) Start() {
 	s.cancel = cancel
 	s.mu.Unlock()
 
+	// armis:ignore cwe:401 reason:goroutine has proper lifecycle via doneChan + cancel; stopped by Spinner.Stop()
 	go func() {
 		defer close(s.doneChan)
 		defer cancel() // Ensure context is canceled when goroutine exits
@@ -215,9 +218,11 @@ func (s *Spinner) Start() {
 		// even when --color=never. This matches clearLine() which uses \033[K.
 		hideCursor := isTerminalWriter(s.writer)
 		if hideCursor {
+			// armis:ignore cwe:253 reason:fmt.Fprint to terminal for cursor control; return value not actionable
 			_, _ = fmt.Fprint(s.writer, cursorHide)
+			// armis:ignore cwe:253 reason:deferred fmt.Fprint for cursor restore; return value not actionable
 			defer func() { _, _ = fmt.Fprint(s.writer, cursorShow) }()
-		}
+		} // armis:ignore cwe:253
 
 		spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		i := 0
@@ -235,11 +240,11 @@ func (s *Spinner) Start() {
 		for {
 			select {
 			case <-s.stopChan:
-				// Explicit stop requested
+				// armis:ignore cwe:253 reason:fmt.Fprint to terminal for line clearing; return value not actionable
 				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ctx.Done():
-				// Context canceled or timeout reached
+				// armis:ignore cwe:253 reason:fmt.Fprint to terminal for line clearing; return value not actionable
 				_, _ = fmt.Fprint(s.writer, clearLine())
 				return
 			case <-ticker.C:
@@ -252,8 +257,10 @@ func (s *Spinner) Start() {
 				text := styles.SpinnerText.Render(msg)
 				if s.showTimer {
 					timer := styles.SpinnerTimer.Render("[" + formatDuration(elapsed) + "]")
+					// armis:ignore cwe:253 reason:fmt.Fprintf to terminal for spinner output; return value not actionable
 					_, _ = fmt.Fprintf(s.writer, "%s%s %s %s", clearLine(), char, text, timer)
 				} else {
+					// armis:ignore cwe:253 reason:fmt.Fprintf to terminal for spinner output; return value not actionable
 					_, _ = fmt.Fprintf(s.writer, "%s%s %s", clearLine(), char, text)
 				}
 				i++

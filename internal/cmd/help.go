@@ -38,6 +38,7 @@ func SetupHelp(cmd *cobra.Command) {
 		originalOut := c.OutOrStdout()
 
 		// Capture help output to a buffer
+		// armis:ignore cwe:770 reason:buffer captures cobra help text; size bounded by the command's own usage template
 		buf := new(bytes.Buffer)
 		c.SetOut(buf)
 		c.SetUsageTemplate(styledUsageTemplate())

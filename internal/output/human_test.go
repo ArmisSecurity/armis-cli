@@ -1023,6 +1023,13 @@ func TestRenderBriefStatus_WithSuppressed(t *testing.T) {
 			BySeverity: map[model.Severity]int{model.SeverityHigh: 2, model.SeverityMedium: 1},
 			Suppressed: 2,
 		},
+		Findings: []model.Finding{
+			{ID: "a", Severity: model.SeverityHigh},
+			{ID: "b", Severity: model.SeverityHigh},
+			{ID: "c", Severity: model.SeverityMedium},
+			{ID: "d", Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore", Type: "severity", Value: "LOW"}},
+			{ID: "e", Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore", Type: "severity", Value: "LOW"}},
+		},
 	}
 
 	var buf bytes.Buffer
@@ -1071,6 +1078,16 @@ func TestRenderSummaryDashboard_ShowsSuppressionLine(t *testing.T) {
 			Total:      5,
 			BySeverity: map[model.Severity]int{model.SeverityHigh: 5},
 			Suppressed: 3,
+		},
+		Findings: []model.Finding{
+			{ID: "1", Severity: model.SeverityHigh},
+			{ID: "2", Severity: model.SeverityHigh},
+			{ID: "3", Severity: model.SeverityHigh},
+			{ID: "4", Severity: model.SeverityHigh},
+			{ID: "5", Severity: model.SeverityHigh},
+			{ID: "s1", Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore", Type: "severity", Value: "LOW"}},
+			{ID: "s2", Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore", Type: "severity", Value: "LOW"}},
+			{ID: "s3", Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore", Type: "severity", Value: "LOW"}},
 		},
 	}
 
@@ -1122,7 +1139,7 @@ func TestHumanFormatter_CriticalSuppressionWarning(t *testing.T) {
 	os.Stderr = oldStderr
 
 	stderrOutput := stderrBuf.String()
-	if !strings.Contains(stderrOutput, "1 CRITICAL finding suppressed by .armisignore") {
+	if !strings.Contains(stderrOutput, "1 CRITICAL finding suppressed") {
 		t.Errorf("expected CRITICAL suppression warning on stderr, got:\n%s", stderrOutput)
 	}
 

@@ -19,7 +19,11 @@ import (
 
 const githubAPIHost = "api.github.com"
 
-const osWindows = "windows"
+const (
+	osWindows = "windows"
+	osDarwin  = "darwin"
+	osLinux   = "linux"
+)
 
 const (
 	pluginRepo        = "ArmisSecurity/armis-appsec-mcp"
@@ -30,6 +34,8 @@ const (
 	maxFileSize       = 10 * 1024 * 1024  // 10 MB per file
 	maxArchiveEntries = 10000             // max tar entries to prevent resource exhaustion
 )
+
+var pythonCandidates = []string{"python3.13", "python3.12", "python3.11", "python3", "python"}
 
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
@@ -56,6 +62,15 @@ func (pi *PluginInstaller) InstalledVersion() string {
 	return pi.installedVersion
 }
 
+// LatestVersion checks GitHub for the latest release version without downloading.
+func (pi *PluginInstaller) LatestVersion() (string, error) {
+	release, err := pi.fetchLatestRelease()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(release.TagName, "v"), nil
+}
+
 // FetchAndInstall downloads the latest release and sets up the plugin in destDir.
 func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 	release, err := pi.fetchLatestRelease()
@@ -74,10 +89,6 @@ func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 
 	if err := pi.createVenv(destDir); err != nil {
 		return fmt.Errorf("failed to set up Python environment: %w", err)
-	}
-
-	if err := writeHelperScript(destDir); err != nil {
-		return fmt.Errorf("failed to write helper script: %w", err)
 	}
 
 	return nil
@@ -242,12 +253,14 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 func (pi *PluginInstaller) createVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
-		return fmt.Errorf("Python 3.11+ is required but not found in PATH") //nolint:staticcheck // proper noun
+		return fmt.Errorf("Python 3.11+ is required but not found in PATH (tried %s)", strings.Join(pythonCandidates, ", ")) //nolint:staticcheck // proper noun
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
+	// armis:ignore cwe:94 reason:python path from findPython allowlist (python3/python only); args are hardcoded
+	// armis:ignore cwe:78 reason:python binary from findPython allowlist; all args are hardcoded literals
 	venvCmd := exec.Command(python, "-m", "venv", venvDir) //nolint:gosec // python validated by findPython allowlist
-	venvCmd.Stdout = os.Stderr
+	venvCmd.Stdout = os.Stderr                             // armis:ignore cwe:78 reason:part of venvCmd above
 	venvCmd.Stderr = os.Stderr
 	if err := venvCmd.Run(); err != nil {
 		return fmt.Errorf("creating venv: %w", err)
@@ -258,6 +271,8 @@ func (pi *PluginInstaller) createVenv(pluginDir string) error {
 		pip = filepath.Join(venvDir, "Scripts", "pip.exe")
 	}
 	reqsFile := filepath.Join(pluginDir, "requirements.txt")
+	// armis:ignore cwe:78 reason:pip binary from our own venv directory; args are hardcoded literals
+	// armis:ignore cwe:94 reason:pip binary from our own venv; reqsFile is hardcoded "requirements.txt"
 	pipCmd := exec.Command(pip, "install", "-q", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
 	pipCmd.Stdout = os.Stderr
 	pipCmd.Stderr = os.Stderr
@@ -306,7 +321,7 @@ func writeJSON(path string, data interface{}) error {
 }
 
 func findPython() string {
-	for _, name := range []string{"python3", "python"} {
+	for _, name := range pythonCandidates {
 		resolved, err := exec.LookPath(name)
 		if err != nil {
 			continue
@@ -315,6 +330,8 @@ func findPython() string {
 		if err != nil || !filepath.IsAbs(resolved) {
 			continue
 		}
+		// armis:ignore cwe:94 reason:resolved path from hardcoded allowlist (python3/python); -c arg is a hardcoded literal
+		// armis:ignore cwe:78 reason:resolved path from hardcoded allowlist; args are hardcoded literals
 		out, err := exec.Command(resolved, "-c", "import sys; print(sys.version_info >= (3, 11))").Output() //nolint:gosec // resolved path validated above
 		if err != nil {
 			continue
@@ -343,61 +360,18 @@ func writeEnvFromEnvironment(envPath string) error {
 		return nil
 	}
 
+	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
 	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+	// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
 		return fmt.Errorf("creating env directory: %w", err)
 	}
+	// armis:ignore cwe:73 reason:envPath constructed from pluginDir (known cache dir) + hardcoded ".env" filename
+	// armis:ignore cwe:522 reason:credentials written to 0600 file in user-local plugin dir; required for MCP server auth
 	if err := os.WriteFile(filepath.Clean(envPath), []byte(content), 0o600); err != nil { // #nosec G703 - envPath is constructed from pluginDir + ".env"
 		return fmt.Errorf("writing env file: %w", err)
 	}
 	return nil
-}
-
-// writeHelperScript writes a standalone scan script that editors without
-// native MCP support (e.g. Copilot) can invoke to scan files directly.
-func writeHelperScript(pluginDir string) error {
-	scriptPath := filepath.Join(pluginDir, "scan_file.py")
-	script := `#!/usr/bin/env python3
-"""Scan a file for security vulnerabilities using the Armis AppSec scanner.
-
-Usage: python3 scan_file.py <file_path>
-
-This script calls the same scanning engine as the MCP server but can be
-invoked directly from editors that cannot call MCP tools natively.
-"""
-import os
-import sys
-
-_plugin_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _plugin_dir)
-
-from dotenv import load_dotenv
-
-_env_file = os.path.join(_plugin_dir, ".env")
-if os.path.isfile(_env_file):
-    load_dotenv(_env_file, override=False)
-
-from auth import init_auth
-from scanner_core import call_appsec_api, format_findings, parse_findings
-
-if len(sys.argv) != 2:
-    print("Usage: python3 scan_file.py <file_path>", file=sys.stderr)
-    sys.exit(1)
-
-file_path = os.path.abspath(sys.argv[1])
-if not os.path.isfile(file_path):
-    print(f"Error: {file_path} not found", file=sys.stderr)
-    sys.exit(1)
-
-init_auth()
-with open(file_path) as f:
-    code = f.read()
-
-raw = call_appsec_api(code)
-findings = parse_findings(raw)
-print(format_findings(findings, os.path.basename(file_path)))
-`
-	return os.WriteFile(filepath.Clean(scriptPath), []byte(script), 0o750) // #nosec G306 - script needs execute permission
 }
 
 // venvPython returns the path to the Python interpreter inside a venv.

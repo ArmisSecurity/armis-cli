@@ -114,6 +114,25 @@ var rootCmd = &cobra.Command{
 
 		output.SyncColors()
 
+		// Resolve credentials from environment when not explicitly provided via flags.
+		// Using cmd.Flags().Changed() ensures that an explicit --flag="" can override
+		// an env var (i.e. intentionally clear a credential).
+		if !cmd.Flags().Changed("token") {
+			token = os.Getenv("ARMIS_API_TOKEN")
+		}
+		if !cmd.Flags().Changed("tenant-id") {
+			tenantID = os.Getenv("ARMIS_TENANT_ID")
+		}
+		if !cmd.Flags().Changed("client-id") {
+			clientID = os.Getenv("ARMIS_CLIENT_ID")
+		}
+		if !cmd.Flags().Changed("client-secret") {
+			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
+		}
+		if !cmd.Flags().Changed("region") {
+			region = os.Getenv("ARMIS_REGION")
+		}
+
 		// Warn if the removed ARMIS_AUTH_ENDPOINT env var is set
 		if os.Getenv("ARMIS_AUTH_ENDPOINT") != "" {
 			cli.PrintWarning("ARMIS_AUTH_ENDPOINT is no longer supported. " +
@@ -164,13 +183,13 @@ func init() {
 	SetupHelp(rootCmd)
 
 	// Legacy Basic authentication
-	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", os.Getenv("ARMIS_API_TOKEN"), "API token for Basic authentication (env: ARMIS_API_TOKEN)")
-	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", os.Getenv("ARMIS_TENANT_ID"), "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
+	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", "", "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 
 	// JWT authentication
-	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", os.Getenv("ARMIS_CLIENT_ID"), "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
-	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", os.Getenv("ARMIS_CLIENT_SECRET"), "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&region, "region", os.Getenv("ARMIS_REGION"), "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
+	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", "", "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
+	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", "", "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
+	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
@@ -261,8 +280,9 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+// getAPIBaseURL returns the Armis API base URL, allowing override via ARMIS_API_URL env var for testing.
+// armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
 func getAPIBaseURL() string {
-	// Allow override via environment variable (useful for testing)
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
 		return override
 	}

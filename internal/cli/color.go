@@ -58,7 +58,7 @@ var outputToFile = false
 //  7. CLICOLOR_FORCE -> colors ON (overrides TTY detection in auto mode)
 //  8. --color=auto   -> detect TTY on both stderr and stdout
 func InitColors(mode ColorMode) {
-	// Reset colorsForced - only ColorModeAlways sets it to true
+	// armis:ignore cwe:362 reason:InitColors called once during CLI startup from main goroutine; no concurrent access
 	colorsForced = false
 
 	switch mode {
@@ -198,7 +198,9 @@ func PrintErrorf(format string, args ...interface{}) {
 
 // PrintWarning writes a colored warning message to stderr.
 // Format: "Warning: <message>\n"
+// armis:ignore cwe:200 reason:intentional user-facing warning output to stderr; message masked via MaskSecretInLine
 func PrintWarning(msg string) {
+	msg = util.MaskSecretInLine(msg)
 	fmt.Fprintf(os.Stderr, "%s %s\n", warningLabelStyle.Render("Warning:"), msg)
 }
 

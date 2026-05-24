@@ -105,6 +105,7 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	// Create parent directories if needed
 	dir := filepath.Dir(cleanPath)
 	if dir != "" && dir != "." {
+		// armis:ignore cwe:770 reason:MkdirAll depth bounded by user-specified output path; not recursive input
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create output directory %s: %w", dir, err)
 		}
@@ -125,6 +126,8 @@ func NewFileOutput(path string) (*FileOutput, error) {
 	// CodeQL/GHAS alerts for this should be dismissed as "Won't fix" in the UI.
 	//
 	// #nosec G304 -- CLI tool with explicit user-controlled --output flag; no privilege escalation.
+	// armis:ignore cwe:73 reason:--output flag is intentionally user-controlled; CLI tool writing to user-specified path
+	// armis:ignore cwe:59 reason:cleanPath sanitized via filepath.Clean; symlink risk accepted for user-specified output file
 	file, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file %s: %w", cleanPath, err)

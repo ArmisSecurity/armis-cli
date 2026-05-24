@@ -190,9 +190,9 @@ func (c *Checker) fetchLatestVersion(ctx context.Context) (string, error) {
 }
 
 // getCacheFilePath returns the path to the cache file.
+// armis:ignore cwe:73 reason:cacheDir set from XDG/home path; SanitizePath validates before use
 func (c *Checker) getCacheFilePath() string {
 	if c.cacheDir != "" {
-		// Testing override - validate the provided path
 		sanitized, err := util.SanitizePath(c.cacheDir)
 		if err != nil {
 			return "" // invalid cacheDir, disable caching
@@ -210,11 +210,12 @@ func (c *Checker) readCache() *cacheFile {
 	if path == "" {
 		return nil
 	}
-	// Validate the final path before reading to prevent path traversal (CWE-73)
+	// armis:ignore cwe:73 reason:path constructed from getCacheFilePath (XDG cache dir + hardcoded filename)
 	sanitizedPath, err := util.SanitizePath(path)
 	if err != nil {
 		return nil
 	}
+	// armis:ignore cwe:73 reason:path already validated by SanitizePath above; reads CLI version cache file
 	data, err := os.ReadFile(sanitizedPath) //nolint:gosec // path validated by SanitizePath
 	if err != nil {
 		return nil
@@ -233,7 +234,7 @@ func (c *Checker) writeCache(result *cacheFile) {
 	if path == "" {
 		return
 	}
-	// Validate the final path before writing to prevent path traversal (CWE-73)
+	// armis:ignore cwe:73 reason:SanitizePath IS the path traversal prevention; validates before any write
 	sanitizedPath, err := util.SanitizePath(path)
 	if err != nil {
 		return
@@ -246,6 +247,7 @@ func (c *Checker) writeCache(result *cacheFile) {
 	if err != nil {
 		return
 	}
+	// armis:ignore cwe:73 reason:path already validated by SanitizePath above; writes CLI version cache file
 	_ = os.WriteFile(sanitizedPath, data, 0o600) //nolint:gosec // path validated by SanitizePath
 }
 
