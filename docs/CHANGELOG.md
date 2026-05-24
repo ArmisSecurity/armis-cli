@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.1] - 2026-05-24
+
+### Fixed
+
+- Inline suppression now correctly sees through function signatures, matching findings inside annotated functions regardless of signature length (#187)
+
+### Changed
+
+- Updated go-git/go-git to v5.19.1 (#183)
+- Updated golang.org/x/sys to v0.44.0, golang.org/x/term to v0.43.0 (#167, #168)
+- Updated alecthomas/chroma to v2.24.1 (#156)
+- Updated mattn/go-runewidth to v0.0.23 (#139)
+- Updated sigstore/cosign-installer to v4.1.2 (#165)
+
+---
+
 ## [1.9.0] - 2026-05-21
 
 ### Added
@@ -334,7 +350,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...v1.9.0
 [1.8.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.2...v1.8.3
