@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,19 +19,20 @@ With no arguments, installs the plugin and registers it in all detected editors.
 Specify one or more editor names to target specific tools.
 
 Supported editors:
-  claude     Claude Code (uses plugin system)
-  vscode     VS Code / GitHub Copilot
-  copilot    Alias for vscode
-  cursor     Cursor
-  windsurf   Windsurf (Codeium)
-  zed        Zed
-  cline      Cline (VS Code extension)
-  amazonq    Amazon Q Developer
-  continue      Continue
-  antigravity   Antigravity
-  gemini        Gemini CLI
-  roocode       Roo Code
-  junie         Junie
+  claude          Claude Code (uses plugin system)
+  claude-desktop  Claude Desktop app (macOS/Windows)
+  vscode          VS Code / GitHub Copilot
+  copilot         Alias for vscode
+  cursor          Cursor
+  windsurf        Windsurf (Codeium)
+  zed             Zed
+  cline           Cline (VS Code extension)
+  amazonq         Amazon Q Developer
+  continue        Continue
+  antigravity     Antigravity
+  gemini          Gemini CLI
+  roocode         Roo Code
+  junie           Junie
 
 Not auto-configurable (manual setup required):
   jetbrains  JetBrains IDEs (per-project .jb-mcp.json)
@@ -54,6 +56,7 @@ Not auto-configurable (manual setup required):
 func init() {
 	rootCmd.AddCommand(installCmd)
 	installCmd.Flags().Bool("version", false, "Print the installed plugin version and exit")
+	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -66,18 +69,26 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return showInstalledVersions()
 	}
 
-	if len(args) == 0 {
-		return installAll()
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("reading --force flag: %w", err)
 	}
 
-	return installTargets(args)
+	if len(args) == 0 {
+		return installAll(force)
+	}
+
+	return installTargets(args, force)
 }
 
 func showInstalledVersions() error {
 	ei := install.NewEditorInstaller()
 	v := ei.GetInstalledVersion()
 
-	ci := install.NewClaudeInstaller()
+	ci, err := install.NewClaudeInstaller()
+	if err != nil {
+		return fmt.Errorf("failed to initialize Claude installer: %w", err)
+	}
 	cv := ci.GetInstalledVersion()
 
 	if v == "" && cv == "" {
@@ -93,14 +104,26 @@ func showInstalledVersions() error {
 	return nil
 }
 
-func installAll() error {
+func installAll(force bool) error {
 	ei := install.NewEditorInstaller()
 
 	fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
-	if err := ei.FetchPlugin(); err != nil {
-		return fmt.Errorf("download failed: %w", err)
+	if err := ei.FetchPlugin(force); err != nil {
+		if errors.Is(err, install.ErrAlreadyCurrent) {
+			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
+		} else {
+			return fmt.Errorf("download failed: %w", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
 	}
-	fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
+
+	manifest := install.ReadManifest(ei.PluginDir())
+	if manifest == nil {
+		manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+	} else {
+		manifest.PluginVersion = ei.InstalledVersion()
+	}
 
 	detected := install.DetectedEditors()
 	var registered []string
@@ -113,16 +136,25 @@ func installAll() error {
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 			registered = append(registered, e.Name)
+			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 		}
 	}
 
-	ci := install.NewClaudeInstaller()
-	if err := ci.Install(); err != nil {
+	ci, ciErr := install.NewClaudeInstaller()
+	if ciErr != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
+		failed = append(failed, "Claude Code")
+	} else if err := ci.Install(); err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", err)
 		failed = append(failed, "Claude Code")
 	} else {
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code\n")
 		registered = append(registered, "Claude Code")
+		manifest.SetClaude(ci.PluginCacheDir())
+	}
+
+	if err := install.WriteManifest(manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 	}
 
 	fmt.Fprintln(os.Stderr, "")
@@ -141,7 +173,7 @@ func installAll() error {
 	return nil
 }
 
-func installTargets(targets []string) error {
+func installTargets(targets []string, force bool) error {
 	hasClaude := false
 	var editorIDs []install.EditorID
 
@@ -182,31 +214,63 @@ func installTargets(targets []string) error {
 	if needsSharedPlugin {
 		ei = install.NewEditorInstaller()
 		fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
-		if err := ei.FetchPlugin(); err != nil {
-			return fmt.Errorf("download failed: %w", err)
+		if err := ei.FetchPlugin(force); err != nil {
+			if errors.Is(err, install.ErrAlreadyCurrent) {
+				fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
+			} else {
+				return fmt.Errorf("download failed: %w", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
 		}
-		fmt.Fprintf(os.Stderr, "MCP server v%s downloaded.\n\n", ei.InstalledVersion())
+
+		manifest := install.ReadManifest(ei.PluginDir())
+		if manifest == nil {
+			manifest = install.NewManifest(ei.PluginDir(), ei.InstalledVersion())
+		} else {
+			manifest.PluginVersion = ei.InstalledVersion()
+		}
 
 		for _, id := range editorIDs {
-			e, _ := install.EditorByID(id)
+			e, ok := install.EditorByID(id)
+			if !ok {
+				continue
+			}
 			if err := e.Register(ei.PluginDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
+				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 			}
+		}
+		if err := install.WriteManifest(manifest); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 		}
 		fmt.Fprintln(os.Stderr, "")
 		printCredentialStatus(ei)
 	}
 
 	if hasClaude {
-		ci := install.NewClaudeInstaller()
+		ci, ciErr := install.NewClaudeInstaller()
+		if ciErr != nil {
+			return fmt.Errorf("Claude Code installation failed: %w", ciErr) //nolint:staticcheck // proper noun
+		}
 		fmt.Fprintln(os.Stderr, "Installing Armis AppSec plugin for Claude Code...")
 		if err := ci.Install(); err != nil {
 			return fmt.Errorf("Claude Code installation failed: %w", err) //nolint:staticcheck // proper noun
 		}
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
 		fmt.Fprintln(os.Stderr, "")
+
+		pluginDir := install.NewEditorInstaller().PluginDir()
+		manifest := install.ReadManifest(pluginDir)
+		if manifest == nil {
+			manifest = install.NewManifest(pluginDir, ci.InstalledVersion())
+		}
+		manifest.SetClaude(ci.PluginCacheDir())
+		if err := install.WriteManifest(manifest); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
+		}
 
 		if ci.HasExistingEnv() {
 			fmt.Fprintln(os.Stderr, "Credentials configured. Restart Claude Code to pick up the updated plugin.")

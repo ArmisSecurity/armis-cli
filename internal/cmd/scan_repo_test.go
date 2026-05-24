@@ -32,6 +32,8 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
 	originalFormat := format
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
@@ -41,6 +43,8 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	t.Cleanup(func() {
 		token = originalToken
 		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
 		format = originalFormat
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
@@ -51,8 +55,12 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 
 	// Set up test environment
 	_ = os.Setenv("ARMIS_API_URL", serverURL)
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
 	token = testToken
 	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
 	format = "json"
 	colorFlag = testColorNever
 	themeFlag = themeAuto
@@ -72,6 +80,8 @@ func TestScanRepoRunE_IncludeFilesValidation(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -80,6 +90,8 @@ func TestScanRepoRunE_IncludeFilesValidation(t *testing.T) {
 	t.Cleanup(func() {
 		token = originalToken
 		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -89,8 +101,12 @@ func TestScanRepoRunE_IncludeFilesValidation(t *testing.T) {
 
 	// Set up mock server URL (even though we won't reach it)
 	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
 	token = testToken
 	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true
@@ -119,6 +135,8 @@ func TestScanRepoRunE_InvalidPath(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -126,6 +144,8 @@ func TestScanRepoRunE_InvalidPath(t *testing.T) {
 	t.Cleanup(func() {
 		token = originalToken
 		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -133,8 +153,12 @@ func TestScanRepoRunE_InvalidPath(t *testing.T) {
 	})
 
 	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
 	token = testToken
 	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true
@@ -154,6 +178,8 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -162,6 +188,8 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 	t.Cleanup(func() {
 		token = originalToken
 		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -177,8 +205,12 @@ func TestScanRepoRunE_ChangedFlagNonGitRepo(t *testing.T) {
 	})
 
 	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
 	token = testToken
 	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true
@@ -213,6 +245,8 @@ func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
 	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -221,6 +255,8 @@ func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
 	t.Cleanup(func() {
 		token = originalToken
 		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -236,8 +272,12 @@ func TestScanRepoRunE_ChangedFlagNoChanges(t *testing.T) {
 	})
 
 	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
 	token = testToken
 	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true

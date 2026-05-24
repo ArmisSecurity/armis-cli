@@ -23,6 +23,7 @@ func (p *windowsPlatform) UserHomeDirs() ([]UserHome, error) {
 	return currentUserOnly()
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *windowsPlatform) VSCodeExtensionsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".vscode", "extensions")
 }
@@ -31,19 +32,22 @@ func (p *windowsPlatform) JetBrainsPluginDirs(homeDir string) []string {
 	return globJetBrainsPluginDirs(filepath.Join(homeDir, "AppData", "Roaming", "JetBrains"))
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *windowsPlatform) VSCodeUserConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "AppData", "Roaming", "Code", "User")
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *windowsPlatform) CursorAppExists(homeDir string) bool {
 	cursorPath := filepath.Join(homeDir, "AppData", "Local", "Programs", "Cursor", "Cursor.exe")
 	_, err := os.Stat(cursorPath)
 	return err == nil
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *windowsPlatform) JunieBinaryPaths(homeDir string) []string {
 	return []string{
-		filepath.Join(homeDir, "AppData", "Local", "Programs", "Junie", "junie.exe"),
+		filepath.Join(homeDir, "AppData", "Local", "Programs", "Junie", "junie.exe"), // armis:ignore cwe:22
 	}
 }
 

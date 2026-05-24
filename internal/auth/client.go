@@ -48,7 +48,7 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 
-	// Require HTTPS for non-localhost
+	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
 	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
@@ -95,6 +95,7 @@ type AuthResult struct {
 // Calls POST /api/v1/auth/token with client_id, client_secret, and optional region hint.
 // Returns the token and the discovered/confirmed region for caching.
 func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret string, regionHint *string) (*AuthResult, error) {
+	// armis:ignore cwe:522 reason:CLI must marshal credentials to authenticate; sent over HTTPS only
 	reqBody := authRequest{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -114,6 +115,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 
 	req.Header.Set("Content-Type", "application/json")
 
+	// armis:ignore cwe:918 reason:baseURL is user-configurable via ARMIS_API_URL but validated (HTTPS enforced for non-localhost, no redirects)
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("authentication request failed: %w", err)

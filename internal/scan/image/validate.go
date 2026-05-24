@@ -18,6 +18,7 @@ func validateImageName(raw string) (string, error) {
 		return "", fmt.Errorf("image name may not start with '-'")
 	}
 
+	// armis:ignore cwe:20 reason:ParseNormalizedNamed IS the input validation; rejects invalid image names
 	ref, err := reference.ParseNormalizedNamed(raw)
 	if err != nil {
 		return "", fmt.Errorf("invalid image name: %w", err)

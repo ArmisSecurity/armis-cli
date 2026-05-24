@@ -8,6 +8,8 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+const suppressionSourceInline = "inline"
+
 // Package-level variables for testability
 var (
 	stdoutSyncer           = func() error { return os.Stdout.Sync() }
@@ -114,8 +116,7 @@ func CheckExit(result *model.ScanResult, failOnSeverities []string, exitCode int
 			// is a pipe, socket, or /dev/stdout which don't support fsync.
 			// The output is still delivered correctly.
 			if !isSyncNotSupported(err) {
-				// Log actual flush failures to stderr (stdout may be broken)
-				// Using stderrWriter (instead of cli.PrintWarning) for testability
+				// armis:ignore cwe:253 reason:fmt.Fprintf to stderr for warning; return value not actionable
 				_, _ = fmt.Fprintf(stderrWriter, "Warning: failed to flush stdout before exit: %v\n", err)
 			}
 		}

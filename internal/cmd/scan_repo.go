@@ -37,6 +37,7 @@ var scanRepoCmd = &cobra.Command{
 		repoPath := args[0]
 
 		// Validate path exists and is a directory before making network calls
+		// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
 		info, err := os.Stat(repoPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -104,6 +105,7 @@ var scanRepoCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to resolve path: %w", err)
 			}
+			// armis:ignore cwe:22 reason:absPath resolved via filepath.Abs() on line 104; ParseFileList validates paths via SafeJoinPath
 			fileList, err := repo.ParseFileList(absPath, includeFiles)
 			if err != nil {
 				return fmt.Errorf("invalid --include-files: %w", err)

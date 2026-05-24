@@ -81,6 +81,7 @@ func (fl *FileList) addFile(path string) error {
 	}
 
 	// Validate path doesn't escape repo root using SafeJoinPath
+	// armis:ignore cwe:22 reason:this IS the path traversal prevention check (SafeJoinPath validates containment)
 	if _, err := util.SafeJoinPath(fl.repoRoot, path); err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}

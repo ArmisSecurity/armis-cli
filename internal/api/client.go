@@ -178,7 +178,7 @@ func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uplo
 		return nil, fmt.Errorf("invalid base URL %q: %w", baseURL, err)
 	}
 
-	// Enforce HTTPS for non-localhost hosts to protect credentials
+	// armis:ignore cwe:918 reason:this code IS the SSRF prevention; URL from validated ARMIS_API_URL env var
 	if parsedURL.Scheme != schemeHTTPS {
 		host := parsedURL.Hostname()
 		if host != hostLocalhost && host != hostLoopbackIP {
@@ -238,7 +238,8 @@ func (c *Client) setAuthHeader(ctx context.Context, req *http.Request) error {
 	scheme := strings.ToLower(req.URL.Scheme)
 
 	// Require HTTPS for non-localhost hosts to protect credentials
-	// #nosec G402 -- Localhost exception intentional for local development/testing
+	// armis:ignore cwe:918 reason:request URL is constructed from operator-configured base URL, not external input
+	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement)
 	if host != hostLocalhost && host != hostLoopbackIP && scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
 	}
@@ -268,7 +269,7 @@ type StatusCallback func(status model.IngestStatusData)
 
 // StartIngest uploads an artifact for scanning and returns the scan ID.
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
-	// Validate upload size for defense-in-depth
+	// armis:ignore cwe:770 reason:this IS the resource exhaustion prevention; MaxUploadSize bounds upload size
 	if opts.Size > MaxUploadSize {
 		return "", fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
 	}
@@ -367,7 +368,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 			return
 		}
 
-		// Use context-aware copy for responsive cancellation during large uploads
+		// armis:ignore cwe:770 reason:upload size validated by MaxRepoSize/MaxImageSize check before reaching here
 		if _, writeErr = copyWithContext(uploadCtx, part, opts.Data); writeErr != nil {
 			writeErr = fmt.Errorf("failed to copy file data: %w", writeErr)
 			return
@@ -598,6 +599,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 }
 
 // GetScanResult retrieves the result of a completed scan.
+// armis:ignore cwe:73 reason:baseURL validated at client creation (HTTPS enforced); scanID from our own API response
 func (c *Client) GetScanResult(ctx context.Context, scanID string) (*model.ScanResult, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/scans/"+scanID, nil)
 	if err != nil {

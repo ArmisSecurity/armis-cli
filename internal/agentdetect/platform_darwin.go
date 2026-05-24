@@ -25,10 +25,12 @@ func (p *darwinPlatform) VSCodeExtensionsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".vscode", "extensions")
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *darwinPlatform) JetBrainsPluginDirs(homeDir string) []string {
 	return globJetBrainsPluginDirs(filepath.Join(homeDir, "Library", "Application Support", "JetBrains"))
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *darwinPlatform) VSCodeUserConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "Library", "Application Support", "Code", "User")
 }
@@ -38,13 +40,15 @@ func (p *darwinPlatform) CursorAppExists(_ string) bool {
 	return err == nil
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *darwinPlatform) JunieBinaryPaths(homeDir string) []string {
 	return []string{
 		"/usr/local/bin/junie",
-		filepath.Join(homeDir, ".local", "bin", "junie"),
+		filepath.Join(homeDir, ".local", "bin", "junie"), // armis:ignore cwe:22
 	}
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *darwinPlatform) ZedConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "Library", "Application Support", "Zed")
 }

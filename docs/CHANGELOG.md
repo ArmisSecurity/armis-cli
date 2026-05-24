@@ -21,6 +21,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.0] - 2026-05-21
+
+### Added
+
+- `uninstall` command for cleanly removing installed plugins, with manifest tracking and upgrade detection (#182)
+
+### Fixed
+
+- Suppressed findings are now excluded from SARIF output, allowing GitHub Code Scanning alerts to auto-close when findings are suppressed via `.armisignore` or inline directives (#185)
+- Python binary discovery now probes versioned names (`python3.11`, `python3.12`, etc.) in addition to `python3` and `python`, resolving install failures on systems without a generic `python3` symlink (#184)
+
+---
+
+## [1.8.4] - 2026-05-18
+
+### Added
+
+- Claude Desktop app as an install target for the `install` command (#179)
+
+### Fixed
+
+- Secrets no longer leak in `--help` output when default values contain credentials (#180)
+
+---
+
+## [1.8.3] - 2026-05-13
+
+### Changed
+
+- Inline suppression now matches findings within a 5-line window around the directive, improving coverage for multi-line code patterns (#175)
+
+---
+
+## [1.8.2] - 2026-05-13
+
+### Added
+
+- Inline `armis:ignore` comment suppression — suppress findings directly in source code with parameterized matching by category, rule, CWE, or severity; supports all major comment syntaxes with security-hardened parsing (#170)
+
+### Fixed
+
+- Recurring findings no longer reopen on the GitHub Code Scanning tab — separated PR and scheduled scan SARIF categories (#171)
+- `PrintWarning` now masks secrets consistently with `PrintError` (#172)
+- HTTP client disallows redirects to strengthen SSRF protection (#172)
+- Inline suppression file handle errors properly propagated instead of suppressed (#172)
+- Stale Code Scanning alerts now close correctly when findings are suppressed via inline directives (#173)
+
+---
+
+## [1.8.1] - 2026-05-11
+
+### Added
+
+- Client-side finding suppression via `.armisignore` directives — findings matching severity, category, CWE, or rule patterns are excluded from `--fail-on` evaluation and human/JUnit output, with proper suppression metadata in SARIF and JSON (#162)
+- `--show-suppressed` flag to include suppressed findings in output (#162)
+
+### Changed
+
+- GitHub Action updated to use JWT authentication as default, removing unused Basic auth secrets from scan workflows (#164)
+
+### Fixed
+
+- `LICENSE_COMPLIANCE_RISK` findings now correctly classified as LICENSE type (#162)
+
+---
+
 ## [1.8.0] - 2026-05-11
 
 ### Added
@@ -268,7 +334,12 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...v1.9.0
+[1.8.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.3...v1.8.4
+[1.8.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.2...v1.8.3
+[1.8.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.1...v1.8.2
+[1.8.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
 [1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0

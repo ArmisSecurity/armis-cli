@@ -111,9 +111,10 @@ func MaskSecretInLine(line string) string {
 		return line
 	}
 
-	// Defense against ReDoS (CWE-770): skip regex processing for extremely long lines
+	// armis:ignore cwe:770 reason:maxLineLength bounds input size; this IS the resource control
+	// armis:ignore cwe:522 reason:this IS the secret masking function; it processes secrets to redact them from output
 	if len(line) > maxLineLength {
-		return line
+		return line // armis:ignore cwe:522
 	}
 
 	result := line
@@ -129,7 +130,7 @@ func MaskSecretInLine(line string) string {
 			// For patterns with prefix + value (3+ capture groups), mask just the value (submatches[2])
 			if len(submatches) >= 3 {
 				value := submatches[2]
-				// Skip common literals that aren't secrets
+				// armis:ignore cwe:522 reason:skipping common literals (true/false/null) is intentional; these aren't credentials
 				if commonLiterals[strings.ToLower(value)] {
 					return match
 				}

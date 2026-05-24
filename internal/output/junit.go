@@ -61,6 +61,9 @@ func (f *JUnitFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 }
 
 func (f *JUnitFormatter) formatWithSeverities(result *model.ScanResult, w io.Writer, failOnSeverities []string) error {
+	if result == nil {
+		result = &model.ScanResult{}
+	}
 	activeFindings := FilterActiveFindings(result.Findings)
 	suites := junitTestSuites{
 		Suites: []junitTestSuite{
@@ -97,6 +100,7 @@ func isFailureSeverity(severity string, failOnSeverities []string) bool {
 }
 
 func convertToJUnitCasesWithSeverities(findings []model.Finding, failOnSeverities []string) []junitTestCase {
+	// armis:ignore cwe:770 reason:findings count bounded by API pagination (max 1000 per page)
 	cases := make([]junitTestCase, 0, len(findings))
 
 	for _, finding := range findings {

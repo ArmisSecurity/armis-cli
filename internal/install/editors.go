@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,17 +15,18 @@ const mcpServerName = "armis-appsec"
 type EditorID string
 
 const (
-	EditorVSCode      EditorID = "vscode"
-	EditorCursor      EditorID = "cursor"
-	EditorWindsurf    EditorID = "windsurf"
-	EditorZed         EditorID = "zed"
-	EditorCline       EditorID = "cline"
-	EditorAmazonQ     EditorID = "amazonq"
-	EditorContinue    EditorID = "continue"
-	EditorAntigravity EditorID = "antigravity"
-	EditorGemini      EditorID = "gemini"
-	EditorRooCode     EditorID = "roocode"
-	EditorJunie       EditorID = "junie"
+	EditorVSCode        EditorID = "vscode"
+	EditorCursor        EditorID = "cursor"
+	EditorWindsurf      EditorID = "windsurf"
+	EditorZed           EditorID = "zed"
+	EditorCline         EditorID = "cline"
+	EditorAmazonQ       EditorID = "amazonq"
+	EditorContinue      EditorID = "continue"
+	EditorAntigravity   EditorID = "antigravity"
+	EditorGemini        EditorID = "gemini"
+	EditorRooCode       EditorID = "roocode"
+	EditorJunie         EditorID = "junie"
+	EditorClaudeDesktop EditorID = "claude-desktop"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -46,6 +48,7 @@ var AllEditors = []Editor{
 	{EditorGemini, "Gemini CLI"},
 	{EditorRooCode, "Roo Code"},
 	{EditorJunie, "Junie"},
+	{EditorClaudeDesktop, "Claude Desktop"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -110,7 +113,8 @@ type EditorInstaller struct {
 
 // NewEditorInstaller creates an installer using the shared plugin directory (~/.armis/plugins/armis-appsec-mcp).
 func NewEditorInstaller() *EditorInstaller {
-	home, _ := os.UserHomeDir()
+	// armis:ignore cwe:253 reason:UserHomeDir error results in empty string which fails gracefully downstream
+	home, _ := os.UserHomeDir() //nolint:errcheck // armis:ignore cwe:253
 	return &EditorInstaller{
 		pluginDir: filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp"),
 		plugin:    newPluginInstaller(),
@@ -132,16 +136,33 @@ func (ei *EditorInstaller) HasExistingEnv() bool {
 	return err == nil
 }
 
+// ErrAlreadyCurrent is returned when the installed version matches the latest release.
+var ErrAlreadyCurrent = errors.New("already up to date")
+
 // FetchPlugin downloads and sets up the plugin (venv + deps), writes credentials
 // from the environment, and records the installed version.
-func (ei *EditorInstaller) FetchPlugin() error {
+// If force is false and the installed version matches the latest, returns ErrAlreadyCurrent.
+func (ei *EditorInstaller) FetchPlugin(force bool) error {
+	if !force {
+		current := ei.GetInstalledVersion()
+		if current != "" {
+			latest, err := ei.plugin.LatestVersion()
+			if err == nil && current == latest {
+				ei.plugin.installedVersion = current
+				return ErrAlreadyCurrent
+			}
+		}
+	}
+
 	if err := ei.plugin.FetchAndInstall(ei.pluginDir); err != nil {
 		return err
 	}
+	// armis:ignore cwe:522 reason:delegates to writeEnvFromEnvironment which writes with 0600 permissions
 	if err := writeEnvFromEnvironment(ei.EnvFilePath()); err != nil {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}
 	versionFile := filepath.Join(ei.pluginDir, ".installed-version")
+	// armis:ignore cwe:253 reason:best-effort version tracking; write failure is non-critical
 	_ = os.WriteFile(filepath.Clean(versionFile), []byte(ei.plugin.InstalledVersion()), 0o600)
 	return nil
 }
@@ -191,6 +212,11 @@ func defaultConfigPath(id EditorID) string {
 		return homeDir(".roo-cline", "mcp_settings.json")
 	case EditorJunie:
 		return homeDir(".junie", "mcp", "mcp.json")
+	case EditorClaudeDesktop:
+		if runtime.GOOS != osDarwin && runtime.GOOS != osWindows {
+			return ""
+		}
+		return appSupportPath("Claude", "claude_desktop_config.json")
 	}
 	return ""
 }
@@ -206,13 +232,14 @@ func homeDir(parts ...string) string {
 func appSupportPath(parts ...string) string {
 	var base string
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return ""
 		}
 		base = filepath.Join(home, "Library", "Application Support")
-	case "linux":
+	case osLinux:
+		// armis:ignore cwe:22 reason:XDG_CONFIG_HOME is a user-local config env var; affects only the current user context
 		base = os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()
@@ -222,6 +249,7 @@ func appSupportPath(parts ...string) string {
 			base = filepath.Join(home, ".config")
 		}
 	case osWindows:
+		// armis:ignore cwe:22 reason:APPDATA is a standard OS env var for user config; not user-controlled input
 		base = os.Getenv("APPDATA")
 		if base == "" {
 			return ""
@@ -241,13 +269,13 @@ func registerEditor(id EditorID, pluginDir, configFile string) error {
 	case EditorZed:
 		return registerZedFormat(pluginDir, configFile)
 	default:
-		// Cursor, Windsurf, Cline, Amazon Q, Continue, Antigravity all use mcpServers map
+		// Shared by the standard mcpServers editors.
 		return registerMCPServersFormat(pluginDir, configFile)
 	}
 }
 
 // registerMCPServersFormat handles {"mcpServers": {"name": {command, args}}}.
-// Used by Cursor, Windsurf, Cline, Amazon Q, JetBrains.
+// Shared by the standard mcpServers editors (and JetBrains via RegisterJetBrains).
 func registerMCPServersFormat(pluginDir, configFile string) error {
 	data := readJSONFileAsMap(configFile)
 
@@ -309,6 +337,8 @@ func stdServerEntry(pluginDir string) map[string]interface{} {
 
 func readJSONFileAsMap(path string) map[string]interface{} {
 	data := make(map[string]interface{})
+	// armis:ignore cwe:22 reason:path from filepath.Join with known base dirs; filepath.Clean applied
+	// armis:ignore cwe:253 reason:ReadFile error handled by err == nil guard; non-critical config read
 	if b, err := os.ReadFile(filepath.Clean(path)); err == nil {
 		_ = json.Unmarshal(b, &data)
 	}
