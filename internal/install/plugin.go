@@ -407,7 +407,7 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	if err != nil {
 		return fmt.Errorf("creating temp env file: %w", err)
 	}
-	tmpPath := tmpFile.Name()
+	tmpPath := tmpFile.Name() //nolint:gosec // G703: temp file created in same dir as target via os.CreateTemp
 	closed := false
 	defer func() {
 		if !closed {
@@ -415,20 +415,20 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 		}
 	}()
 	if _, err := tmpFile.WriteString(content); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
 		return fmt.Errorf("writing temp env file: %w", err)
 	}
 	if err := tmpFile.Chmod(0o600); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
 		return fmt.Errorf("setting env file permissions: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
 		return fmt.Errorf("closing temp env file: %w", err)
 	}
 	closed = true
 	if err := os.Rename(tmpPath, cleanPath); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
 		return fmt.Errorf("finalizing env file: %w", err)
 	}
 	return nil
