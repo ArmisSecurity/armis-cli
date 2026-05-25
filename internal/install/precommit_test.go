@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,9 +39,11 @@ func TestInstallPreCommit(t *testing.T) {
 			t.Error("missing shebang")
 		}
 
-		info, _ := os.Stat(hookPath)
-		if info.Mode()&0o111 == 0 {
-			t.Error("hook file is not executable")
+		if runtime.GOOS != osWindows {
+			info, _ := os.Stat(hookPath)
+			if info.Mode()&0o111 == 0 {
+				t.Error("hook file is not executable")
+			}
 		}
 	})
 

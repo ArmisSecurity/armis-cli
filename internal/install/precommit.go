@@ -23,6 +23,14 @@ type PreCommitOpts struct {
 // appended between marker comments. If the plugin ships a git-hooks/pre-commit
 // script, that is used; otherwise a fallback that calls armis-cli directly is written.
 func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
+	if !filepath.IsAbs(repoRoot) {
+		return fmt.Errorf("repo root must be an absolute path: %s", repoRoot)
+	}
+	gitDir := filepath.Join(repoRoot, ".git")
+	if info, err := os.Stat(gitDir); err != nil || !info.IsDir() {
+		return fmt.Errorf("not a git repository (no .git directory): %s", repoRoot)
+	}
+
 	hookDir := filepath.Join(repoRoot, ".git", "hooks")
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(hookDir, 0o750); err != nil {
@@ -72,10 +80,14 @@ func RemovePreCommit(repoRoot string) error {
 
 	content := string(data)
 	startIdx := strings.Index(content, preCommitMarkerStart)
-	endIdx := strings.Index(content, preCommitMarkerEnd)
-	if startIdx == -1 || endIdx == -1 {
+	if startIdx == -1 {
 		return nil // no armis section found
 	}
+	endIdx := strings.Index(content[startIdx:], preCommitMarkerEnd)
+	if endIdx == -1 {
+		return nil // no armis section found
+	}
+	endIdx += startIdx
 
 	// Remove the armis section including trailing newline
 	endIdx += len(preCommitMarkerEnd)
@@ -130,12 +142,12 @@ func buildPreCommitSection(pluginDir string, opts PreCommitOpts) string {
 		// Use the plugin's pre-commit script (handles .scan-pass verification)
 		if opts.FailOpen {
 			sb.WriteString("# Armis AppSec: security scan verification (fail-open mode)\n")
-			sb.WriteString(fmt.Sprintf("if ! '%s'; then\n", pluginPreCommit))
+			sb.WriteString(fmt.Sprintf("if ! %s; then\n", posixQuote(pluginPreCommit)))
 			sb.WriteString("  echo \"⚠️  Armis: scan verification failed (continuing in fail-open mode)\" >&2\n")
 			sb.WriteString("fi\n")
 		} else {
 			sb.WriteString("# Armis AppSec: security scan verification\n")
-			sb.WriteString(fmt.Sprintf("exec '%s'\n", pluginPreCommit))
+			sb.WriteString(fmt.Sprintf("exec %s\n", posixQuote(pluginPreCommit)))
 		}
 	} else {
 		// Fallback: call armis-cli directly

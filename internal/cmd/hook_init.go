@@ -13,8 +13,9 @@ var hookInitCmd = &cobra.Command{
 	Short: "Install git pre-commit hook in the current repository",
 	Long: `Install the Armis security scanning hook into .git/hooks/pre-commit.
 
-The hook verifies that code was scanned before allowing commits. It checks
-for the .scan-pass file created by the Armis MCP server's scan_diff() tool.
+The hook verifies that code was scanned before allowing commits. When the
+Armis plugin's pre-commit script is available, it checks the .scan-pass file.
+Otherwise, it runs armis-cli scan directly on the repository.
 
 If a pre-commit hook already exists, the Armis section is appended.`,
 	Example: `  # Install pre-commit hook (fail-closed: blocks commit on findings)
@@ -68,7 +69,7 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 			mode = "fail-open"
 		}
 		fmt.Fprintf(os.Stderr, "Pre-commit hook installed (%s): %s/.git/hooks/pre-commit\n", mode, repoRoot)
-		fmt.Fprintln(os.Stderr, "Commits will be verified against the scan-pass file.")
+		fmt.Fprintln(os.Stderr, "Commits will be verified for security findings before proceeding.")
 	}
 	return nil
 }

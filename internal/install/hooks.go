@@ -67,7 +67,7 @@ func installHooksToFile(settingsPath string) error {
 		"hooks": []map[string]interface{}{
 			{
 				"type":    "command",
-				"command": "armis-cli scan repo --format json --no-progress --fail-on CRITICAL . 2>/dev/null | head -c 0",
+				"command": "armis-cli scan repo --format json --no-progress --fail-on CRITICAL . >/dev/null 2>&1",
 			},
 		},
 	}

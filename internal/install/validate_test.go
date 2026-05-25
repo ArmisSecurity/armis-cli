@@ -20,7 +20,7 @@ func TestValidateCredentialsWithURL(t *testing.T) {
 
 			var req struct {
 				ClientID     string `json:"client_id"`
-				ClientSecret string `json:"client_secret"`
+				ClientSecret string `json:"client_secret"` //nolint:gosec // G117: test struct for JSON decoding
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decoding request: %v", err)
