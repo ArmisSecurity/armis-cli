@@ -17,6 +17,7 @@ const (
 // If the settings file cannot be parsed (e.g., JSONC with comments), returns an error
 // with a user-friendly message.
 func InstallHooks() error {
+	// armis:ignore cwe:22 reason:os.UserHomeDir is a trusted OS source, not external input
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine home directory: %w", err)
@@ -90,6 +91,7 @@ func installHooksToFile(settingsPath string) error {
 
 // RemoveHooks removes Armis-related hooks from Claude Code settings.
 func RemoveHooks() error {
+	// armis:ignore cwe:22 reason:os.UserHomeDir is a trusted OS source, not external input
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine home directory: %w", err)

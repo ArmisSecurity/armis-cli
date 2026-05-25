@@ -106,7 +106,13 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 
 	// Remove native hook configs from all AI clients
 	for _, hc := range install.AllHookClients {
-		_ = install.RemoveNativeHook(hc)
+		if err := install.RemoveNativeHook(hc); err != nil {
+			if styled {
+				fmt.Fprintf(os.Stderr, "  %s Hook removal (%s): %v\n", warnMark.Render("⚠"), hc.Name, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ⚠ Hook removal (%s): %v\n", hc.Name, err)
+			}
+		}
 	}
 
 	deregistered, warnings := u.DeregisterAllEditors()

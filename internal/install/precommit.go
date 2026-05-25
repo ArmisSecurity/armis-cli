@@ -73,7 +73,10 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 func RemovePreCommit(repoRoot string) error {
 	hookDir, err := resolveHooksDir(repoRoot)
 	if err != nil {
-		return nil // not a git repo or can't resolve — nothing to remove
+		if _, statErr := os.Stat(filepath.Join(repoRoot, ".git")); os.IsNotExist(statErr) {
+			return nil // not a git repo — nothing to remove
+		}
+		return fmt.Errorf("resolving hooks directory: %w", err)
 	}
 	hookPath := filepath.Join(hookDir, "pre-commit")
 

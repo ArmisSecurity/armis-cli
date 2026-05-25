@@ -145,7 +145,7 @@ func runInteractiveInstall(force bool) error {
 
 	// --- Security scanning hooks ---
 	fmt.Fprintln(os.Stderr, "")
-	selectedHookClients, installPreCommit := offerHookSetup(theme, accessible, ei.PluginDir(), installClaude)
+	selectedHookClients, installPreCommit := offerHookSetup(theme, accessible, installClaude)
 
 	// Download plugin if hooks need it and it wasn't already fetched
 	if !needsSharedPlugin && (len(selectedHookClients) > 0 || installPreCommit) {
@@ -401,7 +401,7 @@ func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, b
 	return editors, installClaude, false
 }
 
-func offerHookSetup(theme *huh.Theme, accessible bool, pluginDir string, hasClaude bool) ([]install.HookClient, bool) {
+func offerHookSetup(theme *huh.Theme, accessible bool, hasClaude bool) ([]install.HookClient, bool) {
 	detected := install.DetectHookClients()
 
 	// All covered only when Claude is the sole AI tool (it has hooks via plugin).

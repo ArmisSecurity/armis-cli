@@ -384,13 +384,13 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 
 	cleanPath := filepath.Clean(envPath)
 
-	// Back up existing file
+	// Back up existing file — abort if backup fails to prevent data loss
 	if _, err := os.Stat(cleanPath); err == nil {
 		bakPath := cleanPath + ".bak"
 		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
 		_ = os.Remove(bakPath)
 		if err := os.Rename(cleanPath, bakPath); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: could not back up %s: %v\n", filepath.Base(cleanPath), err)
+			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
 		}
 	}
 
@@ -427,6 +427,7 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 		return fmt.Errorf("closing temp env file: %w", err)
 	}
 	closed = true
+	// armis:ignore cwe:22 reason:cleanPath derived from known plugin dir + ".env", not external input
 	if err := os.Rename(tmpPath, cleanPath); err != nil {
 		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
 		return fmt.Errorf("finalizing env file: %w", err)
