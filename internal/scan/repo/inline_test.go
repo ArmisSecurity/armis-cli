@@ -1025,3 +1025,65 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+func TestIsFuncSignature(t *testing.T) {
+	tests := []struct {
+		name    string
+		trimmed string
+		ext     string
+		want    bool
+	}{
+		{"Go func", "func Foo() {", ".go", true},
+		{"Go method", "func (s *Server) Handle() {", ".go", true},
+		{"Go non-func", "var fn = func() {", ".go", false},
+		{"Python def", "def process_request(self):", ".py", true},
+		{"Python class with parens", "class MyClass(Base):", ".py", true},
+		{"Python class with brace", "class Handler {", ".py", true},
+		{"Python non-class identifier", "class_name = 'test'", ".py", false},
+		{"Rust fn", "fn main() {", ".rs", true},
+		{"Rust pub fn", "pub fn new() -> Self {", ".rs", true},
+		{"Rust non-fn", "let fn_name = true;", ".rs", false},
+		{"Java class", "class Handler {", ".java", true},
+		{"Java class without brace", "class Handler", ".java", false},
+		{"JS function", "function handleRequest() {", ".js", true},
+		{"TS function", "function handleRequest() {", ".ts", true},
+		{"Swift func", "func viewDidLoad() {", ".swift", true},
+		{"Kotlin fun", "fun main() {", ".kt", true},
+		{"Unknown extension", "func foo()", ".txt", false},
+		{"Empty string", "", ".go", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isFuncSignature(tt.trimmed, tt.ext)
+			if got != tt.want {
+				t.Errorf("isFuncSignature(%q, %q) = %v, want %v", tt.trimmed, tt.ext, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainsAny(t *testing.T) {
+	tests := []struct {
+		name  string
+		s     string
+		chars []byte
+		want  bool
+	}{
+		{"contains first char", "hello(", []byte{'(', '{', ':'}, true},
+		{"contains colon", "class Foo:", []byte{'(', '{', ':'}, true},
+		{"contains brace", "class Foo {", []byte{'(', '{', ':'}, true},
+		{"contains none", "class Foo", []byte{'(', '{', ':'}, false},
+		{"empty string", "", []byte{'('}, false},
+		{"single char match", "(", []byte{'('}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := containsAny(tt.s, tt.chars...)
+			if got != tt.want {
+				t.Errorf("containsAny(%q, %v) = %v, want %v", tt.s, tt.chars, got, tt.want)
+			}
+		})
+	}
+}

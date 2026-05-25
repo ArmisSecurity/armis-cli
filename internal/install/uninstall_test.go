@@ -378,6 +378,200 @@ func TestConfigFormat(t *testing.T) {
 	}
 }
 
+func TestManifestPath(t *testing.T) {
+	dir := t.TempDir()
+
+	tests := []struct {
+		name      string
+		input     string
+		wantEmpty bool
+	}{
+		{"empty string", "", true},
+		{"relative path", "relative/dir", true},
+		{"valid absolute path", dir, false},
+		{"root path", "/", true}, // Join("/", ".manifest.json") == "/.manifest.json" which doesn't start with "/"+"/"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ManifestPath(tt.input)
+			if tt.wantEmpty && got != "" {
+				t.Errorf("ManifestPath(%q) = %q, want empty", tt.input, got)
+			}
+			if !tt.wantEmpty && got == "" {
+				t.Errorf("ManifestPath(%q) = empty, want non-empty path", tt.input)
+			}
+		})
+	}
+
+	t.Run("valid path ends with .manifest.json", func(t *testing.T) {
+		got := ManifestPath(dir)
+		if got == "" {
+			t.Fatal("expected non-empty path")
+		}
+		if filepath.Base(got) != ".manifest.json" {
+			t.Errorf("ManifestPath() base = %q, want .manifest.json", filepath.Base(got))
+		}
+	})
+}
+
+func TestDeregisterAllEditors(t *testing.T) {
+	t.Run("manifest-based deregistration", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+
+		pluginDir := filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp")
+		if err := os.MkdirAll(pluginDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a cursor config with armis entry
+		cursorConfig := filepath.Join(home, "cursor-mcp.json")
+		mustWriteJSON(t, cursorConfig, map[string]interface{}{
+			"mcpServers": map[string]interface{}{
+				"armis-appsec": map[string]interface{}{"command": "/bin/python"},
+				"other":        map[string]interface{}{"command": "/bin/other"},
+			},
+		})
+
+		// Create manifest pointing to the cursor config
+		m := NewManifest(pluginDir, "1.0.0")
+		m.AddEditor(EditorCursor, cursorConfig, "mcpServers")
+		if err := WriteManifest(m); err != nil {
+			t.Fatal(err)
+		}
+
+		// Override all editor paths to nonexistent so scan doesn't find extra editors
+		configPathOverrides = make(map[EditorID]string)
+		for _, e := range AllEditors {
+			configPathOverrides[e.ID] = filepath.Join(home, "nonexistent", string(e.ID)+".json")
+		}
+		defer func() { configPathOverrides = nil }()
+
+		u := NewUninstaller()
+		deregistered, warnings := u.DeregisterAllEditors()
+
+		if len(warnings) > 0 {
+			t.Errorf("unexpected warnings: %v", warnings)
+		}
+		if len(deregistered) != 1 || deregistered[0] != "Cursor" {
+			t.Errorf("deregistered = %v, want [Cursor]", deregistered)
+		}
+
+		// Verify armis-appsec was removed from cursor config
+		result := mustReadJSON(t, cursorConfig)
+		servers := result["mcpServers"].(map[string]interface{})
+		if _, exists := servers["armis-appsec"]; exists {
+			t.Error("armis-appsec should be removed from cursor config")
+		}
+		if _, exists := servers["other"]; !exists {
+			t.Error("other server should be preserved")
+		}
+	})
+
+	t.Run("no manifest scans known paths", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+
+		pluginDir := filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp")
+		if err := os.MkdirAll(pluginDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a cursor config with armis entry in the overridden path
+		cursorConfig := filepath.Join(home, "cursor-mcp.json")
+		mustWriteJSON(t, cursorConfig, map[string]interface{}{
+			"mcpServers": map[string]interface{}{
+				"armis-appsec": map[string]interface{}{"command": "/bin/python"},
+			},
+		})
+
+		configPathOverrides = make(map[EditorID]string)
+		for _, e := range AllEditors {
+			configPathOverrides[e.ID] = filepath.Join(home, "nonexistent", string(e.ID)+".json")
+		}
+		configPathOverrides[EditorCursor] = cursorConfig
+		defer func() { configPathOverrides = nil }()
+
+		u := &Uninstaller{pluginDir: pluginDir, manifest: nil}
+		deregistered, warnings := u.DeregisterAllEditors()
+
+		if len(warnings) > 0 {
+			t.Errorf("unexpected warnings: %v", warnings)
+		}
+		if len(deregistered) != 1 || deregistered[0] != "Cursor" {
+			t.Errorf("deregistered = %v, want [Cursor]", deregistered)
+		}
+	})
+
+	t.Run("missing config file is silently skipped", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+
+		pluginDir := filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp")
+		if err := os.MkdirAll(pluginDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		configPathOverrides = make(map[EditorID]string)
+		for _, e := range AllEditors {
+			configPathOverrides[e.ID] = filepath.Join(home, "nonexistent", string(e.ID)+".json")
+		}
+		defer func() { configPathOverrides = nil }()
+
+		u := &Uninstaller{pluginDir: pluginDir, manifest: nil}
+		deregistered, warnings := u.DeregisterAllEditors()
+
+		if len(deregistered) != 0 {
+			t.Errorf("deregistered = %v, want empty", deregistered)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("warnings = %v, want empty", warnings)
+		}
+	})
+}
+
+func TestWriteJSONAtomic(t *testing.T) {
+	t.Run("writes valid JSON", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "test.json")
+		data := map[string]interface{}{
+			"key": "value",
+			"num": 42,
+		}
+
+		if err := writeJSONAtomic(path, data); err != nil {
+			t.Fatalf("writeJSONAtomic() error: %v", err)
+		}
+
+		result := mustReadJSON(t, path)
+		if result["key"] != "value" {
+			t.Errorf("key = %v, want 'value'", result["key"])
+		}
+	})
+
+	t.Run("overwrites existing file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "test.json")
+		mustWriteJSON(t, path, map[string]interface{}{"old": true})
+
+		if err := writeJSONAtomic(path, map[string]interface{}{"new": true}); err != nil {
+			t.Fatalf("writeJSONAtomic() error: %v", err)
+		}
+
+		result := mustReadJSON(t, path)
+		if _, exists := result["old"]; exists {
+			t.Error("old content should be overwritten")
+		}
+		if _, exists := result["new"]; !exists {
+			t.Error("new content should be present")
+		}
+	})
+}
+
 // --- Test helpers ---
 
 func mustWriteJSON(t *testing.T, path string, data interface{}) {
