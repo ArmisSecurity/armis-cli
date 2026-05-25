@@ -401,13 +401,32 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
 	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
 
-	// Atomic write: temp file + rename
-	tmpPath := cleanPath + ".tmp"
-	// armis:ignore cwe:73 reason:tmpPath derived from cleanPath which is constructed from known plugin dir + ".env"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
+	// Atomic write: randomized temp file + rename
+	// armis:ignore cwe:73 reason:temp file created in same directory as target, derived from known plugin dir
+	tmpFile, err := os.CreateTemp(filepath.Dir(cleanPath), ".env.tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temp env file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmpFile.Close()
+		}
+	}()
+	if _, err := tmpFile.WriteString(content); err != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("writing temp env file: %w", err)
 	}
-	// armis:ignore cwe:73 reason:both paths derived from known plugin dir
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("setting env file permissions: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("closing temp env file: %w", err)
+	}
+	closed = true
 	if err := os.Rename(tmpPath, cleanPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("finalizing env file: %w", err)

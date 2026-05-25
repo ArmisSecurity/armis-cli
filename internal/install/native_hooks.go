@@ -120,6 +120,10 @@ func hookConfigPath(id HookClientID, defaultFn func() string) string {
 // InstallNativeHook writes the hook config for a client, pointing to the
 // Python adapter in the plugin directory.
 func InstallNativeHook(client HookClient, pluginDir string) error {
+	// armis:ignore cwe:78 reason:pluginDir is resolved from known install location, not user input
+	if !filepath.IsAbs(pluginDir) {
+		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
+	}
 	adapterPath := filepath.Join(pluginDir, "hooks", client.AdapterPy)
 	if _, err := os.Stat(adapterPath); os.IsNotExist(err) {
 		return fmt.Errorf("hook adapter not found: %s (is the MCP server installed?)", adapterPath)
@@ -562,8 +566,13 @@ func isArmisHookJSON(entry interface{}) bool {
 	}
 	s := string(b)
 	return strings.Contains(s, armisHookMarker) ||
-		strings.Contains(s, "armis-cli") ||
-		strings.Contains(s, "pre_tool.py")
+		strings.Contains(s, "armis-appsec") ||
+		strings.Contains(s, "armis-cli scan repo") ||
+		strings.Contains(s, "cursor_pre_tool.py") ||
+		strings.Contains(s, "gemini_pre_tool.py") ||
+		strings.Contains(s, "codex_pre_tool.py") ||
+		strings.Contains(s, "copilot_pre_tool.py") ||
+		strings.Contains(s, "cline_pre_tool.py")
 }
 
 // posixQuote wraps a string in POSIX-safe single quotes, escaping embedded single quotes.

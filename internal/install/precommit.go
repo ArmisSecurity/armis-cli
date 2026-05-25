@@ -26,12 +26,15 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 	if !filepath.IsAbs(repoRoot) {
 		return fmt.Errorf("repo root must be an absolute path: %s", repoRoot)
 	}
-	gitDir := filepath.Join(repoRoot, ".git")
-	if info, err := os.Stat(gitDir); err != nil || !info.IsDir() {
-		return fmt.Errorf("not a git repository (no .git directory): %s", repoRoot)
+	gitEntry := filepath.Join(repoRoot, ".git")
+	if _, err := os.Stat(gitEntry); err != nil {
+		return fmt.Errorf("not a git repository (no .git): %s", repoRoot)
 	}
 
-	hookDir := filepath.Join(repoRoot, ".git", "hooks")
+	hookDir, err := resolveHooksDir(repoRoot)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(hookDir, 0o750); err != nil {
 			return fmt.Errorf("creating hooks directory: %w", err)
@@ -68,7 +71,11 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 // RemovePreCommit removes the Armis section from the git pre-commit hook.
 // If the Armis section is the only content, the hook file is removed entirely.
 func RemovePreCommit(repoRoot string) error {
-	hookPath := filepath.Join(repoRoot, ".git", "hooks", "pre-commit")
+	hookDir, err := resolveHooksDir(repoRoot)
+	if err != nil {
+		return nil // not a git repo or can't resolve — nothing to remove
+	}
+	hookPath := filepath.Join(hookDir, "pre-commit")
 
 	data, err := os.ReadFile(filepath.Clean(hookPath)) //nolint:gosec // hookPath from git repo
 	if err != nil {
@@ -112,12 +119,56 @@ func RemovePreCommit(repoRoot string) error {
 
 // IsPreCommitInstalled checks whether the Armis pre-commit hook is installed.
 func IsPreCommitInstalled(repoRoot string) bool {
-	hookPath := filepath.Join(repoRoot, ".git", "hooks", "pre-commit")
+	hookDir, err := resolveHooksDir(repoRoot)
+	if err != nil {
+		return false
+	}
+	hookPath := filepath.Join(hookDir, "pre-commit")
 	data, err := os.ReadFile(filepath.Clean(hookPath)) //nolint:gosec // hookPath from git repo
 	if err != nil {
 		return false
 	}
 	return strings.Contains(string(data), preCommitMarkerStart)
+}
+
+// resolveHooksDir returns the git hooks directory for a repo, supporting
+// both regular repos (.git directory) and worktrees/submodules (.git file).
+func resolveHooksDir(repoRoot string) (string, error) {
+	// armis:ignore cwe:78 reason:hardcoded command "git" with hardcoded args, no user input
+	// armis:ignore cwe:73 reason:repoRoot validated as absolute path by caller
+	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks") //nolint:gosec // hardcoded command
+	cmd.Dir = repoRoot
+	if out, err := cmd.Output(); err == nil {
+		hookDir := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(hookDir) {
+			hookDir = filepath.Join(repoRoot, hookDir)
+		}
+		return hookDir, nil
+	}
+
+	// Fallback: check if .git is a directory (standard repo) or file (worktree)
+	gitEntry := filepath.Join(repoRoot, ".git")
+	info, err := os.Stat(gitEntry)
+	if err != nil {
+		return "", fmt.Errorf("resolving hooks directory: %w", err)
+	}
+	if info.IsDir() {
+		return filepath.Join(gitEntry, "hooks"), nil
+	}
+	// .git file — parse gitdir pointer
+	data, err := os.ReadFile(gitEntry) //nolint:gosec // path from validated repoRoot
+	if err != nil {
+		return "", fmt.Errorf("reading .git file: %w", err)
+	}
+	content := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(content, "gitdir: ") {
+		return "", fmt.Errorf("unexpected .git file format in %s", repoRoot)
+	}
+	gitDir := strings.TrimPrefix(content, "gitdir: ")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoRoot, gitDir)
+	}
+	return filepath.Join(gitDir, "hooks"), nil
 }
 
 // DetectGitRoot returns the git repository root for the current directory,

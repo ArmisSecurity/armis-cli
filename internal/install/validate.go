@@ -2,7 +2,9 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
@@ -32,7 +34,11 @@ func validateCredentialsWithURL(clientID, clientSecret, baseURL string) error {
 
 	_, err = client.Authenticate(ctx, clientID, clientSecret, nil)
 	if err != nil {
-		return fmt.Errorf("authentication failed: %w\n%s", err, validationHelpText)
+		var authErr *auth.AuthError
+		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("authentication failed: %w\n%s", err, validationHelpText)
+		}
+		return fmt.Errorf("authentication failed: %w", err)
 	}
 	return nil
 }

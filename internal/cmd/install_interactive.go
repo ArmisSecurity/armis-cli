@@ -221,7 +221,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 
 	// Auto-validate env vars without asking
 	if envID != "" && envSecret != "" {
-		if err := validateAndReport(envID, envSecret); err == nil {
+		if err := validateAndReport(envID, envSecret, accessible); err == nil {
 			return envID, envSecret, false
 		}
 		// Invalid — fall through to prompt for new credentials
@@ -272,7 +272,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 	}
 
 	// Validate credentials
-	if err := validateAndReport(clientID, clientSecret); err != nil {
+	if err := validateAndReport(clientID, clientSecret, accessible); err != nil {
 		// Offer retry
 		retry := true
 		retryForm := huh.NewForm(
@@ -309,7 +309,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 		if clientID == "" || clientSecret == "" {
 			return "", "", true
 		}
-		if err := validateAndReport(clientID, clientSecret); err != nil {
+		if err := validateAndReport(clientID, clientSecret, accessible); err != nil {
 			fmt.Fprintln(os.Stderr, "  Proceeding without credential validation. You can fix the .env file later.")
 			return clientID, clientSecret, false
 		}
@@ -318,17 +318,25 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 	return clientID, clientSecret, false
 }
 
-func validateAndReport(clientID, clientSecret string) error {
+func validateAndReport(clientID, clientSecret string, accessible bool) error {
 	fmt.Fprint(os.Stderr, "  Verifying credentials... ")
 	if err := install.ValidateCredentials(clientID, clientSecret); err != nil {
-		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandError).Render("✗"))
+		if accessible {
+			fmt.Fprintln(os.Stderr, "[FAIL]")
+		} else {
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandError).Render("✗"))
+		}
 		for _, line := range strings.Split(err.Error(), "\n") {
 			fmt.Fprintf(os.Stderr, "  %s\n", line)
 		}
 		fmt.Fprintln(os.Stderr, "")
 		return err
 	}
-	fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandSuccess).Render("✓"))
+	if accessible {
+		fmt.Fprintln(os.Stderr, "[OK]")
+	} else {
+		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandSuccess).Render("✓"))
+	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
