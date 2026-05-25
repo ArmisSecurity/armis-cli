@@ -130,12 +130,12 @@ func buildPreCommitSection(pluginDir string, opts PreCommitOpts) string {
 		// Use the plugin's pre-commit script (handles .scan-pass verification)
 		if opts.FailOpen {
 			sb.WriteString("# Armis AppSec: security scan verification (fail-open mode)\n")
-			sb.WriteString(fmt.Sprintf("if ! %s; then\n", pluginPreCommit))
+			sb.WriteString(fmt.Sprintf("if ! '%s'; then\n", pluginPreCommit))
 			sb.WriteString("  echo \"⚠️  Armis: scan verification failed (continuing in fail-open mode)\" >&2\n")
 			sb.WriteString("fi\n")
 		} else {
 			sb.WriteString("# Armis AppSec: security scan verification\n")
-			sb.WriteString(fmt.Sprintf("exec %s\n", pluginPreCommit))
+			sb.WriteString(fmt.Sprintf("exec '%s'\n", pluginPreCommit))
 		}
 	} else {
 		// Fallback: call armis-cli directly
