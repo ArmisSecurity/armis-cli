@@ -36,7 +36,10 @@ func TestConfirm(t *testing.T) {
 
 			oldStdin := os.Stdin
 			os.Stdin = r
-			defer func() { os.Stdin = oldStdin }()
+			t.Cleanup(func() {
+				os.Stdin = oldStdin
+				_ = r.Close()
+			})
 
 			got := confirm("Continue?")
 			if got != tt.want {
@@ -54,7 +57,10 @@ func TestConfirm(t *testing.T) {
 
 		oldStdin := os.Stdin
 		os.Stdin = r
-		defer func() { os.Stdin = oldStdin }()
+		t.Cleanup(func() {
+			os.Stdin = oldStdin
+			_ = r.Close()
+		})
 
 		if confirm("Continue?") {
 			t.Error("confirm() should return false on EOF")
