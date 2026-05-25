@@ -16,6 +16,9 @@ import (
 const (
 	// maxResponseSize limits auth response body to prevent memory exhaustion attacks
 	maxResponseSize = 1 << 20 // 1MB
+
+	// ProductionBaseURL is the default Armis API endpoint.
+	ProductionBaseURL = "https://moose.armis.com"
 )
 
 // AuthError represents an authentication failure with HTTP status context.

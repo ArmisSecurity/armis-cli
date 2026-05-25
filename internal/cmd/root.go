@@ -20,7 +20,7 @@ import (
 
 const (
 	devBaseURL        = "https://moose-dev.armis.com"
-	productionBaseURL = "https://moose.armis.com"
+	productionBaseURL = auth.ProductionBaseURL
 
 	// Theme values for terminal background detection
 	themeAuto  = "auto"

@@ -208,6 +208,7 @@ func copilotHooksPath() string {
 		case osDarwin, osLinux:
 			return homeDir(".config", "github-copilot", "hooks.json")
 		case osWindows:
+			// armis:ignore cwe:73 reason:APPDATA is the OS-standard config dir; validated as absolute path below
 			appdata := os.Getenv("APPDATA")
 			if appdata == "" {
 				return ""
