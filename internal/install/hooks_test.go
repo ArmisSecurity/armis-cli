@@ -287,7 +287,8 @@ func TestIsArmisHookCommand(t *testing.T) {
 		{"armis-appsec command", "armis-appsec scan .", true},
 		{"unrelated command", "echo hello", false},
 		{"empty string", "", false},
-		{"partial match", "armis-cli-wrapper foo", true},
+		{"unrelated wrapper", "armis-cli-wrapper foo", false},
+		{"armis full command", "armis-cli scan repo . --fail-on HIGH >/dev/null 2>&1", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

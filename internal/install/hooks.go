@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const armisHookMatcher = "Edit|Write|MultiEdit"
+const (
+	armisHookMatcher = "Edit|Write|MultiEdit"
+	maxSettingsSize  = 10 << 20 // 10 MB — sanity limit for settings files
+)
 
 // InstallHooks adds Armis security scanning hooks to the user's Claude Code settings.
 // If the settings file cannot be parsed (e.g., JSONC with comments), returns an error
@@ -26,6 +29,9 @@ func InstallHooks() error {
 func installHooksToFile(settingsPath string) error {
 	settings := make(map[string]interface{})
 
+	if info, err := os.Stat(settingsPath); err == nil && info.Size() > maxSettingsSize {
+		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
+	}
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading settings: %w", err)
@@ -94,11 +100,16 @@ func RemoveHooks() error {
 }
 
 func removeHooksFromFile(settingsPath string) error {
-	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
-	if err != nil {
+	if info, err := os.Stat(settingsPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return fmt.Errorf("reading settings: %w", err)
+	} else if info.Size() > maxSettingsSize {
+		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
+	}
+	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
+	if err != nil {
 		return fmt.Errorf("reading settings: %w", err)
 	}
 
@@ -160,5 +171,5 @@ func isArmisHookEntry(m map[string]interface{}) bool {
 }
 
 func isArmisHookCommand(cmd string) bool {
-	return strings.Contains(cmd, "armis-cli") || strings.Contains(cmd, "armis-appsec")
+	return strings.Contains(cmd, "armis-cli scan repo") || strings.Contains(cmd, "armis-appsec")
 }

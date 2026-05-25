@@ -17,7 +17,7 @@ Armis hooks enforce security scanning at two levels:
   Git pre-commit — block commits unless scanning passed (per-repo)
     Works with any tool, catches manual commits too.
 
-Native hooks are installed automatically by 'armis-cli install'.
+Native hooks are configured during 'armis-cli install' (interactive setup).
 Use 'armis-cli hook init' to add the git pre-commit hook to a repo.`,
 }
 
