@@ -263,6 +263,7 @@ func stableRuleID(finding model.Finding) string {
 
 // buildRules creates SARIF rules from findings, deduplicating by rule ID.
 // Returns the rules array and a map of rule ID to index.
+// armis:ignore cwe:770 reason:rules bounded by deduplicated finding count; findings bounded by API pagination (max 1000/page)
 func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 	ruleIndexMap := make(map[string]int)
 	var rules []sarifRule

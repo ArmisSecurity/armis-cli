@@ -183,11 +183,11 @@ func PrintError(msg string) {
 	reason, context := parseErrorMessage(msg)
 	// Sanitize error details to prevent accidental exposure of secrets (CWE-200)
 	reason = util.MaskSecretInLine(reason)
-	fmt.Fprintf(os.Stderr, "%s %s\n", errorLabelStyle.Render("Error:"), reason)
+	fmt.Fprintf(os.Stderr, "%s %s\n", errorLabelStyle.Render("Error:"), reason) // armis:ignore cwe:200 reason:intentional user-facing error output; secrets masked via MaskSecretInLine
 	if context != "" {
 		// Sanitize context to prevent accidental exposure of secrets (CWE-200)
 		context = util.MaskSecretInLine(context)
-		fmt.Fprintf(os.Stderr, "  %s\n", mutedStyle.Render(context))
+		fmt.Fprintf(os.Stderr, "  %s\n", mutedStyle.Render(context)) // armis:ignore cwe:200 reason:intentional user-facing error context; secrets masked via MaskSecretInLine
 	}
 }
 

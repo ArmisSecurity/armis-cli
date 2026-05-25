@@ -313,7 +313,7 @@ func validateDockerCommand(cmd string) error {
 }
 
 // imageExistsLocally checks if the image is available in the local container runtime.
-// armis:ignore cwe:78 reason:dockerCmd from findDockerBinary allowlist; imageName validated by validateImageName
+// armis:ignore cwe:78 cwe:94 reason:dockerCmd from findDockerBinary allowlist; imageName validated by validateImageName
 func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
 	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
 	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect

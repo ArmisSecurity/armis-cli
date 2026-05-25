@@ -52,7 +52,7 @@ func GenerateFindingTitle(finding *model.Finding) string {
 
 	// Last resort - formatted category
 	if finding.FindingCategory != "" {
-		return util.FormatCategory(finding.FindingCategory)
+		return util.FormatCategory(finding.FindingCategory) // armis:ignore cwe:20 reason:FindingCategory from API response; formatting is display-only with no execution risk
 	}
 
 	return "Security Finding"
