@@ -261,6 +261,9 @@ func stableRuleID(finding model.Finding) string {
 	return finding.ID
 }
 
+// maxSarifRules is the maximum number of unique rules to prevent unbounded growth (CWE-770).
+const maxSarifRules = 10000
+
 // buildRules creates SARIF rules from findings, deduplicating by rule ID.
 // Returns the rules array and a map of rule ID to index.
 func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
@@ -273,6 +276,9 @@ func buildRules(findings []model.Finding) ([]sarifRule, map[string]int) {
 		}
 		ruleID := stableRuleID(finding)
 		if _, exists := ruleIndexMap[ruleID]; !exists {
+			if len(rules) >= maxSarifRules {
+				continue
+			}
 			ruleIndexMap[ruleID] = len(rules)
 			rule := sarifRule{
 				ID: ruleID,

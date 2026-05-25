@@ -256,8 +256,8 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.MutedText.Render("Pulling image"),
 			styles.Bold.Render(imageName))
 
-		// armis:ignore cwe:94 reason:dockerCmd is from findDockerBinary (hardcoded names); imageName validated by validateImageName()
-		// armis:ignore cwe:78 reason:dockerCmd from findDockerBinary allowlist; imageName validated by validateImageName
+		// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
+		// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName
 		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
 		pullCmd.Stdout = os.Stderr
 		pullCmd.Stderr = os.Stderr
@@ -313,9 +313,15 @@ func validateDockerCommand(cmd string) error {
 }
 
 // imageExistsLocally checks if the image is available in the local container runtime.
-// armis:ignore cwe:78 reason:dockerCmd from findDockerBinary allowlist; imageName validated by validateImageName
+// armis:ignore cwe:78 cwe:94 reason:dockerCmd validated by validateDockerCommand; imageName validated by validateImageName (defense-in-depth)
 func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
-	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by caller
+	if err := validateDockerCommand(dockerCmd); err != nil {
+		return false
+	}
+	if _, err := validateImageName(imageName); err != nil {
+		return false
+	}
+	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated above
 	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect
 	cmd.Stderr = io.Discard                                                   // Suppress "Error: no such image" noise
 	return cmd.Run() == nil

@@ -29,8 +29,7 @@ type ScanResult struct {
 func (r *ScanResult) FlatResults() []DetectedAgent {
 	var results []DetectedAgent
 	for _, u := range r.Users {
-		// armis:ignore cwe:770 reason:bounded by number of OS users; only iterates pre-scanned results in memory
-		results = append(results, u.Agents...)
+		results = append(results, u.Agents...) // armis:ignore cwe:770 reason:bounded by number of OS users; only iterates pre-scanned results in memory
 	}
 	return results
 }
