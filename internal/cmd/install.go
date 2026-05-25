@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
 	"github.com/spf13/cobra"
 )
@@ -39,8 +40,11 @@ Not auto-configurable (manual setup required):
   devin      Devin (cloud-based, configure via web UI)
   openhands  OpenHands (cloud-based, configure via web UI)
   aider      Aider (no MCP support)`,
-	Example: `  # Install to all detected editors
+	Example: `  # Interactive setup (prompts for credentials and editors)
   armis-cli install
+
+  # Non-interactive install (for CI/scripts, reads credentials from env)
+  armis-cli install --non-interactive
 
   # Install to specific editors
   armis-cli install vscode cursor
@@ -57,6 +61,7 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	installCmd.Flags().Bool("version", false, "Print the installed plugin version and exit")
 	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
+	installCmd.Flags().Bool("non-interactive", false, "Disable interactive prompts (for CI/scripts)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -72,6 +77,16 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	force, err := cmd.Flags().GetBool("force")
 	if err != nil {
 		return fmt.Errorf("reading --force flag: %w", err)
+	}
+
+	nonInteractive, err := cmd.Flags().GetBool("non-interactive")
+	if err != nil {
+		return fmt.Errorf("reading --non-interactive flag: %w", err)
+	}
+
+	// Interactive mode: no args, TTY detected, and --non-interactive not set
+	if len(args) == 0 && !nonInteractive && cli.IsInteractive() {
+		return runInteractiveInstall(force)
 	}
 
 	if len(args) == 0 {

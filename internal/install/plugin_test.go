@@ -268,6 +268,78 @@ func TestWriteEnvFromEnvironment(t *testing.T) {
 	})
 }
 
+func TestWriteEnvFromValues(t *testing.T) {
+	t.Run("writes credentials to new file", func(t *testing.T) {
+		dir := t.TempDir()
+		envPath := filepath.Join(dir, ".env")
+
+		if err := WriteEnvFromValues(envPath, "my-id", "my-secret"); err != nil {
+			t.Fatalf("WriteEnvFromValues() error = %v", err)
+		}
+
+		b, err := os.ReadFile(filepath.Clean(envPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(b)
+		if !searchString(content, "ARMIS_CLIENT_ID=my-id") {
+			t.Error("missing ARMIS_CLIENT_ID")
+		}
+		if !searchString(content, "ARMIS_CLIENT_SECRET=my-secret") {
+			t.Error("missing ARMIS_CLIENT_SECRET")
+		}
+
+		if runtime.GOOS != "windows" {
+			info, _ := os.Stat(envPath)
+			if perm := info.Mode().Perm(); perm != 0o600 {
+				t.Errorf("file permissions = %o, want 600", perm)
+			}
+		}
+	})
+
+	t.Run("backs up existing file", func(t *testing.T) {
+		dir := t.TempDir()
+		envPath := filepath.Join(dir, ".env")
+
+		if err := os.WriteFile(envPath, []byte("OLD_DATA=true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := WriteEnvFromValues(envPath, "new-id", "new-secret"); err != nil {
+			t.Fatalf("WriteEnvFromValues() error = %v", err)
+		}
+
+		// Check backup exists
+		bakPath := envPath + ".bak"
+		bakData, err := os.ReadFile(filepath.Clean(bakPath))
+		if err != nil {
+			t.Fatalf("backup file not created: %v", err)
+		}
+		if string(bakData) != "OLD_DATA=true\n" {
+			t.Errorf("backup content = %q, want %q", string(bakData), "OLD_DATA=true\n")
+		}
+
+		// Check new file has updated content
+		newData, _ := os.ReadFile(filepath.Clean(envPath))
+		if !searchString(string(newData), "ARMIS_CLIENT_ID=new-id") {
+			t.Error("new file missing updated credentials")
+		}
+	})
+
+	t.Run("creates parent directories", func(t *testing.T) {
+		dir := t.TempDir()
+		envPath := filepath.Join(dir, "nested", "dir", ".env")
+
+		if err := WriteEnvFromValues(envPath, "id", "secret"); err != nil {
+			t.Fatalf("WriteEnvFromValues() error = %v", err)
+		}
+
+		if _, err := os.Stat(envPath); err != nil {
+			t.Errorf("file not created: %v", err)
+		}
+	})
+}
+
 // createTestTarball creates a gzipped tarball matching GitHub's format.
 func createTestTarball(t *testing.T, withPaxHeader ...bool) []byte {
 	t.Helper()

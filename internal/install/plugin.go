@@ -374,6 +374,40 @@ func writeEnvFromEnvironment(envPath string) error {
 	return nil
 }
 
+// WriteEnvFromValues writes client credentials to a .env file at envPath.
+// If the file already exists, it is backed up to .env.bak before overwriting.
+// The write is atomic (temp file + rename) to prevent corruption on interrupt.
+func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
+	cleanPath := filepath.Clean(envPath)
+
+	// Back up existing file
+	if _, err := os.Stat(cleanPath); err == nil {
+		bakPath := cleanPath + ".bak"
+		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
+		_ = os.Rename(cleanPath, bakPath)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
+		return fmt.Errorf("creating env directory: %w", err)
+	}
+
+	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
+	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+
+	// Atomic write: temp file + rename
+	tmpPath := cleanPath + ".tmp"
+	// armis:ignore cwe:73 reason:tmpPath derived from cleanPath which is constructed from known plugin dir + ".env"
+	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("writing temp env file: %w", err)
+	}
+	// armis:ignore cwe:73 reason:both paths derived from known plugin dir
+	if err := os.Rename(tmpPath, cleanPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("finalizing env file: %w", err)
+	}
+	return nil
+}
+
 // venvPython returns the path to the Python interpreter inside a venv.
 func venvPython(pluginDir string) string {
 	if runtime.GOOS == osWindows {
