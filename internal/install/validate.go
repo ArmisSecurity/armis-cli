@@ -32,7 +32,7 @@ func validateCredentialsWithURL(clientID, clientSecret, baseURL string) error {
 
 	_, err = client.Authenticate(ctx, clientID, clientSecret, nil)
 	if err != nil {
-		return fmt.Errorf("authentication failed: %s\n%s", err, validationHelpText)
+		return fmt.Errorf("authentication failed: %w\n%s", err, validationHelpText)
 	}
 	return nil
 }

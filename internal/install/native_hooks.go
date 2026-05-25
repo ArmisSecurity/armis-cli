@@ -208,6 +208,10 @@ func copilotHooksPath() string {
 			if appdata == "" {
 				return ""
 			}
+			appdata = filepath.Clean(appdata)
+			if !filepath.IsAbs(appdata) {
+				return ""
+			}
 			return filepath.Join(appdata, "github-copilot", "hooks.json")
 		}
 		return ""
@@ -562,10 +566,13 @@ func isArmisHookJSON(entry interface{}) bool {
 		strings.Contains(s, "pre_tool.py")
 }
 
-// quotedCommand produces a shell command string with single-quoted paths,
-// safe for paths containing spaces (e.g. "/Users/John Smith/...").
+// posixQuote wraps a string in POSIX-safe single quotes, escaping embedded single quotes.
+func posixQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func quotedCommand(pythonPath, adapterPath string) string {
-	return fmt.Sprintf("'%s' '%s'", pythonPath, adapterPath)
+	return posixQuote(pythonPath) + " " + posixQuote(adapterPath)
 }
 
 // HookConfigFormat returns the hook config format name for manifest tracking.

@@ -17,12 +17,16 @@ func runInteractiveInstall(force bool) error {
 	theme := getInstallTheme()
 	accessible := !cli.ColorsEnabled()
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
-	borderStyle := lipgloss.NewStyle().Foreground(brandSeparator)
-
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintf(os.Stderr, "  %s\n", titleStyle.Render("Armis AppSec MCP Server Setup"))
-	fmt.Fprintf(os.Stderr, "  %s\n", borderStyle.Render("─────────────────────────────"))
+	if accessible {
+		fmt.Fprintln(os.Stderr, "  Armis AppSec MCP Server Setup")
+		fmt.Fprintln(os.Stderr, "  ─────────────────────────────")
+	} else {
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
+		borderStyle := lipgloss.NewStyle().Foreground(brandSeparator)
+		fmt.Fprintf(os.Stderr, "  %s\n", titleStyle.Render("Armis AppSec MCP Server Setup"))
+		fmt.Fprintf(os.Stderr, "  %s\n", borderStyle.Render("─────────────────────────────"))
+	}
 	fmt.Fprintln(os.Stderr, "")
 
 	clientID, clientSecret, skipCreds := collectCredentials(theme, accessible)
@@ -37,9 +41,14 @@ func runInteractiveInstall(force bool) error {
 	}
 
 	// --- Execute installation ---
-	successMark := lipgloss.NewStyle().Foreground(brandSuccess).Render("✓")
-	failMark := lipgloss.NewStyle().Foreground(brandError).Render("✗")
-	warnMark := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}).Render("⚠")
+	var successMark, failMark, warnMark string
+	if accessible {
+		successMark, failMark, warnMark = "[OK]", "[FAIL]", "[WARN]"
+	} else {
+		successMark = lipgloss.NewStyle().Foreground(brandSuccess).Render("✓")
+		failMark = lipgloss.NewStyle().Foreground(brandError).Render("✗")
+		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}).Render("⚠")
+	}
 
 	fmt.Fprintln(os.Stderr, "")
 
@@ -110,11 +119,14 @@ func runInteractiveInstall(force bool) error {
 				manifest = install.NewManifest(pluginDir, ci.InstalledVersion())
 			}
 			manifest.SetClaude(ci.PluginCacheDir())
-			_ = install.WriteManifest(manifest)
+			if err := install.WriteManifest(manifest); err != nil {
+				fmt.Fprintf(os.Stderr, "  %s Could not write install manifest: %v\n", warnMark, err)
+			}
 		}
 	}
 
 	// Write credentials if collected
+	// armis:ignore cwe:522 reason:CLI stores credentials in .env with 0600 perms; standard local auth config pattern
 	if !skipCreds && clientID != "" && clientSecret != "" {
 		if needsSharedPlugin {
 			if err := install.WriteEnvFromValues(ei.EnvFilePath(), clientID, clientSecret); err != nil {
@@ -134,6 +146,17 @@ func runInteractiveInstall(force bool) error {
 	// --- Security scanning hooks ---
 	fmt.Fprintln(os.Stderr, "")
 	selectedHookClients, installPreCommit := offerHookSetup(theme, accessible, ei.PluginDir(), installClaude)
+
+	// Download plugin if hooks need it and it wasn't already fetched
+	if !needsSharedPlugin && (len(selectedHookClients) > 0 || installPreCommit) {
+		spinner := progress.NewSpinner("Downloading MCP server...", !cli.ColorsEnabled())
+		spinner.Start()
+		fetchErr := ei.FetchPlugin(force)
+		spinner.Stop()
+		if fetchErr != nil && !errors.Is(fetchErr, install.ErrAlreadyCurrent) {
+			fmt.Fprintf(os.Stderr, "  %s MCP server download failed: %v\n", failMark, fetchErr)
+		}
+	}
 
 	if len(selectedHookClients) > 0 {
 		fmt.Fprintln(os.Stderr, "")
@@ -171,13 +194,22 @@ func runInteractiveInstall(force bool) error {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintf(os.Stderr, "  %s Setup complete.\n", successMark)
 	fmt.Fprintln(os.Stderr, "")
-	dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
-	fmt.Fprintln(os.Stderr, dimStyle.Render("  Next steps:"))
-	fmt.Fprintln(os.Stderr, dimStyle.Render("    Restart your editors to activate the MCP server."))
-	if installPreCommit {
-		fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli hook init' in other repos for pre-commit coverage."))
+	if accessible {
+		fmt.Fprintln(os.Stderr, "  Next steps:")
+		fmt.Fprintln(os.Stderr, "    Restart your editors to activate the MCP server.")
+		if installPreCommit {
+			fmt.Fprintln(os.Stderr, "    Run 'armis-cli hook init' in other repos for pre-commit coverage.")
+		}
+		fmt.Fprintln(os.Stderr, "    Run 'armis-cli scan repo .' to verify everything works.")
+	} else {
+		dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
+		fmt.Fprintln(os.Stderr, dimStyle.Render("  Next steps:"))
+		fmt.Fprintln(os.Stderr, dimStyle.Render("    Restart your editors to activate the MCP server."))
+		if installPreCommit {
+			fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli hook init' in other repos for pre-commit coverage."))
+		}
+		fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli scan repo .' to verify everything works."))
 	}
-	fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli scan repo .' to verify everything works."))
 	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
@@ -364,9 +396,9 @@ func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, b
 func offerHookSetup(theme *huh.Theme, accessible bool, pluginDir string, hasClaude bool) ([]install.HookClient, bool) {
 	detected := install.DetectHookClients()
 
-	// Determine if all detected editors have native hook coverage
-	allCovered := len(detected) > 0 || hasClaude
-	// If Claude is installed via plugin system, it has native hooks automatically
+	// All covered only when Claude is the sole AI tool (it has hooks via plugin).
+	// When external hook clients exist, default pre-commit ON as defense-in-depth.
+	allCovered := hasClaude && len(detected) == 0
 
 	// Build hook client options
 	var hookOptions []huh.Option[string]
@@ -389,8 +421,12 @@ func offerHookSetup(theme *huh.Theme, accessible bool, pluginDir string, hasClau
 
 	if !inGitRepo && len(hookOptions) == 0 {
 		if !hasClaude {
-			dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
-			fmt.Fprintln(os.Stderr, dimStyle.Render("  No hook-capable AI clients detected. Skipping hook setup."))
+			if accessible {
+				fmt.Fprintln(os.Stderr, "  No hook-capable AI clients detected. Skipping hook setup.")
+			} else {
+				dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
+				fmt.Fprintln(os.Stderr, dimStyle.Render("  No hook-capable AI clients detected. Skipping hook setup."))
+			}
 		}
 		return nil, false
 	}

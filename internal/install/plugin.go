@@ -388,7 +388,10 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	if _, err := os.Stat(cleanPath); err == nil {
 		bakPath := cleanPath + ".bak"
 		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
-		_ = os.Rename(cleanPath, bakPath)
+		_ = os.Remove(bakPath)
+		if err := os.Rename(cleanPath, bakPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not back up %s: %v\n", filepath.Base(cleanPath), err)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
