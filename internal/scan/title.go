@@ -37,7 +37,7 @@ func GenerateFindingTitle(finding *model.Finding) string {
 
 	// Fallback - use first sentence of description (no length limit; human formatter wraps)
 	if finding.Description != "" {
-		firstLine := strings.Split(finding.Description, "\n")[0]
+		firstLine := strings.Split(finding.Description, "\n")[0] // armis:ignore cwe:770 reason:Description from trusted API response; bounded by API pagination limits; display-only extraction
 
 		// Extract first sentence if present (cleaner titles)
 		if idx := strings.Index(firstLine, ". "); idx > 0 {
