@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -61,14 +63,42 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 }
 
 func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
+	styled := cli.ColorsEnabled()
+
+	var titleStyle, separatorStyle, successMark, warnMark, dimStyle lipgloss.Style
+	if styled {
+		titleStyle = lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
+		separatorStyle = lipgloss.NewStyle().Foreground(brandSeparator)
+		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
+		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"})
+		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
+	}
+
 	if !force {
-		msg := "This will remove the Armis AppSec MCP server from all editors and delete plugin files."
-		if keepCreds {
-			msg += "\nCredentials (.env) will be preserved."
+		if styled {
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintf(os.Stderr, "  %s\n", titleStyle.Render("Armis AppSec MCP Server Uninstall"))
+			fmt.Fprintf(os.Stderr, "  %s\n", separatorStyle.Render("──────────────────────────────────"))
+			fmt.Fprintln(os.Stderr, "")
+			msg := "  This will remove the MCP server from all editors and delete plugin files."
+			if keepCreds {
+				msg += "\n  Credentials (.env) will be preserved."
+			}
+			fmt.Fprintln(os.Stderr, dimStyle.Render(msg))
+			fmt.Fprintln(os.Stderr, "")
+		} else {
+			msg := "This will remove the Armis AppSec MCP server from all editors and delete plugin files."
+			if keepCreds {
+				msg += "\nCredentials (.env) will be preserved."
+			}
+			fmt.Fprintln(os.Stderr, msg)
 		}
-		fmt.Fprintln(os.Stderr, msg)
-		if !confirm("Continue?") {
-			fmt.Fprintln(os.Stderr, "Aborted.")
+		prompt := "Continue?"
+		if styled {
+			prompt = "  Continue?"
+		}
+		if !confirm(prompt) {
+			fmt.Fprintln(os.Stderr, "  Aborted.")
 			return nil
 		}
 		fmt.Fprintln(os.Stderr, "")
@@ -76,27 +106,61 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 
 	deregistered, warnings := u.DeregisterAllEditors()
 	for _, name := range deregistered {
-		fmt.Fprintf(os.Stderr, "  ✓ Removed from %s\n", name)
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Removed from %s\n", successMark.Render("✓"), name)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ Removed from %s\n", name)
+		}
 	}
 	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", w)
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", warnMark.Render("⚠"), w)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", w)
+		}
 	}
 
 	if err := u.DeregisterClaude(); err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠ Claude Code: %v\n", err)
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Claude Code: %v\n", warnMark.Render("⚠"), err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ Claude Code: %v\n", err)
+		}
 	} else {
-		fmt.Fprintf(os.Stderr, "  ✓ Removed from Claude Code\n")
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Removed from Claude Code\n", successMark.Render("✓"))
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ Removed from Claude Code\n")
+		}
 	}
 
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠ Plugin files: %v\n", err)
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ Plugin files: %v\n", err)
+		}
 	} else if keepCreds {
-		fmt.Fprintln(os.Stderr, "  ✓ Plugin files removed (credentials preserved)")
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Plugin files removed (credentials preserved)\n", successMark.Render("✓"))
+		} else {
+			fmt.Fprintln(os.Stderr, "  ✓ Plugin files removed (credentials preserved)")
+		}
 	} else {
-		fmt.Fprintln(os.Stderr, "  ✓ Plugin files removed")
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Plugin files removed\n", successMark.Render("✓"))
+		} else {
+			fmt.Fprintln(os.Stderr, "  ✓ Plugin files removed")
+		}
 	}
 
-	fmt.Fprintln(os.Stderr, "\nArmis AppSec MCP server uninstalled.")
+	fmt.Fprintln(os.Stderr, "")
+	if styled {
+		fmt.Fprintf(os.Stderr, "  %s Armis AppSec MCP server uninstalled.\n", successMark.Render("✓"))
+	} else {
+		fmt.Fprintln(os.Stderr, "Armis AppSec MCP server uninstalled.")
+	}
+	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
 
@@ -106,39 +170,71 @@ const (
 )
 
 func uninstallTargets(u *install.Uninstaller, targets []string) error {
+	styled := cli.ColorsEnabled()
+
+	var successMark, failMark, warnMark, dimStyle lipgloss.Style
+	if styled {
+		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
+		failMark = lipgloss.NewStyle().Foreground(brandError)
+		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"})
+		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
+	}
+
+	printSuccess := func(msg string) {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", successMark.Render("✓"), msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ %s\n", msg)
+		}
+	}
+	printFail := func(msg string) {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", failMark.Render("✗"), msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✗ %s\n", msg)
+		}
+	}
+	printWarn := func(msg string) {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", warnMark.Render("⚠"), msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", msg)
+		}
+	}
+
 	for _, name := range targets {
 		switch name {
 		case targetClaude:
 			if err := u.DeregisterClaude(); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", err)
+				printFail(fmt.Sprintf("Claude Code: %v", err))
 			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ Claude Code\n")
+				printSuccess("Claude Code")
 			}
 		case targetCopilot:
 			if err := u.DeregisterEditor(install.EditorVSCode); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ VS Code: %v\n", err)
+				printFail(fmt.Sprintf("VS Code: %v", err))
 			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ VS Code\n")
+				printSuccess("VS Code")
 			}
 		case "jetbrains":
-			fmt.Fprintln(os.Stderr, "  ⚠ JetBrains: Remove .jb-mcp.json from your project root manually.")
+			printWarn("JetBrains: Remove .jb-mcp.json from your project root manually.")
 		case "devin":
-			fmt.Fprintln(os.Stderr, "  ⚠ Devin: Remove the MCP server via the Devin web UI.")
+			printWarn("Devin: Remove the MCP server via the Devin web UI.")
 		case "openhands":
-			fmt.Fprintln(os.Stderr, "  ⚠ OpenHands: Remove the MCP server via the OpenHands web UI.")
+			printWarn("OpenHands: Remove the MCP server via the OpenHands web UI.")
 		case "aider":
-			fmt.Fprintln(os.Stderr, "  ⚠ Aider: No MCP configuration to remove.")
+			printWarn("Aider: No MCP configuration to remove.")
 		default:
 			id := install.EditorID(name)
 			e, ok := install.EditorByID(id)
 			if !ok {
-				fmt.Fprintf(os.Stderr, "  ✗ Unknown editor: %s\n", name)
+				printFail(fmt.Sprintf("Unknown editor: %s", name))
 				continue
 			}
 			if err := u.DeregisterEditor(id); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
+				printFail(fmt.Sprintf("%s: %v", e.Name, err))
 			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
+				printSuccess(e.Name)
 			}
 		}
 	}
@@ -157,11 +253,17 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			}
 		}
 		if err := install.WriteManifest(manifest); err != nil {
-			fmt.Fprintf(os.Stderr, "  ⚠ Could not update install manifest: %v\n", err)
+			printWarn(fmt.Sprintf("Could not update install manifest: %v", err))
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "\nPlugin files kept (other editors may still use them).")
+	fmt.Fprintln(os.Stderr, "")
+	if styled {
+		fmt.Fprintln(os.Stderr, dimStyle.Render("  Plugin files kept (other editors may still use them)."))
+	} else {
+		fmt.Fprintln(os.Stderr, "Plugin files kept (other editors may still use them).")
+	}
+	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
 
