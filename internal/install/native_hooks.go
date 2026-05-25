@@ -235,10 +235,34 @@ func clineHooksPath() string {
 
 const armisHookMarker = "armis-appsec"
 
+// readJSONFileAsMapSafe reads a JSON file into a map, returning an error
+// if the file exists but cannot be parsed. This prevents silent data loss
+// when overwriting a corrupt or JSONC config file.
+func readJSONFileAsMapSafe(path string) (map[string]interface{}, error) {
+	data := make(map[string]interface{})
+	b, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path from known config locations
+	if err != nil {
+		if os.IsNotExist(err) {
+			return data, nil
+		}
+		return nil, fmt.Errorf("reading config: %w", err)
+	}
+	if len(b) == 0 {
+		return data, nil
+	}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return nil, fmt.Errorf("could not parse %s — skipping hook setup.\n  Fix the JSON syntax or remove the file.\n  Parse error: %w", path, err)
+	}
+	return data, nil
+}
+
 // installMergedHook handles clients that use a merged JSON settings file
 // with a hooks section (Gemini, Codex, Cline).
 func installMergedHook(pluginDir, configPath string, client HookClient) error {
-	data := readJSONFileAsMap(configPath)
+	data, err := readJSONFileAsMapSafe(configPath)
+	if err != nil {
+		return err
+	}
 
 	hooks := client.buildHooks(pluginDir)
 
@@ -267,7 +291,10 @@ func installMergedHook(pluginDir, configPath string, client HookClient) error {
 
 // removeMergedHook removes Armis hook entries from a merged config file.
 func removeMergedHook(configPath string, _ HookClient) error {
-	data := readJSONFileAsMap(configPath)
+	data, err := readJSONFileAsMapSafe(configPath)
+	if err != nil {
+		return err
+	}
 
 	hooksSection, _ := data["hooks"].(map[string]interface{})
 	if hooksSection == nil {
@@ -298,7 +325,10 @@ func removeMergedHook(configPath string, _ HookClient) error {
 
 // installCursorHook handles Cursor's hook format.
 func installCursorHook(pluginDir, configPath string) error {
-	data := readJSONFileAsMap(configPath)
+	data, err := readJSONFileAsMapSafe(configPath)
+	if err != nil {
+		return err
+	}
 
 	if _, ok := data["version"]; !ok {
 		data["version"] = 1
@@ -326,7 +356,10 @@ func installCursorHook(pluginDir, configPath string) error {
 
 // removeCursorHook removes Armis entries from Cursor hook config.
 func removeCursorHook(configPath string) error {
-	data := readJSONFileAsMap(configPath)
+	data, err := readJSONFileAsMapSafe(configPath)
+	if err != nil {
+		return err
+	}
 
 	hooksSection, _ := data["hooks"].(map[string]interface{})
 	if hooksSection == nil {
@@ -357,7 +390,10 @@ func removeCursorHook(configPath string) error {
 
 // installCopilotHook handles Copilot CLI's hook format (uses "bash" key instead of "command").
 func installCopilotHook(pluginDir, configPath string) error {
-	data := readJSONFileAsMap(configPath)
+	data, err := readJSONFileAsMapSafe(configPath)
+	if err != nil {
+		return err
+	}
 
 	if _, ok := data["version"]; !ok {
 		data["version"] = 1
@@ -393,7 +429,7 @@ func removeCopilotHook(configPath string) error {
 func buildCursorHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "cursor_pre_tool.py")
-	cmd := fmt.Sprintf("%s %s", py, adapter)
+	cmd := quotedCommand(py, adapter)
 	return map[string]interface{}{
 		"beforeShellExecution": []interface{}{
 			map[string]interface{}{
@@ -415,7 +451,7 @@ func buildCursorHooks(pluginDir string) interface{} {
 func buildGeminiHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "gemini_pre_tool.py")
-	cmd := fmt.Sprintf("%s %s", py, adapter)
+	cmd := quotedCommand(py, adapter)
 	return map[string]interface{}{
 		"BeforeTool": []interface{}{
 			map[string]interface{}{
@@ -435,7 +471,7 @@ func buildGeminiHooks(pluginDir string) interface{} {
 func buildCodexHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "codex_pre_tool.py")
-	cmd := fmt.Sprintf("%s %s", py, adapter)
+	cmd := quotedCommand(py, adapter)
 	return map[string]interface{}{
 		"PreToolUse": []interface{}{
 			map[string]interface{}{
@@ -465,7 +501,7 @@ func buildCodexHooks(pluginDir string) interface{} {
 func buildCopilotHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "copilot_pre_tool.py")
-	cmd := fmt.Sprintf("%s %s", py, adapter)
+	cmd := quotedCommand(py, adapter)
 	return map[string]interface{}{
 		"preToolUse": []interface{}{
 			map[string]interface{}{
@@ -481,7 +517,7 @@ func buildCopilotHooks(pluginDir string) interface{} {
 func buildClineHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "cline_pre_tool.py")
-	cmd := fmt.Sprintf("%s %s", py, adapter)
+	cmd := quotedCommand(py, adapter)
 	return map[string]interface{}{
 		"PreToolUse": []interface{}{
 			map[string]interface{}{
@@ -524,6 +560,12 @@ func isArmisHookJSON(entry interface{}) bool {
 	return strings.Contains(s, armisHookMarker) ||
 		strings.Contains(s, "armis-cli") ||
 		strings.Contains(s, "pre_tool.py")
+}
+
+// quotedCommand produces a shell command string with single-quoted paths,
+// safe for paths containing spaces (e.g. "/Users/John Smith/...").
+func quotedCommand(pythonPath, adapterPath string) string {
+	return fmt.Sprintf("'%s' '%s'", pythonPath, adapterPath)
 }
 
 // HookConfigFormat returns the hook config format name for manifest tracking.
