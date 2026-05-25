@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.3] - 2026-05-25
+
+### Fixed
+
+- Suppression directives updated for compatibility with the new inline matching engine (#192)
+
+### Changed
+
+- Added comprehensive unit tests for install, uninstall, scan, and inline suppression flows (#191)
+
+---
+
 ## [1.9.2] - 2026-05-25
 
 ### Fixed
@@ -358,7 +370,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.3...HEAD
+[1.9.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.4...v1.9.0
