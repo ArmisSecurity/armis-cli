@@ -50,7 +50,7 @@ var classKeywordExts = map[string]bool{
 type InlineDirective struct {
 	Category string
 	Rule     string
-	CWE      string
+	CWEs     []string
 	Severity string
 	Reason   string
 }
@@ -170,8 +170,11 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 		// a function declaration applies to findings in the function body.
 		var directive *InlineDirective
 		if d := parseInlineComment(fl.lines[lineIdx], prefixes); d != nil {
-			directive = d
-		} else {
+			if matchesInlineDirective(findings[i], d) { //nolint:gosec // G602 false positive: i is bounded by range
+				directive = d
+			}
+		}
+		if directive == nil {
 			for offset := 1; offset <= maxScanLinesAbove && lineIdx-offset >= 0; offset++ {
 				above := fl.lines[lineIdx-offset]
 				trimmed := strings.TrimSpace(above)
@@ -185,8 +188,11 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 					continue
 				}
 				if d := parseInlineComment(above, prefixes); d != nil {
-					directive = d
-					break
+					if matchesInlineDirective(findings[i], d) { //nolint:gosec // G602 false positive: i is bounded by range
+						directive = d
+						break
+					}
+					continue
 				}
 			}
 		}
@@ -195,11 +201,9 @@ func ApplyInlineSuppression(findings []model.Finding, repoRoot string) int {
 			continue
 		}
 
-		if matchesInlineDirective(findings[i], directive) { //nolint:gosec // G602 false positive: i is bounded by range
-			findings[i].Suppressed = true                                       //nolint:gosec // G602 false positive: i is bounded by range
-			findings[i].SuppressionInfo = buildInlineSuppressionInfo(directive) //nolint:gosec // G602 false positive: i is bounded by range
-			suppressed++
-		}
+		findings[i].Suppressed = true                                       //nolint:gosec // G602 false positive: i is bounded by range
+		findings[i].SuppressionInfo = buildInlineSuppressionInfo(directive) //nolint:gosec // G602 false positive: i is bounded by range
+		suppressed++
 	}
 
 	return suppressed
@@ -356,7 +360,7 @@ func parseDirectiveParams(text string) *InlineDirective {
 			d.Rule = value
 			recognized = true
 		case string(DirectiveCWE):
-			d.CWE = value
+			d.CWEs = append(d.CWEs, value)
 			recognized = true
 		case string(DirectiveSeverity):
 			d.Severity = strings.ToUpper(value)
@@ -387,8 +391,15 @@ func matchesInlineDirective(finding model.Finding, d *InlineDirective) bool {
 		}
 	}
 
-	if d.CWE != "" {
-		if !cweMatches(finding.CWEs, d.CWE) {
+	if len(d.CWEs) > 0 {
+		matched := false
+		for _, cwe := range d.CWEs {
+			if cweMatches(finding.CWEs, cwe) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}
@@ -409,9 +420,9 @@ func buildInlineSuppressionInfo(d *InlineDirective) *model.SuppressionInfo {
 	}
 
 	switch {
-	case d.CWE != "":
+	case len(d.CWEs) > 0:
 		info.Type = suppressionTypeCWE
-		info.Value = d.CWE
+		info.Value = strings.Join(d.CWEs, ",")
 	case d.Rule != "":
 		info.Type = suppressionTypeRule
 		info.Value = d.Rule

@@ -135,6 +135,7 @@ func parseDirectiveLine(line string) (*SuppressionDirective, bool, string) {
 
 	switch prefix {
 	case "rule":
+		// armis:ignore cwe:20 reason:value is from internal .armisignore file; format validated by prefix/colonIdx parsing above
 		if value == "" {
 			return nil, false, fmt.Sprintf("empty rule directive ignored: %q", line)
 		}
@@ -155,6 +156,7 @@ func parseDirectiveLine(line string) (*SuppressionDirective, bool, string) {
 		return &SuppressionDirective{Type: DirectiveSeverity, Value: normalized, Reason: reason}, true, ""
 
 	case "cwe":
+		// armis:ignore cwe:20 reason:validateCWE rejects non-numeric input; accepting any integer is by design for forward-compat
 		normalized, valid, warning := validateCWE(value)
 		if !valid {
 			return nil, false, warning

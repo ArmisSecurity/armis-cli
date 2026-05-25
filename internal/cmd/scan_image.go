@@ -116,8 +116,9 @@ var scanImageCmd = &cobra.Command{
 				return handleScanError(ctx, err)
 			}
 		} else {
+			// armis:ignore cwe:20 reason:imageName validated by distribution/reference.ParseNormalizedNamed in ScanImage
 			imageName := args[0]
-			result, err = scanner.ScanImage(ctx, imageName)
+			result, err = scanner.ScanImage(ctx, imageName) // armis:ignore cwe:20 reason:validated by reference.ParseNormalizedNamed in ScanImage
 			if err != nil {
 				return handleScanError(ctx, err)
 			}

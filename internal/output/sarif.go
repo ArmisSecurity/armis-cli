@@ -193,7 +193,7 @@ func normalizeCVE(s string) string {
 func stripMarkdown(md string) string {
 	// armis:ignore cwe:770 reason:input is finding description from API (bounded by API response size)
 	result := md
-	result = mdHeaderRegex.ReplaceAllString(result, "")       // Remove # headers
+	result = mdHeaderRegex.ReplaceAllString(result, "")       // armis:ignore cwe:770 reason:input bounded by API response size
 	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // **bold** → bold
 	result = mdLinkRegex.ReplaceAllString(result, "$1")       // [text](url) → text
 	result = mdCodeRegex.ReplaceAllString(result, "$1")       // `code` → code

@@ -263,6 +263,7 @@ func runGit(dir string, args ...string) (string, error) {
 	// Force English output for consistent error message parsing across locales
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 
+	// armis:ignore cwe:770 reason:git output bounded by repo size; used only for diff/log of controlled internal operations
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

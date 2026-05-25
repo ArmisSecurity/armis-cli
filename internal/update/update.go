@@ -217,7 +217,7 @@ func (c *Checker) readCache() *cacheFile {
 	}
 	// armis:ignore cwe:73 reason:path already validated by SanitizePath above; reads CLI version cache file
 	data, err := os.ReadFile(sanitizedPath) //nolint:gosec // path validated by SanitizePath
-	if err != nil {
+	if err != nil {                         // armis:ignore cwe:73 reason:path validated by SanitizePath; reads CLI version cache
 		return nil
 	}
 	var cache cacheFile

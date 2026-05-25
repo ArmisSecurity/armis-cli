@@ -355,6 +355,7 @@ main() {
     download_file "$BASE_URL/${BINARY_NAME}-checksums.txt.sig" "$CHECKSUMS_SIG" || true
 
     echo ""
+    # armis:ignore cwe:253 reason:verify_checksums calls fail() on any error; non-zero exit propagates via set -e
     verify_checksums "$ARCHIVE_FILE" "$CHECKSUMS_FILE" "$CHECKSUMS_SIG"
     echo ""
 
@@ -393,7 +394,7 @@ main() {
 
     # armis:ignore cwe:367 reason:TOCTOU between writable-check and mv is acceptable for installer; no security boundary crossed
     if [ -w "$INSTALL_DIR" ]; then
-        # armis:ignore cwe:73 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
+        # armis:ignore cwe:73 cwe:59 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
         # armis:ignore cwe:367 reason:mv after writable-check; acceptable TOCTOU for local installer binary placement
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else

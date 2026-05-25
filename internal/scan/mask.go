@@ -18,6 +18,7 @@ import (
 //
 // Text fields (Explanation, Recommendations, Feedback) are NOT masked as they contain
 // human-readable analysis, not raw code.
+// armis:ignore cwe:522 reason:text fields contain analysis prose, not code; masking would corrupt explanations with false positives
 func MaskFixSecrets(fix *model.Fix) *model.Fix {
 	if fix == nil {
 		return nil

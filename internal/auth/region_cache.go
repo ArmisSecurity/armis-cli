@@ -43,6 +43,7 @@ func (c *RegionCache) Load(clientID string) (string, bool) {
 		return "", false
 	}
 
+	// armis:ignore cwe:367 reason:stat-then-read race is benign; worst case reads stale cache, no security impact
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", false

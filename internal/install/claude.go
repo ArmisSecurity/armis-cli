@@ -38,6 +38,7 @@ func (ci *ClaudeInstaller) InstalledVersion() string {
 
 // Install downloads and installs the MCP plugin for Claude Code.
 func (ci *ClaudeInstaller) Install() error {
+	// armis:ignore cwe:253 reason:intentionally checks only IsNotExist; other stat errors are irrelevant to user-facing message
 	if _, err := os.Stat(ci.claudeDir); os.IsNotExist(err) {
 		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir) //nolint:staticcheck // proper noun
 	}

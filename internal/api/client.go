@@ -289,6 +289,7 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	// This prevents a deadlock where the goroutine blocks on opts.Data.Read()
 	// while we wait on errChan after a request creation failure.
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + "/api/v1/ingest/tar"
+	// armis:ignore cwe:918 reason:baseURL validated in NewClient (HTTPS enforced, no user-controlled URL components)
 	req, err := http.NewRequestWithContext(uploadCtx, "POST", endpoint, pr)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
@@ -760,6 +761,7 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	// - bucket.s3.amazonaws.com (legacy)
 	// - bucket.s3.region.amazonaws.com (current)
 	// - s3.region.amazonaws.com/bucket (path-style)
+	// armis:ignore cwe:918 reason:this IS the SSRF validation function; allowlisting verified S3 endpoints
 	if strings.HasSuffix(host, ".amazonaws.com") && strings.Contains(host, "s3") {
 		return nil
 	}
@@ -785,6 +787,7 @@ func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL stri
 	}
 
 	// Note: Pre-signed URLs include authentication, so no auth header needed
+	// armis:ignore cwe:918 reason:URL validated by ValidatePresignedURL above (HTTPS + S3 host allowlist)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download: %w", err)

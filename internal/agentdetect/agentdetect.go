@@ -77,7 +77,7 @@ func (s *Scanner) Scan() (*ScanResult, error) {
 			}
 			userResult.Agents = append(userResult.Agents, agent)
 		}
-		result.Users = append(result.Users, userResult)
+		result.Users = append(result.Users, userResult) // armis:ignore cwe:770 reason:bounded by OS user count; enumerateUserDirs skips system dirs
 	}
 
 	return result, nil

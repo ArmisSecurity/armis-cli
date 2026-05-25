@@ -68,7 +68,7 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "cwe scope",
 			line:     "# armis:ignore cwe:798",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{CWE: "798"},
+			want:     &InlineDirective{CWEs: []string{"798"}},
 		},
 		{
 			name:     "severity scope",
@@ -80,13 +80,19 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "multiple params",
 			line:     "# armis:ignore category:sast cwe:79",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{Category: "sast", CWE: "79"},
+			want:     &InlineDirective{Category: "sast", CWEs: []string{"79"}},
+		},
+		{
+			name:     "multiple CWEs",
+			line:     "// armis:ignore cwe:73 cwe:22 reason:both apply",
+			prefixes: []string{"//"},
+			want:     &InlineDirective{CWEs: []string{"73", "22"}, Reason: "both apply"},
 		},
 		{
 			name:     "with reason",
 			line:     "// armis:ignore cwe:798 reason: this is a test token",
 			prefixes: []string{"//"},
-			want:     &InlineDirective{CWE: "798", Reason: "this is a test token"},
+			want:     &InlineDirective{CWEs: []string{"798"}, Reason: "this is a test token"},
 		},
 		{
 			name:     "case insensitive ARMIS:IGNORE",
@@ -146,7 +152,7 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "real comment after string literal accepted",
 			line:     `x := "value" // armis:ignore cwe:798`,
 			prefixes: []string{"//"},
-			want:     &InlineDirective{CWE: "798"},
+			want:     &InlineDirective{CWEs: []string{"798"}},
 		},
 		{
 			name:     "params in any order - severity then category",
@@ -158,13 +164,13 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "params in any order - cwe then category",
 			line:     "# armis:ignore cwe:79 category:sast",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{CWE: "79", Category: "sast"},
+			want:     &InlineDirective{CWEs: []string{"79"}, Category: "sast"},
 		},
 		{
 			name:     "params in any order - rule then severity then cwe",
 			line:     "// armis:ignore rule:CKV_AWS_18 severity:HIGH cwe:798",
 			prefixes: []string{"//"},
-			want:     &InlineDirective{Rule: "CKV_AWS_18", Severity: "HIGH", CWE: "798"},
+			want:     &InlineDirective{Rule: "CKV_AWS_18", Severity: "HIGH", CWEs: []string{"798"}},
 		},
 		{
 			name:     "prefix inside backtick string rejected",
@@ -176,19 +182,19 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "real comment after backtick string accepted",
 			line:     "x := `value` // armis:ignore cwe:79",
 			prefixes: []string{"//"},
-			want:     &InlineDirective{CWE: "79"},
+			want:     &InlineDirective{CWEs: []string{"79"}},
 		},
 		{
 			name:     "tabs between params handled",
 			line:     "# armis:ignore\tcategory:sast\tcwe:79",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{Category: "sast", CWE: "79"},
+			want:     &InlineDirective{Category: "sast", CWEs: []string{"79"}},
 		},
 		{
 			name:     "multiple spaces between params handled",
 			line:     "# armis:ignore  category:sast   cwe:79",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{Category: "sast", CWE: "79"},
+			want:     &InlineDirective{Category: "sast", CWEs: []string{"79"}},
 		},
 		{
 			name:     "unknown key only - returns nil",
@@ -200,13 +206,13 @@ func TestParseInlineComment(t *testing.T) {
 			name:     "unknown key with valid key - keeps valid",
 			line:     "# armis:ignore catgory:sast cwe:79",
 			prefixes: []string{"#"},
-			want:     &InlineDirective{CWE: "79"},
+			want:     &InlineDirective{CWEs: []string{"79"}},
 		},
 		{
 			name:     "block comment in JS",
 			line:     "/* armis:ignore cwe:79 */",
 			prefixes: []string{"//", "/*"},
-			want:     &InlineDirective{CWE: "79"},
+			want:     &InlineDirective{CWEs: []string{"79"}},
 		},
 		{
 			name:     "leading whitespace",
@@ -234,8 +240,8 @@ func TestParseInlineComment(t *testing.T) {
 			if got.Rule != tt.want.Rule {
 				t.Errorf("Rule = %q, want %q", got.Rule, tt.want.Rule)
 			}
-			if got.CWE != tt.want.CWE {
-				t.Errorf("CWE = %q, want %q", got.CWE, tt.want.CWE)
+			if !slicesEqual(got.CWEs, tt.want.CWEs) {
+				t.Errorf("CWEs = %v, want %v", got.CWEs, tt.want.CWEs)
 			}
 			if got.Severity != tt.want.Severity {
 				t.Errorf("Severity = %q, want %q", got.Severity, tt.want.Severity)
@@ -275,13 +281,13 @@ func TestMatchesInlineDirective(t *testing.T) {
 		{
 			name:      "cwe matches",
 			finding:   model.Finding{CWEs: []string{"CWE-79: Cross-site Scripting"}},
-			directive: &InlineDirective{CWE: "79"},
+			directive: &InlineDirective{CWEs: []string{"79"}},
 			want:      true,
 		},
 		{
 			name:      "cwe does not match",
 			finding:   model.Finding{CWEs: []string{"CWE-89"}},
-			directive: &InlineDirective{CWE: "79"},
+			directive: &InlineDirective{CWEs: []string{"79"}},
 			want:      false,
 		},
 		{
@@ -299,19 +305,19 @@ func TestMatchesInlineDirective(t *testing.T) {
 		{
 			name:      "AND logic: both category and cwe must match - both match",
 			finding:   model.Finding{Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-79"}},
-			directive: &InlineDirective{Category: "sast", CWE: "79"},
+			directive: &InlineDirective{Category: "sast", CWEs: []string{"79"}},
 			want:      true,
 		},
 		{
 			name:      "AND logic: category matches but cwe does not",
 			finding:   model.Finding{Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-89"}},
-			directive: &InlineDirective{Category: "sast", CWE: "79"},
+			directive: &InlineDirective{Category: "sast", CWEs: []string{"79"}},
 			want:      false,
 		},
 		{
 			name:      "AND logic: cwe matches but category does not",
 			finding:   model.Finding{Type: model.FindingTypeSecret, CWEs: []string{"CWE-79"}},
-			directive: &InlineDirective{Category: "sast", CWE: "79"},
+			directive: &InlineDirective{Category: "sast", CWEs: []string{"79"}},
 			want:      false,
 		},
 		{
@@ -820,7 +826,7 @@ func TestBuildInlineSuppressionInfo(t *testing.T) {
 		},
 		{
 			name:      "cwe takes priority",
-			directive: &InlineDirective{CWE: "79", Category: "sast"},
+			directive: &InlineDirective{CWEs: []string{"79"}, Category: "sast"},
 			wantType:  "cwe",
 			wantValue: "79",
 		},
@@ -860,6 +866,143 @@ func TestBuildInlineSuppressionInfo(t *testing.T) {
 	}
 }
 
+func TestApplyInlineSuppression_StackedComments(t *testing.T) {
+	t.Run("nearest directive wrong CWE, farther directive matches", func(t *testing.T) {
+		dir := t.TempDir()
+		// Line 1: package main
+		// Line 2: // armis:ignore cwe:367 reason:TOCTOU benign
+		// Line 3: // armis:ignore cwe:22 reason:path validated
+		// Line 4: f, err := os.Open(filePath)
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:367 reason:TOCTOU benign\n// armis:ignore cwe:22 reason:path validated\nf, err := os.Open(filePath)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-367"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (stacked: nearest is cwe:22, farther is cwe:367), got %d", count)
+		}
+		if findings[0].SuppressionInfo.Value != "367" {
+			t.Errorf("expected suppression value 367, got %q", findings[0].SuppressionInfo.Value)
+		}
+	})
+
+	t.Run("stacked comments no match at all", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79\n// armis:ignore cwe:89\nvar x = doSomething(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (stacked comments, none match CWE-22), got %d", count)
+		}
+	})
+
+	t.Run("stacked comments nearest matches", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:79 reason:farther\n// armis:ignore cwe:22 reason:nearest\nvar path = readFile(input)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 4, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (nearest stacked comment matches), got %d", count)
+		}
+		if findings[0].SuppressionInfo.Reason != "nearest" {
+			t.Errorf("expected reason from nearest directive, got %q", findings[0].SuppressionInfo.Reason)
+		}
+	})
+}
+
+func TestApplyInlineSuppression_SameLineNonMatchFallsThrough(t *testing.T) {
+	t.Run("non-matching end-of-line directive falls through to comment above", func(t *testing.T) {
+		dir := t.TempDir()
+		// Line 1: package main
+		// Line 2: // armis:ignore cwe:22 reason:path traversal OK
+		// Line 3: fileOutput, err := output.NewFileOutput(path) // armis:ignore cwe:73 reason:other
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:22 reason:path traversal OK\nfileOutput, err := output.NewFileOutput(path) // armis:ignore cwe:73 reason:other\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (end-of-line cwe:73 doesn't match CWE-22, but comment above does), got %d", count)
+		}
+		if findings[0].SuppressionInfo.Reason != "path traversal OK" {
+			t.Errorf("expected reason from above-line directive, got %q", findings[0].SuppressionInfo.Reason)
+		}
+	})
+
+	t.Run("matching end-of-line directive takes precedence over comment above", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:22 reason:above\nfileOutput, err := output.NewFileOutput(path) // armis:ignore cwe:22 reason:inline\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (end-of-line directive matches), got %d", count)
+		}
+		if findings[0].SuppressionInfo.Reason != "inline" {
+			t.Errorf("expected reason from same-line directive (precedence), got %q", findings[0].SuppressionInfo.Reason)
+		}
+	})
+}
+
+func TestApplyInlineSuppression_MultiCWE(t *testing.T) {
+	t.Run("multi-CWE comment suppresses either CWE", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:73 cwe:22 reason:both apply\nfileOutput, err := output.NewFileOutput(path)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-73"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (multi-CWE: finding is CWE-73, directive has cwe:73 cwe:22), got %d", count)
+		}
+	})
+
+	t.Run("multi-CWE suppresses second CWE too", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:73 cwe:22 reason:both apply\nfileOutput, err := output.NewFileOutput(path)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-22"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 1 {
+			t.Fatalf("expected 1 (multi-CWE: finding is CWE-22, directive has cwe:73 cwe:22), got %d", count)
+		}
+	})
+
+	t.Run("multi-CWE does not suppress unrelated CWE", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "main.go", "package main\n// armis:ignore cwe:73 cwe:22 reason:both apply\nfileOutput, err := output.NewFileOutput(path)\n")
+
+		findings := []model.Finding{
+			{File: "main.go", StartLine: 3, Type: model.FindingTypeVulnerability, CWEs: []string{"CWE-89"}},
+		}
+
+		count := ApplyInlineSuppression(findings, dir)
+		if count != 0 {
+			t.Fatalf("expected 0 (multi-CWE: finding is CWE-89, not in cwe:73 cwe:22), got %d", count)
+		}
+	})
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -869,4 +1012,16 @@ func writeFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

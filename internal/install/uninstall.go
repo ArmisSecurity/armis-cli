@@ -178,7 +178,7 @@ func (u *Uninstaller) RemovePluginFiles(keepCredentials bool) error {
 func (u *Uninstaller) editorConfigPath(id EditorID, e Editor) string {
 	if u.manifest != nil {
 		if entry, ok := u.manifest.Editors[id]; ok {
-			return entry.ConfigFile // armis:ignore cwe:73 reason:manifest written by our install with paths from ConfigPath(); not external input
+			return entry.ConfigFile // armis:ignore cwe:73 cwe:22 reason:manifest written by our install with paths from ConfigPath(); not external input
 		}
 		// Editor not in manifest — still check its default path so we catch
 		// registrations that predate manifest tracking.

@@ -83,8 +83,8 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 		output.SyncColors()
 	}
 
-	// armis:ignore cwe:73 reason:outputPath is from --output flag; user-controlled CLI arg for their own files
-	fileOutput, err := output.NewFileOutput(outputPath)
+	// armis:ignore cwe:22 reason:outputPath is from --output flag; user-controlled CLI arg for their own files
+	fileOutput, err := output.NewFileOutput(outputPath) // armis:ignore cwe:73 reason:outputPath from --output flag; user's own files
 	if err != nil {
 		// Restore previous state on error
 		cli.SetOutputToFile(prevOutputToFile)

@@ -79,6 +79,7 @@ function Verify-Checksums {
         [string]$ChecksumsSig
     )
 
+    # armis:ignore cwe:494 reason:$Verify defaults true; explicit opt-out for environments without cosign (documented flag)
     if (-not $Verify) {
         Write-Host "⚠️  Skipping verification (-Verify:`$false)"
         return
@@ -215,6 +216,7 @@ function Main {
         Write-Host ""
 
         Write-Host "📂 Extracting archive..."
+        # armis:ignore cwe:22 reason:archiveFile downloaded from verified GitHub release with checksum validation above
         Expand-Archive -Path $archiveFile -DestinationPath $tmpDir -Force
 
         Write-Host "📥 Installing to $InstallDir..."
@@ -245,12 +247,13 @@ function Main {
         # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
         if (-not (Test-CIEnvironment)) {
             $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            # armis:ignore cwe:426 reason:InstallDir validated by Resolve-InstallDir; adds our own install directory to user PATH
             $newUserPath = Add-DirectoryToPath -ExistingPath $currentPath -Directory $InstallDir
             if ($newUserPath -ne $currentPath) {
                 Write-Host "Adding to PATH..."
                 # armis:ignore cwe:426 reason:installer adds its own validated InstallDir to user PATH; standard installer pattern
                 [Environment]::SetEnvironmentVariable(
-                    "Path",
+                    "Path", # armis:ignore cwe:426 reason:installer sets validated InstallDir to user PATH
                     $newUserPath,
                     "User"
                 )

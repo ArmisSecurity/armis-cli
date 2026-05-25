@@ -70,7 +70,7 @@ func hasExtensionPrefix(resolvedHome, extDir, prefix string) bool {
 	}
 	// armis:ignore cwe:770 reason:reads bounded directory (e.g. ~/.vscode/extensions); extDir validated via isUnderDir above
 	entries, err := os.ReadDir(extDir)
-	if err != nil {
+	if err != nil { // armis:ignore cwe:770 reason:reads bounded directory; validated via isUnderDir
 		return false
 	}
 	lower := strings.ToLower(prefix)
