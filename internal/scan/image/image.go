@@ -134,8 +134,8 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 
 	// armis:ignore cwe:22 reason:tarballPath is user-selected local file input; validated by SanitizePath in caller before reaching here
-	file, err := os.Open(tarballPath) // #nosec G304 - tarball path is user-provided input
-	if err != nil {
+	file, err := os.Open(tarballPath) //nolint:gosec // G304: tarball path validated by SanitizePath // armis:ignore cwe:22 reason:tarballPath validated by SanitizePath above
+	if err != nil {                   // armis:ignore cwe:22 reason:tarballPath validated by SanitizePath above; user-selected local file
 		return nil, fmt.Errorf("failed to open tarball: %w", err)
 	}
 	defer file.Close() //nolint:errcheck // file opened for reading

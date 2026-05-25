@@ -194,10 +194,10 @@ func stripMarkdown(md string) string {
 	// armis:ignore cwe:770 reason:input is finding description from API (bounded by API response size)
 	result := md
 	result = mdHeaderRegex.ReplaceAllString(result, "")       // armis:ignore cwe:770 reason:input bounded by API response size
-	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // **bold** → bold
-	result = mdLinkRegex.ReplaceAllString(result, "$1")       // [text](url) → text
-	result = mdCodeRegex.ReplaceAllString(result, "$1")       // `code` → code
-	result = mdBlockquoteRegex.ReplaceAllString(result, "")   // Remove > blockquotes
+	result = mdBoldItalicRegex.ReplaceAllString(result, "$1") // armis:ignore cwe:770 reason:input bounded by API response size
+	result = mdLinkRegex.ReplaceAllString(result, "$1")       // armis:ignore cwe:770 reason:input bounded by API response size
+	result = mdCodeRegex.ReplaceAllString(result, "$1")       // armis:ignore cwe:770 reason:input bounded by API response size
+	result = mdBlockquoteRegex.ReplaceAllString(result, "")   // armis:ignore cwe:770 reason:input bounded by API response size
 	return strings.TrimSpace(result)
 }
 
