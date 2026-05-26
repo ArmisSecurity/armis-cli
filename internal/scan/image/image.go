@@ -259,7 +259,6 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
 		// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName
 		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
-		// armis:ignore cwe:78 cwe:94 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName
 		pullCmd.Stdout = os.Stderr
 		pullCmd.Stderr = os.Stderr
 		if err := pullCmd.Run(); err != nil {
