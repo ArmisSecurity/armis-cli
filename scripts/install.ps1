@@ -230,6 +230,7 @@ function Main {
         # Detect upgrade vs fresh install
         if (Test-Path $binaryDest) {
             try {
+                # armis:ignore cwe:78 reason:binaryDest constructed from Join-Path with validated InstallDir; executing our own installed binary
                 $existingVersion = & $binaryDest --version 2>$null | Select-Object -First 1
                 if ($existingVersion) {
                     Write-Host "Upgrading existing installation..."

@@ -41,7 +41,7 @@ func HasArmisMCPInClaudeSettings(resolvedHome, settingsPath string) bool {
 	if !isUnderDir(resolvedHome, settingsPath) {
 		return false
 	}
-	// armis:ignore cwe:770 reason:reads bounded local config file; path validated by isUnderDir
+	// armis:ignore cwe:770 cwe:22 reason:reads bounded local config file; path validated by isUnderDir
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // path validated by isUnderDir
 	if err != nil {
 		return false
@@ -69,7 +69,7 @@ func HasArmisMCPInZedSettings(resolvedHome, settingsPath string) bool {
 	if !isUnderDir(resolvedHome, settingsPath) {
 		return false
 	}
-	// armis:ignore cwe:770 reason:reads bounded local config file; path validated by isUnderDir
+	// armis:ignore cwe:770 cwe:22 reason:reads bounded local config file; path validated by isUnderDir
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // path validated by isUnderDir
 	if err != nil {
 		return false
@@ -99,7 +99,7 @@ func HasArmisMCPInVSCodeFormat(resolvedHome, configPath string) bool {
 	if !isUnderDir(resolvedHome, configPath) {
 		return false
 	}
-	// armis:ignore cwe:770 reason:reads bounded local config file; path validated by isUnderDir
+	// armis:ignore cwe:770 cwe:22 reason:reads bounded local config file; path validated by isUnderDir
 	data, err := os.ReadFile(configPath) //nolint:gosec // path validated by isUnderDir
 	if err != nil {
 		return false

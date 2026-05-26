@@ -157,6 +157,7 @@ var scanRepoCmd = &cobra.Command{
 		ctx, cancel := NewSignalContext()
 		defer cancel()
 
+		// armis:ignore cwe:22 reason:repoPath is from direct CLI argument; validated as existing directory above
 		result, err := scanner.Scan(ctx, repoPath)
 		if err != nil {
 			return handleScanError(ctx, err)

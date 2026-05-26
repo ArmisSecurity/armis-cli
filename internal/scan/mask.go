@@ -55,5 +55,6 @@ func MaskFixSecrets(fix *model.Fix) *model.Fix {
 		fixCopy.PatchFiles = util.MaskSecretsInStringMap(fixCopy.PatchFiles)
 	}
 
+	// armis:ignore cwe:522 reason:text fields contain analysis prose, not code; masking would corrupt explanations with false positives
 	return &fixCopy
 }

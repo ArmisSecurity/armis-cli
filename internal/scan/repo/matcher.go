@@ -43,6 +43,7 @@ func MatchFinding(finding model.Finding, config *SuppressionConfig) MatchResult 
 		}
 	}
 
+	// armis:ignore cwe:20 reason:config.CWEs is parsed from trusted .armisignore directives, not external input
 	for _, d := range config.CWEs {
 		if cweMatches(finding.CWEs, d.Value) {
 			return MatchResult{Matched: true, Directive: d}
