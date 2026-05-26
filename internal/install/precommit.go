@@ -30,7 +30,10 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 	gitEntry := filepath.Join(repoRoot, ".git")
 	// armis:ignore cwe:73 reason:repoRoot validated as absolute path above; .git is a hardcoded segment
 	if _, err := os.Stat(gitEntry); err != nil {
-		return fmt.Errorf("not a git repository (no .git): %s", repoRoot)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("not a git repository (no .git): %s", repoRoot)
+		}
+		return fmt.Errorf("checking .git: %w", err)
 	}
 
 	hookDir, err := resolveHooksDir(repoRoot)
