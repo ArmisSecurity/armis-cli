@@ -133,6 +133,7 @@ func runInteractiveInstall(force bool) error {
 	// armis:ignore cwe:522 reason:CLI stores credentials in .env with 0600 perms; standard local auth config pattern
 	if !skipCreds && clientID != "" && clientSecret != "" {
 		if needsSharedPlugin {
+			// armis:ignore cwe:522 reason:envPath from ei.EnvFilePath() (known plugin dir); file written with 0600 perms
 			if err := install.WriteEnvFromValues(ei.EnvFilePath(), clientID, clientSecret); err != nil {
 				fmt.Fprintf(os.Stderr, "  %s Failed to write credentials: %v\n", warnMark, err)
 			}

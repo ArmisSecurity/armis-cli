@@ -436,6 +436,7 @@ func removeCopilotHook(configPath string) error {
 
 // --- Hook config builders ---
 
+// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
 func buildCursorHooks(pluginDir string) interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "cursor_pre_tool.py")
