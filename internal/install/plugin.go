@@ -384,12 +384,11 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 
 	cleanPath := filepath.Clean(envPath)
 
-	// Back up existing file — abort if backup fails to prevent data loss
+	// Back up existing file via copy (not rename) so the original remains if a later step fails
 	if _, err := os.Stat(cleanPath); err == nil {
 		bakPath := cleanPath + ".bak"
 		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
-		_ = os.Remove(bakPath)
-		if err := os.Rename(cleanPath, bakPath); err != nil {
+		if err := copyFile(cleanPath, bakPath); err != nil {
 			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
 		}
 	}
@@ -433,6 +432,25 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 		return fmt.Errorf("finalizing env file: %w", err)
 	}
 	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(filepath.Clean(src)) //nolint:gosec // src from known plugin dir
+	if err != nil {
+		return err
+	}
+	defer in.Close() //nolint:errcheck // read-only file, close error is informational
+
+	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst from known plugin dir
+	if err != nil {
+		return err
+	}
+
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // venvPython returns the path to the Python interpreter inside a venv.

@@ -42,6 +42,7 @@ Not auto-configurable (manual setup required):
   aider      Aider (no MCP support)`,
 	Example: `  # Interactive setup (prompts for credentials and editors)
   armis-cli install
+  armis-cli install --interactive
 
   # Non-interactive install (for CI/scripts, reads credentials from env)
   armis-cli install --non-interactive
@@ -61,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	installCmd.Flags().Bool("version", false, "Print the installed plugin version and exit")
 	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
+	installCmd.Flags().Bool("interactive", false, "Force interactive setup wizard (even without TTY)")
 	installCmd.Flags().Bool("non-interactive", false, "Disable interactive prompts (for CI/scripts)")
 }
 
@@ -79,13 +81,17 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading --force flag: %w", err)
 	}
 
+	interactive, err := cmd.Flags().GetBool("interactive")
+	if err != nil {
+		return fmt.Errorf("reading --interactive flag: %w", err)
+	}
 	nonInteractive, err := cmd.Flags().GetBool("non-interactive")
 	if err != nil {
 		return fmt.Errorf("reading --non-interactive flag: %w", err)
 	}
 
-	// Interactive mode: no args, TTY detected, and --non-interactive not set
-	if len(args) == 0 && !nonInteractive && cli.IsInteractive() {
+	// Interactive mode: explicit flag, or (no args + TTY + not --non-interactive)
+	if interactive || (len(args) == 0 && !nonInteractive && cli.IsInteractive()) {
 		return runInteractiveInstall(force)
 	}
 

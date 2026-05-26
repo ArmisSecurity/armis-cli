@@ -261,7 +261,7 @@ func readJSONFileAsMapSafe(path string) (map[string]interface{}, error) {
 		return data, nil
 	}
 	if err := json.Unmarshal(b, &data); err != nil {
-		return nil, fmt.Errorf("could not parse %s — skipping hook setup.\n  Fix the JSON syntax or remove the file.\n  Parse error: %w", path, err)
+		return nil, fmt.Errorf("could not parse %s — not modifying hooks config.\n  Fix the JSON syntax or remove the file.\n  Parse error: %w", path, err)
 	}
 	return data, nil
 }
