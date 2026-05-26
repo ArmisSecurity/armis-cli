@@ -105,6 +105,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		Region:       regionHint,
 	}
 
+	// armis:ignore cwe:770 reason:credentials are bounded by caller input (CLI flags/env); request is a single fixed-structure JSON with context timeout
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
