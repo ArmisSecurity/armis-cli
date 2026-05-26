@@ -27,6 +27,7 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 		return fmt.Errorf("repo root must be an absolute path: %s", repoRoot)
 	}
 	gitEntry := filepath.Join(repoRoot, ".git")
+	// armis:ignore cwe:73 reason:repoRoot validated as absolute path above; .git is a hardcoded segment
 	if _, err := os.Stat(gitEntry); err != nil {
 		return fmt.Errorf("not a git repository (no .git): %s", repoRoot)
 	}
@@ -36,6 +37,7 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 		return err
 	}
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
+		// armis:ignore cwe:73 reason:hookDir resolved from git rev-parse or validated repoRoot/.git
 		if err := os.MkdirAll(hookDir, 0o750); err != nil {
 			return fmt.Errorf("creating hooks directory: %w", err)
 		}
@@ -46,6 +48,7 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 	// Build the hook script content
 	armisSection := buildPreCommitSection(pluginDir, opts)
 
+	// armis:ignore cwe:73 reason:hookPath derived from git hooks dir + hardcoded "pre-commit" filename
 	existing, err := os.ReadFile(filepath.Clean(hookPath)) //nolint:gosec // hookPath from git repo + hardcoded segment
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading existing pre-commit hook: %w", err)
@@ -80,6 +83,7 @@ func RemovePreCommit(repoRoot string) error {
 	}
 	hookPath := filepath.Join(hookDir, "pre-commit")
 
+	// armis:ignore cwe:73 reason:hookPath derived from git hooks dir + hardcoded "pre-commit" filename
 	data, err := os.ReadFile(filepath.Clean(hookPath)) //nolint:gosec // hookPath from git repo
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -117,6 +121,7 @@ func RemovePreCommit(repoRoot string) error {
 		return os.Remove(filepath.Clean(hookPath))
 	}
 
+	// armis:ignore cwe:73 reason:hookPath derived from git hooks dir + hardcoded "pre-commit" filename
 	return os.WriteFile(filepath.Clean(hookPath), []byte(remaining+"\n"), 0o755) //nolint:gosec // hookPath from git repo
 }
 
@@ -127,6 +132,7 @@ func IsPreCommitInstalled(repoRoot string) bool {
 		return false
 	}
 	hookPath := filepath.Join(hookDir, "pre-commit")
+	// armis:ignore cwe:73 reason:hookPath derived from git hooks dir + hardcoded "pre-commit" filename
 	data, err := os.ReadFile(filepath.Clean(hookPath)) //nolint:gosec // hookPath from git repo
 	if err != nil {
 		return false
@@ -159,6 +165,7 @@ func resolveHooksDir(repoRoot string) (string, error) {
 		return filepath.Join(gitEntry, "hooks"), nil
 	}
 	// .git file — parse gitdir pointer
+	// armis:ignore cwe:73 reason:gitEntry is repoRoot (validated absolute) + hardcoded ".git"
 	data, err := os.ReadFile(gitEntry) //nolint:gosec // path from validated repoRoot
 	if err != nil {
 		return "", fmt.Errorf("reading .git file: %w", err)

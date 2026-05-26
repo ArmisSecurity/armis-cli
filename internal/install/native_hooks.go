@@ -124,6 +124,7 @@ func InstallNativeHook(client HookClient, pluginDir string) error {
 	if !filepath.IsAbs(pluginDir) {
 		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
 	}
+	// armis:ignore cwe:22 reason:pluginDir validated as absolute above; "hooks" and AdapterPy are compile-time constants
 	adapterPath := filepath.Join(pluginDir, "hooks", client.AdapterPy)
 	if _, err := os.Stat(adapterPath); os.IsNotExist(err) {
 		return fmt.Errorf("hook adapter not found: %s (is the MCP server installed?)", adapterPath)
