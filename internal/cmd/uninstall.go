@@ -248,6 +248,12 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 				printSuccess(e.Name)
 			}
 		}
+
+		if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
+			if err := install.RemoveNativeHook(hc); err != nil {
+				printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
+			}
+		}
 	}
 
 	// Update manifest if one exists

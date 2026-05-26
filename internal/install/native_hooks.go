@@ -26,7 +26,7 @@ type HookClient struct {
 	Name       string
 	AdapterPy  string // filename in hooks/ dir (e.g. "cursor_pre_tool.py")
 	configPath func() string
-	buildHooks func(pluginDir string) interface{}
+	buildHooks func(pluginDir string) map[string]interface{}
 }
 
 // AllHookClients lists every client with native hook support (excluding Claude Code,
@@ -275,16 +275,11 @@ func installMergedHook(pluginDir, configPath string, client HookClient) error {
 		return err
 	}
 
-	hooks := client.buildHooks(pluginDir)
+	newHooks := client.buildHooks(pluginDir)
 
 	hooksSection, _ := data["hooks"].(map[string]interface{})
 	if hooksSection == nil {
 		hooksSection = make(map[string]interface{})
-	}
-
-	newHooks, ok := hooks.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected hook format for %s", client.Name)
 	}
 
 	for key, entries := range newHooks {
@@ -345,7 +340,7 @@ func installCursorHook(pluginDir, configPath string) error {
 		data["version"] = 1
 	}
 
-	hooks := buildCursorHooks(pluginDir).(map[string]interface{})
+	hooks := buildCursorHooks(pluginDir)
 
 	hooksSection, _ := data["hooks"].(map[string]interface{})
 	if hooksSection == nil {
@@ -410,7 +405,7 @@ func installCopilotHook(pluginDir, configPath string) error {
 		data["version"] = 1
 	}
 
-	hooks := buildCopilotHooks(pluginDir).(map[string]interface{})
+	hooks := buildCopilotHooks(pluginDir)
 
 	hooksSection, _ := data["hooks"].(map[string]interface{})
 	if hooksSection == nil {
@@ -438,7 +433,7 @@ func removeCopilotHook(configPath string) error {
 // --- Hook config builders ---
 
 // armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
-func buildCursorHooks(pluginDir string) interface{} {
+func buildCursorHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "cursor_pre_tool.py")
 	cmd := quotedCommand(py, adapter)
@@ -460,7 +455,8 @@ func buildCursorHooks(pluginDir string) interface{} {
 	}
 }
 
-func buildGeminiHooks(pluginDir string) interface{} {
+// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
+func buildGeminiHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "gemini_pre_tool.py")
 	cmd := quotedCommand(py, adapter)
@@ -480,7 +476,8 @@ func buildGeminiHooks(pluginDir string) interface{} {
 	}
 }
 
-func buildCodexHooks(pluginDir string) interface{} {
+// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
+func buildCodexHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "codex_pre_tool.py")
 	cmd := quotedCommand(py, adapter)
@@ -510,7 +507,8 @@ func buildCodexHooks(pluginDir string) interface{} {
 	}
 }
 
-func buildCopilotHooks(pluginDir string) interface{} {
+// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
+func buildCopilotHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "copilot_pre_tool.py")
 	cmd := quotedCommand(py, adapter)
@@ -526,7 +524,8 @@ func buildCopilotHooks(pluginDir string) interface{} {
 	}
 }
 
-func buildClineHooks(pluginDir string) interface{} {
+// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
+func buildClineHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "cline_pre_tool.py")
 	cmd := quotedCommand(py, adapter)

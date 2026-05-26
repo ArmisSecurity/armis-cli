@@ -323,7 +323,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 			return "", "", true, false
 		}
 		if err := validateAndReport(clientID, clientSecret, accessible); err != nil {
-			fmt.Fprintln(os.Stderr, "  Proceeding without credential validation. You can fix the .env file later.")
+			fmt.Fprintln(os.Stderr, "  Credential validation failed. Credentials were not saved — re-run the installer to try again.")
 			return "", "", true, false
 		}
 	}
