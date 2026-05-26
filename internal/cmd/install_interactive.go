@@ -206,7 +206,6 @@ func runInteractiveInstall(force bool) error {
 		if installPreCommit {
 			fmt.Fprintln(os.Stderr, "    Run 'armis-cli hook init' in other repos for pre-commit coverage.")
 		}
-		fmt.Fprintln(os.Stderr, "    Run 'armis-cli scan repo .' to verify everything works.")
 	} else {
 		dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
 		fmt.Fprintln(os.Stderr, dimStyle.Render("  Next steps:"))
@@ -214,7 +213,6 @@ func runInteractiveInstall(force bool) error {
 		if installPreCommit {
 			fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli hook init' in other repos for pre-commit coverage."))
 		}
-		fmt.Fprintln(os.Stderr, dimStyle.Render("    Run 'armis-cli scan repo .' to verify everything works."))
 	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil
