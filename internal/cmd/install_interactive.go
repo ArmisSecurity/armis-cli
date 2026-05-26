@@ -29,7 +29,11 @@ func runInteractiveInstall(force bool) error {
 	}
 	fmt.Fprintln(os.Stderr, "")
 
-	clientID, clientSecret, skipCreds := collectCredentials(theme, accessible)
+	clientID, clientSecret, skipCreds, credsAborted := collectCredentials(theme, accessible)
+	if credsAborted {
+		fmt.Fprintln(os.Stderr, "\n  Setup cancelled.")
+		return nil
+	}
 
 	selectedEditors, installClaude, cancelled := selectEditors(theme, accessible)
 	if cancelled {
@@ -214,7 +218,7 @@ func runInteractiveInstall(force bool) error {
 	return nil
 }
 
-func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecret string, skip bool) {
+func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecret string, skip, aborted bool) {
 	ei := install.NewEditorInstaller()
 	envID := os.Getenv("ARMIS_CLIENT_ID")
 	envSecret := os.Getenv("ARMIS_CLIENT_SECRET")
@@ -222,7 +226,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 	// Auto-validate env vars without asking
 	if envID != "" && envSecret != "" {
 		if err := validateAndReport(envID, envSecret, accessible); err == nil {
-			return envID, envSecret, false
+			return envID, envSecret, false, false
 		}
 		// Invalid — fall through to prompt for new credentials
 	}
@@ -240,10 +244,10 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 			),
 		).WithTheme(theme).WithAccessible(accessible)
 		if err := form.Run(); err != nil {
-			return "", "", true
+			return "", "", false, errors.Is(err, huh.ErrUserAborted)
 		}
 		if keepExisting {
-			return "", "", true
+			return "", "", true, false
 		}
 	}
 
@@ -263,12 +267,12 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 	).WithTheme(theme).WithAccessible(accessible)
 
 	if err := form.Run(); err != nil {
-		return "", "", true
+		return "", "", false, errors.Is(err, huh.ErrUserAborted)
 	}
 
 	if clientID == "" || clientSecret == "" {
 		fmt.Fprintln(os.Stderr, "  Skipping credentials — configure later in the .env file.")
-		return "", "", true
+		return "", "", true, false
 	}
 
 	// Validate credentials
@@ -284,9 +288,16 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 					Value(&retry),
 			),
 		).WithTheme(theme).WithAccessible(accessible)
-		if retryErr := retryForm.Run(); retryErr != nil || !retry {
+		if retryErr := retryForm.Run(); retryErr != nil {
+			if errors.Is(retryErr, huh.ErrUserAborted) {
+				return "", "", false, true
+			}
 			fmt.Fprintln(os.Stderr, "  Skipping credentials — configure later in the .env file.")
-			return "", "", true
+			return "", "", true, false
+		}
+		if !retry {
+			fmt.Fprintln(os.Stderr, "  Skipping credentials — configure later in the .env file.")
+			return "", "", true, false
 		}
 
 		// Second attempt
@@ -304,18 +315,18 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 			),
 		).WithTheme(theme).WithAccessible(accessible)
 		if err := retryInputForm.Run(); err != nil {
-			return "", "", true
+			return "", "", false, errors.Is(err, huh.ErrUserAborted)
 		}
 		if clientID == "" || clientSecret == "" {
-			return "", "", true
+			return "", "", true, false
 		}
 		if err := validateAndReport(clientID, clientSecret, accessible); err != nil {
 			fmt.Fprintln(os.Stderr, "  Proceeding without credential validation. You can fix the .env file later.")
-			return clientID, clientSecret, false
+			return clientID, clientSecret, false, false
 		}
 	}
 
-	return clientID, clientSecret, false
+	return clientID, clientSecret, false, false
 }
 
 func validateAndReport(clientID, clientSecret string, accessible bool) error {

@@ -36,8 +36,14 @@ func init() {
 }
 
 func runHookInit(cmd *cobra.Command, _ []string) error {
-	remove, _ := cmd.Flags().GetBool("remove")
-	failOpen, _ := cmd.Flags().GetBool("fail-open")
+	remove, err := cmd.Flags().GetBool("remove")
+	if err != nil {
+		return fmt.Errorf("reading --remove flag: %w", err)
+	}
+	failOpen, err := cmd.Flags().GetBool("fail-open")
+	if err != nil {
+		return fmt.Errorf("reading --fail-open flag: %w", err)
+	}
 
 	repoRoot := install.DetectGitRoot()
 	if repoRoot == "" {
