@@ -377,6 +377,7 @@ func writeEnvFromEnvironment(envPath string) error {
 // WriteEnvFromValues writes client credentials to a .env file at envPath.
 // If the file already exists, it is backed up to .env.bak before overwriting.
 // The write is atomic (temp file + rename) to prevent corruption on interrupt.
+// armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install functions
 func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	if strings.ContainsAny(clientID, "\n\r") || strings.ContainsAny(clientSecret, "\n\r") {
 		return fmt.Errorf("credentials must not contain newline characters")
@@ -434,6 +435,7 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	return nil
 }
 
+// armis:ignore cwe:73 reason:called only from WriteEnvFromValues with paths from known plugin dir
 func copyFile(src, dst string) error {
 	in, err := os.Open(filepath.Clean(src)) //nolint:gosec // src from known plugin dir
 	if err != nil {
