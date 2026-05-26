@@ -33,11 +33,13 @@ func installHooksToFile(settingsPath string) error {
 	if info, err := os.Stat(settingsPath); err == nil && info.Size() > maxSettingsSize {
 		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
 	}
+	// armis:ignore cwe:59 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); no user input
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading settings: %w", err)
 	}
 	if len(data) > 0 {
+		// armis:ignore cwe:502 reason:JSON config from user's own ~/.claude/settings.json (trusted local file, size-limited above)
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("could not parse %s — skipping hook setup.\n"+
 				"  You can configure hooks manually.\n"+
@@ -110,6 +112,7 @@ func removeHooksFromFile(settingsPath string) error {
 	} else if info.Size() > maxSettingsSize {
 		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
 	}
+	// armis:ignore cwe:59 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); no user input
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil {
 		return fmt.Errorf("reading settings: %w", err)

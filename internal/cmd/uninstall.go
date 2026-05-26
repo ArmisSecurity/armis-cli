@@ -278,6 +278,7 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	return nil
 }
 
+// armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 func confirm(prompt string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
 	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))

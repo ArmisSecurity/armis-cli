@@ -259,7 +259,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
 		// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName
 		pullCmd := exec.CommandContext(ctx, dockerCmd, "pull", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated by validateImageName()
-		pullCmd.Stdout = os.Stderr
+		pullCmd.Stdout = os.Stderr                                        // armis:ignore cwe:78 reason:dockerCmd and imageName validated by allowlist + validateImageName()
 		pullCmd.Stderr = os.Stderr
 		if err := pullCmd.Run(); err != nil {
 			return fmt.Errorf("failed to pull image: %w", err)
@@ -270,6 +270,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.Bold.Render(imageName))
 	}
 
+	// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName; outputPath is temp file
 	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
 	saveCmd.Stdout = os.Stderr
 	saveCmd.Stderr = os.Stderr

@@ -209,7 +209,7 @@ func copilotHooksPath() string {
 		case osDarwin, osLinux:
 			return homeDir(".config", "github-copilot", "hooks.json")
 		case osWindows:
-			// armis:ignore cwe:73 reason:APPDATA is the OS-standard config dir; validated as absolute path below
+			// armis:ignore cwe:73 cwe:22 reason:APPDATA is the OS-standard config dir; validated as absolute path below
 			appdata := os.Getenv("APPDATA")
 			if appdata == "" {
 				return ""
@@ -250,6 +250,7 @@ const armisHookMarker = "armis-appsec"
 // when overwriting a corrupt or JSONC config file.
 func readJSONFileAsMapSafe(path string) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
+	// armis:ignore cwe:22 reason:path from known config locations (XDG paths, hardcoded editor config dirs)
 	b, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path from known config locations
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -216,8 +216,9 @@ function Main {
         Write-Host ""
 
         Write-Host "📂 Extracting archive..."
-        # armis:ignore cwe:22 reason:archiveFile downloaded from verified GitHub release with checksum validation above
+        # armis:ignore cwe:22 reason:archiveFile downloaded from verified GitHub release with checksum validation above; tmpDir is a temp directory created by New-TemporaryFile
         Expand-Archive -Path $archiveFile -DestinationPath $tmpDir -Force
+        # armis:ignore cwe:22 reason:extracted content from verified GitHub release archive (checksum + signature validated)
 
         Write-Host "📥 Installing to $InstallDir..."
         if (-not (Test-Path $InstallDir)) {

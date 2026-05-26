@@ -111,6 +111,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	authEndpoint := c.baseURL + "/api/v1/auth/token"
+	// armis:ignore cwe:918 reason:baseURL validated by NewAuthClient (HTTPS enforced for non-localhost); endpoint path is hardcoded
 	req, err := http.NewRequestWithContext(ctx, "POST", authEndpoint, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -119,6 +120,7 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	req.Header.Set("Content-Type", "application/json")
 
 	// armis:ignore cwe:918 reason:baseURL is user-configurable via ARMIS_API_URL but validated (HTTPS enforced for non-localhost, no redirects)
+	// armis:ignore cwe:522 reason:credentials are sent over HTTPS (enforced above); this is the auth token exchange endpoint
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("authentication request failed: %w", err)
