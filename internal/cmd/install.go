@@ -64,6 +64,7 @@ func init() {
 	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
 	installCmd.Flags().Bool("interactive", false, "Force interactive setup wizard (even without TTY)")
 	installCmd.Flags().Bool("non-interactive", false, "Disable interactive prompts (for CI/scripts)")
+	installCmd.MarkFlagsMutuallyExclusive("interactive", "non-interactive")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {

@@ -18,6 +18,7 @@ var (
 	brandSeparator   = lipgloss.AdaptiveColor{Light: "#C4B5FD", Dark: "#4C1D95"} // purple-300/900 (title underline)
 	brandPanelBorder = lipgloss.AdaptiveColor{Light: "#6366F1", Dark: "#818CF8"} // indigo-500/400 (interactive panels)
 	brandDim         = lipgloss.AdaptiveColor{Light: "#9CA3AF", Dark: "#4B5563"} // gray-400/600
+	brandWarn        = lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"} // amber-600/500
 )
 
 func armisTheme() *huh.Theme {

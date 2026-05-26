@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
@@ -17,9 +18,20 @@ const (
 )
 
 // ValidateCredentials performs a token exchange to verify the credentials are valid.
+// It respects ARMIS_API_URL and ARMIS_REGION env vars to select the correct endpoint.
 // Returns nil on success, or a user-friendly error on failure.
 func ValidateCredentials(clientID, clientSecret string) error {
-	return validateCredentialsWithURL(clientID, clientSecret, auth.ProductionBaseURL)
+	return validateCredentialsWithURL(clientID, clientSecret, resolveBaseURL())
+}
+
+func resolveBaseURL() string {
+	if override := os.Getenv("ARMIS_API_URL"); override != "" {
+		return override
+	}
+	if region := os.Getenv("ARMIS_REGION"); region != "" {
+		return "https://moose." + region + ".armis.com"
+	}
+	return auth.ProductionBaseURL
 }
 
 func validateCredentialsWithURL(clientID, clientSecret, baseURL string) error {

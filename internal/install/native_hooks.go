@@ -586,20 +586,3 @@ func posixQuote(s string) string {
 func quotedCommand(pythonPath, adapterPath string) string {
 	return posixQuote(pythonPath) + " " + posixQuote(adapterPath)
 }
-
-// HookConfigFormat returns the hook config format name for manifest tracking.
-func HookConfigFormat(id HookClientID) string {
-	switch id {
-	case HookClientCursor:
-		return "cursor-hooks"
-	case HookClientGemini:
-		return "gemini-hooks"
-	case HookClientCodex:
-		return "codex-hooks"
-	case HookClientCopilot:
-		return "copilot-hooks"
-	case HookClientCline:
-		return "cline-hooks"
-	}
-	return "unknown"
-}

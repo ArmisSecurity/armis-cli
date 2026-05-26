@@ -51,7 +51,7 @@ func runInteractiveInstall(force bool) error {
 	} else {
 		successMark = lipgloss.NewStyle().Foreground(brandSuccess).Render("✓")
 		failMark = lipgloss.NewStyle().Foreground(brandError).Render("✗")
-		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}).Render("⚠")
+		warnMark = lipgloss.NewStyle().Foreground(brandWarn).Render("⚠")
 	}
 
 	fmt.Fprintln(os.Stderr, "")
@@ -323,7 +323,7 @@ func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecr
 		}
 		if err := validateAndReport(clientID, clientSecret, accessible); err != nil {
 			fmt.Fprintln(os.Stderr, "  Proceeding without credential validation. You can fix the .env file later.")
-			return clientID, clientSecret, false, false
+			return "", "", true, false
 		}
 	}
 
@@ -416,9 +416,9 @@ func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, b
 func offerHookSetup(theme *huh.Theme, accessible bool, hasClaude bool) ([]install.HookClient, bool) {
 	detected := install.DetectHookClients()
 
-	// All covered only when Claude is the sole AI tool (it has hooks via plugin).
-	// When external hook clients exist, default pre-commit ON as defense-in-depth.
-	allCovered := hasClaude && len(detected) == 0
+	// All covered when any AI tool with native hooks is present (Claude via plugin,
+	// or detected clients that will be configured). Pre-commit is optional in that case.
+	allCovered := hasClaude || len(detected) > 0
 
 	// Build hook client options
 	var hookOptions []huh.Option[string]
@@ -473,7 +473,7 @@ func offerHookSetup(theme *huh.Theme, accessible bool, hasClaude bool) ([]instal
 		if allCovered {
 			desc += " Optional — your AI tools already have native hooks."
 		} else {
-			desc += " Recommended — catches commits from tools without native hooks."
+			desc += " Recommended — no AI tools with native hooks detected."
 		}
 		groups = append(groups, huh.NewGroup(
 			huh.NewConfirm().

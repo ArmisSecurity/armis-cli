@@ -70,7 +70,7 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		titleStyle = lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
 		separatorStyle = lipgloss.NewStyle().Foreground(brandSeparator)
 		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
-		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"})
+		warnMark = lipgloss.NewStyle().Foreground(brandWarn)
 		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
 	}
 
@@ -187,7 +187,7 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	if styled {
 		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
 		failMark = lipgloss.NewStyle().Foreground(brandError)
-		warnMark = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"})
+		warnMark = lipgloss.NewStyle().Foreground(brandWarn)
 		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
 	}
 
