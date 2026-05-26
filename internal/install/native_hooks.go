@@ -120,7 +120,7 @@ func hookConfigPath(id HookClientID, defaultFn func() string) string {
 // InstallNativeHook writes the hook config for a client, pointing to the
 // Python adapter in the plugin directory.
 func InstallNativeHook(client HookClient, pluginDir string) error {
-	// armis:ignore cwe:78 reason:pluginDir is resolved from known install location, not user input
+	// armis:ignore cwe:78,cwe:22 reason:pluginDir is resolved from known install location, not user input
 	if !filepath.IsAbs(pluginDir) {
 		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
 	}

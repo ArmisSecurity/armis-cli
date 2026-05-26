@@ -26,6 +26,7 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 	if !filepath.IsAbs(repoRoot) {
 		return fmt.Errorf("repo root must be an absolute path: %s", repoRoot)
 	}
+	// armis:ignore cwe:73 reason:repoRoot validated absolute by guard above; ".git" is hardcoded literal
 	gitEntry := filepath.Join(repoRoot, ".git")
 	// armis:ignore cwe:73 reason:repoRoot validated as absolute path above; .git is a hardcoded segment
 	if _, err := os.Stat(gitEntry); err != nil {
@@ -203,11 +204,13 @@ func buildPreCommitSection(pluginDir string, opts PreCommitOpts) string {
 		// Use the plugin's pre-commit script (handles .scan-pass verification)
 		if opts.FailOpen {
 			sb.WriteString("# Armis AppSec: security scan verification (fail-open mode)\n")
+			// armis:ignore cwe:78 reason:pluginPreCommit is pluginDir+hardcoded segments; posixQuote escapes shell metacharacters
 			sb.WriteString(fmt.Sprintf("if ! %s; then\n", posixQuote(pluginPreCommit)))
 			sb.WriteString("  echo \"⚠️  Armis: scan verification failed (continuing in fail-open mode)\" >&2\n")
 			sb.WriteString("fi\n")
 		} else {
 			sb.WriteString("# Armis AppSec: security scan verification\n")
+			// armis:ignore cwe:78 reason:pluginPreCommit is pluginDir+hardcoded segments; posixQuote escapes shell metacharacters
 			sb.WriteString(fmt.Sprintf("exec %s\n", posixQuote(pluginPreCommit)))
 		}
 	} else {
