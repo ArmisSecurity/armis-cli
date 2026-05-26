@@ -61,6 +61,7 @@ func (ci *ClaudeInstaller) Install() error {
 		return fmt.Errorf("failed to enable plugin: %w", err)
 	}
 
+	// armis:ignore cwe:522 reason:env file written with 0600 permissions; credentials sourced from caller's environment variables
 	if err := writeEnvFromEnvironment(ci.EnvFilePath()); err != nil {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}

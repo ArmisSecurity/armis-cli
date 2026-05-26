@@ -321,6 +321,7 @@ func imageExistsLocally(ctx context.Context, dockerCmd, imageName string) bool {
 	if _, err := validateImageName(imageName); err != nil {
 		return false
 	}
+	// armis:ignore cwe:78 cwe:94 reason:dockerCmd validated by validateDockerCommand; imageName validated by validateImageName
 	cmd := exec.CommandContext(ctx, dockerCmd, "image", "inspect", imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated above
 	cmd.Stdout = io.Discard                                                   // Suppress JSON output on successful inspect
 	cmd.Stderr = io.Discard                                                   // Suppress "Error: no such image" noise

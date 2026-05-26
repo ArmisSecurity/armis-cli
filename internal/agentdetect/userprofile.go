@@ -28,10 +28,10 @@ func enumerateUserDirs(baseDir string, skipSet map[string]bool) ([]UserHome, err
 		if skipSet[name] {
 			continue
 		}
-		// armis:ignore cwe:770 reason:bounded by number of OS user directories under /home or /Users
+		// armis:ignore cwe:770 cwe:22 reason:bounded by OS user directories; baseDir is hardcoded /home or /Users; name from os directory listing
 		users = append(users, UserHome{
 			Username: name,
-			HomeDir:  filepath.Join(baseDir, name),
+			HomeDir:  filepath.Join(baseDir, name), // armis:ignore cwe:22 reason:baseDir is hardcoded /home or /Users; name from OS directory listing
 		})
 	}
 	return users, nil

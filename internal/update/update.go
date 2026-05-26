@@ -193,6 +193,7 @@ func (c *Checker) fetchLatestVersion(ctx context.Context) (string, error) {
 // armis:ignore cwe:73 reason:cacheDir set from XDG/home path; SanitizePath validates before use
 func (c *Checker) getCacheFilePath() string {
 	if c.cacheDir != "" {
+		// armis:ignore cwe:73 reason:cacheDir set from XDG/home path; SanitizePath validates before use
 		sanitized, err := util.SanitizePath(c.cacheDir)
 		if err != nil {
 			return "" // invalid cacheDir, disable caching

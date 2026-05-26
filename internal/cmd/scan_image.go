@@ -107,6 +107,7 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		if tarballPath != "" {
+			// armis:ignore cwe:22 reason:tarballPath is immediately sanitized by SanitizePath; only sanitizedPath is used
 			sanitizedPath, pathErr := util.SanitizePath(tarballPath)
 			if pathErr != nil {
 				return fmt.Errorf("invalid tarball path: %w", pathErr)
