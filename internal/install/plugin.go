@@ -392,6 +392,8 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 		if err := copyFile(cleanPath, bakPath); err != nil {
 			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking existing env file: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
@@ -429,6 +431,10 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	closed = true
 	// armis:ignore cwe:22 reason:cleanPath derived from known plugin dir + ".env", not external input
 	if err := os.Rename(tmpPath, cleanPath); err != nil { //nolint:gosec // G703: both paths from known plugin dir
+		if runtime.GOOS != "windows" {
+			_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+			return fmt.Errorf("finalizing env file: %w", err)
+		}
 		// On Windows, Rename fails if destination exists; remove and retry.
 		_ = os.Remove(cleanPath) //nolint:gosec // G703: cleanPath from known plugin dir; already backed up above
 		if retryErr := os.Rename(tmpPath, cleanPath); retryErr != nil {
