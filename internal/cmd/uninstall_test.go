@@ -96,7 +96,7 @@ func TestUninstallTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("copilot maps to vscode", func(t *testing.T) {
+	t.Run("copilot maps to copilot cli", func(t *testing.T) {
 		err := uninstallTargets(u, []string{"copilot"})
 		if err != nil {
 			t.Errorf("uninstallTargets(copilot) unexpected error: %v", err)

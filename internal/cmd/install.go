@@ -23,8 +23,8 @@ Supported editors:
   claude          Claude Code (uses plugin system)
   claude-desktop  Claude Desktop app (macOS/Windows)
   codex           Codex CLI (registers MCP server + hooks)
-  vscode          VS Code / GitHub Copilot
-  copilot         Alias for vscode
+  vscode          VS Code / GitHub Copilot Chat extension
+  copilot         GitHub Copilot CLI
   cursor          Cursor
   windsurf        Windsurf (Codeium)
   zed             Zed
@@ -220,7 +220,7 @@ func installTargets(targets []string, force bool) error {
 		case targetCodex:
 			hasCodex = true
 		case "copilot":
-			editorIDs = append(editorIDs, install.EditorVSCode)
+			editorIDs = append(editorIDs, install.EditorCopilotCLI)
 		case "jetbrains":
 			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project.")
 			fmt.Fprintln(os.Stderr, "After installing, copy .jb-mcp.json to your project root.")

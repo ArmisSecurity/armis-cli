@@ -243,10 +243,10 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 				printSuccess("Codex CLI")
 			}
 		case targetCopilot:
-			if err := u.DeregisterEditor(install.EditorVSCode); err != nil {
-				printFail(fmt.Sprintf("VS Code: %v", err))
+			if err := u.DeregisterEditor(install.EditorCopilotCLI); err != nil {
+				printFail(fmt.Sprintf("Copilot CLI: %v", err))
 			} else {
-				printSuccess("VS Code")
+				printSuccess("Copilot CLI")
 			}
 		case "jetbrains":
 			printWarn("JetBrains: Remove .jb-mcp.json from your project root manually.")
@@ -270,13 +270,9 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			}
 		}
 
-		// Remove native hook config — skip for "copilot" which is an alias for
-		// VS Code MCP, not the Copilot CLI hook at ~/.config/github-copilot/.
-		if name != targetCopilot {
-			if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
-				if err := install.RemoveNativeHook(hc); err != nil {
-					printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
-				}
+		if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
+			if err := install.RemoveNativeHook(hc); err != nil {
+				printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
 			}
 		}
 	}
@@ -291,7 +287,7 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			case targetCodex:
 				manifest.Codex = nil
 			case targetCopilot:
-				manifest.RemoveEditor(install.EditorVSCode)
+				manifest.RemoveEditor(install.EditorCopilotCLI)
 			default:
 				manifest.RemoveEditor(install.EditorID(name))
 			}
