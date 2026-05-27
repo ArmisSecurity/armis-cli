@@ -108,6 +108,7 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 		// Redirect HOME so cleanupLegacyCopilotHook targets the temp dir.
 		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
 		defer func() { hookConfigPathOverrides = nil }()
 
 		client, _ := HookClientByID(HookClientCopilot)
@@ -163,6 +164,7 @@ func TestInstallNativeHook(t *testing.T) {
 		writeTestJSON(t, legacyPath, legacy)
 
 		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
 		cleanupLegacyCopilotHook()
 
 		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
@@ -193,6 +195,7 @@ func TestInstallNativeHook(t *testing.T) {
 		writeTestJSON(t, legacyPath, legacy)
 
 		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
 		cleanupLegacyCopilotHook()
 
 		if _, err := os.Stat(legacyPath); err != nil {
