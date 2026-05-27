@@ -207,12 +207,18 @@ func (d *copilotDetector) Detect(resolvedHome, homeDir string, platform Platform
 	if hasJetBrainsPlugin(resolvedHome, platform, homeDir, "github-copilot") {
 		return true
 	}
+	if dirExists(resolvedHome, filepath.Join(homeDir, ".copilot")) {
+		return true
+	}
 	return dirExists(resolvedHome, filepath.Join(homeDir, ".config", "github-copilot"))
 }
 
 func (d *copilotDetector) CheckMCP(resolvedHome, homeDir string, platform Platform) bool {
 	mcpPath := filepath.Join(platform.VSCodeUserConfigDir(homeDir), "mcp.json")
-	return HasArmisMCP(resolvedHome, mcpPath) || HasArmisMCPInVSCodeFormat(resolvedHome, mcpPath)
+	if HasArmisMCP(resolvedHome, mcpPath) || HasArmisMCPInVSCodeFormat(resolvedHome, mcpPath) {
+		return true
+	}
+	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".copilot", "mcp-config.json"))
 }
 
 func (d *copilotDetector) DetectVersion(resolvedHome, homeDir string, platform Platform) string {

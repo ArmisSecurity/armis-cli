@@ -27,6 +27,7 @@ const (
 	EditorRooCode       EditorID = "roocode"
 	EditorJunie         EditorID = "junie"
 	EditorClaudeDesktop EditorID = "claude-desktop"
+	EditorCopilotCLI    EditorID = "copilot"
 )
 
 // Editor represents a code editor with MCP server support.
@@ -49,6 +50,7 @@ var AllEditors = []Editor{
 	{EditorRooCode, "Roo Code"},
 	{EditorJunie, "Junie"},
 	{EditorClaudeDesktop, "Claude Desktop"},
+	{EditorCopilotCLI, "Copilot CLI"},
 }
 
 // EditorByID returns the editor with the given ID.
@@ -217,6 +219,8 @@ func defaultConfigPath(id EditorID) string {
 			return ""
 		}
 		return appSupportPath("Claude", "claude_desktop_config.json")
+	case EditorCopilotCLI:
+		return homeDir(".copilot", "mcp-config.json")
 	}
 	return ""
 }

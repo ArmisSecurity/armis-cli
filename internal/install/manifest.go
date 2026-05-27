@@ -19,6 +19,7 @@ type Manifest struct {
 	PluginDir     string                     `json:"pluginDir"`
 	Editors       map[EditorID]ManifestEntry `json:"editors,omitempty"`
 	Claude        *ManifestClaude            `json:"claude,omitempty"`
+	Codex         *ManifestCodex             `json:"codex,omitempty"`
 }
 
 // ManifestEntry records where an editor was registered.
@@ -30,6 +31,11 @@ type ManifestEntry struct {
 // ManifestClaude records Claude Code installation details.
 type ManifestClaude struct {
 	CacheDir string `json:"cacheDir"`
+}
+
+// ManifestCodex records Codex CLI MCP registration details.
+type ManifestCodex struct {
+	ConfigFile string `json:"configFile"`
 }
 
 // ManifestPath returns the path to the manifest file for the given plugin directory.
@@ -107,6 +113,11 @@ func (m *Manifest) RemoveEditor(id EditorID) {
 // SetClaude records Claude Code installation in the manifest.
 func (m *Manifest) SetClaude(cacheDir string) {
 	m.Claude = &ManifestClaude{CacheDir: cacheDir}
+}
+
+// SetCodex records Codex CLI MCP registration in the manifest.
+func (m *Manifest) SetCodex(configFile string) {
+	m.Codex = &ManifestCodex{ConfigFile: configFile}
 }
 
 // ConfigFormat returns the JSON format identifier for a given editor.

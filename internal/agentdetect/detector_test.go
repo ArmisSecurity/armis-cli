@@ -249,6 +249,13 @@ func TestCopilotDetector_Detect(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "copilot cli dir exists",
+			setup: func(t *testing.T, home string, _ *mockPlatform) {
+				mustMkdirAll(t, filepath.Join(home, ".copilot"))
+			},
+			expected: true,
+		},
+		{
 			name:     "nothing exists",
 			setup:    func(_ *testing.T, _ string, _ *mockPlatform) {},
 			expected: false,
@@ -294,6 +301,18 @@ func TestCopilotDetector_CheckMCP(t *testing.T) {
 		p.vsCodeConfigDir = configDir
 		if !d.CheckMCP(home, home, p) {
 			t.Error("CheckMCP() should return true for VS Code servers format")
+		}
+	})
+
+	t.Run("copilot cli config", func(t *testing.T) {
+		home := resolvedTempDir(t)
+		copilotDir := filepath.Join(home, ".copilot")
+		mustMkdirAll(t, copilotDir)
+		mustWriteFile(t, filepath.Join(copilotDir, "mcp-config.json"),
+			`{"mcpServers":{"armis-appsec":{"command":"python3","args":["server.py"]}}}`)
+		p := newMockPlatform(home)
+		if !d.CheckMCP(home, home, p) {
+			t.Error("CheckMCP() should return true for Copilot CLI mcp-config.json")
 		}
 	})
 }

@@ -22,8 +22,9 @@ Specify one or more editor names to target specific tools.
 Supported editors:
   claude          Claude Code (uses plugin system)
   claude-desktop  Claude Desktop app (macOS/Windows)
-  vscode          VS Code / GitHub Copilot
-  copilot         Alias for vscode
+  codex           Codex CLI (registers MCP server + hooks)
+  vscode          VS Code / GitHub Copilot Chat extension
+  copilot         GitHub Copilot CLI
   cursor          Cursor
   windsurf        Windsurf (Codeium)
   zed             Zed
@@ -175,6 +176,24 @@ func installAll(force bool) error {
 		manifest.SetClaude(ci.PluginCacheDir())
 	}
 
+	if install.IsCodexDetected() {
+		if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ Codex CLI (MCP): %v\n", err)
+			failed = append(failed, "Codex CLI")
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
+			registered = append(registered, "Codex CLI")
+			manifest.SetCodex(install.CodexConfigPath())
+		}
+		if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
+			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+			}
+		}
+	}
+
 	if err := install.WriteManifest(manifest); err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 	}
@@ -199,12 +218,16 @@ func installTargets(targets []string, force bool) error {
 	hasClaude := false
 	var editorIDs []install.EditorID
 
+	hasCodex := false
+
 	for _, name := range targets {
 		switch name {
 		case "claude":
 			hasClaude = true
+		case targetCodex:
+			hasCodex = true
 		case "copilot":
-			editorIDs = append(editorIDs, install.EditorVSCode)
+			editorIDs = append(editorIDs, install.EditorCopilotCLI)
 		case "jetbrains":
 			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project.")
 			fmt.Fprintln(os.Stderr, "After installing, copy .jb-mcp.json to your project root.")
@@ -230,7 +253,7 @@ func installTargets(targets []string, force bool) error {
 		}
 	}
 
-	needsSharedPlugin := len(editorIDs) > 0
+	needsSharedPlugin := len(editorIDs) > 0 || hasCodex
 	var ei *install.EditorInstaller
 
 	if needsSharedPlugin {
@@ -265,6 +288,23 @@ func installTargets(targets []string, force bool) error {
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 			}
 		}
+
+		if hasCodex {
+			if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ Codex CLI (MCP): %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
+				manifest.SetCodex(install.CodexConfigPath())
+			}
+			if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
+				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+				}
+			}
+		}
+
 		if err := install.WriteManifest(manifest); err != nil {
 			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
 		}

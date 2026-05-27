@@ -145,6 +145,20 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	if removed, err := install.DeregisterCodexMCP(); err != nil {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Codex CLI: %v\n", warnMark.Render("⚠"), err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI: %v\n", err)
+		}
+	} else if removed {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Removed from Codex CLI\n", successMark.Render("✓"))
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ Removed from Codex CLI\n")
+		}
+	}
+
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
@@ -174,11 +188,6 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
-
-const (
-	targetClaude  = "claude"
-	targetCopilot = "copilot"
-)
 
 func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	styled := cli.ColorsEnabled()
@@ -221,11 +230,17 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			} else {
 				printSuccess("Claude Code")
 			}
+		case targetCodex:
+			if removed, err := install.DeregisterCodexMCP(); err != nil {
+				printFail(fmt.Sprintf("Codex CLI: %v", err))
+			} else if removed {
+				printSuccess("Codex CLI")
+			}
 		case targetCopilot:
-			if err := u.DeregisterEditor(install.EditorVSCode); err != nil {
-				printFail(fmt.Sprintf("VS Code: %v", err))
+			if err := u.DeregisterEditor(install.EditorCopilotCLI); err != nil {
+				printFail(fmt.Sprintf("Copilot CLI: %v", err))
 			} else {
-				printSuccess("VS Code")
+				printSuccess("Copilot CLI")
 			}
 		case "jetbrains":
 			printWarn("JetBrains: Remove .jb-mcp.json from your project root manually.")
@@ -249,13 +264,9 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			}
 		}
 
-		// Remove native hook config — skip for "copilot" which is an alias for
-		// VS Code MCP, not the Copilot CLI hook at ~/.config/github-copilot/.
-		if name != targetCopilot {
-			if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
-				if err := install.RemoveNativeHook(hc); err != nil {
-					printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
-				}
+		if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
+			if err := install.RemoveNativeHook(hc); err != nil {
+				printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
 			}
 		}
 	}
@@ -267,8 +278,10 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			switch name {
 			case targetClaude:
 				manifest.Claude = nil
+			case targetCodex:
+				manifest.Codex = nil
 			case targetCopilot:
-				manifest.RemoveEditor(install.EditorVSCode)
+				manifest.RemoveEditor(install.EditorCopilotCLI)
 			default:
 				manifest.RemoveEditor(install.EditorID(name))
 			}
