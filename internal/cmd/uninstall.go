@@ -145,6 +145,20 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	if err := install.DeregisterCodexMCP(); err != nil {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Codex CLI: %v\n", warnMark.Render("⚠"), err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI: %v\n", err)
+		}
+	} else if install.IsCodexDetected() {
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s Removed from Codex CLI\n", successMark.Render("✓"))
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✓ Removed from Codex CLI\n")
+		}
+	}
+
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
@@ -177,6 +191,7 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 
 const (
 	targetClaude  = "claude"
+	targetCodex   = "codex"
 	targetCopilot = "copilot"
 )
 
@@ -220,6 +235,12 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 				printFail(fmt.Sprintf("Claude Code: %v", err))
 			} else {
 				printSuccess("Claude Code")
+			}
+		case targetCodex:
+			if err := install.DeregisterCodexMCP(); err != nil {
+				printFail(fmt.Sprintf("Codex CLI: %v", err))
+			} else {
+				printSuccess("Codex CLI")
 			}
 		case targetCopilot:
 			if err := u.DeregisterEditor(install.EditorVSCode); err != nil {
@@ -267,6 +288,8 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			switch name {
 			case targetClaude:
 				manifest.Claude = nil
+			case targetCodex:
+				manifest.Codex = nil
 			case targetCopilot:
 				manifest.RemoveEditor(install.EditorVSCode)
 			default:

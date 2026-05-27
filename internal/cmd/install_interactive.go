@@ -35,12 +35,15 @@ func runInteractiveInstall(force bool) error {
 		return nil
 	}
 
-	selectedEditors, installClaude, cancelled := selectEditors(theme, accessible)
-	if cancelled {
+	editorResult := selectEditorsWithCodex(theme, accessible)
+	if editorResult.cancelled {
 		fmt.Fprintln(os.Stderr, "\n  Setup cancelled.")
 		return nil
 	}
-	if len(selectedEditors) == 0 && !installClaude {
+	selectedEditors := editorResult.editors
+	installClaude := editorResult.installClaude
+	installCodex := editorResult.installCodex
+	if len(selectedEditors) == 0 && !installClaude && !installCodex {
 		return fmt.Errorf("no editors selected — nothing to install")
 	}
 
@@ -57,7 +60,7 @@ func runInteractiveInstall(force bool) error {
 	fmt.Fprintln(os.Stderr, "")
 
 	ei := install.NewEditorInstaller()
-	needsSharedPlugin := len(selectedEditors) > 0
+	needsSharedPlugin := len(selectedEditors) > 0 || installCodex
 
 	if needsSharedPlugin {
 		spinner := progress.NewSpinner("Downloading MCP server...", !cli.ColorsEnabled())
@@ -89,6 +92,15 @@ func runInteractiveInstall(force bool) error {
 			} else {
 				registered = append(registered, e.Name)
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+			}
+		}
+
+		if installCodex {
+			if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
+				failures = append(failures, fmt.Sprintf("Codex CLI: %v", err))
+			} else {
+				registered = append(registered, "Codex CLI")
+				manifest.SetCodex(install.CodexConfigPath())
 			}
 		}
 
@@ -352,17 +364,26 @@ func validateAndReport(clientID, clientSecret string, accessible bool) error {
 	return nil
 }
 
-func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, bool) {
+// selectEditorsResult holds the selection from the editor picker.
+type selectEditorsResult struct {
+	editors       []install.Editor
+	installClaude bool
+	installCodex  bool
+	cancelled     bool
+}
+
+func selectEditorsWithCodex(theme *huh.Theme, accessible bool) selectEditorsResult {
 	detected := install.DetectedEditors()
 
 	claudeAvailable := false
 	if _, err := install.NewClaudeInstaller(); err == nil {
 		claudeAvailable = true
 	}
+	codexAvailable := install.IsCodexDetected()
 
-	if len(detected) == 0 && !claudeAvailable {
+	if len(detected) == 0 && !claudeAvailable && !codexAvailable {
 		fmt.Fprintln(os.Stderr, "  No supported editors detected.")
-		return nil, false, false
+		return selectEditorsResult{}
 	}
 
 	var options []huh.Option[string]
@@ -376,6 +397,10 @@ func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, b
 	if claudeAvailable {
 		options = append(options, huh.NewOption("Claude Code", "claude"))
 		allEditorKeys = append(allEditorKeys, "claude")
+	}
+	if codexAvailable {
+		options = append(options, huh.NewOption("Codex CLI", targetCodex))
+		allEditorKeys = append(allEditorKeys, targetCodex)
 	}
 
 	// Pre-select all by default
@@ -393,23 +418,32 @@ func selectEditors(theme *huh.Theme, accessible bool) ([]install.Editor, bool, b
 	).WithTheme(theme).WithAccessible(accessible)
 
 	if err := form.Run(); err != nil {
-		return nil, false, true
+		return selectEditorsResult{cancelled: true}
 	}
 
 	var editors []install.Editor
 	installClaude := false
+	installCodex := false
 
 	for _, sel := range selected {
-		if sel == "claude" {
+		switch sel {
+		case "claude":
 			installClaude = true
-			continue
-		}
-		if e, ok := install.EditorByID(install.EditorID(sel)); ok {
-			editors = append(editors, e)
+		case targetCodex:
+			installCodex = true
+		default:
+			if e, ok := install.EditorByID(install.EditorID(sel)); ok {
+				editors = append(editors, e)
+			}
 		}
 	}
 
-	return editors, installClaude, false
+	return selectEditorsResult{
+		editors:       editors,
+		installClaude: installClaude,
+		installCodex:  installCodex,
+		cancelled:     false,
+	}
 }
 
 func offerHookSetup(theme *huh.Theme, accessible bool, hasClaude bool) ([]install.HookClient, bool) {
