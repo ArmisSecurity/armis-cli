@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -29,10 +30,10 @@ func TestRegisterCodexMCP_MissingFile(t *testing.T) {
 	if !strings.Contains(got, "[mcp_servers.armis_scanner]") {
 		t.Errorf("missing section header in:\n%s", got)
 	}
-	if !strings.Contains(got, `command = "`+venvPython(pluginDir)+`"`) {
+	if !strings.Contains(got, "command = "+tomlQuote(venvPython(pluginDir))) {
 		t.Errorf("missing command in:\n%s", got)
 	}
-	if !strings.Contains(got, filepath.Join(pluginDir, "server.py")) {
+	if !strings.Contains(got, tomlQuote(filepath.Join(pluginDir, "server.py"))) {
 		t.Errorf("missing server.py path in:\n%s", got)
 	}
 }
@@ -147,8 +148,8 @@ args = ["-y", "@upstash/context7-mcp"]
 	if strings.Contains(got, "/old/path/") {
 		t.Errorf("old path still present:\n%s", got)
 	}
-	// New path present
-	if !strings.Contains(got, venvPython(pluginDir)) {
+	// New path present (TOML-escaped)
+	if !strings.Contains(got, tomlQuote(venvPython(pluginDir))) {
 		t.Errorf("new python path missing:\n%s", got)
 	}
 	// Other sections preserved
@@ -274,7 +275,12 @@ func TestRegisterCodexMCP_RelativePath(t *testing.T) {
 // setupFakeVenv creates a minimal directory structure so venvPython resolves.
 func setupFakeVenv(t *testing.T, pluginDir string) {
 	t.Helper()
-	venvBin := filepath.Join(pluginDir, ".venv", "bin")
+	var venvBin string
+	if runtime.GOOS == osWindows {
+		venvBin = filepath.Join(pluginDir, ".venv", "Scripts")
+	} else {
+		venvBin = filepath.Join(pluginDir, ".venv", "bin")
+	}
 	if err := os.MkdirAll(venvBin, 0o750); err != nil {
 		t.Fatal(err)
 	}

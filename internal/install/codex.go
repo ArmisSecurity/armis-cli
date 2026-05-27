@@ -209,20 +209,20 @@ func writeFileAtomic(path, content string) error {
 
 	if _, err := f.WriteString(content); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("writing config: %w", err)
 	}
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("setting permissions: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("closing temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("renaming config: %w", err)
 	}
 	return nil
