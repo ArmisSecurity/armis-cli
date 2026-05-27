@@ -374,6 +374,97 @@ func writeEnvFromEnvironment(envPath string) error {
 	return nil
 }
 
+// WriteEnvFromValues writes client credentials to a .env file at envPath.
+// If the file already exists, it is backed up to .env.bak before overwriting.
+// The write is atomic (temp file + rename) to prevent corruption on interrupt.
+// armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install functions
+func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
+	if strings.ContainsAny(clientID, "\n\r") || strings.ContainsAny(clientSecret, "\n\r") {
+		return fmt.Errorf("credentials must not contain newline characters")
+	}
+
+	cleanPath := filepath.Clean(envPath)
+
+	// Back up existing file via copy (not rename) so the original remains if a later step fails
+	if _, err := os.Stat(cleanPath); err == nil {
+		bakPath := cleanPath + ".bak"
+		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
+		if err := copyFile(cleanPath, bakPath); err != nil {
+			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking existing env file: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
+		return fmt.Errorf("creating env directory: %w", err)
+	}
+
+	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
+	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+
+	// Atomic write: randomized temp file + rename
+	// armis:ignore cwe:73 reason:temp file created in same directory as target, derived from known plugin dir
+	tmpFile, err := os.CreateTemp(filepath.Dir(cleanPath), ".env.tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temp env file: %w", err)
+	}
+	tmpPath := tmpFile.Name() //nolint:gosec // G703: temp file created in same dir as target via os.CreateTemp
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmpFile.Close()
+		}
+	}()
+	if _, err := tmpFile.WriteString(content); err != nil {
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+		return fmt.Errorf("writing temp env file: %w", err)
+	}
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+		return fmt.Errorf("setting env file permissions: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+		return fmt.Errorf("closing temp env file: %w", err)
+	}
+	closed = true
+	// armis:ignore cwe:22 reason:cleanPath derived from known plugin dir + ".env", not external input
+	if err := os.Rename(tmpPath, cleanPath); err != nil { //nolint:gosec // G703: both paths from known plugin dir
+		if runtime.GOOS != osWindows {
+			_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+			return fmt.Errorf("finalizing env file: %w", err)
+		}
+		// On Windows, Rename fails if destination exists; remove and retry.
+		_ = os.Remove(cleanPath) //nolint:gosec // G703: cleanPath from known plugin dir; already backed up above
+		if retryErr := os.Rename(tmpPath, cleanPath); retryErr != nil {
+			_ = os.Remove(tmpPath) //nolint:gosec // G703: tmpPath from os.CreateTemp in known plugin dir
+			return fmt.Errorf("finalizing env file: %w", retryErr)
+		}
+	}
+	return nil
+}
+
+// armis:ignore cwe:73 reason:called only from WriteEnvFromValues with paths from known plugin dir
+func copyFile(src, dst string) error {
+	in, err := os.Open(filepath.Clean(src)) //nolint:gosec // src from known plugin dir
+	if err != nil {
+		return err
+	}
+	defer in.Close() //nolint:errcheck // read-only file, close error is informational
+
+	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst from known plugin dir
+	if err != nil {
+		return err
+	}
+
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // venvPython returns the path to the Python interpreter inside a venv.
 func venvPython(pluginDir string) string {
 	if runtime.GOOS == osWindows {

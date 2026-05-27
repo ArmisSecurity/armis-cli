@@ -75,7 +75,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 		// armis:ignore cwe:918 reason:URL validated by api.Client caller (HTTPS enforced, no redirects)
 		resp, err = c.httpClient.Do(req) //nolint:gosec // G704: URL is from API client, validated before use
-		if err != nil {
+		if err != nil {                  // armis:ignore cwe:918 reason:URL validated upstream by api.Client (HTTPS enforced)
 			// Close response body if present to prevent resource leaks
 			// (some HTTP errors may return both a response and an error)
 			if resp != nil && resp.Body != nil {

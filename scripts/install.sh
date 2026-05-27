@@ -255,6 +255,7 @@ verify_checksums() {
     local checksums_sig="$3"
 
     # armis:ignore cwe:494 reason:VERIFY defaults to true; explicit opt-out for environments without cosign/sha256sum
+    # armis:ignore cwe:347 reason:VERIFY defaults to true; when true, cosign or sha256sum verifies authenticity below
     if [ "$VERIFY" != "true" ]; then
         echo "⚠️  Skipping verification (VERIFY=false)"
         return 0
@@ -394,7 +395,7 @@ main() {
 
     # armis:ignore cwe:367 reason:TOCTOU between writable-check and mv is acceptable for installer; no security boundary crossed
     if [ -w "$INSTALL_DIR" ]; then
-        # armis:ignore cwe:73 cwe:59 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
+        # armis:ignore cwe:73 cwe:59 cwe:367 reason:INSTALL_DIR validated by validate_install_dir() when user-set; defaults are hardcoded safe paths
         # armis:ignore cwe:367 reason:mv after writable-check; acceptable TOCTOU for local installer binary placement
         mv "$BINARY_FILE" "$TARGET_PATH" || fail "Failed to move binary to $TARGET_PATH"
     else
