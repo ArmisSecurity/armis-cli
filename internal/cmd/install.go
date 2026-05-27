@@ -178,12 +178,19 @@ func installAll(force bool) error {
 
 	if install.IsCodexDetected() {
 		if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ Codex CLI: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  ✗ Codex CLI (MCP): %v\n", err)
 			failed = append(failed, "Codex CLI")
 		} else {
-			fmt.Fprintf(os.Stderr, "  ✓ Codex CLI\n")
+			fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 			registered = append(registered, "Codex CLI")
 			manifest.SetCodex(install.CodexConfigPath())
+		}
+		if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
+			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+			}
 		}
 	}
 

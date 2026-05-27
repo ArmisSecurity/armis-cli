@@ -161,6 +161,35 @@ args = ["-y", "@upstash/context7-mcp"]
 	}
 }
 
+func TestDeregisterCodexMCP_SectionAtEOFWithTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.toml")
+	codexConfigPathOverride = configFile
+	t.Cleanup(func() { codexConfigPathOverride = "" })
+
+	// Section is the last thing in the file, WITH trailing newline
+	existing := "[mcp_servers.armis_scanner]\ncommand = \"/old/python\"\nargs = [\"/old/server.py\"]\n"
+	if err := os.WriteFile(configFile, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := DeregisterCodexMCP()
+	if err != nil {
+		t.Fatalf("DeregisterCodexMCP() error: %v", err)
+	}
+	if !removed {
+		t.Error("DeregisterCodexMCP() returned false, want true")
+	}
+
+	content, err := os.ReadFile(configFile) //nolint:gosec // test file with controlled path
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if strings.Contains(string(content), "armis_scanner") {
+		t.Errorf("section not removed:\n%s", string(content))
+	}
+}
+
 func TestDeregisterCodexMCP(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.toml")

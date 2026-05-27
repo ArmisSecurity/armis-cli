@@ -171,24 +171,24 @@ func findTOMLSectionBounds(content, header string) (int, int) {
 		endLine--
 	}
 
-	// Calculate byte offsets.
-	// Only add +1 (for \n) between lines, not after the final line if there's
-	// no trailing newline in the original content.
-	hasTrailingNewline := strings.HasSuffix(content, "\n")
+	// Calculate byte offsets using character positions in the original content.
+	// Each line except the very last has a \n separator (strings.Split consumed them).
+	// When content ends with \n, Split produces a trailing empty element — the \n
+	// between the second-to-last and last element accounts for the trailing newline.
 	lastLine := len(lines) - 1
 
 	startByte := 0
 	for i := 0; i < startLine; i++ {
 		startByte += len(lines[i])
-		if i < lastLine || hasTrailingNewline {
-			startByte++
+		if i < lastLine {
+			startByte++ // \n separator
 		}
 	}
 	endByte := 0
 	for i := 0; i < endLine; i++ {
 		endByte += len(lines[i])
-		if i < lastLine || hasTrailingNewline {
-			endByte++
+		if i < lastLine {
+			endByte++ // \n separator
 		}
 	}
 
