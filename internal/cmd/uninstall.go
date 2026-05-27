@@ -249,9 +249,13 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 			}
 		}
 
-		if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
-			if err := install.RemoveNativeHook(hc); err != nil {
-				printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
+		// Remove native hook config — skip for "copilot" which is an alias for
+		// VS Code MCP, not the Copilot CLI hook at ~/.config/github-copilot/.
+		if name != targetCopilot {
+			if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
+				if err := install.RemoveNativeHook(hc); err != nil {
+					printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
+				}
 			}
 		}
 	}

@@ -129,6 +129,16 @@ func RemovePreCommit(repoRoot string) error {
 	return os.WriteFile(filepath.Clean(hookPath), []byte(remaining+"\n"), 0o755) //nolint:gosec // hookPath from git repo
 }
 
+// PreCommitHookPath returns the resolved path to the pre-commit hook file for
+// the given repository root, respecting worktrees and submodules.
+func PreCommitHookPath(repoRoot string) (string, error) {
+	hookDir, err := resolveHooksDir(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(hookDir, "pre-commit"), nil
+}
+
 // IsPreCommitInstalled checks whether the Armis pre-commit hook is installed.
 func IsPreCommitInstalled(repoRoot string) bool {
 	hookDir, err := resolveHooksDir(repoRoot)

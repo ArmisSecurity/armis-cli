@@ -74,7 +74,11 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 		if failOpen {
 			mode = "fail-open"
 		}
-		fmt.Fprintf(os.Stderr, "Pre-commit hook installed (%s): %s/.git/hooks/pre-commit\n", mode, repoRoot)
+		hookPath, _ := install.PreCommitHookPath(repoRoot)
+		if hookPath == "" {
+			hookPath = repoRoot + "/.git/hooks/pre-commit"
+		}
+		fmt.Fprintf(os.Stderr, "Pre-commit hook installed (%s): %s\n", mode, hookPath)
 		fmt.Fprintln(os.Stderr, "Commits will be verified for security findings before proceeding.")
 	}
 	return nil
