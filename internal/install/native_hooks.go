@@ -532,15 +532,27 @@ func isArmisHookJSON(entry interface{}) bool {
 		strings.Contains(s, "cline_pre_tool.py")
 }
 
-// cleanupLegacyCopilotHook removes the old ~/.config/github-copilot/hooks.json
-// if it only contains Armis hook entries (left over from the incorrect path).
-// armis:ignore cwe:22 reason:path is hardcoded from homeDir(".config","github-copilot","hooks.json"), not user input
+// cleanupLegacyCopilotHook removes old hook files that were previously written
+// to the wrong path, if they only contain Armis entries.
 func cleanupLegacyCopilotHook() {
-	legacyPath := homeDir(".config", "github-copilot", "hooks.json")
-	if legacyPath == "" {
-		return
+	// armis:ignore cwe:22 reason:homeDir uses os.UserHomeDir(); path components are hardcoded literals
+	if p := homeDir(".config", "github-copilot", "hooks.json"); p != "" {
+		removeLegacyFileIfArmisOnly(p)
 	}
-	data, err := readJSONFileAsMapSafe(legacyPath)
+	// armis:ignore cwe:73 cwe:22 reason:APPDATA is the OS-standard config dir; validated absolute
+	if runtime.GOOS == osWindows {
+		if appdata := os.Getenv("APPDATA"); appdata != "" {
+			appdata = filepath.Clean(appdata)
+			if filepath.IsAbs(appdata) {
+				removeLegacyFileIfArmisOnly(filepath.Join(appdata, "github-copilot", "hooks.json"))
+			}
+		}
+	}
+}
+
+// armis:ignore cwe:22 cwe:73 reason:called only from cleanupLegacyCopilotHook with hardcoded OS config paths
+func removeLegacyFileIfArmisOnly(path string) {
+	data, err := readJSONFileAsMapSafe(path)
 	if err != nil || len(data) == 0 {
 		return
 	}
@@ -548,7 +560,6 @@ func cleanupLegacyCopilotHook() {
 	if hooksSection == nil {
 		return
 	}
-	// Only remove if every hook entry is ours.
 	for _, entries := range hooksSection {
 		arr, ok := entries.([]interface{})
 		if !ok {
@@ -560,14 +571,12 @@ func cleanupLegacyCopilotHook() {
 			}
 		}
 	}
-	// Check there's nothing else besides "version" and "hooks".
 	for key := range data {
 		if key != "version" && key != "hooks" {
 			return
 		}
 	}
-	// armis:ignore cwe:22 reason:legacyPath is constructed from hardcoded literals via homeDir(".config","github-copilot","hooks.json")
-	_ = os.Remove(filepath.Clean(legacyPath)) //nolint:gosec // best-effort cleanup of our own file
+	_ = os.Remove(filepath.Clean(path)) //nolint:gosec // armis:ignore cwe:22 cwe:73 reason:path from hardcoded OS config dirs
 }
 
 // posixQuote wraps a string in POSIX-safe single quotes, escaping embedded single quotes.

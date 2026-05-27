@@ -106,6 +106,8 @@ func TestInstallNativeHook(t *testing.T) {
 		hookConfigPathOverrides = map[HookClientID]string{
 			HookClientCopilot: configPath,
 		}
+		// Redirect HOME so cleanupLegacyCopilotHook targets the temp dir.
+		t.Setenv("HOME", dir)
 		defer func() { hookConfigPathOverrides = nil }()
 
 		client, _ := HookClientByID(HookClientCopilot)
@@ -134,6 +136,67 @@ func TestInstallNativeHook(t *testing.T) {
 		entry := preToolUse[0].(map[string]interface{})
 		if _, ok := entry["bash"]; !ok {
 			t.Error("expected 'bash' key in copilot hook (not 'command')")
+		}
+	})
+
+	t.Run("copilot legacy cleanup removes armis-only file", func(t *testing.T) {
+		dir := t.TempDir()
+		// Place legacy file where cleanupLegacyCopilotHook will look.
+		legacyDir := filepath.Join(dir, ".config", "github-copilot")
+		if err := os.MkdirAll(legacyDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+
+		legacy := map[string]interface{}{
+			"version": float64(1),
+			"hooks": map[string]interface{}{
+				"preToolUse": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"bash":    "'/path/to/python' '/path/to/copilot_pre_tool.py'",
+						"matcher": "bash|powershell|create|edit",
+					},
+				},
+			},
+		}
+		writeTestJSON(t, legacyPath, legacy)
+
+		t.Setenv("HOME", dir)
+		cleanupLegacyCopilotHook()
+
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Error("expected legacy file to be removed")
+		}
+	})
+
+	t.Run("copilot legacy cleanup preserves non-armis file", func(t *testing.T) {
+		dir := t.TempDir()
+		legacyDir := filepath.Join(dir, ".config", "github-copilot")
+		if err := os.MkdirAll(legacyDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+
+		legacy := map[string]interface{}{
+			"version": float64(1),
+			"hooks": map[string]interface{}{
+				"preToolUse": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"bash":    "some-other-tool",
+						"matcher": "bash",
+					},
+				},
+			},
+		}
+		writeTestJSON(t, legacyPath, legacy)
+
+		t.Setenv("HOME", dir)
+		cleanupLegacyCopilotHook()
+
+		if _, err := os.Stat(legacyPath); err != nil {
+			t.Error("expected legacy file to be preserved when it has non-Armis entries")
 		}
 	})
 
