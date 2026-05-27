@@ -545,11 +545,11 @@ func cleanupLegacyCopilotHook() {
 	if p := homeDir(".config", "github-copilot", "hooks.json"); p != "" {
 		removeLegacyFileIfArmisOnly(p)
 	}
-	// armis:ignore cwe:73 cwe:22 reason:APPDATA is the OS-standard config dir; validated absolute
 	if runtime.GOOS == osWindows {
 		if appdata := os.Getenv("APPDATA"); appdata != "" {
 			appdata = filepath.Clean(appdata)
 			if filepath.IsAbs(appdata) {
+				// armis:ignore cwe:73 cwe:22 reason:APPDATA is the OS-standard config dir; validated absolute above
 				removeLegacyFileIfArmisOnly(filepath.Join(appdata, "github-copilot", "hooks.json"))
 			}
 		}
