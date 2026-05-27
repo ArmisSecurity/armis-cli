@@ -94,14 +94,21 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 	})
 
-	t.Run("copilot hook uses bash key", func(t *testing.T) {
+	t.Run("copilot hook merges into settings and uses bash key", func(t *testing.T) {
 		dir := t.TempDir()
-		configPath := filepath.Join(dir, "hooks.json")
+		configPath := filepath.Join(dir, "settings.json")
 		pluginDir := setupFakePluginDir(t, "copilot_pre_tool.py")
+
+		// Pre-populate with existing settings to verify merge behavior.
+		existing := map[string]interface{}{"memory": true, "model": "claude-opus-4.7"}
+		writeTestJSON(t, configPath, existing)
 
 		hookConfigPathOverrides = map[HookClientID]string{
 			HookClientCopilot: configPath,
 		}
+		// Redirect HOME so cleanupLegacyCopilotHook targets the temp dir.
+		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
 		defer func() { hookConfigPathOverrides = nil }()
 
 		client, _ := HookClientByID(HookClientCopilot)
@@ -110,11 +117,89 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 
 		data := readTestJSON(t, configPath)
+
+		// Existing settings preserved.
+		if data["memory"] != true {
+			t.Error("existing 'memory' setting was lost")
+		}
+		if data["model"] != "claude-opus-4.7" {
+			t.Error("existing 'model' setting was lost")
+		}
+
+		// No "version" key (settings.json doesn't use it).
+		if _, ok := data["version"]; ok {
+			t.Error("settings.json should not have 'version' key")
+		}
+
+		// Hook uses "bash" key.
 		hooks := data["hooks"].(map[string]interface{})
 		preToolUse := hooks["preToolUse"].([]interface{})
 		entry := preToolUse[0].(map[string]interface{})
 		if _, ok := entry["bash"]; !ok {
 			t.Error("expected 'bash' key in copilot hook (not 'command')")
+		}
+	})
+
+	t.Run("copilot legacy cleanup removes armis-only file", func(t *testing.T) {
+		dir := t.TempDir()
+		// Place legacy file where cleanupLegacyCopilotHook will look.
+		legacyDir := filepath.Join(dir, ".config", "github-copilot")
+		if err := os.MkdirAll(legacyDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+
+		legacy := map[string]interface{}{
+			"version": float64(1),
+			"hooks": map[string]interface{}{
+				"preToolUse": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"bash":    "'/path/to/python' '/path/to/copilot_pre_tool.py'",
+						"matcher": "bash|powershell|create|edit",
+					},
+				},
+			},
+		}
+		writeTestJSON(t, legacyPath, legacy)
+
+		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
+		cleanupLegacyCopilotHook()
+
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Error("expected legacy file to be removed")
+		}
+	})
+
+	t.Run("copilot legacy cleanup preserves non-armis file", func(t *testing.T) {
+		dir := t.TempDir()
+		legacyDir := filepath.Join(dir, ".config", "github-copilot")
+		if err := os.MkdirAll(legacyDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+
+		legacy := map[string]interface{}{
+			"version": float64(1),
+			"hooks": map[string]interface{}{
+				"preToolUse": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"bash":    "some-other-tool",
+						"matcher": "bash",
+					},
+				},
+			},
+		}
+		writeTestJSON(t, legacyPath, legacy)
+
+		t.Setenv("HOME", dir)
+		t.Setenv("USERPROFILE", dir)
+		cleanupLegacyCopilotHook()
+
+		if _, err := os.Stat(legacyPath); err != nil {
+			t.Error("expected legacy file to be preserved when it has non-Armis entries")
 		}
 	})
 
