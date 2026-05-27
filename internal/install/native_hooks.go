@@ -139,7 +139,14 @@ func InstallNativeHook(client HookClient, pluginDir string) error {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	return installClientHook(client, pluginDir, configPath)
+	if err := installClientHook(client, pluginDir, configPath); err != nil {
+		return err
+	}
+
+	if client.ID == HookClientCopilot {
+		cleanupLegacyCopilotHook()
+	}
+	return nil
 }
 
 // RemoveNativeHook removes hook entries for a client.
@@ -164,7 +171,7 @@ func installClientHook(client HookClient, pluginDir, configPath string) error {
 	case HookClientCodex:
 		return installMergedHook(pluginDir, configPath, client)
 	case HookClientCopilot:
-		return installCopilotHook(pluginDir, configPath)
+		return installMergedHook(pluginDir, configPath, client)
 	case HookClientCline:
 		return installMergedHook(pluginDir, configPath, client)
 	}
@@ -176,8 +183,6 @@ func removeClientHook(client HookClient, configPath string) error {
 	switch client.ID {
 	case HookClientCursor:
 		return removeCursorHook(configPath)
-	case HookClientCopilot:
-		return removeCopilotHook(configPath)
 	default:
 		return removeMergedHook(configPath, client)
 	}
@@ -205,22 +210,7 @@ func codexHooksPath() string {
 
 func copilotHooksPath() string {
 	return hookConfigPath(HookClientCopilot, func() string {
-		switch runtime.GOOS {
-		case osDarwin, osLinux:
-			return homeDir(".config", "github-copilot", "hooks.json")
-		case osWindows:
-			// armis:ignore cwe:73 cwe:22 reason:APPDATA is the OS-standard config dir; validated as absolute path below
-			appdata := os.Getenv("APPDATA")
-			if appdata == "" {
-				return ""
-			}
-			appdata = filepath.Clean(appdata)
-			if !filepath.IsAbs(appdata) {
-				return ""
-			}
-			return filepath.Join(appdata, "github-copilot", "hooks.json")
-		}
-		return ""
+		return homeDir(".copilot", "settings.json")
 	})
 }
 
@@ -394,42 +384,6 @@ func removeCursorHook(configPath string) error {
 	return writeJSONAtomic(configPath, data)
 }
 
-// installCopilotHook handles Copilot CLI's hook format (uses "bash" key instead of "command").
-func installCopilotHook(pluginDir, configPath string) error {
-	data, err := readJSONFileAsMapSafe(configPath)
-	if err != nil {
-		return err
-	}
-
-	if _, ok := data["version"]; !ok {
-		data["version"] = 1
-	}
-
-	hooks := buildCopilotHooks(pluginDir)
-
-	hooksSection, _ := data["hooks"].(map[string]interface{})
-	if hooksSection == nil {
-		hooksSection = make(map[string]interface{})
-	}
-
-	for key, entries := range hooks {
-		existing, _ := hooksSection[key].([]interface{})
-		if !hasArmisHookEntries(existing) {
-			newEntries, _ := entries.([]interface{})
-			existing = append(existing, newEntries...)
-			hooksSection[key] = existing
-		}
-	}
-
-	data["hooks"] = hooksSection
-	return writeJSONAtomic(configPath, data)
-}
-
-// removeCopilotHook removes Armis entries from Copilot hook config.
-func removeCopilotHook(configPath string) error {
-	return removeCursorHook(configPath) // same structure
-}
-
 // --- Hook config builders ---
 
 // armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
@@ -576,6 +530,44 @@ func isArmisHookJSON(entry interface{}) bool {
 		strings.Contains(s, "codex_pre_tool.py") ||
 		strings.Contains(s, "copilot_pre_tool.py") ||
 		strings.Contains(s, "cline_pre_tool.py")
+}
+
+// cleanupLegacyCopilotHook removes the old ~/.config/github-copilot/hooks.json
+// if it only contains Armis hook entries (left over from the incorrect path).
+// armis:ignore cwe:22 reason:path is hardcoded from homeDir(".config","github-copilot","hooks.json"), not user input
+func cleanupLegacyCopilotHook() {
+	legacyPath := homeDir(".config", "github-copilot", "hooks.json")
+	if legacyPath == "" {
+		return
+	}
+	data, err := readJSONFileAsMapSafe(legacyPath)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	hooksSection, _ := data["hooks"].(map[string]interface{})
+	if hooksSection == nil {
+		return
+	}
+	// Only remove if every hook entry is ours.
+	for _, entries := range hooksSection {
+		arr, ok := entries.([]interface{})
+		if !ok {
+			return
+		}
+		for _, entry := range arr {
+			if !isArmisHookJSON(entry) {
+				return
+			}
+		}
+	}
+	// Check there's nothing else besides "version" and "hooks".
+	for key := range data {
+		if key != "version" && key != "hooks" {
+			return
+		}
+	}
+	// armis:ignore cwe:22 reason:legacyPath is constructed from hardcoded literals via homeDir(".config","github-copilot","hooks.json")
+	_ = os.Remove(filepath.Clean(legacyPath)) //nolint:gosec // best-effort cleanup of our own file
 }
 
 // posixQuote wraps a string in POSIX-safe single quotes, escaping embedded single quotes.

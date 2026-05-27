@@ -94,10 +94,14 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 	})
 
-	t.Run("copilot hook uses bash key", func(t *testing.T) {
+	t.Run("copilot hook merges into settings and uses bash key", func(t *testing.T) {
 		dir := t.TempDir()
-		configPath := filepath.Join(dir, "hooks.json")
+		configPath := filepath.Join(dir, "settings.json")
 		pluginDir := setupFakePluginDir(t, "copilot_pre_tool.py")
+
+		// Pre-populate with existing settings to verify merge behavior.
+		existing := map[string]interface{}{"memory": true, "model": "claude-opus-4.7"}
+		writeTestJSON(t, configPath, existing)
 
 		hookConfigPathOverrides = map[HookClientID]string{
 			HookClientCopilot: configPath,
@@ -110,6 +114,21 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 
 		data := readTestJSON(t, configPath)
+
+		// Existing settings preserved.
+		if data["memory"] != true {
+			t.Error("existing 'memory' setting was lost")
+		}
+		if data["model"] != "claude-opus-4.7" {
+			t.Error("existing 'model' setting was lost")
+		}
+
+		// No "version" key (settings.json doesn't use it).
+		if _, ok := data["version"]; ok {
+			t.Error("settings.json should not have 'version' key")
+		}
+
+		// Hook uses "bash" key.
 		hooks := data["hooks"].(map[string]interface{})
 		preToolUse := hooks["preToolUse"].([]interface{})
 		entry := preToolUse[0].(map[string]interface{})

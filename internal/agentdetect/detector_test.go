@@ -233,7 +233,14 @@ func TestCopilotDetector_Detect(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "config dir exists",
+			name: "copilot CLI config dir exists",
+			setup: func(t *testing.T, home string, _ *mockPlatform) {
+				mustMkdirAll(t, filepath.Join(home, ".copilot"))
+			},
+			expected: true,
+		},
+		{
+			name: "legacy config dir exists",
 			setup: func(t *testing.T, home string, _ *mockPlatform) {
 				mustMkdirAll(t, filepath.Join(home, ".config", "github-copilot"))
 			},
