@@ -145,13 +145,13 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
-	if err := install.DeregisterCodexMCP(); err != nil {
+	if removed, err := install.DeregisterCodexMCP(); err != nil {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Codex CLI: %v\n", warnMark.Render("⚠"), err)
 		} else {
 			fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI: %v\n", err)
 		}
-	} else if install.IsCodexDetected() {
+	} else if removed {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Removed from Codex CLI\n", successMark.Render("✓"))
 		} else {
@@ -188,12 +188,6 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	fmt.Fprintln(os.Stderr, "")
 	return nil
 }
-
-const (
-	targetClaude  = "claude"
-	targetCodex   = "codex"
-	targetCopilot = "copilot"
-)
 
 func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	styled := cli.ColorsEnabled()
@@ -237,9 +231,9 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 				printSuccess("Claude Code")
 			}
 		case targetCodex:
-			if err := install.DeregisterCodexMCP(); err != nil {
+			if removed, err := install.DeregisterCodexMCP(); err != nil {
 				printFail(fmt.Sprintf("Codex CLI: %v", err))
-			} else {
+			} else if removed {
 				printSuccess("Codex CLI")
 			}
 		case targetCopilot:

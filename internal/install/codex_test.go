@@ -181,8 +181,12 @@ args = ["-y", "@upstash/context7-mcp"]
 		t.Fatal(err)
 	}
 
-	if err := DeregisterCodexMCP(); err != nil {
+	removed, err := DeregisterCodexMCP()
+	if err != nil {
 		t.Fatalf("DeregisterCodexMCP() error: %v", err)
+	}
+	if !removed {
+		t.Error("DeregisterCodexMCP() returned false, want true")
 	}
 
 	content, err := os.ReadFile(configFile) //nolint:gosec // test file with controlled path
@@ -218,8 +222,12 @@ args = ["-y", "@upstash/context7-mcp"]
 		t.Fatal(err)
 	}
 
-	if err := DeregisterCodexMCP(); err != nil {
+	removed, err := DeregisterCodexMCP()
+	if err != nil {
 		t.Fatalf("DeregisterCodexMCP() error: %v", err)
+	}
+	if removed {
+		t.Error("DeregisterCodexMCP() returned true, want false (no section)")
 	}
 
 	content, err := os.ReadFile(configFile) //nolint:gosec // test file with controlled path
@@ -240,8 +248,12 @@ func TestDeregisterCodexMCP_FileMissing(t *testing.T) {
 	t.Cleanup(func() { codexConfigPathOverride = "" })
 
 	// No error when file doesn't exist
-	if err := DeregisterCodexMCP(); err != nil {
+	removed, err := DeregisterCodexMCP()
+	if err != nil {
 		t.Fatalf("DeregisterCodexMCP() error: %v", err)
+	}
+	if removed {
+		t.Error("DeregisterCodexMCP() returned true, want false (file missing)")
 	}
 }
 
@@ -269,6 +281,68 @@ func TestIsCodexDetected(t *testing.T) {
 func TestRegisterCodexMCP_RelativePath(t *testing.T) {
 	if err := RegisterCodexMCP("relative/path"); err == nil {
 		t.Error("expected error for relative path")
+	}
+}
+
+func TestRegisterCodexMCP_PathTraversalCleaned(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.toml")
+	codexConfigPathOverride = configFile
+	t.Cleanup(func() { codexConfigPathOverride = "" })
+
+	// Plugin dir with ".." segments — should be cleaned before writing to config
+	pluginDir := filepath.Join(dir, "plugins", "foo", "..", "armis-appsec-mcp")
+	setupFakeVenv(t, pluginDir)
+
+	if err := RegisterCodexMCP(pluginDir); err != nil {
+		t.Fatalf("RegisterCodexMCP() error: %v", err)
+	}
+
+	content, err := os.ReadFile(configFile) //nolint:gosec // test file with controlled path
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+
+	got := string(content)
+	if strings.Contains(got, "..") {
+		t.Errorf("config contains unresolved path traversal:\n%s", got)
+	}
+	cleanedDir := filepath.Clean(pluginDir)
+	if !strings.Contains(got, tomlQuote(venvPython(cleanedDir))) {
+		t.Errorf("missing cleaned python path in:\n%s", got)
+	}
+}
+
+func TestRegisterCodexMCP_NoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.toml")
+	codexConfigPathOverride = configFile
+	t.Cleanup(func() { codexConfigPathOverride = "" })
+
+	// Config without trailing newline
+	existing := `model = "gpt-5-codex"`
+	if err := os.WriteFile(configFile, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pluginDir := filepath.Join(dir, "plugins", "armis-appsec-mcp")
+	setupFakeVenv(t, pluginDir)
+
+	if err := RegisterCodexMCP(pluginDir); err != nil {
+		t.Fatalf("RegisterCodexMCP() error: %v", err)
+	}
+
+	content, err := os.ReadFile(configFile) //nolint:gosec // test file with controlled path
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+
+	got := string(content)
+	if !strings.Contains(got, `model = "gpt-5-codex"`) {
+		t.Errorf("existing content lost:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.armis_scanner]") {
+		t.Errorf("missing armis_scanner section:\n%s", got)
 	}
 }
 

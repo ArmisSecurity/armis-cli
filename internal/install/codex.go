@@ -39,6 +39,10 @@ func RegisterCodexMCP(pluginDir string) error {
 		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
 	}
 
+	// Sanitize: resolve symlink-like components (e.g. "..") to prevent
+	// path traversal when the stored path is later used by Codex CLI.
+	pluginDir = filepath.Clean(pluginDir)
+
 	configPath := CodexConfigPath()
 	if configPath == "" {
 		return fmt.Errorf("codex config path not available on this platform")
@@ -60,28 +64,28 @@ func RegisterCodexMCP(pluginDir string) error {
 }
 
 // DeregisterCodexMCP removes the [mcp_servers.armis_scanner] section
-// from Codex CLI's config.toml.
-func DeregisterCodexMCP() error {
+// from Codex CLI's config.toml. Returns true if a section was actually removed.
+func DeregisterCodexMCP() (bool, error) {
 	configPath := CodexConfigPath()
 	if configPath == "" {
-		return nil
+		return false, nil
 	}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 
 	content, err := readFileOrEmpty(configPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	updated := removeTOMLSection(content, codexSectionHeader)
 	if updated == content {
-		return nil
+		return false, nil
 	}
 
-	return writeFileAtomic(configPath, updated)
+	return true, writeFileAtomic(configPath, updated)
 }
 
 func buildCodexSection(pluginDir string) string {
@@ -167,14 +171,25 @@ func findTOMLSectionBounds(content, header string) (int, int) {
 		endLine--
 	}
 
-	// Calculate byte offsets
+	// Calculate byte offsets.
+	// Only add +1 (for \n) between lines, not after the final line if there's
+	// no trailing newline in the original content.
+	hasTrailingNewline := strings.HasSuffix(content, "\n")
+	lastLine := len(lines) - 1
+
 	startByte := 0
 	for i := 0; i < startLine; i++ {
-		startByte += len(lines[i]) + 1 // +1 for \n
+		startByte += len(lines[i])
+		if i < lastLine || hasTrailingNewline {
+			startByte++
+		}
 	}
 	endByte := 0
 	for i := 0; i < endLine; i++ {
-		endByte += len(lines[i]) + 1
+		endByte += len(lines[i])
+		if i < lastLine || hasTrailingNewline {
+			endByte++
+		}
 	}
 
 	return startByte, endByte
