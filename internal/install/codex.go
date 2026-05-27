@@ -236,7 +236,7 @@ func writeFileAtomic(path, content string) error {
 		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("closing temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil { // #nosec G703 -- atomic write to known config path
 		_ = os.Remove(tmpPath) // #nosec G703 -- tmpPath from os.CreateTemp in controlled dir
 		return fmt.Errorf("renaming config: %w", err)
 	}
