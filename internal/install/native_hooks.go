@@ -274,11 +274,14 @@ func installMergedHook(pluginDir, configPath string, client HookClient) error {
 
 	for key, entries := range newHooks {
 		existing, _ := hooksSection[key].([]interface{})
-		if !hasArmisHookEntries(existing) {
-			newEntries, _ := entries.([]interface{})
+		newEntries, _ := entries.([]interface{})
+		if hasArmisHookEntries(existing) {
+			filtered := filterNonArmisEntries(existing)
+			existing = append(filtered, newEntries...)
+		} else {
 			existing = append(existing, newEntries...)
-			hooksSection[key] = existing
 		}
+		hooksSection[key] = existing
 	}
 
 	data["hooks"] = hooksSection
@@ -339,11 +342,14 @@ func installCursorHook(pluginDir, configPath string) error {
 
 	for key, entries := range hooks {
 		existing, _ := hooksSection[key].([]interface{})
-		if !hasArmisHookEntries(existing) {
-			newEntries, _ := entries.([]interface{})
+		newEntries, _ := entries.([]interface{})
+		if hasArmisHookEntries(existing) {
+			filtered := filterNonArmisEntries(existing)
+			existing = append(filtered, newEntries...)
+		} else {
 			existing = append(existing, newEntries...)
-			hooksSection[key] = existing
 		}
+		hooksSection[key] = existing
 	}
 
 	data["hooks"] = hooksSection
@@ -471,7 +477,7 @@ func buildCopilotHooks(pluginDir string) map[string]interface{} {
 			map[string]interface{}{
 				"type":       "command",
 				"bash":       cmd,
-				"matcher":    "bash|powershell|create|edit",
+				"matcher":    "bash|shell|terminal|powershell|create|edit",
 				"timeoutSec": 10,
 			},
 		},

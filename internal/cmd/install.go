@@ -161,6 +161,12 @@ func installAll(force bool) error {
 			registered = append(registered, e.Name)
 			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
 		}
+
+		if hc, ok := install.HookClientByID(install.HookClientID(e.ID)); ok {
+			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ %s (hooks): %v\n", e.Name, err)
+			}
+		}
 	}
 
 	ci, ciErr := install.NewClaudeInstaller()
@@ -286,6 +292,12 @@ func installTargets(targets []string, force bool) error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+			}
+
+			if hc, ok := install.HookClientByID(install.HookClientID(id)); ok {
+				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ %s (hooks): %v\n", e.Name, err)
+				}
 			}
 		}
 
