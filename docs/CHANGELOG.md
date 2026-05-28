@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.1] - 2026-05-27
+
+### Fixed
+
+- Copilot CLI hook now installs to the correct path (`~/.copilot/settings.json`) instead of the VS Code extension directory (#202)
+- Separated Copilot CLI hook target from VS Code extension target to prevent cross-contamination during install (#201)
+
+---
+
 ## [1.10.0] - 2026-05-27
 
 ### Added
@@ -391,6 +400,7 @@ Manual entries for significant releases:
 -->
 
 [Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.0...HEAD
+[1.10.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.4...v1.10.0
 [1.9.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.3...v1.9.4
 [1.9.3]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.2...v1.9.3
