@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.2] - 2026-05-28
+
+### Fixed
+
+- Gemini CLI hook now uses the correct timeout unit (seconds instead of milliseconds) preventing premature request timeouts (#204)
+
+---
+
 ## [1.10.1] - 2026-05-27
 
 ### Fixed
@@ -399,7 +407,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.2...HEAD
+[1.10.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.4...v1.10.0
 [1.9.4]: https://github.com/ArmisSecurity/armis-cli/compare/v1.9.3...v1.9.4
