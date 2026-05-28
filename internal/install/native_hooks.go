@@ -428,7 +428,7 @@ func buildGeminiHooks(pluginDir string) map[string]interface{} {
 					map[string]interface{}{
 						"type":    "command",
 						"command": cmd,
-						"timeout": 10,
+						"timeout": 10000,
 					},
 				},
 			},
