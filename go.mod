@@ -3,6 +3,7 @@ module github.com/ArmisSecurity/armis-cli
 go 1.25.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/alecthomas/chroma/v2 v2.24.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/huh v1.0.0

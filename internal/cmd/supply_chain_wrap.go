@@ -260,7 +260,21 @@ func registryEnvForPM(pm, registryURL string) []string {
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("BUN_CONFIG_REGISTRY=%s", registryURL),
 		}
+	case "yarn":
+		return []string{
+			fmt.Sprintf("npm_config_registry=%s", registryURL),
+			fmt.Sprintf("YARN_NPM_REGISTRY_SERVER=%s", registryURL),
+		}
+	case "uv":
+		return []string{
+			fmt.Sprintf("UV_INDEX_URL=%s/simple/", registryURL),
+		}
 	default:
+		if strings.HasPrefix(pm, "pip") {
+			return []string{
+				fmt.Sprintf("PIP_INDEX_URL=%s/simple/", registryURL),
+			}
+		}
 		return []string{
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 		}

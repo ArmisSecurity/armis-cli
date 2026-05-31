@@ -1,0 +1,11 @@
+[[package]]
+name = "flask"
+version = "3.0.0"
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+
+[[package]]
+name = "click"
+version = "8.1.7"

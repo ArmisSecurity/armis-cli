@@ -62,7 +62,7 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(os.Stderr, "%s\n", s.SectionTitle.Render("Policy"))
 	fmt.Fprintf(os.Stderr, "  %s %s\n", s.MutedText.Render("Source:      "), configSource)
-	fmt.Fprintf(os.Stderr, "  %s %s\n", s.MutedText.Render("Min age:     "), policy.MinReleaseAge)
+	fmt.Fprintf(os.Stderr, "  %s %s\n", s.MutedText.Render("Min age:     "), formatDurationShort(policy.MinReleaseAge))
 	if len(policy.Exclusions) > 0 {
 		fmt.Fprintf(os.Stderr, "  %s %v\n", s.MutedText.Render("Exclusions:  "), policy.Exclusions)
 	} else {

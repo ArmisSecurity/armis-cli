@@ -87,8 +87,22 @@ func parseLockfile(ecosystem supplychain.Ecosystem, path string) ([]PackageEntry
 		return ParsePNPMLockfile(path)
 	case supplychain.EcosystemBun:
 		return ParseBunLockfile(path)
+	case supplychain.EcosystemYarn:
+		return ParseYarnLockfile(path)
 	case supplychain.EcosystemPip:
 		return ParsePipRequirements(path)
+	case supplychain.EcosystemPipfile:
+		return ParsePipfileLock(path)
+	case supplychain.EcosystemPoetry:
+		return ParsePoetryLockfile(path)
+	case supplychain.EcosystemPDM:
+		return ParsePDMLockfile(path)
+	case supplychain.EcosystemUV:
+		return ParseUVLockfile(path)
+	case supplychain.EcosystemMaven:
+		return ParseMavenDeps(path)
+	case supplychain.EcosystemGradle:
+		return ParseGradleLockfile(path)
 	default:
 		return ParseNPMLockfile(path)
 	}
@@ -96,8 +110,11 @@ func parseLockfile(ecosystem supplychain.Ecosystem, path string) ([]PackageEntry
 
 func queryRegistry(ctx context.Context, ecosystem supplychain.Ecosystem, packages []struct{ Name, Version string }) []registry.QueryResult {
 	switch ecosystem {
-	case supplychain.EcosystemPip:
+	case supplychain.EcosystemPip, supplychain.EcosystemPoetry, supplychain.EcosystemPipfile, supplychain.EcosystemPDM, supplychain.EcosystemUV:
 		client := registry.NewPyPIClient()
+		return client.GetPublishDates(ctx, packages)
+	case supplychain.EcosystemMaven, supplychain.EcosystemGradle:
+		client := registry.NewMavenClient()
 		return client.GetPublishDates(ctx, packages)
 	default:
 		client := registry.NewClient()
@@ -112,6 +129,20 @@ func detectEcosystemFromPath(path string) supplychain.Ecosystem {
 		return supplychain.EcosystemPNPM
 	case strings.HasSuffix(lower, "bun.lock"):
 		return supplychain.EcosystemBun
+	case strings.HasSuffix(lower, "yarn.lock") || strings.HasSuffix(lower, "yarn-berry.lock"):
+		return supplychain.EcosystemYarn
+	case strings.HasSuffix(lower, "pom.xml"):
+		return supplychain.EcosystemMaven
+	case strings.HasSuffix(lower, "gradle.lockfile"):
+		return supplychain.EcosystemGradle
+	case strings.HasSuffix(lower, "poetry.lock"):
+		return supplychain.EcosystemPoetry
+	case strings.HasSuffix(lower, "pipfile.lock"):
+		return supplychain.EcosystemPipfile
+	case strings.HasSuffix(lower, "pdm.lock"):
+		return supplychain.EcosystemPDM
+	case strings.HasSuffix(lower, "uv.lock"):
+		return supplychain.EcosystemUV
 	case strings.Contains(lower, "requirements"):
 		return supplychain.EcosystemPip
 	default:

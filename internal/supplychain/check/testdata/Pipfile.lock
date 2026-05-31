@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "hash": {"sha256": "abc123"},
+        "pipfile-spec": 6,
+        "requires": {"python_version": "3.11"}
+    },
+    "default": {
+        "flask": {"version": "==3.0.0"},
+        "requests": {"version": "==2.31.0"},
+        "SQLAlchemy": {"version": "==2.0.23"},
+        "click": {"version": ">=8.0"},
+        "my_package": {"version": "==1.0.0"}
+    },
+    "develop": {
+        "pytest": {"version": "==7.4.3"},
+        "black": {"version": "==23.12.0"}
+    }
+}

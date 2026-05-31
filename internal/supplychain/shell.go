@@ -210,3 +210,71 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// DetectPipVariants scans $PATH for pip executables (pip, pip3, pip3.11, etc.)
+// and returns a deduplicated sorted list of command names found.
+func DetectPipVariants() []string {
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		return []string{"pip"}
+	}
+
+	seen := make(map[string]bool)
+	dirs := filepath.SplitList(pathEnv)
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if isPipExecutable(name) && !seen[name] {
+				seen[name] = true
+			}
+		}
+	}
+
+	var variants []string
+	for name := range seen {
+		variants = append(variants, name)
+	}
+
+	// Sort for deterministic output
+	sortStrings(variants)
+
+	if len(variants) == 0 {
+		return []string{"pip"}
+	}
+	return variants
+}
+
+func isPipExecutable(name string) bool {
+	if name == "pip" || name == "pip3" {
+		return true
+	}
+	// Match pip3.X patterns (e.g., pip3.11, pip3.12)
+	if strings.HasPrefix(name, "pip3.") {
+		rest := name[4:]
+		for _, c := range rest {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return len(rest) > 0
+	}
+	return false
+}
+
+func sortStrings(s []string) {
+	for i := range s {
+		for j := i + 1; j < len(s); j++ {
+			if s[j] < s[i] {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
+}

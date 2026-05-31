@@ -83,13 +83,39 @@ func detectWrappablePMs() []string {
 	ecosystems, _ := supplychain.DetectEcosystems(".")
 	seen := make(map[string]bool)
 	var pms []string
+	hasPython := false
+
 	for _, e := range ecosystems {
 		pm := ecosystemToPM(e.Ecosystem)
-		if pm != "" && !seen[pm] {
-			seen[pm] = true
-			pms = append(pms, pm)
+		if pm == "" {
+			continue
+		}
+
+		switch e.Ecosystem {
+		case supplychain.EcosystemPip, supplychain.EcosystemPoetry, supplychain.EcosystemPipfile, supplychain.EcosystemPDM, supplychain.EcosystemUV:
+			hasPython = true
+			// Add the tool-specific PM (poetry, pdm, uv, pipenv)
+			if pm != "pip" && !seen[pm] {
+				seen[pm] = true
+				pms = append(pms, pm)
+			}
+		default:
+			if !seen[pm] {
+				seen[pm] = true
+				pms = append(pms, pm)
+			}
 		}
 	}
+
+	if hasPython {
+		for _, pipVar := range supplychain.DetectPipVariants() {
+			if !seen[pipVar] {
+				seen[pipVar] = true
+				pms = append(pms, pipVar)
+			}
+		}
+	}
+
 	if len(pms) == 0 {
 		return []string{"npm"}
 	}
@@ -104,6 +130,22 @@ func ecosystemToPM(eco supplychain.Ecosystem) string {
 		return "pnpm"
 	case supplychain.EcosystemBun:
 		return "bun"
+	case supplychain.EcosystemYarn:
+		return "yarn"
+	case supplychain.EcosystemPip:
+		return "pip"
+	case supplychain.EcosystemPoetry:
+		return "poetry"
+	case supplychain.EcosystemPipfile:
+		return "pipenv"
+	case supplychain.EcosystemPDM:
+		return "pdm"
+	case supplychain.EcosystemUV:
+		return "uv"
+	case supplychain.EcosystemMaven:
+		return "mvn"
+	case supplychain.EcosystemGradle:
+		return "gradle"
 	default:
 		return ""
 	}
