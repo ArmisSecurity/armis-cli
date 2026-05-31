@@ -14,6 +14,7 @@ import (
 type Policy struct {
 	MinReleaseAge time.Duration
 	Exclusions    []string
+	FailOpen      bool
 }
 
 func DefaultPolicy() Policy {

@@ -12,6 +12,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
+	"github.com/ArmisSecurity/armis-cli/internal/supplychain/check"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +50,195 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 		return exitWithCode(execPM(pmName, pmArgs, nil))
 	}
 
+	if requiresPreInstallBlock(pmName) {
+		return runPreInstallBlock(cmd, pmName, pmArgs)
+	}
+
+	return runProxyWrap(cmd, pmName, pmArgs)
+}
+
+func requiresPreInstallBlock(pm string) bool {
+	switch pm {
+	case "mvn", "gradle", "poetry", "pipenv", "pdm":
+		return true
+	}
+	return false
+}
+
+func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) error {
+	skipPkgs := parseSkipPackages(os.Getenv(envSCSkip))
+	policy := resolveWrapPolicy()
+
+	ecosystems, _ := supplychain.DetectEcosystems(".")
+	var lockfilePath string
+	for _, e := range ecosystems {
+		pm := pmToEcosystem(pmName)
+		if e.Ecosystem == pm {
+			lockfilePath = e.LockfilePath
+			break
+		}
+	}
+
+	if lockfilePath == "" {
+		fmt.Fprintf(os.Stderr, "%s no lockfile found for %s, running without enforcement\n", scPrefix, pmName)
+		return exitWithCode(execPM(pmName, pmArgs, nil))
+	}
+
+	// Gradle staleness check
+	if pmName == "gradle" {
+		checkGradleStaleness(lockfilePath)
+	}
+
+	// Maven partial coverage warning
+	if pmName == "mvn" && strings.HasSuffix(lockfilePath, "pom.xml") {
+		fmt.Fprintf(os.Stderr, "%s note: pom.xml only covers direct dependencies. For full transitive\n", scPrefix)
+		fmt.Fprintf(os.Stderr, "  coverage, consider a lockfile plugin (e.g., io.github.chains-project:maven-lockfile)\n")
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+	defer cancel()
+
+	result, err := check.RunCheck(ctx, policy, lockfilePath, "")
+	if err != nil {
+		if policy.FailOpen {
+			fmt.Fprintf(os.Stderr, "%s supply-chain: check failed, allowing (fail-open): %v\n", scPrefix, err)
+			return exitWithCode(execPM(pmName, pmArgs, nil))
+		}
+		fmt.Fprintf(os.Stderr, "%s supply-chain: check failed: %v\n", scPrefix, err)
+		return exitWithCode(execPM(pmName, pmArgs, nil))
+	}
+
+	// Filter out skipped packages
+	var violations []supplychain.Violation
+	for _, v := range result.Violations {
+		skipped := false
+		for _, skip := range skipPkgs {
+			if v.Name == skip {
+				skipped = true
+				break
+			}
+		}
+		if !skipped {
+			violations = append(violations, v)
+		}
+	}
+
+	if len(violations) == 0 {
+		if result.Checked > 0 {
+			s := output.GetStyles()
+			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
+				s.MutedText.Render(scPrefix),
+				s.SuccessText.Render(output.IconSuccess),
+				s.SuccessText.Render(fmt.Sprintf("supply-chain: %d packages checked, all pass", result.Checked)),
+				s.MutedText.Render(fmt.Sprintf("(%s minimum age)", formatDurationShort(policy.MinReleaseAge))))
+		}
+		return exitWithCode(execPM(pmName, pmArgs, nil))
+	}
+
+	// Violations found — block
+	printPreInstallBlockSummary(violations, policy, pmName)
+	os.Exit(1)
+	return nil
+}
+
+func printPreInstallBlockSummary(violations []supplychain.Violation, policy supplychain.Policy, pmName string) {
+	s := output.GetStyles()
+
+	sort.Slice(violations, func(i, j int) bool {
+		return violations[i].Age < violations[j].Age
+	})
+
+	fmt.Fprintf(os.Stderr, "\n%s %s\n",
+		s.MutedText.Render(scPrefix),
+		s.WarningText.Render(fmt.Sprintf("supply-chain: BLOCKED — %d package(s) younger than %s", len(violations), formatDurationShort(policy.MinReleaseAge))))
+
+	fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("Build was stopped BEFORE execution to prevent supply chain attacks."))
+
+	displayCount := len(violations)
+	if displayCount > maxBlockedDisplay {
+		displayCount = maxBlockedDisplay
+	}
+
+	fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render("Violations:"))
+	for _, v := range violations[:displayCount] {
+		age := formatDurationShort(v.Age)
+		dot := severityDot(s, v.Severity)
+		fmt.Fprintf(os.Stderr, "    %s %s %s\n",
+			dot,
+			s.Bold.Render(fmt.Sprintf("%s@%s", v.Name, v.Version)),
+			s.MutedText.Render(fmt.Sprintf("(published %s ago)", age)))
+	}
+	if remaining := len(violations) - displayCount; remaining > 0 {
+		fmt.Fprintf(os.Stderr, "    %s\n",
+			s.MutedText.Render(fmt.Sprintf("… and %d more", remaining)))
+	}
+
+	// Bypass instructions
+	names := make([]string, 0, len(violations))
+	seen := make(map[string]bool)
+	for _, v := range violations {
+		if !seen[v.Name] {
+			seen[v.Name] = true
+			names = append(names, v.Name)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render(strings.Repeat("─", scSepLen)))
+	if len(names) <= 3 {
+		fmt.Fprintf(os.Stderr, "  %s %s\n",
+			s.MutedText.Render("Bypass:"),
+			s.Bold.Render(fmt.Sprintf("%s=%s %s <args>", envSCSkip, strings.Join(names, ","), pmName)))
+	}
+	fmt.Fprintf(os.Stderr, "  %s %s\n",
+		s.MutedText.Render("Disable:"),
+		s.Bold.Render(fmt.Sprintf("%s=off %s <args>", envSCOff, pmName)))
+	fmt.Fprintf(os.Stderr, "  %s %s\n\n",
+		s.MutedText.Render("Exclude:"),
+		s.Bold.Render("add to exclusions in .armis-supply-chain.yaml"))
+}
+
+func pmToEcosystem(pm string) supplychain.Ecosystem {
+	switch pm {
+	case "mvn":
+		return supplychain.EcosystemMaven
+	case "gradle":
+		return supplychain.EcosystemGradle
+	case "poetry":
+		return supplychain.EcosystemPoetry
+	case "pipenv":
+		return supplychain.EcosystemPipfile
+	case "pdm":
+		return supplychain.EcosystemPDM
+	default:
+		return ""
+	}
+}
+
+func checkGradleStaleness(lockfilePath string) {
+	lockInfo, err := os.Stat(lockfilePath)
+	if err != nil {
+		return
+	}
+
+	buildGradle := strings.TrimSuffix(lockfilePath, "gradle.lockfile") + "build.gradle"
+	buildInfo, err := os.Stat(buildGradle)
+	if err != nil {
+		buildGradle = strings.TrimSuffix(lockfilePath, "gradle.lockfile") + "build.gradle.kts"
+		buildInfo, err = os.Stat(buildGradle)
+		if err != nil {
+			return
+		}
+	}
+
+	if buildInfo.ModTime().After(lockInfo.ModTime()) {
+		s := output.GetStyles()
+		fmt.Fprintf(os.Stderr, "%s %s lockfile may be stale (build.gradle is newer). Run:\n",
+			s.MutedText.Render(scPrefix), s.WarningText.Render("⚠"))
+		fmt.Fprintf(os.Stderr, "  %s\n\n", s.Bold.Render("gradle dependencies --write-locks"))
+	}
+}
+
+func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	skipPkgs := parseSkipPackages(os.Getenv(envSCSkip))
 
 	policy := resolveWrapPolicy()

@@ -36,6 +36,12 @@ func LoadConfig(dir string) (*Config, error) {
 	return &cfg, nil
 }
 
+var knownEcosystems = map[string]bool{
+	"npm": true, "pnpm": true, "bun": true, "yarn": true,
+	"pip": true, "poetry": true, "pipfile": true, "pdm": true, "uv": true,
+	"maven": true, "gradle": true,
+}
+
 func (c *Config) ToPolicy() (Policy, error) {
 	policy := DefaultPolicy()
 
@@ -50,6 +56,14 @@ func (c *Config) ToPolicy() (Policy, error) {
 	if len(c.Exclusions) > 0 {
 		policy.Exclusions = c.Exclusions
 	}
+
+	for _, eco := range c.Ecosystems {
+		if !knownEcosystems[eco] {
+			fmt.Fprintf(os.Stderr, "Warning: unknown ecosystem %q in %s — supported: npm, pnpm, bun, yarn, maven, gradle, pip, poetry, pipfile, pdm, uv\n", eco, ConfigFileName)
+		}
+	}
+
+	policy.FailOpen = c.FailOpen
 
 	return policy, nil
 }

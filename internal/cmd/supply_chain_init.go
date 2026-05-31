@@ -21,9 +21,11 @@ var scInitCmd = &cobra.Command{
 	Short: "Set up local package age enforcement",
 	Long: `Configure your shell to enforce package release age policies during installations.
 
-This wraps your package manager (npm, pnpm, bun — auto-detected from lockfiles) so
-that armis-cli can filter out recently-published package versions before they reach
-your local install. Packages older than the policy threshold (default 72h) install normally.
+This wraps your package manager (auto-detected from lockfiles) so that armis-cli
+can enforce age policies on package installations. Node PMs (npm, pnpm, bun, yarn)
+use a transparent proxy that filters registry responses. Java and Python PMs
+(mvn, gradle, poetry, pipenv, pdm, uv, pip) use a pre-install check that blocks
+builds if violations are found.
 
 Four modes are available:
   rc     — Inject shell functions into ~/.bashrc / ~/.zshrc (default, interactive)

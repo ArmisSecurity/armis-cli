@@ -14,7 +14,13 @@ during package installations. Packages published too recently (e.g., within 72 h
 are flagged or blocked to prevent supply chain attacks via typosquatting,
 compromised maintainer accounts, or dependency confusion.
 
-No Armis Cloud authentication is required — supply-chain queries the public npm registry.`,
+Supported ecosystems:
+  Node:   npm, pnpm, bun, yarn (transparent proxy enforcement)
+  Python: pip, poetry, pipenv, pdm, uv (pre-install block)
+  Java:   Maven (pom.xml), Gradle (gradle.lockfile) (pre-install block)
+
+No Armis Cloud authentication is required — supply-chain queries public registries
+(npm, PyPI, Maven Central).`,
 	Example: `  # Audit lockfile for recently-published packages (CI mode)
   armis-cli supply-chain check
 
