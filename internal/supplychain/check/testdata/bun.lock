@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-project",
+      "dependencies": {
+        "express": "^4.18.2",
+        "lodash": "^4.17.21",
+      },
+    },
+  },
+  "packages": {
+    "express": ["express@4.18.2", "", {}, "sha512-abc123"],
+    "@types/node": ["@types/node@20.10.0", "", {}, "sha512-def456"],
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-ghi789"],
+    "my-git-pkg": ["my-git-pkg@2.0.0", "git+https://github.com/example/pkg.git#abc123", {}, ""],
+    "my-local-pkg": ["my-local-pkg@1.0.0", "file:../my-local-pkg", {}, ""],
+  },
+}

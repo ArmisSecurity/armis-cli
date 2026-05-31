@@ -1,0 +1,39 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "test-project",
+      "version": "1.0.0"
+    },
+    "node_modules/express": {
+      "version": "4.18.2",
+      "resolved": "https://registry.npmjs.org/express/-/express-4.18.2.tgz"
+    },
+    "node_modules/@types/node": {
+      "version": "20.10.0",
+      "resolved": "https://registry.npmjs.org/@types/node/-/node-20.10.0.tgz"
+    },
+    "node_modules/lodash": {
+      "version": "4.17.21",
+      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"
+    },
+    "node_modules/my-local-pkg": {
+      "version": "1.0.0",
+      "resolved": "file:../my-local-pkg"
+    },
+    "node_modules/my-git-pkg": {
+      "version": "2.0.0",
+      "resolved": "git+https://github.com/example/pkg.git#abc123"
+    },
+    "node_modules/linked-pkg": {
+      "version": "1.0.0",
+      "link": true
+    },
+    "node_modules/express/node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz"
+    }
+  }
+}
