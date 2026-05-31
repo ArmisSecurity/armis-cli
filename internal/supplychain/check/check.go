@@ -53,9 +53,14 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 	now := time.Now()
 	var violations []supplychain.Violation
 	var warnings []string
+	rateLimitCount := 0
 
 	for _, r := range results {
 		if r.Err != nil {
+			if strings.Contains(r.Err.Error(), "rate limited") || strings.Contains(r.Err.Error(), "429") {
+				rateLimitCount++
+				continue
+			}
 			warnings = append(warnings, fmt.Sprintf("could not check %s@%s: %v", r.Name, r.Version, r.Err))
 			continue
 		}
@@ -71,6 +76,10 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 				Severity:        supplychain.ClassifySeverity(age, policy.MinReleaseAge),
 			})
 		}
+	}
+
+	if rateLimitCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("registry rate-limited %d request(s) — re-run with --fail-open or try again later", rateLimitCount))
 	}
 
 	return &Result{
