@@ -1,4 +1,4 @@
-package protect
+package supplychain
 
 import (
 	"fmt"
@@ -28,6 +28,10 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 		ecosystem Ecosystem
 	}{
 		{"package-lock.json", EcosystemNPM},
+		{"pnpm-lock.yaml", EcosystemPNPM},
+		{"bun.lock", EcosystemBun},
+		{"requirements.txt", EcosystemPip},
+		{"requirements-lock.txt", EcosystemPip},
 	}
 
 	for _, c := range checks {
@@ -41,7 +45,7 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 	}
 
 	if len(detected) == 0 {
-		return nil, fmt.Errorf("no supported lockfile found in %s (supported: package-lock.json)", dir)
+		return nil, fmt.Errorf("no supported lockfile found in %s\n\n  Supported: package-lock.json, pnpm-lock.yaml, bun.lock, requirements.txt\n  Try:       armis-cli supply-chain check <path-to-project>\n  Or use:    --lockfile <path-to-lockfile>", dir)
 	}
 
 	return detected, nil

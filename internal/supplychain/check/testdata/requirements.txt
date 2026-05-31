@@ -1,0 +1,23 @@
+# Production dependencies
+flask==3.0.0
+requests==2.31.0
+SQLAlchemy==2.0.23
+numpy==1.26.2
+
+# VCS install (should be skipped)
+git+https://github.com/example/pkg.git#egg=mypkg
+
+# Local install (should be skipped)
+./local-package
+
+# With extras (should parse correctly)
+celery[redis]==5.3.6
+
+# Unpinned (should be skipped - no ==)
+boto3>=1.28.0
+
+# With environment marker
+typing-extensions==4.8.0 ; python_version < "3.11"
+
+# Underscore normalized
+my_cool_package==1.0.0

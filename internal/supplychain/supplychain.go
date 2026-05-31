@@ -1,5 +1,5 @@
-// Package protect implements supply chain package age policy enforcement.
-package protect
+// Package supplychain implements supply chain package age policy enforcement.
+package supplychain
 
 import (
 	"fmt"

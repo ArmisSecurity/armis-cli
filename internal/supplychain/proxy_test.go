@@ -1,4 +1,4 @@
-package protect
+package supplychain
 
 import (
 	"context"
@@ -355,6 +355,32 @@ func TestExtractPackageNameFromPath(t *testing.T) {
 	}
 }
 
+func TestExtractTarballVersion(t *testing.T) {
+	tests := []struct {
+		path    string
+		wantPkg string
+		wantVer string
+	}{
+		{"/zod/-/zod-3.22.4.tgz", "zod", "3.22.4"},
+		{"/express/-/express-4.18.2.tgz", "express", "4.18.2"},
+		{"/@types/node/-/node-20.11.0.tgz", "@types/node", "20.11.0"},
+		{"/@scope/pkg/-/pkg-1.0.0-beta.1.tgz", "@scope/pkg", "1.0.0-beta.1"},
+		{"/zod/-/zod-4.5.0-canary.20260504T165552.tgz", "zod", "4.5.0-canary.20260504T165552"},
+		{"/express", "", ""},
+		{"/@types/node", "", ""},
+		{"/", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			pkg, ver := extractTarballVersion(tt.path)
+			if pkg != tt.wantPkg || ver != tt.wantVer {
+				t.Errorf("extractTarballVersion(%q) = (%q, %q), want (%q, %q)", tt.path, pkg, ver, tt.wantPkg, tt.wantVer)
+			}
+		})
+	}
+}
+
 func TestIsMetadataRequest(t *testing.T) {
 	tests := []struct {
 		path   string
@@ -378,5 +404,114 @@ func TestIsMetadataRequest(t *testing.T) {
 				t.Errorf("isMetadataRequest(%q, accept=%q) = %v, want %v", tt.path, tt.accept, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProxyFilterMetadata_DistTagsUpdated(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	metadata := map[string]interface{}{
+		"name": "express",
+		"dist-tags": map[string]string{
+			"latest": "4.19.0",
+			"next":   "5.0.0-alpha",
+		},
+		"time": map[string]string{
+			"created":     oldTime,
+			"modified":    youngTime,
+			"4.18.2":      oldTime,
+			"4.19.0":      youngTime,
+			"5.0.0-alpha": youngTime,
+		},
+		"versions": map[string]interface{}{
+			"4.18.2":      map[string]string{"name": "express", "version": "4.18.2"},
+			"4.19.0":      map[string]string{"name": "express", "version": "4.19.0"},
+			"5.0.0-alpha": map[string]string{"name": "express", "version": "5.0.0-alpha"},
+		},
+	}
+
+	body, _ := json.Marshal(metadata)
+
+	proxy := &Proxy{
+		policy:  Policy{MinReleaseAge: 72 * time.Hour},
+		allowed: make(map[string]string),
+	}
+
+	filtered, blocked := proxy.filterMetadata(body, "express")
+
+	if len(blocked) != 2 {
+		t.Fatalf("expected 2 blocked, got %d", len(blocked))
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(filtered, &result); err != nil {
+		t.Fatalf("unmarshal filtered: %v", err)
+	}
+
+	var distTags map[string]string
+	if err := json.Unmarshal(result["dist-tags"], &distTags); err != nil {
+		t.Fatalf("unmarshal dist-tags: %v", err)
+	}
+
+	if distTags["latest"] == "4.19.0" {
+		t.Error("dist-tags.latest should not point to blocked version 4.19.0")
+	}
+	if distTags["latest"] != "4.18.2" {
+		t.Errorf("dist-tags.latest should point to 4.18.2, got %s", distTags["latest"])
+	}
+	if distTags["next"] != "4.18.2" {
+		t.Errorf("dist-tags.next should point to 4.18.2 (only allowed version), got %s", distTags["next"])
+	}
+}
+
+func TestProxyFilterMetadata_AllBlocked(t *testing.T) {
+	now := time.Now()
+	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	metadata := map[string]interface{}{
+		"name": "evil-pkg",
+		"dist-tags": map[string]string{
+			"latest": "1.0.0",
+		},
+		"time": map[string]string{
+			"1.0.0": youngTime,
+		},
+		"versions": map[string]interface{}{
+			"1.0.0": map[string]string{"name": "evil-pkg"},
+		},
+	}
+
+	body, _ := json.Marshal(metadata)
+
+	proxy := &Proxy{
+		policy:  Policy{MinReleaseAge: 72 * time.Hour},
+		allowed: make(map[string]string),
+	}
+
+	filtered, blocked := proxy.filterMetadata(body, "evil-pkg")
+
+	if len(blocked) != 1 {
+		t.Fatalf("expected 1 blocked, got %d", len(blocked))
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(filtered, &result); err != nil {
+		t.Fatalf("unmarshal filtered: %v", err)
+	}
+
+	var versions map[string]json.RawMessage
+	json.Unmarshal(result["versions"], &versions) //nolint:errcheck,gosec
+
+	if len(versions) != 0 {
+		t.Errorf("all versions should be blocked, got %d remaining", len(versions))
+	}
+
+	// dist-tags should remain pointing to blocked version (no safe alternative)
+	var distTags map[string]string
+	json.Unmarshal(result["dist-tags"], &distTags) //nolint:errcheck,gosec
+	if distTags["latest"] != "1.0.0" {
+		t.Errorf("dist-tags.latest should remain unchanged when all versions blocked, got %s", distTags["latest"])
 	}
 }

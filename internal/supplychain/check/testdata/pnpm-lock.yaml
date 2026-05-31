@@ -1,0 +1,15 @@
+lockfileVersion: '9.0'
+
+packages:
+  /express@4.18.2:
+    resolution: {integrity: sha512-abc123}
+  /@types/node@20.10.0:
+    resolution: {integrity: sha512-def456}
+  /lodash@4.17.21:
+    resolution: {integrity: sha512-ghi789}
+  /debug@2.6.9(@types/node@20.10.0):
+    resolution: {integrity: sha512-jkl012}
+  /my-git-pkg@2.0.0:
+    resolution: {type: git}
+  file:../local-pkg:
+    resolution: {type: directory}

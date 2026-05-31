@@ -1,5 +1,5 @@
-// Package protect implements supply chain age enforcement for npm packages.
-package protect
+// Package supplychain implements supply chain age enforcement for npm packages.
+package supplychain
 
 import (
 	"fmt"
@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	markerStart = "# >>> armis-cli protect >>>"
-	markerEnd   = "# <<< armis-cli protect <<<"
+	markerStart = "# >>> armis-cli supply-chain >>>"
+	markerEnd   = "# <<< armis-cli supply-chain <<<"
 )
 
 type Shell struct {
@@ -46,32 +46,49 @@ func DetectShells() []Shell {
 }
 
 func GenerateWrapper(shell string, pms []string) string {
+	cli := resolveCliPath()
 	switch shell {
 	case "fish":
-		return generateFishWrapper(pms)
+		return generateFishWrapper(pms, cli)
 	default:
-		return generatePosixWrapper(pms)
+		return generatePosixWrapper(pms, cli)
 	}
 }
 
-func generatePosixWrapper(pms []string) string {
+func generatePosixWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range pms {
-		fmt.Fprintf(&b, "%s() {\n  command armis-cli protect wrap %s \"$@\"\n}\n", pm, pm)
+		fmt.Fprintf(&b, "%s() {\n  command '%s' supply-chain wrap %s \"$@\"\n}\n", pm, cli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
 }
 
-func generateFishWrapper(pms []string) string {
+func generateFishWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range pms {
-		fmt.Fprintf(&b, "function %s\n  command armis-cli protect wrap %s $argv\nend\n", pm, pm)
+		fmt.Fprintf(&b, "function %s\n  command '%s' supply-chain wrap %s $argv\nend\n", pm, cli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
+}
+
+func resolveCliPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "armis-cli"
+	}
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return exe
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+	return resolved
 }
 
 func InjectFunctions(shells []Shell, pms []string) ([]string, error) {
@@ -178,7 +195,7 @@ func removeBlock(content string) string {
 }
 
 func EvalCommand(pms []string) string {
-	return generatePosixWrapper(pms)
+	return generatePosixWrapper(pms, resolveCliPath())
 }
 
 func HasInjection(path string) bool {

@@ -44,6 +44,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 ## Features
 
 - Scan repositories and container images
+- **Supply chain protection**: Block recently-published packages (typosquatting, account compromise)
 - Multiple output formats: human, JSON, SARIF, JUnit XML
 - **SBOM generation**: Generate CycloneDX Software Bill of Materials
 - **VEX generation**: Generate Vulnerability Exploitability eXchange documents
@@ -488,6 +489,105 @@ Test report format for CI/CD integration.
 
 ```bash
 armis-cli scan repo ./my-app --format junit > results.xml
+```
+
+---
+
+## Supply Chain Protection
+
+Protect your supply chain by enforcing minimum release age policies on packages. Packages published too recently (e.g., within 72 hours) are flagged or blocked to prevent attacks via typosquatting, compromised maintainer accounts, or dependency confusion.
+
+**No Armis Cloud authentication required** — supply-chain queries public registries directly.
+
+### Quick Start (CI)
+
+```bash
+# Audit your lockfile for recently-published packages
+armis-cli supply-chain check
+```
+
+That's it. Detects your lockfile (package-lock.json, pnpm-lock.yaml, bun.lock, requirements.txt) and checks all new packages against registry publish dates.
+
+### Configuration
+
+Create `.armis-supply-chain.yaml` in your project root (or use `armis-cli supply-chain init --mode config` to generate one):
+
+```yaml
+version: 1
+min-age: 72h
+exclusions:
+  - "@myorg/*"
+  - "typescript"
+ecosystems:
+  - npm
+  - pnpm
+fail-open: false
+```
+
+### Local Enforcement
+
+Protect can transparently wrap your package manager to filter out young versions during install:
+
+```bash
+# Set up shell wrappers (auto-detects npm, pnpm, bun)
+armis-cli supply-chain init
+
+# After restarting your shell, npm/pnpm/bun installs are enforced:
+npm install express  # only allows versions older than 72h
+```
+
+### Bypass and Disable
+
+```bash
+# Skip enforcement for specific packages
+ARMIS_PROTECT_SKIP=hot-new-pkg npm install
+
+# Disable enforcement entirely for one command
+ARMIS_PROTECT=off npm install
+
+# Remove shell wrappers
+armis-cli supply-chain uninit
+```
+
+### GitHub Actions
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # needed for base branch diff
+
+- name: Install armis-cli
+  run: curl -sSfL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | sh
+
+- name: Check supply chain age policy
+  run: armis-cli supply-chain check --format sarif --fail-on high --output supply-chain-results.sarif
+
+- name: Upload SARIF
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: supply-chain-results.sarif
+    category: supply-chain-age
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `supply-chain check [path]` | Audit lockfile for age policy violations (CI mode) |
+| `supply-chain init` | Set up local enforcement (shell wrappers or config) |
+| `supply-chain uninit` | Remove local enforcement |
+| `supply-chain status` | Show current policy, ecosystems, and shell integration |
+
+### Check Flags
+
+```text
+--min-age string        Minimum release age (default: 72h, supports: h/d/w)
+--exclude strings       Package patterns to exclude (glob: @myorg/*)
+--base-lockfile string  Base lockfile to diff against (auto-detected from git)
+--lockfile string       Explicit lockfile path
+--all                   Check all packages (disable diff mode)
+--fail-open             Exit 0 on registry errors
 ```
 
 ---

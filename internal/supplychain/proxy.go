@@ -1,4 +1,4 @@
-package protect
+package supplychain
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,13 +27,22 @@ type BlockedPackage struct {
 	Age     time.Duration
 }
 
+type InstalledPackage struct {
+	Name    string
+	Version string
+}
+
 type Proxy struct {
 	policy       Policy
 	upstreamURL  *url.URL
+	httpClient   *http.Client
+	revProxy     *httputil.ReverseProxy
 	listener     net.Listener
 	server       *http.Server
 	blocked      []BlockedPackage
 	blockedMu    sync.Mutex
+	allowed      map[string]string // package name → latest allowed version
+	allowedMu    sync.Mutex
 	checked      int
 	checkedMu    sync.Mutex
 	skipPackages map[string]bool
@@ -61,9 +71,14 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	}
 
 	return &Proxy{
-		policy:       cfg.Policy,
-		upstreamURL:  upstreamURL,
+		policy:      cfg.Policy,
+		upstreamURL: upstreamURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		revProxy:     httputil.NewSingleHostReverseProxy(upstreamURL),
 		skipPackages: skipSet,
+		allowed:      make(map[string]string),
 	}, nil
 }
 
@@ -114,6 +129,16 @@ func (p *Proxy) Checked() int {
 	return p.checked
 }
 
+func (p *Proxy) Allowed() []InstalledPackage {
+	p.allowedMu.Lock()
+	defer p.allowedMu.Unlock()
+	result := make([]InstalledPackage, 0, len(p.allowed))
+	for name, version := range p.allowed {
+		result = append(result, InstalledPackage{Name: name, Version: version})
+	}
+	return result
+}
+
 func (p *Proxy) Close() error {
 	if p.server != nil {
 		return p.server.Close()
@@ -144,15 +169,15 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, pkgName string) {
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.Path, nil) //nolint:gosec // upstream URL is configured at startup, path is from local proxy
 	if err != nil {
-		p.reverseProxy(w, r)
+		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
 		return
 	}
 	upstreamReq.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
+	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
 	if err != nil {
-		p.reverseProxy(w, r)
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry unreachable for %s: %v\n", pkgName, err)
+		http.Error(w, fmt.Sprintf("[armis] supply-chain: registry unreachable for %s", pkgName), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close() //nolint:errcheck
@@ -231,6 +256,43 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	for v := range versionsToRemove {
 		delete(timeMap, v)
 	}
+
+	// Determine the resolved version: prefer dist-tags.latest if it wasn't blocked,
+	// otherwise find the newest stable (non-prerelease) version still in the map.
+	var latestVersion string
+	if distTagsRaw, ok := metadata["dist-tags"]; ok {
+		var distTags map[string]string
+		if err := json.Unmarshal(distTagsRaw, &distTags); err == nil {
+			if tagged, ok := distTags["latest"]; ok && !versionsToRemove[tagged] {
+				latestVersion = tagged
+			}
+		}
+	}
+	if latestVersion == "" {
+		var latestTime time.Time
+		for version, timeStr := range timeMap {
+			if version == "created" || version == "modified" {
+				continue
+			}
+			if isPrerelease(version) {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, timeStr)
+			if err != nil {
+				continue
+			}
+			if t.After(latestTime) {
+				latestTime = t
+				latestVersion = version
+			}
+		}
+	}
+	if latestVersion != "" && p.allowed != nil {
+		p.allowedMu.Lock()
+		p.allowed[pkgName] = latestVersion
+		p.allowedMu.Unlock()
+	}
+
 	newTime, _ := json.Marshal(timeMap)
 	metadata["time"] = newTime
 
@@ -246,6 +308,24 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		}
 	}
 
+	// Update dist-tags that point to blocked versions
+	if distTagsRaw, ok := metadata["dist-tags"]; ok && latestVersion != "" {
+		var distTags map[string]string
+		if err := json.Unmarshal(distTagsRaw, &distTags); err == nil {
+			updated := false
+			for tag, ver := range distTags {
+				if versionsToRemove[ver] {
+					distTags[tag] = latestVersion
+					updated = true
+				}
+			}
+			if updated {
+				newDistTags, _ := json.Marshal(distTags)
+				metadata["dist-tags"] = newDistTags
+			}
+		}
+	}
+
 	result, err := json.Marshal(metadata)
 	if err != nil {
 		return body, blocked
@@ -254,8 +334,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 }
 
 func (p *Proxy) reverseProxy(w http.ResponseWriter, r *http.Request) {
-	proxy := httputil.NewSingleHostReverseProxy(p.upstreamURL)
-	proxy.ServeHTTP(w, r)
+	p.revProxy.ServeHTTP(w, r)
 }
 
 func extractPackageNameFromPath(path string) string {
@@ -283,9 +362,63 @@ func isMetadataRequest(r *http.Request) bool {
 	if strings.Contains(path, "/-/") || strings.HasSuffix(path, ".tgz") {
 		return false
 	}
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "application/json") {
-		return true
-	}
 	return true
+}
+
+func isPrerelease(version string) bool {
+	parts := strings.SplitN(version, "-", 2)
+	return len(parts) == 2 && parts[0] != ""
+}
+
+// extractTarballVersion parses version from npm tarball URLs:
+//
+//	/zod/-/zod-3.22.4.tgz → ("zod", "3.22.4")
+//	/@scope/pkg/-/pkg-1.0.0.tgz → ("@scope/pkg", "1.0.0")
+func extractTarballVersion(path string) (string, string) {
+	if !strings.HasSuffix(path, ".tgz") || !strings.Contains(path, "/-/") {
+		return "", ""
+	}
+
+	path = strings.TrimPrefix(path, "/")
+
+	var pkgName, tarballSegment string
+	if strings.HasPrefix(path, "@") {
+		// Scoped: @scope/pkg/-/pkg-version.tgz
+		parts := strings.SplitN(path, "/-/", 2)
+		if len(parts) != 2 {
+			return "", ""
+		}
+		pkgName = parts[0]
+		tarballSegment = parts[1]
+	} else {
+		// Unscoped: pkg/-/pkg-version.tgz
+		parts := strings.SplitN(path, "/-/", 2)
+		if len(parts) != 2 {
+			return "", ""
+		}
+		pkgName = parts[0]
+		tarballSegment = parts[1]
+	}
+
+	// tarballSegment is "pkg-version.tgz" — strip .tgz suffix
+	tarballSegment = strings.TrimSuffix(tarballSegment, ".tgz")
+
+	// Find the package's short name (without scope) to strip the prefix
+	shortName := pkgName
+	if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
+		shortName = pkgName[idx+1:]
+	}
+
+	// tarballSegment should be "shortName-version"
+	prefix := shortName + "-"
+	if !strings.HasPrefix(tarballSegment, prefix) {
+		return "", ""
+	}
+
+	version := tarballSegment[len(prefix):]
+	if version == "" {
+		return "", ""
+	}
+
+	return pkgName, version
 }

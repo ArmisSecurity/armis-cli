@@ -1,4 +1,4 @@
-package protect
+package supplychain
 
 import (
 	"os"
@@ -16,7 +16,7 @@ func TestGenerateWrapper_Posix(t *testing.T) {
 	if !strings.Contains(wrapper, markerEnd) {
 		t.Error("missing end marker")
 	}
-	if !strings.Contains(wrapper, `command armis-cli protect wrap npm "$@"`) {
+	if !strings.Contains(wrapper, `supply-chain wrap npm "$@"`) {
 		t.Errorf("unexpected wrapper content: %s", wrapper)
 	}
 }
@@ -27,7 +27,7 @@ func TestGenerateWrapper_Fish(t *testing.T) {
 	if !strings.Contains(wrapper, "function npm") {
 		t.Error("missing fish function declaration")
 	}
-	if !strings.Contains(wrapper, "command armis-cli protect wrap npm $argv") {
+	if !strings.Contains(wrapper, "supply-chain wrap npm $argv") {
 		t.Errorf("unexpected fish wrapper: %s", wrapper)
 	}
 }
@@ -70,7 +70,7 @@ func TestInjectAndRemoveFunctions(t *testing.T) {
 	if !strings.Contains(text, markerStart) {
 		t.Error("marker should be injected")
 	}
-	if !strings.Contains(text, `command armis-cli protect wrap npm "$@"`) {
+	if !strings.Contains(text, `supply-chain wrap npm "$@"`) {
 		t.Error("wrapper function should be injected")
 	}
 

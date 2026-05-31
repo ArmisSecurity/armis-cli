@@ -1,4 +1,4 @@
-package protect
+package supplychain
 
 import (
 	"testing"
@@ -105,5 +105,40 @@ func TestFormatAge(t *testing.T) {
 				t.Errorf("formatAge(%v) = %q, want %q", tt.age, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestViolationToFinding(t *testing.T) {
+	v := Violation{
+		Name:            "evil-pkg",
+		Version:         "1.0.0",
+		PublishTime:     time.Now().Add(-2 * time.Hour),
+		Age:             2 * time.Hour,
+		PolicyThreshold: 72 * time.Hour,
+		Severity:        model.SeverityHigh,
+	}
+
+	f := ViolationToFinding(v, "package-lock.json")
+
+	if f.ID != "SUPPLY_CHAIN_AGE/evil-pkg@1.0.0" {
+		t.Errorf("unexpected ID: %s", f.ID)
+	}
+	if f.Type != model.FindingTypeSCA {
+		t.Errorf("unexpected type: %s", f.Type)
+	}
+	if f.Severity != model.SeverityHigh {
+		t.Errorf("unexpected severity: %s", f.Severity)
+	}
+	if f.Package != "evil-pkg" {
+		t.Errorf("unexpected package: %s", f.Package)
+	}
+	if f.Version != "1.0.0" {
+		t.Errorf("unexpected version: %s", f.Version)
+	}
+	if f.File != "package-lock.json" {
+		t.Errorf("unexpected file: %s", f.File)
+	}
+	if f.FindingCategory != "SUPPLY_CHAIN_AGE" {
+		t.Errorf("unexpected category: %s", f.FindingCategory)
 	}
 }

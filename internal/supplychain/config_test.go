@@ -1,0 +1,139 @@
+package supplychain
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestLoadConfig(t *testing.T) {
+	t.Run("file exists", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `min-age: 7d
+exclusions:
+  - "@myorg/*"
+  - typescript
+ecosystems:
+  - npm
+  - pnpm
+fail-open: true
+`
+		os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o600) //nolint:errcheck,gosec
+
+		cfg, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("expected config, got nil")
+		}
+		if cfg.MinAge != "7d" {
+			t.Errorf("expected min-age=7d, got %s", cfg.MinAge)
+		}
+		if len(cfg.Exclusions) != 2 {
+			t.Errorf("expected 2 exclusions, got %d", len(cfg.Exclusions))
+		}
+		if !cfg.FailOpen {
+			t.Error("expected fail-open=true")
+		}
+		if len(cfg.Ecosystems) != 2 {
+			t.Errorf("expected 2 ecosystems, got %d", len(cfg.Ecosystems))
+		}
+	})
+
+	t.Run("file not found returns nil", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg != nil {
+			t.Error("expected nil for missing config")
+		}
+	})
+
+	t.Run("invalid YAML", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(": bad: yaml: ["), 0o600) //nolint:errcheck,gosec
+
+		_, err := LoadConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid YAML")
+		}
+	})
+}
+
+func TestConfigToPolicy(t *testing.T) {
+	t.Run("full config", func(t *testing.T) {
+		cfg := &Config{
+			MinAge:     "5d",
+			Exclusions: []string{"@myorg/*", "typescript"},
+		}
+
+		policy, err := cfg.ToPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		expected := 5 * 24 * time.Hour
+		if policy.MinReleaseAge != expected {
+			t.Errorf("expected %v, got %v", expected, policy.MinReleaseAge)
+		}
+		if len(policy.Exclusions) != 2 {
+			t.Errorf("expected 2 exclusions, got %d", len(policy.Exclusions))
+		}
+	})
+
+	t.Run("empty config uses defaults", func(t *testing.T) {
+		cfg := &Config{}
+		policy, err := cfg.ToPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if policy.MinReleaseAge != 72*time.Hour {
+			t.Errorf("expected default 72h, got %v", policy.MinReleaseAge)
+		}
+	})
+
+	t.Run("invalid duration", func(t *testing.T) {
+		cfg := &Config{MinAge: "invalid"}
+		_, err := cfg.ToPolicy()
+		if err == nil {
+			t.Error("expected error for invalid duration")
+		}
+	})
+}
+
+func TestFindConfigDir(t *testing.T) {
+	t.Run("config in current dir", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ConfigFileName), []byte("min-age: 3d\n"), 0o600) //nolint:errcheck,gosec
+
+		found := FindConfigDir(dir)
+		if found != dir {
+			t.Errorf("expected %s, got %s", dir, found)
+		}
+	})
+
+	t.Run("config in parent dir", func(t *testing.T) {
+		parent := t.TempDir()
+		child := filepath.Join(parent, "subdir")
+		os.MkdirAll(child, 0o750)                                                           //nolint:errcheck,gosec
+		os.WriteFile(filepath.Join(parent, ConfigFileName), []byte("min-age: 3d\n"), 0o600) //nolint:errcheck,gosec
+
+		found := FindConfigDir(child)
+		if found != parent {
+			t.Errorf("expected %s, got %s", parent, found)
+		}
+	})
+
+	t.Run("no config found", func(t *testing.T) {
+		dir := t.TempDir()
+		found := FindConfigDir(dir)
+		if found != "" {
+			t.Errorf("expected empty string, got %s", found)
+		}
+	})
+}
