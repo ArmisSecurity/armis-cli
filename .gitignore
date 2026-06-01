@@ -13,3 +13,4 @@ coverage.out
 coverage_output.out
 *.test
 *.prof
+.scan-pass

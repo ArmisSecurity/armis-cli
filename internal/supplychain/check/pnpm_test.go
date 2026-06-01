@@ -85,24 +85,3 @@ func TestParsePnpmPackageKey(t *testing.T) {
 		})
 	}
 }
-
-func TestStripPeerSuffix(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"4.18.2", "4.18.2"},
-		{"2.6.9(@types/node@20.10.0)", "2.6.9"},
-		{"4.17.21_peer@1.0.0", "4.17.21"},
-		{"1.0.0", "1.0.0"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := stripPeerSuffix(tt.input)
-			if got != tt.want {
-				t.Errorf("stripPeerSuffix(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}

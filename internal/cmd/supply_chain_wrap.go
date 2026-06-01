@@ -35,9 +35,15 @@ func init() {
 	supplyChainCmd.AddCommand(scWrapCmd)
 }
 
+var allowedPMs = map[string]bool{"npm": true, "pnpm": true, "bun": true, "yarn": true}
+
 func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 	pmName := args[0]
 	pmArgs := args[1:]
+
+	if !allowedPMs[pmName] {
+		return fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn)", pmName)
+	}
 
 	if os.Getenv(envSCActive) == "1" {
 		return exitWithCode(execPM(pmName, pmArgs, nil))
@@ -145,7 +151,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 		allowedVersions[pkg.Name] = pkg.Version
 	}
 
-	relevant := filterRelevantBlocked(blocked, allowedVersions)
+	relevant := filterRelevantBlocked(blocked)
 
 	sort.Slice(relevant, func(i, j int) bool {
 		return relevant[i].Age < relevant[j].Age
@@ -194,7 +200,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 		s.Bold.Render(fmt.Sprintf("%s=off %s install", envSCOff, pmName)))
 }
 
-func filterRelevantBlocked(blocked []supplychain.BlockedPackage, _ map[string]string) []supplychain.BlockedPackage {
+func filterRelevantBlocked(blocked []supplychain.BlockedPackage) []supplychain.BlockedPackage {
 	relevant := make([]supplychain.BlockedPackage, 0, len(blocked))
 	for _, b := range blocked {
 		if isPrerelease(b.Version) {

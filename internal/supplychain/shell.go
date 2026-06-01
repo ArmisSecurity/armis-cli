@@ -56,23 +56,29 @@ func GenerateWrapper(shell string, pms []string) string {
 }
 
 func generatePosixWrapper(pms []string, cli string) string {
+	safeCli := shellQuote(cli)
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range pms {
-		fmt.Fprintf(&b, "%s() {\n  command '%s' supply-chain wrap %s \"$@\"\n}\n", pm, cli, pm)
+		fmt.Fprintf(&b, "%s() {\n  command %s supply-chain wrap %s \"$@\"\n}\n", pm, safeCli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
 }
 
 func generateFishWrapper(pms []string, cli string) string {
+	safeCli := shellQuote(cli)
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range pms {
-		fmt.Fprintf(&b, "function %s\n  command '%s' supply-chain wrap %s $argv\nend\n", pm, cli, pm)
+		fmt.Fprintf(&b, "function %s\n  command %s supply-chain wrap %s $argv\nend\n", pm, safeCli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func resolveCliPath() string {
@@ -112,6 +118,11 @@ func injectIntoFile(path, block string) (bool, error) {
 		return false, err
 	}
 
+	perm := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		perm = info.Mode().Perm()
+	}
+
 	text := string(content)
 
 	if strings.Contains(text, markerStart) {
@@ -129,7 +140,7 @@ func injectIntoFile(path, block string) (bool, error) {
 		return false, err
 	}
 
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil { //nolint:gosec // shell RC file
+	if err := os.WriteFile(path, []byte(text), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
 	return true, nil

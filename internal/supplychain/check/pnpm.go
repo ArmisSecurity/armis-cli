@@ -141,18 +141,6 @@ func stripPeerFromKey(key string) string {
 	return key
 }
 
-func stripPeerSuffix(version string) string {
-	// pnpm appends peer dep info: 1.0.0_peer@version
-	if idx := strings.Index(version, "_"); idx > 0 {
-		return version[:idx]
-	}
-	// pnpm v9 uses parentheses: 1.0.0(@types/node@20.0.0)
-	if idx := strings.Index(version, "("); idx > 0 {
-		return version[:idx]
-	}
-	return version
-}
-
 func shouldSkipPnpmPackage(key string, info pnpmPackageInfo) bool {
 	if strings.HasPrefix(key, "file:") || strings.HasPrefix(key, "link:") {
 		return true

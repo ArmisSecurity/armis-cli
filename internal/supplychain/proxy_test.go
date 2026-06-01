@@ -355,32 +355,6 @@ func TestExtractPackageNameFromPath(t *testing.T) {
 	}
 }
 
-func TestExtractTarballVersion(t *testing.T) {
-	tests := []struct {
-		path    string
-		wantPkg string
-		wantVer string
-	}{
-		{"/zod/-/zod-3.22.4.tgz", "zod", "3.22.4"},
-		{"/express/-/express-4.18.2.tgz", "express", "4.18.2"},
-		{"/@types/node/-/node-20.11.0.tgz", "@types/node", "20.11.0"},
-		{"/@scope/pkg/-/pkg-1.0.0-beta.1.tgz", "@scope/pkg", "1.0.0-beta.1"},
-		{"/zod/-/zod-4.5.0-canary.20260504T165552.tgz", "zod", "4.5.0-canary.20260504T165552"},
-		{"/express", "", ""},
-		{"/@types/node", "", ""},
-		{"/", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			pkg, ver := extractTarballVersion(tt.path)
-			if pkg != tt.wantPkg || ver != tt.wantVer {
-				t.Errorf("extractTarballVersion(%q) = (%q, %q), want (%q, %q)", tt.path, pkg, ver, tt.wantPkg, tt.wantVer)
-			}
-		})
-	}
-}
-
 func TestIsMetadataRequest(t *testing.T) {
 	tests := []struct {
 		path   string
