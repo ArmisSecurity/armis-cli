@@ -44,7 +44,7 @@ func TestParseBunLockfile(t *testing.T) {
 			if e.Name == "my-git-pkg" { //nolint:goconst // test value
 				t.Error("should have skipped git package")
 			}
-			if e.Name == "my-local-pkg" {
+			if e.Name == "my-local-pkg" { //nolint:goconst // test value
 				t.Error("should have skipped local package")
 			}
 		}

@@ -155,7 +155,7 @@ func TestProxyStartAndServe(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express", nil)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request targets the local test proxy on 127.0.0.1
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestProxySkipPackages(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/skipped-pkg", nil)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request targets the local test proxy on 127.0.0.1
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestProxyPolicyExclusion(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/@myorg/utils", nil)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request targets the local test proxy on 127.0.0.1
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

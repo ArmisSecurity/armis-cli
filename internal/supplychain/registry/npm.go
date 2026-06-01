@@ -120,7 +120,7 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + regex-validated, PathEscaped package name
 	if err != nil {
 		return nil, fmt.Errorf("fetching metadata for %s: %w", name, err)
 	}

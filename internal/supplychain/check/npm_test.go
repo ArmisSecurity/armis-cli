@@ -43,10 +43,10 @@ func TestParseNPMLockfile(t *testing.T) {
 		}
 
 		for _, e := range entries {
-			if e.Name == "my-git-pkg" {
+			if e.Name == "my-git-pkg" { //nolint:goconst // test value
 				t.Error("should have skipped git-resolved package")
 			}
-			if e.Name == "my-local-pkg" {
+			if e.Name == "my-local-pkg" { //nolint:goconst // test value
 				t.Error("should have skipped file-resolved package")
 			}
 			if e.Name == "linked-pkg" {

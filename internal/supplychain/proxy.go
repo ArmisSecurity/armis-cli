@@ -333,7 +333,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 }
 
 func (p *Proxy) reverseProxy(w http.ResponseWriter, r *http.Request) {
-	p.revProxy.ServeHTTP(w, r)
+	p.revProxy.ServeHTTP(w, r) //nolint:gosec // G704: single-host reverse proxy to a fixed upstream registry set at construction, not request-controlled
 }
 
 func extractPackageNameFromPath(path string) string {
