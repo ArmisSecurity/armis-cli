@@ -228,7 +228,7 @@ func detectBaseLockfile(lockfilePath string) string {
 }
 
 func resolvePolicy(cmd *cobra.Command, dir string) (supplychain.Policy, error) {
-	cfg, err := supplychain.LoadConfig(dir)
+	cfg, _, err := loadConfigUpward(dir)
 	if err != nil {
 		return supplychain.Policy{}, err
 	}

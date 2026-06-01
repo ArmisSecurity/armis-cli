@@ -108,6 +108,32 @@ func TestInjectAndRemoveFunctions(t *testing.T) {
 	}
 }
 
+func TestRemoveFunctions_PreservesPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	rcFile := filepath.Join(tmpDir, ".bashrc")
+
+	// Create an RC file with restrictive 0600 permissions, then inject + remove.
+	if err := os.WriteFile(rcFile, []byte("# private config\n"), 0o600); err != nil {
+		t.Fatalf("write rc: %v", err)
+	}
+
+	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	if _, err := InjectFunctions(shells, []string{"npm"}); err != nil {
+		t.Fatalf("InjectFunctions: %v", err)
+	}
+	if _, err := RemoveFunctions(shells); err != nil {
+		t.Fatalf("RemoveFunctions: %v", err)
+	}
+
+	info, err := os.Stat(rcFile)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("expected RC file mode 0600 to be preserved after removal, got %o", perm)
+	}
+}
+
 func TestRemoveFunctions_NoBlock(t *testing.T) {
 	tmpDir := t.TempDir()
 	rcFile := filepath.Join(tmpDir, ".zshrc")

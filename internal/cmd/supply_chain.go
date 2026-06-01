@@ -1,8 +1,26 @@
 package cmd
 
 import (
+	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/spf13/cobra"
 )
+
+// loadConfigUpward searches from dir upward (via FindConfigDir) for a
+// .armis-supply-chain.yaml and loads it. It returns the parsed config (nil if
+// none is found), the directory the config was found in, and any load error.
+// This keeps `check`, `status`, and `wrap` consistent: a config in a parent
+// directory applies when commands are run from a subdirectory.
+func loadConfigUpward(dir string) (*supplychain.Config, string, error) {
+	configDir := supplychain.FindConfigDir(dir)
+	if configDir == "" {
+		return nil, "", nil
+	}
+	cfg, err := supplychain.LoadConfig(configDir)
+	if err != nil {
+		return nil, configDir, err
+	}
+	return cfg, configDir, nil
+}
 
 var supplyChainCmd = &cobra.Command{
 	Use:   "supply-chain",

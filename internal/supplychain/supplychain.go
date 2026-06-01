@@ -3,7 +3,7 @@ package supplychain
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +44,10 @@ func ClassifySeverity(age, threshold time.Duration) model.Severity {
 
 func (p Policy) IsExcluded(name string) bool {
 	for _, pattern := range p.Exclusions {
-		if matched, _ := filepath.Match(pattern, name); matched {
+		// Use path.Match (always forward-slash) rather than filepath.Match so
+		// scoped package names like "@scope/name" match consistently across
+		// platforms; filepath.Match treats '/' as a separator only on some OSes.
+		if matched, _ := path.Match(pattern, name); matched {
 			return true
 		}
 	}

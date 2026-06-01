@@ -136,4 +136,36 @@ func TestFindConfigDir(t *testing.T) {
 			t.Errorf("expected empty string, got %s", found)
 		}
 	})
+
+	t.Run("relative dot resolves and finds parent config", func(t *testing.T) {
+		parent := t.TempDir()
+		child := filepath.Join(parent, "subdir")
+		if err := os.MkdirAll(child, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		os.WriteFile(filepath.Join(parent, ConfigFileName), []byte("min-age: 3d\n"), 0o600) //nolint:errcheck,gosec
+
+		// Run from the child dir using a relative ".": FindConfigDir must resolve
+		// to an absolute path so the upward walk actually reaches the parent.
+		origWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		t.Cleanup(func() {
+			if cerr := os.Chdir(origWd); cerr != nil {
+				t.Errorf("restoring working dir: %v", cerr)
+			}
+		})
+		if err := os.Chdir(child); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+
+		found := FindConfigDir(".")
+		// Resolve symlinks (macOS /var -> /private/var) before comparing.
+		wantResolved, _ := filepath.EvalSymlinks(parent)
+		gotResolved, _ := filepath.EvalSymlinks(found)
+		if gotResolved != wantResolved {
+			t.Errorf("expected config dir %s, got %s", wantResolved, gotResolved)
+		}
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
@@ -41,7 +42,7 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "%s\n", s.HeaderBanner.Render("Supply Chain Status"))
 	fmt.Fprintf(os.Stderr, "%s\n\n", s.FooterSeparator.Render("═══════════════════"))
 
-	cfg, err := supplychain.LoadConfig(dir)
+	cfg, configDir, err := loadConfigUpward(dir)
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		configSource = supplychain.ConfigFileName
+		configSource = filepath.Join(configDir, supplychain.ConfigFileName)
 	} else {
 		policy = supplychain.DefaultPolicy()
 		configSource = "defaults (no " + supplychain.ConfigFileName + " found)"
@@ -148,7 +149,7 @@ type statusEnvJSON struct {
 }
 
 func runSupplyChainStatusJSON(dir string) error {
-	cfg, err := supplychain.LoadConfig(dir)
+	cfg, configDir, err := loadConfigUpward(dir)
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ func runSupplyChainStatusJSON(dir string) error {
 		if err != nil {
 			return err
 		}
-		configSource = supplychain.ConfigFileName
+		configSource = filepath.Join(configDir, supplychain.ConfigFileName)
 	} else {
 		policy = supplychain.DefaultPolicy()
 		configSource = "defaults"

@@ -66,8 +66,15 @@ func (c *Config) ToPolicy() (Policy, error) {
 	return policy, nil
 }
 
+// FindConfigDir walks up from startDir looking for a directory that contains
+// ConfigFileName, returning that directory (or "" if none is found). startDir is
+// resolved to an absolute path first so the upward walk works even when callers
+// pass a relative path such as ".".
 func FindConfigDir(startDir string) string {
-	dir := startDir
+	dir, err := filepath.Abs(startDir)
+	if err != nil {
+		dir = startDir
+	}
 	for {
 		path := filepath.Join(dir, ConfigFileName)
 		if _, err := os.Stat(path); err == nil {

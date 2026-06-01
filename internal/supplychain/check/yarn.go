@@ -24,7 +24,11 @@ func ParseYarnLockfile(path string) ([]PackageEntry, error) {
 }
 
 func isBerryLockfile(data []byte) bool {
-	return strings.Contains(string(data[:min(len(data), 512)]), "__metadata:")
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	return strings.Contains(string(head), "__metadata:")
 }
 
 // parseYarnBerry handles yarn v2+ (berry) lockfiles which are YAML.

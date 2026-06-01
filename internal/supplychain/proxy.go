@@ -175,6 +175,11 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 
 	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
 	if err != nil {
+		if p.policy.FailOpen {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: age check unavailable for %s, allowing (fail-open): %v\n", pkgName, err)
+			p.reverseProxy(w, r)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry unreachable for %s: %v\n", pkgName, err)
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: registry unreachable for %s", pkgName), http.StatusBadGateway)
 		return
@@ -192,6 +197,11 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProxyResponseSize))
 	if err != nil {
+		if p.policy.FailOpen {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: age check unavailable for %s, allowing (fail-open): %v\n", pkgName, err)
+			p.reverseProxy(w, r)
+			return
+		}
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to read upstream response for %s", pkgName), http.StatusBadGateway)
 		return
 	}
@@ -341,6 +351,12 @@ func extractPackageNameFromPath(path string) string {
 	if path == "" {
 		return ""
 	}
+
+	// npm clients commonly request scoped metadata with a URL-encoded slash
+	// (e.g. /@scope%2Fname). Normalize it so scoped detection works in both
+	// the decoded (/@scope/name) and encoded forms.
+	path = strings.ReplaceAll(path, "%2F", "/")
+	path = strings.ReplaceAll(path, "%2f", "/")
 
 	// Scoped package: @scope/name
 	if strings.HasPrefix(path, "@") {

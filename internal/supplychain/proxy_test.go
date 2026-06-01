@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -343,6 +345,10 @@ func TestExtractPackageNameFromPath(t *testing.T) {
 		{"/lodash", "lodash"},
 		{"/", ""},
 		{"", ""},
+		// URL-encoded scoped package (npm clients commonly request this form).
+		{"/@scope%2Fname", "@scope/name"},
+		{"/@scope%2fname", "@scope/name"},
+		{"/@types%2Fnode", "@types/node"},
 	}
 
 	for _, tt := range tests {
@@ -487,5 +493,78 @@ func TestProxyFilterMetadata_AllBlocked(t *testing.T) {
 	json.Unmarshal(result["dist-tags"], &distTags) //nolint:errcheck,gosec
 	if distTags["latest"] != "1.0.0" {
 		t.Errorf("dist-tags.latest should remain unchanged when all versions blocked, got %s", distTags["latest"])
+	}
+}
+
+// newUnreachableProxy returns a proxy whose upstream points at a closed port so
+// that age-check requests fail, exercising the registry-unreachable branch.
+func newUnreachableProxy(t *testing.T, failOpen bool) *Proxy {
+	t.Helper()
+
+	// Bind then immediately close a listener to obtain a port nothing is serving.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := l.Addr().String()
+	l.Close() //nolint:errcheck,gosec
+
+	proxy, err := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour, FailOpen: failOpen},
+		UpstreamURL: "http://" + deadAddr,
+	})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+	// Keep the failure fast so the test doesn't wait on the 30s client timeout.
+	proxy.httpClient = &http.Client{Timeout: 2 * time.Second}
+	return proxy
+}
+
+func TestProxyFailClosed_RegistryUnreachable(t *testing.T) {
+	proxy := newUnreachableProxy(t, false)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: local test proxy on 127.0.0.1
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("fail-closed should return 502 when registry is unreachable, got %d", resp.StatusCode)
+	}
+}
+
+func TestProxyFailOpen_RegistryUnreachable(t *testing.T) {
+	proxy := newUnreachableProxy(t, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: local test proxy on 127.0.0.1
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec
+
+	// With fail-open the request falls through to the reverse proxy. The dead
+	// upstream still can't answer, so the reverse proxy reports 502 too — but
+	// the distinguishing signal is that we did NOT short-circuit with our own
+	// "registry unreachable" age-check error. Assert that fail-open took the
+	// passthrough path by checking the body is not our age-check error message.
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "supply-chain: registry unreachable") {
+		t.Errorf("fail-open should not emit the age-check unreachable error; got body %q", string(body))
 	}
 }

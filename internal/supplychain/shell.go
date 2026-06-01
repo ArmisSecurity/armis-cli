@@ -174,8 +174,13 @@ func removeFromFile(path string) (bool, error) {
 		return false, nil
 	}
 
+	perm := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		perm = info.Mode().Perm()
+	}
+
 	cleaned := removeBlock(text)
-	if err := os.WriteFile(path, []byte(cleaned), 0o644); err != nil { //nolint:gosec // shell RC file
+	if err := os.WriteFile(path, []byte(cleaned), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
 	return true, nil

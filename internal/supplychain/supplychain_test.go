@@ -87,6 +87,36 @@ func TestPolicyIsExcluded(t *testing.T) {
 	}
 }
 
+// TestPolicyIsExcluded_ForwardSlashSemantics verifies that exclusion matching
+// treats '/' as a literal path separator consistently (path.Match), so a
+// non-slash pattern never matches a scoped package and a wildcard does not
+// cross the scope separator. This must hold on every OS, including Windows.
+func TestPolicyIsExcluded_ForwardSlashSemantics(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		name     string
+		excluded bool
+	}{
+		// A single '*' must not span the '/' separator.
+		{"*", "@scope/name", false},
+		{"*", "express", true},
+		// Scoped wildcard matches within the scope only.
+		{"@scope/*", "@scope/name", true},
+		{"@scope/*", "@scope/deep/name", false},
+		// Exact scoped match.
+		{"@scope/name", "@scope/name", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_vs_"+tt.name, func(t *testing.T) {
+			policy := Policy{Exclusions: []string{tt.pattern}}
+			if got := policy.IsExcluded(tt.name); got != tt.excluded {
+				t.Errorf("Policy{Exclusions:[%q]}.IsExcluded(%q) = %v, want %v", tt.pattern, tt.name, got, tt.excluded)
+			}
+		})
+	}
+}
+
 func TestFormatAge(t *testing.T) {
 	tests := []struct {
 		age      time.Duration

@@ -169,8 +169,6 @@ func runInitRC(pms []string) error {
 		return fmt.Errorf("no supported shells detected (bash, zsh, or fish)")
 	}
 
-	wrapper := supplychain.GenerateWrapper(shells[0].Name, pms)
-
 	fmt.Fprintf(os.Stderr, "%s ", s.MutedText.Render("Detected shell(s):"))
 	names := make([]string, 0, len(shells))
 	for _, sh := range shells {
@@ -178,8 +176,23 @@ func runInitRC(pms []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s\n\n", strings.Join(names, ", "))
 
+	// Preview each distinct wrapper. bash/zsh share the posix wrapper while fish
+	// uses different syntax, so group shells by the wrapper they produce to keep
+	// the preview accurate when multiple shells are detected.
 	fmt.Fprintf(os.Stderr, "%s\n\n", s.SectionTitle.Render("Will inject the following into shell RC file(s):"))
-	fmt.Fprintf(os.Stderr, "%s\n", s.CodeBlock.Render(wrapper))
+	var order []string
+	shellsByWrapper := make(map[string][]string)
+	for _, sh := range shells {
+		w := supplychain.GenerateWrapper(sh.Name, pms)
+		if _, seen := shellsByWrapper[w]; !seen {
+			order = append(order, w)
+		}
+		shellsByWrapper[w] = append(shellsByWrapper[w], sh.Name)
+	}
+	for _, w := range order {
+		fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(strings.Join(shellsByWrapper[w], ", ")+":"))
+		fmt.Fprintf(os.Stderr, "%s\n", s.CodeBlock.Render(w))
+	}
 
 	if scInitDryRun {
 		fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render("(dry-run: no changes made)"))
