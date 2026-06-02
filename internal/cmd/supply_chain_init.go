@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -314,32 +315,57 @@ fail-open: false
 	return nil
 }
 
+// maxDetectedScopes bounds how many distinct org scopes detectOrgScopes
+// collects. The result only pre-populates suggested exclusions in the generated
+// config, so there is no value in scanning the entire lockfile of a large
+// monorepo once we already have a representative set.
+const maxDetectedScopes = 16
+
 func detectOrgScopes(ecosystems []supplychain.DetectedEcosystem) []string {
 	seen := make(map[string]bool)
+	var scopes []string
 	for _, e := range ecosystems {
 		if e.Ecosystem != supplychain.EcosystemNPM && e.Ecosystem != supplychain.EcosystemPNPM && e.Ecosystem != supplychain.EcosystemBun {
 			continue
 		}
-		data, err := os.ReadFile(e.LockfilePath) //nolint:gosec
-		if err != nil {
-			continue
+		if collectScopesFromFile(e.LockfilePath, seen, &scopes) {
+			break // hit the cap; no need to read remaining lockfiles
 		}
-		content := string(data)
-		for _, line := range strings.Split(content, "\n") {
-			line = strings.TrimSpace(line)
-			if idx := strings.Index(line, "@"); idx >= 0 && strings.HasPrefix(line[idx:], "@") {
-				scope := extractScope(line[idx:])
-				if scope != "" && !seen[scope] {
-					seen[scope] = true
-				}
-			}
-		}
-	}
-	var scopes []string
-	for scope := range seen {
-		scopes = append(scopes, scope)
 	}
 	return scopes
+}
+
+// collectScopesFromFile streams the lockfile line by line (rather than reading
+// the whole file into memory) and appends any newly-seen org scopes. It returns
+// true once maxDetectedScopes distinct scopes have been collected.
+func collectScopesFromFile(path string, seen map[string]bool, scopes *[]string) bool {
+	f, err := os.Open(path) //nolint:gosec // lockfile path from local detection
+	if err != nil {
+		return false
+	}
+	defer f.Close() //nolint:errcheck
+
+	sc := bufio.NewScanner(f)
+	// Lockfile lines can be long (resolved URLs, integrity hashes); raise the
+	// scanner's buffer so a single long line doesn't abort the scan.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		idx := strings.Index(line, "@")
+		if idx < 0 {
+			continue
+		}
+		scope := extractScope(line[idx:])
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		*scopes = append(*scopes, scope)
+		if len(*scopes) >= maxDetectedScopes {
+			return true
+		}
+	}
+	return false
 }
 
 func extractScope(s string) string {
@@ -352,7 +378,9 @@ func extractScope(s string) string {
 	}
 	scope := s[:end]
 	for _, c := range scope[1:] {
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' && c != '.' {
+		// npm scope names allow lowercase and uppercase letters (uppercase is
+		// legacy but still valid), digits, and -_. characters.
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' && c != '.' {
 			return ""
 		}
 	}

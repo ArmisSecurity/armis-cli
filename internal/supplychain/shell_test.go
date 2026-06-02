@@ -3,6 +3,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,10 @@ func TestInjectAndRemoveFunctions(t *testing.T) {
 }
 
 func TestRemoveFunctions_PreservesPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
+
 	tmpDir := t.TempDir()
 	rcFile := filepath.Join(tmpDir, ".bashrc")
 

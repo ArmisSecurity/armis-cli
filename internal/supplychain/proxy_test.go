@@ -189,6 +189,54 @@ func TestProxyStartAndServe(t *testing.T) {
 	}
 }
 
+// TestProxyForwardsQueryString verifies the filtered metadata branch preserves
+// the original query string when proxying to the upstream registry, matching the
+// reverse-proxy passthrough. npm clients append params like ?write=true.
+func TestProxyForwardsQueryString(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+
+	var gotRawQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		metadata := map[string]interface{}{
+			"name": "express",
+			"time": map[string]string{"4.18.2": oldTime},
+			"versions": map[string]interface{}{
+				"4.18.2": map[string]string{"name": "express"},
+			},
+		}
+		json.NewEncoder(w).Encode(metadata) //nolint:errcheck,gosec,gosec
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		UpstreamURL: upstream.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express?write=true&cache_bust=42", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: local test proxy on 127.0.0.1
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec
+
+	if gotRawQuery != "write=true&cache_bust=42" {
+		t.Errorf("upstream should receive the original query string, got %q", gotRawQuery)
+	}
+}
+
 func TestProxySkipPackages(t *testing.T) {
 	now := time.Now()
 	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
@@ -441,8 +489,67 @@ func TestProxyFilterMetadata_DistTagsUpdated(t *testing.T) {
 	if distTags["latest"] != "4.18.2" {
 		t.Errorf("dist-tags.latest should point to 4.18.2, got %s", distTags["latest"])
 	}
-	if distTags["next"] != "4.18.2" {
-		t.Errorf("dist-tags.next should point to 4.18.2 (only allowed version), got %s", distTags["next"])
+	// The "next" channel tag pointed at a blocked prerelease (5.0.0-alpha). It must
+	// be dropped, not repointed to the stable fallback — rewriting it to 4.18.2
+	// would mislead `npm install express@next` into installing a stable release.
+	if ver, ok := distTags["next"]; ok {
+		t.Errorf("dist-tags.next should be removed when its version is blocked, got %s", ver)
+	}
+}
+
+// TestProxyFilterMetadata_UnblockedChannelTagPreserved verifies that a channel
+// tag (e.g. "beta") pointing at a version that is NOT blocked is left untouched,
+// while "latest" is still repointed away from a blocked version. This guards the
+// dist-tag rewrite from being over-aggressive.
+func TestProxyFilterMetadata_UnblockedChannelTagPreserved(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	metadata := map[string]interface{}{
+		"name": "express",
+		"dist-tags": map[string]string{
+			"latest": "4.19.0",      // blocked → must be repointed to 4.18.2
+			"beta":   "4.18.0-beta", // old prerelease, NOT blocked → must remain
+		},
+		"time": map[string]string{
+			"4.18.0-beta": oldTime,
+			"4.18.2":      oldTime,
+			"4.19.0":      youngTime,
+		},
+		"versions": map[string]interface{}{
+			"4.18.0-beta": map[string]string{"name": "express", "version": "4.18.0-beta"},
+			"4.18.2":      map[string]string{"name": "express", "version": "4.18.2"},
+			"4.19.0":      map[string]string{"name": "express", "version": "4.19.0"},
+		},
+	}
+
+	body, _ := json.Marshal(metadata)
+
+	proxy := &Proxy{
+		policy:  Policy{MinReleaseAge: 72 * time.Hour},
+		allowed: make(map[string]string),
+	}
+
+	filtered, blocked := proxy.filterMetadata(body, "express")
+	if len(blocked) != 1 {
+		t.Fatalf("expected 1 blocked, got %d", len(blocked))
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(filtered, &result); err != nil {
+		t.Fatalf("unmarshal filtered: %v", err)
+	}
+	var distTags map[string]string
+	if err := json.Unmarshal(result["dist-tags"], &distTags); err != nil {
+		t.Fatalf("unmarshal dist-tags: %v", err)
+	}
+
+	if distTags["latest"] != "4.18.2" {
+		t.Errorf("dist-tags.latest should be repointed to 4.18.2, got %q", distTags["latest"])
+	}
+	if distTags["beta"] != "4.18.0-beta" {
+		t.Errorf("unblocked dist-tags.beta should be preserved untouched, got %q", distTags["beta"])
 	}
 }
 

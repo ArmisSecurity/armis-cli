@@ -18,6 +18,7 @@ import (
 const (
 	defaultUpstreamRegistry = "https://registry.npmjs.org"
 	maxProxyResponseSize    = 20 * 1024 * 1024
+	distTagLatest           = "latest"
 )
 
 type BlockedPackage struct {
@@ -166,7 +167,10 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, pkgName string) {
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.Path, nil) //nolint:gosec // upstream URL is configured at startup, path is from local proxy
+	// Use RequestURI() (escaped path + raw query) rather than just Path so the
+	// filtered branch is symmetric with the reverse-proxy passthrough: query
+	// params (e.g. ?write=true) and path-escaping nuances reach the upstream.
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.RequestURI(), nil) //nolint:gosec // upstream URL is configured at startup, path is from local proxy
 	if err != nil {
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
 		return
@@ -272,7 +276,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	if distTagsRaw, ok := metadata["dist-tags"]; ok {
 		var distTags map[string]string
 		if err := json.Unmarshal(distTagsRaw, &distTags); err == nil {
-			if tagged, ok := distTags["latest"]; ok && !versionsToRemove[tagged] {
+			if tagged, ok := distTags[distTagLatest]; ok && !versionsToRemove[tagged] {
 				latestVersion = tagged
 			}
 		}
@@ -317,14 +321,29 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		}
 	}
 
-	// Update dist-tags that point to blocked versions
-	if distTagsRaw, ok := metadata["dist-tags"]; ok && latestVersion != "" {
+	// Update dist-tags that point to blocked versions. Only "latest" is repointed
+	// to the fallback stable version — channel tags like "next"/"beta" intentionally
+	// track prereleases, so rewriting them to a stable version would mislead
+	// `npm install pkg@next` into the wrong channel. Instead, drop blocked channel
+	// tags so those installs fail closed rather than silently switch channels.
+	if distTagsRaw, ok := metadata["dist-tags"]; ok {
 		var distTags map[string]string
 		if err := json.Unmarshal(distTagsRaw, &distTags); err == nil {
 			updated := false
 			for tag, ver := range distTags {
-				if versionsToRemove[ver] {
-					distTags[tag] = latestVersion
+				if !versionsToRemove[ver] {
+					continue
+				}
+				if tag == distTagLatest {
+					// Repoint "latest" to the fallback stable version when one
+					// exists; otherwise leave it untouched — the version is gone
+					// from the versions map, so the install fails closed.
+					if latestVersion != "" {
+						distTags[tag] = latestVersion
+						updated = true
+					}
+				} else {
+					delete(distTags, tag)
 					updated = true
 				}
 			}

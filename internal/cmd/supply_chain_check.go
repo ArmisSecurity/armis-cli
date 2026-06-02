@@ -108,7 +108,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	result, err := check.RunCheck(ctx, policy, lockfilePath, baseLockfile)
 	if err != nil {
-		if scFailOpen {
+		if policy.FailOpen {
 			cli.PrintWarningf("supply-chain check failed (--fail-open): %v", err)
 			return nil
 		}
@@ -119,7 +119,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		cli.PrintWarningf("%s", w)
 	}
 
-	if scFailOpen && len(result.Warnings) > 0 && len(result.Violations) == 0 {
+	if policy.FailOpen && len(result.Warnings) > 0 && len(result.Violations) == 0 {
 		fmt.Fprintf(os.Stderr, "\n")
 		cli.PrintWarningf("%d packages could not be checked (--fail-open: passing anyway)", len(result.Warnings))
 	}
@@ -239,9 +239,6 @@ func resolvePolicy(cmd *cobra.Command, dir string) (supplychain.Policy, error) {
 		if err != nil {
 			return supplychain.Policy{}, err
 		}
-		if cfg.FailOpen && !cmd.Flags().Changed("fail-open") {
-			scFailOpen = true
-		}
 	} else {
 		policy = supplychain.DefaultPolicy()
 	}
@@ -256,6 +253,14 @@ func resolvePolicy(cmd *cobra.Command, dir string) (supplychain.Policy, error) {
 
 	if cmd.Flags().Changed("exclude") {
 		policy.Exclusions = scExclude
+	}
+
+	// The explicit --fail-open flag overrides the config value; otherwise
+	// policy.FailOpen already carries the config setting (false by default).
+	// Threading this through the policy avoids mutating the package-level
+	// scFailOpen var as a hidden side effect that would persist across calls.
+	if cmd.Flags().Changed("fail-open") {
+		policy.FailOpen = scFailOpen
 	}
 
 	return policy, nil
