@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -81,7 +82,14 @@ func runSupplyChainInit(_ *cobra.Command, _ []string) error {
 }
 
 func detectWrappablePMs() []string {
-	ecosystems, _ := supplychain.DetectEcosystems(".")
+	ecosystems, err := supplychain.DetectEcosystems(".")
+	if err != nil {
+		// DetectEcosystems only errors when no supported lockfile is present.
+		// Default to npm so the generated wrapper still protects the most common
+		// package manager rather than silently wrapping nothing.
+		return []string{pmNPM}
+	}
+
 	seen := make(map[string]bool)
 	var pms []string
 
@@ -97,7 +105,7 @@ func detectWrappablePMs() []string {
 	}
 
 	if len(pms) == 0 {
-		return []string{"npm"}
+		return []string{pmNPM}
 	}
 	return pms
 }
@@ -105,20 +113,54 @@ func detectWrappablePMs() []string {
 func ecosystemToPM(eco supplychain.Ecosystem) string {
 	switch eco {
 	case supplychain.EcosystemNPM:
-		return "npm"
+		return pmNPM
 	case supplychain.EcosystemPNPM:
-		return "pnpm"
+		return pmPNPM
 	case supplychain.EcosystemBun:
-		return "bun"
+		return pmBun
 	case supplychain.EcosystemYarn:
-		return "yarn"
+		return pmYarn
 	default:
 		return ""
 	}
 }
 
+// promptYesNo prints an interactive yes/no prompt to stderr and reads the reply
+// from stdin. See readYesNo for the answer semantics.
+func promptYesNo(prompt string, defaultYes bool) bool {
+	suffix := "[y/N]"
+	if defaultYes {
+		suffix = "[Y/n]"
+	}
+	fmt.Fprintf(os.Stderr, "%s %s ", prompt, suffix)
+	return readYesNo(os.Stdin, defaultYes)
+}
+
+// readYesNo reads a single line from r and reports whether it is affirmative.
+// An empty answer (the user pressing Enter) accepts the default. If the stream
+// is closed or the read fails before any input is received, it returns false so
+// callers fail closed — an unreadable prompt must never be treated as consent
+// for a destructive action like editing shell RC files.
+func readYesNo(r io.Reader, defaultYes bool) bool {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	// ReadString returns any data read so far alongside io.EOF when input ends
+	// without a trailing newline (e.g. "y"+Ctrl-D), so only fail closed when the
+	// read produced nothing at all — that signals no interactive human present.
+	// armis:ignore cwe:253 reason:the error IS handled — a read error with no data fails closed; a read error with partial data intentionally honors the data already entered
+	if err != nil && line == "" {
+		return false
+	}
+
+	answer := strings.TrimSpace(strings.ToLower(line))
+	if answer == "" {
+		return defaultYes
+	}
+	return answer == "y" || answer == "yes"
+}
+
 func runInitEnv(pms []string) error {
 	s := output.GetStyles()
+	// armis:ignore cwe:78 reason:EvalCommand runs every name through sanitizePMNames (^[a-z][a-z0-9-]*$) before interpolation, so no shell metacharacter can reach the generated eval string; pms originates from local lockfile detection regardless
 	block := supplychain.EvalCommand(pms)
 	if scInitDryRun {
 		fmt.Fprintf(os.Stderr, "%s\n\n", s.MutedText.Render("Would print eval command:"))
@@ -141,12 +183,19 @@ func runInitNpmrc() error {
 		return nil
 	}
 
-	content, _ := os.ReadFile(npmrcPath) //nolint:gosec // project .npmrc
+	content, err := os.ReadFile(npmrcPath) //nolint:gosec // project .npmrc in current working directory
+	if err != nil && !os.IsNotExist(err) {
+		// A missing .npmrc is expected (we create it below); any other read error
+		// (permissions, I/O) must surface rather than be silently treated as an
+		// empty file, which would make the "already configured" check unreliable.
+		return fmt.Errorf("reading %s: %w", npmrcPath, err)
+	}
 	if strings.Contains(string(content), "armis-cli supply-chain") {
 		fmt.Fprintf(os.Stderr, "%s already contains armis-cli supply-chain configuration.\n", s.Bold.Render(npmrcPath))
 		return nil
 	}
 
+	// armis:ignore cwe:732 reason:.npmrc here holds only a non-secret comment pointing at supply-chain wrap; it is a project file meant to be readable by the user's toolchain, so 0644 (respecting umask) is intentional
 	f, err := os.OpenFile(npmrcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // project .npmrc
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", npmrcPath, err)
@@ -201,11 +250,7 @@ func runInitRC(pms []string) error {
 	}
 
 	if !scInitYes {
-		fmt.Fprintf(os.Stderr, "%s [Y/n] ", s.Bold.Render("Proceed?"))
-		var answer string
-		fmt.Scanln(&answer) //nolint:errcheck,gosec // interactive prompt, EOF is fine
-		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer != "" && answer != "y" && answer != "yes" { //nolint:goconst // interactive prompt literal
+		if !promptYesNo(s.Bold.Render("Proceed?"), true) {
 			fmt.Fprintf(os.Stderr, "Aborted.\n")
 			return nil
 		}
@@ -296,16 +341,13 @@ fail-open: false
 	if !scInitYes {
 		fmt.Fprintf(os.Stderr, "%s\n\n", s.SectionTitle.Render(fmt.Sprintf("Will create %s:", configPath)))
 		fmt.Fprintf(os.Stderr, "%s\n", s.CodeBlock.Render(content))
-		fmt.Fprintf(os.Stderr, "%s [Y/n] ", s.Bold.Render("Proceed?"))
-		var answer string
-		fmt.Scanln(&answer) //nolint:errcheck,gosec
-		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer != "" && answer != "y" && answer != "yes" {
+		if !promptYesNo(s.Bold.Render("Proceed?"), true) {
 			fmt.Fprintf(os.Stderr, "Aborted.\n")
 			return nil
 		}
 	}
 
+	// armis:ignore cwe:732 reason:the supply-chain policy file is non-secret config explicitly intended to be committed and shared with the team; 0644 (respecting umask) is the correct mode for a world-readable project file
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil { //nolint:gosec // project config file
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
@@ -339,6 +381,7 @@ func detectOrgScopes(ecosystems []supplychain.DetectedEcosystem) []string {
 // the whole file into memory) and appends any newly-seen org scopes. It returns
 // true once maxDetectedScopes distinct scopes have been collected.
 func collectScopesFromFile(path string, seen map[string]bool, scopes *[]string) bool {
+	// armis:ignore cwe:22 cwe:73 reason:local CLI reading the user's own lockfile to suggest config exclusions; path comes from local lockfile detection, not untrusted input crossing a trust boundary
 	f, err := os.Open(path) //nolint:gosec // lockfile path from local detection
 	if err != nil {
 		return false

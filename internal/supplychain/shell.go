@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -12,6 +13,28 @@ const (
 	markerStart = "# >>> armis-cli supply-chain >>>"
 	markerEnd   = "# <<< armis-cli supply-chain <<<"
 )
+
+// validPMName bounds package-manager names to a safe shell identifier: a
+// lowercase letter followed by lowercase letters, digits, or hyphens. The
+// generated wrapper uses each name both as a shell function name and as a
+// literal command argument, so restricting it to this character set guarantees
+// no shell metacharacter (`;`, backtick, `$`, quotes, whitespace) can ever be
+// interpolated into the script written to a user's RC file.
+var validPMName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// sanitizePMNames drops any package-manager name that is not a safe shell
+// identifier. This is the single chokepoint that every wrapper generator runs
+// its input through, so a malformed or attacker-influenced name can never reach
+// the script-building Fprintf calls below.
+func sanitizePMNames(pms []string) []string {
+	var safe []string
+	for _, pm := range pms {
+		if validPMName.MatchString(pm) {
+			safe = append(safe, pm)
+		}
+	}
+	return safe
+}
 
 type Shell struct {
 	Name   string
@@ -26,6 +49,7 @@ func DetectShells() []Shell {
 
 	var shells []Shell
 
+	// armis:ignore cwe:73 reason:RC paths are the current user's own home dir (os.UserHomeDir) joined with hardcoded shell filenames; configuring the user's own shell is the purpose of `supply-chain init`, and $HOME is not a trust boundary for a local CLI
 	candidates := []Shell{
 		{Name: "bash", RCFile: filepath.Join(home, ".bashrc")},
 		{Name: "zsh", RCFile: filepath.Join(home, ".zshrc")},
@@ -59,7 +83,8 @@ func generatePosixWrapper(pms []string, cli string) string {
 	safeCli := shellQuote(cli)
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
-	for _, pm := range pms {
+	for _, pm := range sanitizePMNames(pms) {
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*$ by sanitizePMNames; safeCli is shellQuote-escaped
 		fmt.Fprintf(&b, "%s() {\n  command %s supply-chain wrap %s \"$@\"\n}\n", pm, safeCli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
@@ -70,7 +95,8 @@ func generateFishWrapper(pms []string, cli string) string {
 	safeCli := shellQuote(cli)
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
-	for _, pm := range pms {
+	for _, pm := range sanitizePMNames(pms) {
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*$ by sanitizePMNames; safeCli is shellQuote-escaped
 		fmt.Fprintf(&b, "function %s\n  command %s supply-chain wrap %s $argv\nend\n", pm, safeCli, pm)
 	}
 	b.WriteString(markerEnd + "\n")
@@ -113,6 +139,7 @@ func InjectFunctions(shells []Shell, pms []string) ([]string, error) {
 }
 
 func injectIntoFile(path, block string) (bool, error) {
+	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain init`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
@@ -140,6 +167,7 @@ func injectIntoFile(path, block string) (bool, error) {
 		return false, err
 	}
 
+	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain init`
 	if err := os.WriteFile(path, []byte(text), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
@@ -161,6 +189,7 @@ func RemoveFunctions(shells []Shell) ([]string, error) {
 }
 
 func removeFromFile(path string) (bool, error) {
+	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain uninit`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -180,6 +209,7 @@ func removeFromFile(path string) (bool, error) {
 	}
 
 	cleaned := removeBlock(text)
+	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain uninit`
 	if err := os.WriteFile(path, []byte(cleaned), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
@@ -215,6 +245,7 @@ func EvalCommand(pms []string) string {
 }
 
 func HasInjection(path string) bool {
+	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to report injection status is the purpose of `supply-chain status`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil {
 		return false

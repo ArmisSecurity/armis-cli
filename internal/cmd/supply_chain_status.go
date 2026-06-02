@@ -108,9 +108,15 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// printEnvStatus is only ever called with the three ARMIS_SUPPLY_CHAIN* control
+// variables below — a master on/off switch, a package bypass list, and a
+// recursion guard. None of them holds a credential or secret; their values are
+// intentionally surfaced so users can diagnose why enforcement is (or isn't)
+// active. Echoing them is the purpose of the `status` command, not a leak.
 func printEnvStatus(s *output.Styles, key, desc string) {
 	val := os.Getenv(key)
 	if val != "" {
+		// armis:ignore cwe:522 reason:key is one of the non-secret ARMIS_SUPPLY_CHAIN* control vars (switch/bypass-list/recursion-guard); diagnostic output by design, no credentials involved
 		fmt.Fprintf(os.Stderr, "  %s=%s %s\n", s.Bold.Render(key), val, s.MutedText.Render("— "+desc))
 	} else {
 		fmt.Fprintf(os.Stderr, "  %s %s %s\n", s.Bold.Render(key), s.MutedText.Render("(unset)"), s.MutedText.Render("— "+desc))
@@ -174,6 +180,7 @@ func runSupplyChainStatusJSON(dir string) error {
 			Exclusions: policy.Exclusions,
 			FailOpen:   cfg != nil && cfg.FailOpen,
 		},
+		// armis:ignore cwe:522 reason:these three ARMIS_SUPPLY_CHAIN* vars are non-secret control values (on/off switch, package bypass list, recursion guard); reporting them is the purpose of `status`, no credentials involved
 		Environment: statusEnvJSON{
 			SupplyChain:       os.Getenv("ARMIS_SUPPLY_CHAIN"),
 			SupplyChainSkip:   os.Getenv("ARMIS_SUPPLY_CHAIN_SKIP"),
@@ -185,7 +192,11 @@ func runSupplyChainStatusJSON(dir string) error {
 		result.Policy.Exclusions = []string{}
 	}
 
-	ecosystems, _ := supplychain.DetectEcosystems(dir)
+	// DetectEcosystems errors only when no supported lockfile exists, which is a
+	// valid state for `status` (we simply report no ecosystems), so the error is
+	// intentionally not surfaced here — mirroring the human-output path.
+	// armis:ignore cwe:770 cwe:253 reason:result bounded to one entry per known lockfile type (4); the "no lockfile" error is a valid empty state for status output, deliberately ignored
+	ecosystems, _ := supplychain.DetectEcosystems(dir) //nolint:errcheck // no-lockfile is a valid empty state for status
 	for _, e := range ecosystems {
 		result.Ecosystems = append(result.Ecosystems, statusEcosystemJSON{
 			Name:         string(e.Ecosystem),
@@ -196,6 +207,7 @@ func runSupplyChainStatusJSON(dir string) error {
 		result.Ecosystems = []statusEcosystemJSON{}
 	}
 
+	// armis:ignore cwe:770 reason:DetectShells returns at most one entry per known shell (bash/zsh/fish); the result set is bounded by a fixed allowlist, not by attacker input
 	shells := supplychain.DetectShells()
 	for _, sh := range shells {
 		result.Shells = append(result.Shells, statusShellJSON{

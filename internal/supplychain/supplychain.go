@@ -47,7 +47,15 @@ func (p Policy) IsExcluded(name string) bool {
 		// Use path.Match (always forward-slash) rather than filepath.Match so
 		// scoped package names like "@scope/name" match consistently across
 		// platforms; filepath.Match treats '/' as a separator only on some OSes.
-		if matched, _ := path.Match(pattern, name); matched {
+		matched, err := path.Match(pattern, name)
+		if err != nil {
+			// A malformed glob (path.ErrBadPattern) can never produce a
+			// meaningful match. Fail safe by treating it as "not excluded" so a
+			// bad exclusion entry never silently bypasses the age check; the
+			// package is still verified against the registry.
+			continue
+		}
+		if matched {
 			return true
 		}
 	}

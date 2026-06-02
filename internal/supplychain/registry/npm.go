@@ -47,6 +47,11 @@ func NewClient() *Client {
 	}
 }
 
+// NewClientWithHTTP builds a Client with an injected HTTP client and registry
+// URL. It exists for tests that point the client at an httptest server; the
+// registryURL is therefore a trusted construction-time value, not request- or
+// network-derived input. Production code uses NewClient, which hardcodes the
+// npmjs.org HTTPS endpoint.
 func NewClientWithHTTP(httpClient *http.Client, registryURL string) *Client {
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
@@ -112,6 +117,7 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 	}
 
 	encodedName := url.PathEscape(name)
+	// armis:ignore cwe:918 reason:registryURL is a trusted construction-time config value (production NewClient hardcodes the npmjs.org HTTPS constant; the URL-accepting NewClientWithHTTP is test-only); name is regex-validated above and PathEscaped, so it cannot alter the host
 	reqURL := fmt.Sprintf("%s/%s", c.registryURL, encodedName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)

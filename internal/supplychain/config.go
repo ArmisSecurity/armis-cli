@@ -20,6 +20,7 @@ type Config struct {
 
 func LoadConfig(dir string) (*Config, error) {
 	path := filepath.Join(dir, ConfigFileName)
+	// armis:ignore cwe:73 cwe:22 cwe:770 reason:local CLI reading its own config file; dir is a user-supplied project path and ConfigFileName is a hardcoded literal, so the filename is not externally controlled across a trust boundary; the file is small project config
 	data, err := os.ReadFile(path) //nolint:gosec // config file in project root
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -29,6 +30,7 @@ func LoadConfig(dir string) (*Config, error) {
 	}
 
 	var cfg Config
+	// armis:ignore cwe:502 cwe:770 reason:yaml.v3 Unmarshal into a typed struct does not execute code or construct arbitrary types; input is the user's own config file, not untrusted data
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w\n\n  Valid format:\n    version: 1\n    min-age: 72h\n    exclusions:\n      - \"@myorg/*\"\n    ecosystems:\n      - npm\n    fail-open: false", ConfigFileName, err)
 	}

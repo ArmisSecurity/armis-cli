@@ -21,12 +21,14 @@ type Result struct {
 func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string) (*Result, error) {
 	ecosystem := detectEcosystemFromPath(lockfilePath)
 
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls, not untrusted network input (readLockfile also size-bounds the read)
 	entries, err := parseLockfile(ecosystem, lockfilePath)
 	if err != nil {
 		return nil, fmt.Errorf("parsing lockfile: %w", err)
 	}
 
 	if baseLockfilePath != "" {
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:base lockfile path is produced internally by detectBaseLockfile (a temp file from git show) or an explicit --base-lockfile flag the user controls, not untrusted network input
 		baseEntries, err := parseLockfile(ecosystem, baseLockfilePath)
 		if err != nil {
 			return nil, fmt.Errorf("parsing base lockfile: %w", err)
@@ -56,6 +58,7 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 
 	for _, r := range results {
 		if r.Err != nil {
+			// armis:ignore cwe:209 reason:local CLI surfacing a registry-query error to the user running it is intended diagnostics; there is no remote attacker to leak internals to
 			warnings = append(warnings, fmt.Sprintf("could not check %s@%s: %v", r.Name, r.Version, r.Err))
 			continue
 		}

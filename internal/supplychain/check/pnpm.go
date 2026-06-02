@@ -2,7 +2,6 @@ package check
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,13 +23,17 @@ type pnpmResolution struct {
 	Type      string `yaml:"type"`
 }
 
+// ParsePNPMLockfile parses a pnpm-lock.yaml into package entries.
+// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
 func ParsePNPMLockfile(path string) ([]PackageEntry, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // lockfile detection path
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
+	data, err := readLockfile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading lockfile: %w", err)
+		return nil, err
 	}
 
 	var lockfile pnpmLockfile
+	// armis:ignore cwe:502 cwe:770 reason:yaml.v3 Unmarshal into a typed struct does not execute code or construct arbitrary types; data is size-bounded by readLockfile and is the user's own lockfile, not untrusted data
 	if err := yaml.Unmarshal(data, &lockfile); err != nil {
 		return nil, fmt.Errorf("parsing pnpm lockfile: %w", err)
 	}

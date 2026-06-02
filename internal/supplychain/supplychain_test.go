@@ -117,6 +117,24 @@ func TestPolicyIsExcluded_ForwardSlashSemantics(t *testing.T) {
 	}
 }
 
+// TestPolicyIsExcluded_MalformedPattern verifies that a malformed glob (which
+// makes path.Match return ErrBadPattern) is treated as "not excluded" rather
+// than silently bypassing the age check. A bad exclusion entry must never cause
+// a package to skip verification.
+func TestPolicyIsExcluded_MalformedPattern(t *testing.T) {
+	// "[" is an unterminated character class — path.Match returns ErrBadPattern.
+	policy := Policy{Exclusions: []string{"["}}
+	if policy.IsExcluded("express") {
+		t.Error("malformed pattern should not exclude any package")
+	}
+
+	// A malformed pattern must not short-circuit a later valid match.
+	policy = Policy{Exclusions: []string{"[", "express"}}
+	if !policy.IsExcluded("express") {
+		t.Error("valid pattern after a malformed one should still match")
+	}
+}
+
 func TestFormatAge(t *testing.T) {
 	tests := []struct {
 		age      time.Duration

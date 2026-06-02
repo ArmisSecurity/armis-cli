@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -203,8 +204,18 @@ func detectBaseLockfile(lockfilePath string) string {
 	if err != nil {
 		return ""
 	}
+	// Reject any lockfile that resolves outside the repository tree. filepath.Rel
+	// yields a ".."-prefixed (or absolute) path when absLockfile escapes root, so
+	// this ensures the pathspec handed to "git show <rev>:<path>" stays within the
+	// repo and cannot be steered at arbitrary files via traversal components.
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+		return ""
+	}
+	// Use forward slashes: git pathspecs are always '/'-separated, even on Windows.
+	relPath = filepath.ToSlash(relPath)
 
 	for _, base := range []string{"origin/main", "origin/master"} {
+		// armis:ignore cwe:22 reason:relPath is confined to the repo tree by the traversal guard above and git resolves the pathspec within the repo; base is one of two hardcoded refs
 		content, err := exec.Command("git", "show", base+":"+relPath).Output() //nolint:gosec // user's git repo
 		if err != nil {
 			continue

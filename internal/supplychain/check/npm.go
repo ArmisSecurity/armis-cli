@@ -3,7 +3,6 @@ package check
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -23,13 +22,17 @@ type packageLockInfo struct {
 	Link     bool   `json:"link"`
 }
 
+// ParseNPMLockfile parses an npm package-lock.json into package entries.
+// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
 func ParseNPMLockfile(path string) ([]PackageEntry, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is from lockfile detection, not user URL input
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
+	data, err := readLockfile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading lockfile: %w", err)
+		return nil, err
 	}
 
 	var lockfile packageLockFile
+	// armis:ignore cwe:770 cwe:502 reason:data is size-bounded by readLockfile and unmarshalled into a typed struct from the user's own lockfile; no untrusted-data deserialization risk
 	if err := json.Unmarshal(data, &lockfile); err != nil {
 		return nil, fmt.Errorf("parsing lockfile: %w", err)
 	}

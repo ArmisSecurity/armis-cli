@@ -3,7 +3,6 @@ package check
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -11,10 +10,12 @@ import (
 )
 
 // ParseYarnLockfile parses both yarn v1 (classic) and v2+ (berry) lockfiles.
+// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
 func ParseYarnLockfile(path string) ([]PackageEntry, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path from lockfile detection
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
+	data, err := readLockfile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading yarn lockfile: %w", err)
+		return nil, err
 	}
 
 	if isBerryLockfile(data) {
@@ -33,6 +34,7 @@ func isBerryLockfile(data []byte) bool {
 
 // parseYarnBerry handles yarn v2+ (berry) lockfiles which are YAML.
 func parseYarnBerry(data []byte) ([]PackageEntry, error) {
+	// armis:ignore cwe:502 reason:yaml.v3 Unmarshal into a generic map does not execute code or construct arbitrary types; input is the user's own lockfile, not untrusted data
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing yarn berry lockfile: %w", err)

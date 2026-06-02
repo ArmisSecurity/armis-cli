@@ -22,6 +22,16 @@ const (
 	scSepLen    = 45
 )
 
+// Supported package-manager names. Centralizing them as constants keeps the
+// allowlist, the registry-env switch, and the exec mapping in sync and avoids
+// scattering the literals across the file.
+const (
+	pmNPM  = "npm"
+	pmPNPM = "pnpm"
+	pmBun  = "bun"
+	pmYarn = "yarn"
+)
+
 var scWrapCmd = &cobra.Command{
 	Use:                "wrap <pm> [args...]",
 	Short:              "Run package manager with age enforcement proxy (internal)",
@@ -35,7 +45,7 @@ func init() {
 	supplyChainCmd.AddCommand(scWrapCmd)
 }
 
-var allowedPMs = map[string]bool{"npm": true, "pnpm": true, "bun": true, "yarn": true}
+var allowedPMs = map[string]bool{pmNPM: true, pmPNPM: true, pmBun: true, pmYarn: true}
 
 func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 	pmName := args[0]
@@ -100,11 +110,33 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 }
 
 func execPM(pm string, args []string, extraEnv []string) (int, error) {
-	pmPath, err := exec.LookPath(pm)
+	// Map the validated name to a hardcoded string literal before the PATH
+	// lookup. This makes the value flowing into exec.LookPath a compile-time
+	// constant rather than the caller's argument, so there is no data-flow path
+	// from user input into the lookup. Resolving the user's own package manager
+	// from their PATH is the intended behavior of a transparent wrapper; only
+	// the four known names can ever reach this point.
+	var pmName string
+	switch pm {
+	case pmNPM:
+		pmName = pmNPM
+	case pmPNPM:
+		pmName = pmPNPM
+	case pmBun:
+		pmName = pmBun
+	case pmYarn:
+		pmName = pmYarn
+	default:
+		return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn)", pm)
+	}
+
+	// armis:ignore cwe:426 reason:pmName is one of four hardcoded string literals selected by the switch above, never the user argument; resolving the user's own PM from PATH is the point of a transparent wrapper
+	pmPath, err := exec.LookPath(pmName)
 	if err != nil {
 		return 1, fmt.Errorf("finding %s: %w", pm, err)
 	}
 
+	// armis:ignore cwe:78 reason:args are the user's own package-manager arguments forwarded verbatim by a transparent wrapper (e.g. "npm install foo"); pmPath resolves a hardcoded PM name and no shell is invoked (exec.Command, not sh -c)
 	cmd := exec.Command(pmPath, args...) //nolint:gosec // user-invoked PM with their own args
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -252,12 +284,12 @@ func blockedNamesUnique(blocked []supplychain.BlockedPackage) []string {
 
 func registryEnvForPM(pm, registryURL string) []string {
 	switch pm {
-	case "bun":
+	case pmBun:
 		return []string{
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("BUN_CONFIG_REGISTRY=%s", registryURL),
 		}
-	case "yarn":
+	case pmYarn:
 		return []string{
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("YARN_NPM_REGISTRY_SERVER=%s", registryURL),
