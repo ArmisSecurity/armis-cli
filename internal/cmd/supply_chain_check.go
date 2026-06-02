@@ -185,21 +185,37 @@ func detectBaseLockfile(lockfilePath string) string {
 		return ""
 	}
 
-	gitDir := exec.Command("git", "rev-parse", "--git-dir") //nolint:gosec // detecting git repo
-	if err := gitDir.Run(); err != nil {
-		return ""
-	}
-
-	topLevel, err := exec.Command("git", "rev-parse", "--show-toplevel").Output() //nolint:gosec
-	if err != nil {
-		return ""
-	}
-	root := filepath.Clean(string(topLevel[:len(topLevel)-1]))
-
+	// Anchor every git invocation to the directory that contains the lockfile,
+	// not the process's cwd. Otherwise `armis-cli supply-chain check
+	// /other/repo` (or a --lockfile outside cwd) resolves base detection
+	// against the wrong repository: rev-parse would report the cwd's repo and
+	// `git show origin/main:<relPath>` could read an unrelated file.
 	absLockfile, err := filepath.Abs(lockfilePath)
 	if err != nil {
 		return ""
 	}
+	gitWorkDir := filepath.Dir(absLockfile)
+
+	gitDir := exec.Command("git", "rev-parse", "--git-dir") //nolint:gosec // detecting git repo
+	gitDir.Dir = gitWorkDir
+	if err := gitDir.Run(); err != nil {
+		return ""
+	}
+
+	showTopLevel := exec.Command("git", "rev-parse", "--show-toplevel") //nolint:gosec
+	showTopLevel.Dir = gitWorkDir
+	topLevel, err := showTopLevel.Output()
+	if err != nil {
+		return ""
+	}
+	// TrimRight (not a fixed-length slice) drops the trailing newline: it is
+	// panic-safe if git unexpectedly returns empty output and also tolerates a
+	// "\r\n" line ending.
+	root := filepath.Clean(strings.TrimRight(string(topLevel), "\r\n"))
+	if root == "" || root == "." {
+		return ""
+	}
+
 	relPath, err := filepath.Rel(root, absLockfile)
 	if err != nil {
 		return ""
@@ -216,7 +232,9 @@ func detectBaseLockfile(lockfilePath string) string {
 
 	for _, base := range []string{"origin/main", "origin/master"} {
 		// armis:ignore cwe:22 reason:relPath is confined to the repo tree by the traversal guard above and git resolves the pathspec within the repo; base is one of two hardcoded refs
-		content, err := exec.Command("git", "show", base+":"+relPath).Output() //nolint:gosec // user's git repo
+		showBase := exec.Command("git", "show", base+":"+relPath) //nolint:gosec // user's git repo
+		showBase.Dir = gitWorkDir
+		content, err := showBase.Output()
 		if err != nil {
 			continue
 		}

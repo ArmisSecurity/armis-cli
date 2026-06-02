@@ -411,25 +411,19 @@ func TestExtractPackageNameFromPath(t *testing.T) {
 
 func TestIsMetadataRequest(t *testing.T) {
 	tests := []struct {
-		path   string
-		accept string
-		want   bool
+		path string
+		want bool
 	}{
-		{"/express", "application/json", true},
-		{"/express", "", true},
-		{"/express/-/express-4.18.2.tgz", "application/json", false},
-		{"/-/npm/v1/security/audits", "", false},
+		{"/express", true},
+		{"/express/-/express-4.18.2.tgz", false},
+		{"/-/npm/v1/security/audits", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			r, _ := http.NewRequest(http.MethodGet, "http://localhost"+tt.path, nil)
-			if tt.accept != "" {
-				r.Header.Set("Accept", tt.accept)
-			}
-			got := isMetadataRequest(r)
+			got := isMetadataRequest(tt.path)
 			if got != tt.want {
-				t.Errorf("isMetadataRequest(%q, accept=%q) = %v, want %v", tt.path, tt.accept, got, tt.want)
+				t.Errorf("isMetadataRequest(%q) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
 	}

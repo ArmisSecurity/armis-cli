@@ -149,7 +149,7 @@ func (p *Proxy) Close() error {
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	pkgName := extractPackageNameFromPath(r.URL.Path)
 
-	if pkgName == "" || r.Method != http.MethodGet || !isMetadataRequest(r) {
+	if pkgName == "" || r.Method != http.MethodGet || !isMetadataRequest(r.URL.Path) {
 		p.reverseProxy(w, r)
 		return
 	}
@@ -391,8 +391,12 @@ func extractPackageNameFromPath(path string) string {
 	return parts[0]
 }
 
-func isMetadataRequest(r *http.Request) bool {
-	path := r.URL.Path
+// isMetadataRequest reports whether a request path targets package metadata
+// (which the proxy filters) rather than a tarball or registry RPC endpoint.
+// The distinction is purely path-based — npm serves metadata and tarballs from
+// different URL shapes — so this takes the path alone and deliberately ignores
+// method and headers, which the caller checks separately.
+func isMetadataRequest(path string) bool {
 	if strings.Contains(path, "/-/") || strings.HasSuffix(path, ".tgz") {
 		return false
 	}

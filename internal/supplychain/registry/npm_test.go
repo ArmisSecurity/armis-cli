@@ -140,7 +140,7 @@ func TestGetPublishDates(t *testing.T) {
 	defer server.Close()
 
 	client := NewClientWithHTTP(server.Client(), server.URL)
-	packages := []struct{ Name, Version string }{
+	packages := []PackageRequest{
 		{"express", "4.18.2"},
 		{"lodash", "4.17.21"},
 		{"nonexistent", "1.0.0"},

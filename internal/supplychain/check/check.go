@@ -36,14 +36,14 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 		entries = diffEntries(entries, baseEntries)
 	}
 
-	var toCheck []struct{ Name, Version string }
+	var toCheck []registry.PackageRequest
 	var skipped int
 	for _, e := range entries {
 		if policy.IsExcluded(e.Name) {
 			skipped++
 			continue
 		}
-		toCheck = append(toCheck, struct{ Name, Version string }{e.Name, e.Version})
+		toCheck = append(toCheck, registry.PackageRequest{Name: e.Name, Version: e.Version})
 	}
 
 	if len(toCheck) == 0 {
@@ -97,7 +97,7 @@ func parseLockfile(ecosystem supplychain.Ecosystem, path string) ([]PackageEntry
 	}
 }
 
-func queryRegistry(ctx context.Context, _ supplychain.Ecosystem, packages []struct{ Name, Version string }) []registry.QueryResult {
+func queryRegistry(ctx context.Context, _ supplychain.Ecosystem, packages []registry.PackageRequest) []registry.QueryResult {
 	client := registry.NewClient()
 	return client.GetPublishDates(ctx, packages)
 }

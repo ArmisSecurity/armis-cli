@@ -31,6 +31,15 @@ type registryResponse struct {
 	Time map[string]string `json:"time"`
 }
 
+// PackageRequest identifies a single package version to look up. It is shared
+// by GetPublishDates and its callers so the API does not rely on an anonymous
+// struct type that every call site would otherwise have to redeclare verbatim
+// (and that any future field addition would break across all of them).
+type PackageRequest struct {
+	Name    string
+	Version string
+}
+
 type QueryResult struct {
 	Name        string
 	Version     string
@@ -85,16 +94,20 @@ func (c *Client) GetPublishDate(ctx context.Context, name, version string) (time
 	return t, nil
 }
 
-func (c *Client) GetPublishDates(ctx context.Context, packages []struct{ Name, Version string }) []QueryResult {
+func (c *Client) GetPublishDates(ctx context.Context, packages []PackageRequest) []QueryResult {
 	results := make([]QueryResult, len(packages))
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
 
 	for i, pkg := range packages {
+		// Acquire the semaphore before spawning so that goroutine creation
+		// itself is bounded by maxConcurrent. Acquiring it inside the goroutine
+		// would launch one stack per package up front (thousands for a large
+		// lockfile) just to park them all on the channel.
+		sem <- struct{}{}
 		wg.Add(1)
 		go func(idx int, name, version string) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			publishTime, err := c.GetPublishDate(ctx, name, version)
