@@ -126,6 +126,7 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 	}
 	req.Header.Set("Accept", "application/json")
 
+	// armis:ignore cwe:918 reason:c.registryURL is a trusted construction-time config value (production NewClient hardcodes the npmjs.org HTTPS constant; the URL-accepting NewClientWithHTTP is test-only), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + regex-validated, PathEscaped package name
 	if err != nil {
 		return nil, fmt.Errorf("fetching metadata for %s: %w", name, err)
@@ -149,6 +150,7 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 		return nil, fmt.Errorf("parsing registry response for %s: %w", name, err)
 	}
 
+	// armis:ignore cwe:401 cwe:770 reason:per-invocation cache for a short-lived CLI command; entries are keyed by the package names in a single lockfile and freed when the process exits, so growth is bounded by the lockfile size, not unbounded
 	c.cache.Store(name, &result)
 	return &result, nil
 }
