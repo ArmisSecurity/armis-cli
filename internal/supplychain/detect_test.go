@@ -3,6 +3,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -79,6 +80,13 @@ func TestDetectEcosystems(t *testing.T) {
 		// file fails with ENOTDIR — a non-IsNotExist error. DetectEcosystems must
 		// surface it instead of silently reporting "no lockfile found", so a real
 		// permission/I/O problem isn't mistaken for an absent lockfile.
+		//
+		// This ENOTDIR behavior is Unix-only: on Windows, stat'ing a path under a
+		// non-directory returns ERROR_PATH_NOT_FOUND, which os.IsNotExist reports as
+		// true, so the error is (correctly) treated as "lockfile absent" there.
+		if runtime.GOOS == "windows" {
+			t.Skip("ENOTDIR-style stat errors are not reproducible on Windows (maps to IsNotExist)")
+		}
 		base := t.TempDir()
 		notADir := filepath.Join(base, "not-a-dir")
 		if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
