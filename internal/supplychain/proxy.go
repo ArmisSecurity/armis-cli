@@ -193,8 +193,17 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		for k, v := range resp.Header {
-			w.Header()[k] = v
+		// Copy headers value-by-value with CR/LF stripped rather than aliasing the
+		// upstream slices wholesale (w.Header()[k] = v). The verbatim copy both
+		// shared upstream's backing arrays and bypassed the response-splitting
+		// sanitization the 200 path relies on (CWE-93); Add preserves multi-value
+		// headers (e.g. multiple Set-Cookie / WWW-Authenticate entries).
+		dst := w.Header()
+		for k, vals := range resp.Header {
+			for _, v := range vals {
+				// armis:ignore cwe:93 cwe:113 reason:sanitizeHeaderValue strips every CR and LF byte from the value before it reaches the header writer, which is the canonical neutralization for HTTP response splitting; the value cannot terminate the header line early
+				dst.Add(k, sanitizeHeaderValue(v))
+			}
 		}
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body) //nolint:errcheck,gosec

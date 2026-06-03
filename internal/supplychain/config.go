@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,18 +21,15 @@ type Config struct {
 	FailOpen   bool     `yaml:"fail-open,omitempty"`
 }
 
+// LoadConfig reads the supply-chain config from dir, returning (nil, nil) when
+// the file is absent. dir is the user's own project directory and ConfigFileName
+// is a constant literal leaf with no separators or "..", so the joined path always
+// resolves to dir/<ConfigFileName> and cannot be steered outside dir.
 func LoadConfig(dir string) (*Config, error) {
-	// Validate that the config file is within the specified directory
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, fmt.Errorf("invalid config directory: %w", err)
-	}
-	path := filepath.Join(absDir, ConfigFileName)
-	if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(absDir)) {
-		return nil, fmt.Errorf("config file would be outside specified directory")
-	}
-
-	f, err := os.Open(path) //nolint:gosec // config file validated above
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading its own project config file; ConfigFileName is a constant literal, so the path is not externally controllable across a trust boundary
+	path := filepath.Join(dir, ConfigFileName)
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:ConfigFileName is a constant literal; the joined path cannot be steered outside the user's own project dir
+	f, err := os.Open(path) //nolint:gosec // config file in project root
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

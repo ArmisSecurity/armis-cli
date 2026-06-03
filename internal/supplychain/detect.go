@@ -20,6 +20,10 @@ type DetectedEcosystem struct {
 	LockfilePath string
 }
 
+// DetectEcosystems probes dir for well-known Node.js lockfiles and reports which
+// package-manager ecosystems are present. dir is the user's own scan target and
+// each lockfile name is a constant literal leaf, so the joined paths can only
+// resolve under dir; only os.Stat (an existence check) is performed on them.
 func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 	var detected []DetectedEcosystem
 
@@ -34,8 +38,9 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 	}
 
 	for _, c := range checks {
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI probing the user's own project dir for well-known lockfile names; c.file is a constant literal and only os.Stat is performed, so the path is not externally controllable across a trust boundary
 		path := filepath.Join(dir, c.file)
-		// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI probing the user's own project dir for well-known lockfile names; dir is a user-supplied scan target, c.file is a hardcoded literal, and only os.Stat (existence check) is performed
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:c.file is a constant literal lockfile name and only os.Stat (existence check) runs, so the path is not externally controllable across a trust boundary
 		_, err := os.Stat(path)
 		if err == nil {
 			detected = append(detected, DetectedEcosystem{

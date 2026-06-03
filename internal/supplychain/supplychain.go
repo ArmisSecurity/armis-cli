@@ -3,6 +3,7 @@ package supplychain
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strconv"
 	"strings"
@@ -71,15 +72,15 @@ func ParseDuration(s string) (time.Duration, error) {
 	last := s[len(s)-1]
 	switch last {
 	case 'd':
-		n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		n, err := parseFiniteNonNegativeFloat(s, s[:len(s)-1])
 		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+			return 0, err
 		}
 		return time.Duration(n * float64(24*time.Hour)), nil
 	case 'w':
-		n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		n, err := parseFiniteNonNegativeFloat(s, s[:len(s)-1])
 		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+			return 0, err
 		}
 		return time.Duration(n * float64(7*24*time.Hour)), nil
 	default:
@@ -89,6 +90,26 @@ func ParseDuration(s string) (time.Duration, error) {
 		}
 		return d, nil
 	}
+}
+
+// parseFiniteNonNegativeFloat parses the numeric portion of a custom 'd'/'w'
+// duration. strconv.ParseFloat accepts "NaN", "Inf", and signed variants, any of
+// which would yield a nonsensical policy (e.g. "NaNd" → duration 0, silently
+// disabling enforcement). Reject non-finite and negative values so a min-age can
+// only ever be a real, non-negative span. orig is the full duration string, used
+// only for error context.
+func parseFiniteNonNegativeFloat(orig, num string) (float64, error) {
+	n, err := strconv.ParseFloat(num, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", orig, err)
+	}
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, fmt.Errorf("invalid duration %q: must be a finite number", orig)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("invalid duration %q: must not be negative", orig)
+	}
+	return n, nil
 }
 
 func ViolationToFinding(v Violation, lockfilePath string) model.Finding {

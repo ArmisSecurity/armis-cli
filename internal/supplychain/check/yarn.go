@@ -2,6 +2,7 @@ package check
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -135,7 +136,10 @@ var yarnV1HeaderRe = regexp.MustCompile(`^"?(@?[^@"]+)@`)
 var yarnV1VersionRe = regexp.MustCompile(`^\s+version\s+"([^"]+)"`)
 
 func parseYarnClassic(data []byte) ([]PackageEntry, error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	// bytes.NewReader reads directly from the lockfile slice; converting to a
+	// string first (strings.NewReader(string(data))) would copy up to the 64MB
+	// readLockfile cap into a second buffer for no benefit.
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 
 	var entries []PackageEntry
 	var currentName string

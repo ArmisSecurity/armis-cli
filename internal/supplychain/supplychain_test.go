@@ -21,6 +21,14 @@ func TestParseDuration(t *testing.T) {
 		{"", 0, true},
 		{"abc", 0, true},
 		{"xd", 0, true},
+		// strconv.ParseFloat accepts these tokens; ParseDuration must reject them
+		// so a min-age policy can't be silently disabled or made nonsensical.
+		{"NaNd", 0, true},
+		{"Infd", 0, true},
+		{"+Infw", 0, true},
+		{"-Infd", 0, true},
+		{"-3d", 0, true},
+		{"-1w", 0, true},
 	}
 
 	for _, tt := range tests {
