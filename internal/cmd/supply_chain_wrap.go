@@ -316,7 +316,9 @@ func parseSkipPackages(raw string) []string {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
 	})
-	var result []string
+	// Pre-allocate a non-nil slice so empty/whitespace input yields []string{}
+	// (an empty skip set) rather than nil, matching FieldsFunc's contract.
+	result := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if len(result) >= maxSkipPackages {
 			break
