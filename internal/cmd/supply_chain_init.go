@@ -136,13 +136,22 @@ func promptYesNo(prompt string, defaultYes bool) bool {
 	return readYesNo(os.Stdin, defaultYes)
 }
 
+// maxPromptInput bounds how much of stdin a single yes/no prompt will read. A
+// real answer is a few bytes; the cap stops a huge piped stream (e.g. a file
+// redirected into stdin) from forcing an unbounded allocation (CWE-770). 4KB is
+// far beyond any legitimate reply yet still reads a full line in normal use.
+const maxPromptInput = 4 * 1024
+
 // readYesNo reads a single line from r and reports whether it is affirmative.
 // An empty answer (the user pressing Enter) accepts the default. If the stream
 // is closed or the read fails before any input is received, it returns false so
 // callers fail closed — an unreadable prompt must never be treated as consent
 // for a destructive action like editing shell RC files.
 func readYesNo(r io.Reader, defaultYes bool) bool {
-	line, err := bufio.NewReader(r).ReadString('\n')
+	// Bound the read so an oversized stdin cannot exhaust memory; a yes/no reply
+	// never approaches the limit, and a line longer than it simply gets truncated
+	// before the trailing newline, which TrimSpace+comparison handles correctly.
+	line, err := bufio.NewReader(io.LimitReader(r, maxPromptInput)).ReadString('\n')
 	// ReadString returns any data read so far alongside io.EOF when input ends
 	// without a trailing newline (e.g. "y"+Ctrl-D), so only fail closed when the
 	// read produced nothing at all — that signals no interactive human present.

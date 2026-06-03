@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -159,5 +160,60 @@ func TestGetPublishDates(t *testing.T) {
 	}
 	if results[2].Err == nil {
 		t.Error("nonexistent: expected error")
+	}
+}
+
+// TestCacheBounded verifies the metadata memo stops growing at maxCacheEntries
+// so a reused client cannot leak memory without bound (CWE-770). Rather than
+// drive 10k real fetches, this white-box test seeds cacheLen at the cap and
+// confirms a subsequent successful fetch is not stored — the request still
+// succeeds (correctness must not depend on the cache), it just isn't memoized.
+func TestCacheBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"time":{"1.0.0":"2020-01-01T00:00:00.000Z"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithHTTP(server.Client(), server.URL)
+	client.cacheLen.Store(maxCacheEntries) // pretend the cache is already full
+
+	if _, err := client.GetPublishDate(context.Background(), "freshpkg", "1.0.0"); err != nil {
+		t.Fatalf("fetch must still succeed when cache is full: %v", err)
+	}
+
+	if _, ok := client.cache.Load("freshpkg"); ok {
+		t.Error("entry must not be stored once the cache is at capacity")
+	}
+	if got := client.cacheLen.Load(); got != maxCacheEntries {
+		t.Errorf("cacheLen must not grow past the cap, got %d want %d", got, maxCacheEntries)
+	}
+}
+
+// TestCacheCountsDistinctEntries confirms cacheLen tracks the number of stored
+// keys so the bound in fetchMetadata is meaningful: two distinct packages add
+// two entries, and re-fetching an already-cached name does not double-count.
+func TestCacheCountsDistinctEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"time":{"1.0.0":"2020-01-01T00:00:00.000Z"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithHTTP(server.Client(), server.URL)
+
+	for i := 0; i < 3; i++ {
+		name := "pkg" + strconv.Itoa(i)
+		if _, err := client.GetPublishDate(context.Background(), name, "1.0.0"); err != nil {
+			t.Fatalf("fetch %s: %v", name, err)
+		}
+	}
+	// Re-fetch an existing name: served from cache, must not increment the count.
+	if _, err := client.GetPublishDate(context.Background(), "pkg0", "1.0.0"); err != nil {
+		t.Fatalf("re-fetch pkg0: %v", err)
+	}
+
+	if got := client.cacheLen.Load(); got != 3 {
+		t.Errorf("cacheLen = %d, want 3 (one per distinct package, no double-count)", got)
 	}
 }

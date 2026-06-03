@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +18,12 @@ const (
 	defaultRegistryURL = "https://registry.npmjs.org"
 	maxResponseSize    = 20 * 1024 * 1024 // 20MB
 	maxConcurrent      = 10
+	// maxCacheEntries bounds the metadata memo so the map cannot grow without
+	// limit (CWE-770) if a client is reused across many lookups — e.g. a future
+	// long-lived consumer or a pathologically large lockfile. The cap is far
+	// above any realistic single-project package count; once reached the client
+	// simply stops memoizing and re-fetches on miss rather than evicting.
+	maxCacheEntries = 10000
 )
 
 var validPackageName = regexp.MustCompile(`^(@[a-z0-9\-~][a-z0-9\-._~]*/)?[a-z0-9\-~][a-z0-9\-._~]*$`)
@@ -25,6 +32,7 @@ type Client struct {
 	httpClient  *http.Client
 	registryURL string
 	cache       sync.Map // map[string]*registryResponse
+	cacheLen    atomic.Int64
 }
 
 type registryResponse struct {
@@ -164,7 +172,15 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 		return nil, fmt.Errorf("parsing registry response for %s: %w", name, err)
 	}
 
-	// armis:ignore cwe:401 cwe:770 reason:per-invocation cache for a short-lived CLI command; entries are keyed by the package names in a single lockfile and freed when the process exits, so growth is bounded by the lockfile size, not unbounded
-	c.cache.Store(name, &result)
+	// Memoize, but stop inserting once the cache reaches maxCacheEntries so it
+	// cannot grow without bound (CWE-770). LoadOrStore keeps the length count
+	// race-free under the concurrent GetPublishDates fan-out: only the goroutine
+	// that actually inserts a new key bumps cacheLen, and a duplicate concurrent
+	// fetch of the same name is counted once.
+	if c.cacheLen.Load() < maxCacheEntries {
+		if _, loaded := c.cache.LoadOrStore(name, &result); !loaded {
+			c.cacheLen.Add(1)
+		}
+	}
 	return &result, nil
 }

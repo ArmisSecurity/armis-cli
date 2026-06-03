@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,44 @@ func TestReadYesNo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReadYesNoBoundsInput ensures a pathologically large stdin (e.g. a file
+// piped into the program) cannot force an unbounded read: readYesNo reads at
+// most maxPromptInput bytes via io.LimitReader. We feed it far more than the
+// cap with no newline; the read returns the truncated prefix rather than
+// consuming the whole stream, and the answer is not parsed as consent.
+func TestReadYesNoBoundsInput(t *testing.T) {
+	// 1MB of 'y' with no newline — without the cap this would all be buffered.
+	huge := strings.Repeat("y", 1<<20)
+
+	// A reader that records how many bytes were actually pulled so we can assert
+	// the read stopped at the cap instead of draining the entire stream.
+	counting := &countingReader{r: strings.NewReader(huge)}
+
+	got := readYesNo(counting, true)
+
+	if counting.n > maxPromptInput {
+		t.Errorf("read %d bytes, want at most %d (input must be bounded)", counting.n, maxPromptInput)
+	}
+	// The truncated 4KB block of 'y' is a single unrecognized token (no newline,
+	// no "y"/"yes" match), so it must not be treated as affirmative consent.
+	if got {
+		t.Errorf("oversized run-on input must not be parsed as consent, got %v", got)
+	}
+}
+
+// countingReader wraps a reader and tallies bytes read, letting a test assert
+// that a consumer stops at a byte bound rather than draining the source.
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
 }
 
 func TestDetectWrappablePMs_DefaultsToNpm(t *testing.T) {
