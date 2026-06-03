@@ -49,10 +49,15 @@ func DetectShells() []Shell {
 
 	var shells []Shell
 
-	// armis:ignore cwe:73 reason:RC paths are the current user's own home dir (os.UserHomeDir) joined with hardcoded shell filenames; configuring the user's own shell is the purpose of `supply-chain init`, and $HOME is not a trust boundary for a local CLI
+	// RC paths are the current user's own home dir (os.UserHomeDir) joined with
+	// hardcoded shell filenames; configuring the user's own shell is the purpose
+	// of `supply-chain init`, and $HOME is not a trust boundary for a local CLI.
 	candidates := []Shell{
+		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with a hardcoded filename; configuring the user's own shell RC is the purpose of `supply-chain init`
 		{Name: "bash", RCFile: filepath.Join(home, ".bashrc")},
+		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with a hardcoded filename; configuring the user's own shell RC is the purpose of `supply-chain init`
 		{Name: "zsh", RCFile: filepath.Join(home, ".zshrc")},
+		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with hardcoded path segments; configuring the user's own shell RC is the purpose of `supply-chain init`
 		{Name: "fish", RCFile: filepath.Join(home, ".config", "fish", "config.fish")},
 	}
 

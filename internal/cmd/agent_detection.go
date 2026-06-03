@@ -38,6 +38,7 @@ func init() {
 	rootCmd.AddCommand(agentDetectionCmd)
 }
 
+// armis:ignore cwe:284 reason:read-only local enumeration of the invoking user's own agent config files; root vs standard-user scoping is handled in agentdetect; only --format is user input (validated above)
 func runAgentDetection(cmd *cobra.Command, _ []string) error {
 	switch agentDetectFormat {
 	case agentFormatPlain, agentFormatJSON:

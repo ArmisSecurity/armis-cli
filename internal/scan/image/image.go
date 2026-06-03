@@ -270,6 +270,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.Bold.Render(imageName))
 	}
 
+	// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
 	// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName; outputPath is temp file
 	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
 	saveCmd.Stdout = os.Stderr

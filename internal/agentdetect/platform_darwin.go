@@ -21,6 +21,7 @@ func (p *darwinPlatform) UserHomeDirs() ([]UserHome, error) {
 	return currentUserOnly()
 }
 
+// armis:ignore cwe:22 reason:homeDir is from os.UserHomeDir; joined with hardcoded path segments
 func (p *darwinPlatform) VSCodeExtensionsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".vscode", "extensions")
 }

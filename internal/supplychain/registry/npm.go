@@ -131,8 +131,9 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 
 	encodedName := url.PathEscape(name)
 	// armis:ignore cwe:918 reason:registryURL is a trusted construction-time config value (production NewClient hardcodes the npmjs.org HTTPS constant; the URL-accepting NewClientWithHTTP is test-only); name is regex-validated above and PathEscaped, so it cannot alter the host
+	// armis:ignore cwe:918 reason:reqURL is built from the trusted registryURL constant (production NewClient hardcodes the npmjs.org HTTPS constant) + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
 	reqURL := fmt.Sprintf("%s/%s", c.registryURL, encodedName)
-
+	// armis:ignore cwe:918 reason:reqURL is built from the trusted registryURL constant + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", name, err)

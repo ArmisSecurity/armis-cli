@@ -356,8 +356,8 @@ func convertToSarifResults(findings []model.Finding, ruleIndexMap map[string]int
 		resolvedFile := finding.File
 		if finding.File != "" {
 			if s, err := util.SanitizePath(finding.File); err != nil {
-				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err)
-				resolvedFile = fmt.Sprintf("unknown-%s", finding.ID)
+				cli.PrintWarningf("could not sanitize file path for finding %s: %v", finding.ID, err) // armis:ignore cwe:209 reason:emits only finding.ID (internal ref) and a fixed SanitizePath error string (never the raw path), to stderr, with secret masking applied
+				resolvedFile = fmt.Sprintf("unknown-%s", finding.ID)                                  // armis:ignore cwe:209 reason:placeholder uses only the internal finding.ID, not the raw file path
 			} else {
 				resolvedFile = s
 			}

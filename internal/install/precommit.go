@@ -69,6 +69,7 @@ func InstallPreCommit(repoRoot, pluginDir string, opts PreCommitOpts) error {
 		content = existingStr + "\n" + armisSection
 	}
 
+	// armis:ignore cwe:73 cwe:22 cwe:23 reason:hookPath = git hooks dir (from git rev-parse) + hardcoded "pre-commit"; repoRoot validated absolute above
 	if err := os.WriteFile(filepath.Clean(hookPath), []byte(content), 0o755); err != nil { //nolint:gosec // hookPath from git repo
 		return fmt.Errorf("writing pre-commit hook: %w", err)
 	}

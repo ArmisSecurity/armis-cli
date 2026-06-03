@@ -183,6 +183,7 @@ func runInitNpmrc() error {
 		return nil
 	}
 
+	// armis:ignore cwe:770 cwe:22 cwe:23 cwe:73 reason:npmrcPath is the hardcoded literal ".npmrc" in the cwd; a bounded local project config file, not user/network input
 	content, err := os.ReadFile(npmrcPath) //nolint:gosec // project .npmrc in current working directory
 	if err != nil && !os.IsNotExist(err) {
 		// A missing .npmrc is expected (we create it below); any other read error
@@ -195,7 +196,17 @@ func runInitNpmrc() error {
 		return nil
 	}
 
-	// armis:ignore cwe:732 reason:.npmrc here holds only a non-secret comment pointing at supply-chain wrap; it is a project file meant to be readable by the user's toolchain, so 0644 (respecting umask) is intentional
+	// O_APPEND writes at the current end of file without inserting a separator,
+	// so if an existing .npmrc does not end in a newline (common for hand-edited
+	// config) the comment would be concatenated onto the last entry — e.g.
+	// "foo=bar" becomes "foo=bar# armis-cli ...", corrupting foo's value. Prepend
+	// a newline when the file is non-empty and lacks a trailing one, mirroring
+	// injectIntoFile in shell.go.
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		line = "\n" + line
+	}
+
+	// armis:ignore cwe:732 cwe:73 cwe:22 cwe:23 reason:npmrcPath is the hardcoded literal ".npmrc" in the cwd, not user input; the file holds only a non-secret comment pointing at supply-chain wrap, so 0644 (respecting umask) is intentional for a project file
 	f, err := os.OpenFile(npmrcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // project .npmrc
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", npmrcPath, err)

@@ -363,6 +363,7 @@ main() {
     echo "📂 Extracting archive..."
     # armis:ignore cwe:22 reason:ARCHIVE_FILE is downloaded from verified GitHub release URL; TMP_DIR is mktemp -d
     if [ "$OS" = "windows" ]; then
+        # armis:ignore cwe:22 reason:ARCHIVE_FILE downloaded from verified GitHub release URL with checksum (verify_checksums runs before extraction); TMP_DIR is mktemp -d
         unzip -q "$ARCHIVE_FILE" -d "$TMP_DIR"
     else
         # armis:ignore cwe:22 reason:ARCHIVE_FILE downloaded from verified GitHub release URL with checksum; TMP_DIR is mktemp -d

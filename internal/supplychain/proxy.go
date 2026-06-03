@@ -170,6 +170,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	// Use RequestURI() (escaped path + raw query) rather than just Path so the
 	// filtered branch is symmetric with the reverse-proxy passthrough: query
 	// params (e.g. ?write=true) and path-escaping nuances reach the upstream.
+	// armis:ignore cwe:918 reason:p.upstreamURL is a startup-configured trusted host (defaults to registry.npmjs.org); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.RequestURI(), nil) //nolint:gosec // upstream URL is configured at startup, path is from local proxy
 	if err != nil {
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
@@ -177,6 +178,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	}
 	upstreamReq.Header.Set("Accept", "application/json")
 
+	// armis:ignore cwe:918 reason:p.upstreamURL is a startup-configured trusted host (defaults to registry.npmjs.org); the request host is not attacker-controlled
 	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
 	if err != nil {
 		if p.policy.FailOpen {
@@ -217,9 +219,64 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 		p.blockedMu.Unlock()
 	}
 
+	// Forward only an explicit allowlist of cache-relevant headers so npm/pnpm/yarn
+	// can populate their HTTP cache (~/.npm/_cacache) and skip a full re-download on
+	// every wrapped invocation. Copying upstream headers wholesale would be wrong on
+	// two counts: payload-describing headers (Content-Length, Content-Encoding)
+	// refer to upstream's original bytes, not our re-marshaled body, and forwarding
+	// unvalidated upstream header values verbatim is an HTTP-response-splitting
+	// vector (CWE-93). copyCacheHeaders sanitizes each value before writing it.
+	copyCacheHeaders(w.Header(), resp.Header, blocked != nil)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(filtered) //nolint:errcheck,gosec
+}
+
+// cacheHeaderAllowlist is the set of upstream response headers safe to forward
+// on a filtered metadata response. It deliberately excludes payload-describing
+// headers (Content-Length, Content-Encoding, Content-Type) because the served
+// body is freshly re-marshaled and no longer matches upstream's bytes.
+var cacheHeaderAllowlist = []string{
+	"Cache-Control",
+	"Vary",
+	"Date",
+	"Expires",
+	"Age",
+}
+
+// copyCacheHeaders forwards a sanitized allowlist of cache-relevant headers from
+// the upstream response to the client. Each value is stripped of CR/LF so a
+// malicious upstream cannot inject extra headers or split the response
+// (CWE-93). When the body was filtered (versionsRemoved), the validator headers
+// ETag/Last-Modified are omitted: they describe upstream's full metadata, so
+// forwarding them would let the client revalidate, receive a 304 from upstream
+// (whose metadata is unchanged), and keep serving this filtered snapshot —
+// hiding a blocked version even after it ages past the threshold. Cache-Control
+// still bounds freshness in that case.
+func copyCacheHeaders(dst, upstream http.Header, versionsRemoved bool) {
+	forward := func(name string) {
+		v := upstream.Get(name)
+		if v == "" {
+			return
+		}
+		dst.Set(name, sanitizeHeaderValue(v))
+	}
+	for _, name := range cacheHeaderAllowlist {
+		forward(name)
+	}
+	if !versionsRemoved {
+		// The body matches upstream byte-for-byte, so its validators are accurate
+		// and safe to forward for conditional-request revalidation.
+		forward("ETag")
+		forward("Last-Modified")
+	}
+}
+
+// sanitizeHeaderValue removes CR and LF bytes from a header value so an
+// attacker-controlled upstream value cannot terminate the header line early and
+// inject additional headers or a response body (HTTP response splitting).
+func sanitizeHeaderValue(v string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(v)
 }
 
 func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPackage) {

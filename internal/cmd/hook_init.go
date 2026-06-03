@@ -60,8 +60,11 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 
 	ei := install.NewEditorInstaller()
 	pluginDir := ei.PluginDir()
-	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
-		return fmt.Errorf("Armis MCP server not installed — run 'armis-cli install' first") //nolint:staticcheck // proper noun
+	if _, err := os.Stat(pluginDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("Armis MCP server not installed — run 'armis-cli install' first") //nolint:staticcheck // proper noun
+		}
+		return fmt.Errorf("checking plugin directory %q: %w", pluginDir, err)
 	}
 
 	opts := install.PreCommitOpts{FailOpen: failOpen}
@@ -74,8 +77,8 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 		if failOpen {
 			mode = "fail-open"
 		}
-		hookPath, _ := install.PreCommitHookPath(repoRoot)
-		if hookPath == "" {
+		hookPath, err := install.PreCommitHookPath(repoRoot)
+		if err != nil || hookPath == "" {
 			hookPath = repoRoot + "/.git/hooks/pre-commit"
 		}
 		fmt.Fprintf(os.Stderr, "Pre-commit hook installed (%s): %s\n", mode, hookPath)

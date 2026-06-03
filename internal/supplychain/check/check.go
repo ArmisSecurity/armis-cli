@@ -84,6 +84,7 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 	}, nil
 }
 
+// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; path comes from lockfile auto-detection or an explicit --lockfile flag the user controls, not untrusted input crossing a trust boundary; readLockfile also size-bounds the read
 func parseLockfile(ecosystem supplychain.Ecosystem, path string) ([]PackageEntry, error) {
 	switch ecosystem {
 	case supplychain.EcosystemPNPM:

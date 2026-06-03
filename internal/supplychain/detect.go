@@ -35,7 +35,7 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 
 	for _, c := range checks {
 		path := filepath.Join(dir, c.file)
-		// armis:ignore cwe:22 cwe:73 reason:local CLI probing the user's own project dir for well-known lockfile names; dir is a user-supplied scan target, c.file is a hardcoded literal, and only os.Stat (existence check) is performed
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI probing the user's own project dir for well-known lockfile names; dir is a user-supplied scan target, c.file is a hardcoded literal, and only os.Stat (existence check) is performed
 		if _, err := os.Stat(path); err == nil {
 			detected = append(detected, DetectedEcosystem{
 				Ecosystem:    c.ecosystem,

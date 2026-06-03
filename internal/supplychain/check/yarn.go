@@ -34,8 +34,8 @@ func isBerryLockfile(data []byte) bool {
 
 // parseYarnBerry handles yarn v2+ (berry) lockfiles which are YAML.
 func parseYarnBerry(data []byte) ([]PackageEntry, error) {
-	// armis:ignore cwe:502 reason:yaml.v3 Unmarshal into a generic map does not execute code or construct arbitrary types; input is the user's own lockfile, not untrusted data
 	var raw map[string]interface{}
+	// armis:ignore cwe:502 cwe:770 reason:yaml.v3 Unmarshal into a generic map does not execute code or construct arbitrary types; input is the user's own lockfile (size-bounded by readLockfile), not untrusted data crossing a trust boundary
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing yarn berry lockfile: %w", err)
 	}

@@ -88,6 +88,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		lockfilePath = ecosystems[0].LockfilePath
 	}
 
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls (e.g. "--lockfile ../sibling/package-lock.json"), not untrusted input crossing a trust boundary
 	if _, err := os.Stat(lockfilePath); err != nil {
 		return fmt.Errorf("lockfile not found: %s", lockfilePath)
 	}

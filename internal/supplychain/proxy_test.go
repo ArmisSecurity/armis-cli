@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -235,6 +236,204 @@ func TestProxyForwardsQueryString(t *testing.T) {
 	if gotRawQuery != "write=true&cache_bust=42" {
 		t.Errorf("upstream should receive the original query string, got %q", gotRawQuery)
 	}
+}
+
+// TestProxyPreservesCacheHeaders verifies the filtered 200 response carries
+// upstream cache headers (Cache-Control, Vary) forward so npm/pnpm/yarn can
+// populate their HTTP cache, while the now-incorrect Content-Length is dropped.
+func TestProxyPreservesCacheHeaders(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Header().Set("ETag", `"abc123"`)
+		w.Header().Set("Last-Modified", "Wed, 21 Oct 2025 07:28:00 GMT")
+		w.Header().Set("Vary", "Accept-Encoding")
+		metadata := map[string]interface{}{
+			"name": "express",
+			"time": map[string]string{
+				"4.18.2": oldTime,
+				"4.19.0": youngTime,
+			},
+			"versions": map[string]interface{}{
+				"4.18.2": map[string]string{"name": "express"},
+				"4.19.0": map[string]string{"name": "express"},
+			},
+		}
+		json.NewEncoder(w).Encode(metadata) //nolint:errcheck,gosec,gosec
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		UpstreamURL: upstream.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: local test proxy on 127.0.0.1
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec
+	body, _ := io.ReadAll(resp.Body)
+
+	// Cache-Control and Vary describe caching/negotiation independent of the
+	// body, so they must survive filtering.
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=300" {
+		t.Errorf("Cache-Control should be preserved, got %q", got)
+	}
+	if got := resp.Header.Get("Vary"); got != "Accept-Encoding" {
+		t.Errorf("Vary should be preserved, got %q", got)
+	}
+
+	// The filtered body differs from upstream's, so the validators that describe
+	// upstream's body (ETag, Last-Modified) must be dropped — otherwise the client
+	// could revalidate, get a 304, and keep serving the stale-filtered snapshot
+	// even after a blocked version ages past the threshold.
+	if got := resp.Header.Get("ETag"); got != "" {
+		t.Errorf("ETag should be dropped on a filtered response, got %q", got)
+	}
+	if got := resp.Header.Get("Last-Modified"); got != "" {
+		t.Errorf("Last-Modified should be dropped on a filtered response, got %q", got)
+	}
+
+	// The served body length differs from upstream's; the response must reflect
+	// the filtered length, never the stale upstream Content-Length.
+	if cl := resp.Header.Get("Content-Length"); cl != "" && cl != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length %q does not match filtered body length %d", cl, len(body))
+	}
+
+	// Sanity: the young version really was filtered out (so the body did change).
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var versions map[string]json.RawMessage
+	json.Unmarshal(result["versions"], &versions) //nolint:errcheck,gosec
+	if _, ok := versions["4.19.0"]; ok {
+		t.Error("young version should have been filtered (precondition for header assertions)")
+	}
+}
+
+// TestProxyForwardsValidatorsWhenUnfiltered verifies that when no version is
+// removed the body matches upstream byte-for-byte, so ETag/Last-Modified are
+// accurate and forwarded — enabling conditional-request revalidation.
+func TestProxyForwardsValidatorsWhenUnfiltered(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"unchanged"`)
+		w.Header().Set("Last-Modified", "Wed, 21 Oct 2025 07:28:00 GMT")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		metadata := map[string]interface{}{
+			"name":     "express",
+			"time":     map[string]string{"4.18.2": oldTime},
+			"versions": map[string]interface{}{"4.18.2": map[string]string{"name": "express"}},
+		}
+		json.NewEncoder(w).Encode(metadata) //nolint:errcheck,gosec,gosec
+	}))
+	defer upstream.Close()
+
+	proxy, _ := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		UpstreamURL: upstream.URL,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/express", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: local test proxy on 127.0.0.1
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()        //nolint:errcheck,gosec
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck,gosec
+
+	// Nothing was filtered (the only version is 30 days old), so validators are
+	// accurate for the served body and must be forwarded.
+	if got := resp.Header.Get("ETag"); got != `"unchanged"` {
+		t.Errorf("ETag should be forwarded on an unfiltered response, got %q", got)
+	}
+	if got := resp.Header.Get("Last-Modified"); got != "Wed, 21 Oct 2025 07:28:00 GMT" {
+		t.Errorf("Last-Modified should be forwarded on an unfiltered response, got %q", got)
+	}
+
+	if proxy.Checked() != 1 {
+		t.Errorf("expected 1 checked, got %d", proxy.Checked())
+	}
+	if len(proxy.Blocked()) != 0 {
+		t.Errorf("expected nothing blocked, got %+v", proxy.Blocked())
+	}
+}
+
+func TestCopyCacheHeaders(t *testing.T) {
+	t.Run("strips CRLF from forwarded values", func(t *testing.T) {
+		upstream := http.Header{}
+		// A malicious upstream tries to smuggle a second header by embedding CRLF.
+		upstream.Set("Cache-Control", "public\r\nX-Injected: evil")
+
+		dst := http.Header{}
+		copyCacheHeaders(dst, upstream, false)
+
+		got := dst.Get("Cache-Control")
+		if strings.ContainsAny(got, "\r\n") {
+			t.Errorf("forwarded header value must not contain CR/LF, got %q", got)
+		}
+		if dst.Get("X-Injected") != "" {
+			t.Errorf("CRLF injection must not produce a smuggled header, got %q", dst.Get("X-Injected"))
+		}
+	})
+
+	t.Run("omits validators when versions removed", func(t *testing.T) {
+		upstream := http.Header{}
+		upstream.Set("ETag", `"x"`)
+		upstream.Set("Last-Modified", "Wed, 21 Oct 2025 07:28:00 GMT")
+		upstream.Set("Cache-Control", "max-age=60")
+
+		dst := http.Header{}
+		copyCacheHeaders(dst, upstream, true)
+
+		if dst.Get("ETag") != "" || dst.Get("Last-Modified") != "" {
+			t.Errorf("validators must be omitted when body was filtered, got ETag=%q Last-Modified=%q",
+				dst.Get("ETag"), dst.Get("Last-Modified"))
+		}
+		if dst.Get("Cache-Control") != "max-age=60" {
+			t.Errorf("Cache-Control should still be forwarded, got %q", dst.Get("Cache-Control"))
+		}
+	})
+
+	t.Run("drops payload-describing headers", func(t *testing.T) {
+		upstream := http.Header{}
+		upstream.Set("Content-Length", "9999")
+		upstream.Set("Content-Encoding", "br")
+
+		dst := http.Header{}
+		copyCacheHeaders(dst, upstream, false)
+
+		if dst.Get("Content-Length") != "" {
+			t.Errorf("Content-Length must not be forwarded (body was re-marshaled), got %q", dst.Get("Content-Length"))
+		}
+		if dst.Get("Content-Encoding") != "" {
+			t.Errorf("Content-Encoding must not be forwarded (body is plain JSON), got %q", dst.Get("Content-Encoding"))
+		}
+	})
 }
 
 func TestProxySkipPackages(t *testing.T) {

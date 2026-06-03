@@ -151,3 +151,107 @@ func TestDetectOrgScopes_SkipsYarn(t *testing.T) {
 		t.Errorf("expected no scopes for yarn ecosystem, got %v", scopes)
 	}
 }
+
+// chdirTemp switches into a fresh temp dir for the duration of the test and
+// restores the original cwd on cleanup. runInitNpmrc operates on ".npmrc" in
+// the working directory, so each case needs an isolated dir.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	return dir
+}
+
+func TestRunInitNpmrc_PrependsNewline(t *testing.T) {
+	const marker = "armis-cli supply-chain"
+
+	tests := []struct {
+		name    string
+		initial string // existing .npmrc content; "" means no file
+		// wantOriginalIntact asserts the original content is preserved verbatim
+		// at the front (so npm never reads a corrupted "foo=bar# armis..." entry).
+		wantOriginalIntact bool
+	}{
+		{name: "no existing file", initial: "", wantOriginalIntact: false},
+		{name: "trailing newline present", initial: "foo=bar\n", wantOriginalIntact: true},
+		{name: "no trailing newline", initial: "foo=bar", wantOriginalIntact: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirTemp(t)
+			scInitDryRun = false
+			t.Cleanup(func() { scInitDryRun = false })
+
+			if tt.initial != "" {
+				if err := os.WriteFile(".npmrc", []byte(tt.initial), 0o600); err != nil {
+					t.Fatalf("seed .npmrc: %v", err)
+				}
+			}
+
+			if err := runInitNpmrc(); err != nil {
+				t.Fatalf("runInitNpmrc: %v", err)
+			}
+
+			got, err := os.ReadFile(".npmrc")
+			if err != nil {
+				t.Fatalf("read .npmrc: %v", err)
+			}
+			content := string(got)
+
+			if !strings.Contains(content, marker) {
+				t.Fatalf("expected marker comment in .npmrc, got %q", content)
+			}
+
+			// The original content must survive untouched at the front.
+			if tt.wantOriginalIntact && !strings.HasPrefix(content, tt.initial) {
+				t.Errorf("original content not preserved: got %q, want prefix %q", content, tt.initial)
+			}
+
+			// The crux of the fix: the appended comment must start a new line, so
+			// the last original entry is never corrupted by concatenation.
+			markerIdx := strings.Index(content, "#")
+			if markerIdx > 0 && content[markerIdx-1] != '\n' {
+				t.Errorf("comment must begin on its own line; byte before '#' was %q in %q", content[markerIdx-1], content)
+			}
+		})
+	}
+}
+
+func TestRunInitNpmrc_Idempotent(t *testing.T) {
+	chdirTemp(t)
+	scInitDryRun = false
+	t.Cleanup(func() { scInitDryRun = false })
+
+	if err := runInitNpmrc(); err != nil {
+		t.Fatalf("first runInitNpmrc: %v", err)
+	}
+	first, err := os.ReadFile(".npmrc")
+	if err != nil {
+		t.Fatalf("read after first run: %v", err)
+	}
+
+	// A second invocation must detect the existing marker and leave the file
+	// unchanged rather than appending a duplicate comment.
+	if err := runInitNpmrc(); err != nil {
+		t.Fatalf("second runInitNpmrc: %v", err)
+	}
+	second, err := os.ReadFile(".npmrc")
+	if err != nil {
+		t.Fatalf("read after second run: %v", err)
+	}
+
+	if string(first) != string(second) {
+		t.Errorf("runInitNpmrc not idempotent:\nfirst:  %q\nsecond: %q", first, second)
+	}
+	if strings.Count(string(second), "armis-cli supply-chain") != 1 {
+		t.Errorf("expected exactly one marker comment, got %q", second)
+	}
+}

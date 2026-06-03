@@ -285,6 +285,7 @@ func installMergedHook(pluginDir, configPath string, client HookClient) error {
 	}
 
 	data["hooks"] = hooksSection
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:configPath from hardcoded editor config locations (homeDir/app-support + fixed segments); not user-controlled
 	return writeJSONAtomic(configPath, data)
 }
 
@@ -353,6 +354,7 @@ func installCursorHook(pluginDir, configPath string) error {
 	}
 
 	data["hooks"] = hooksSection
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:configPath from hardcoded editor config locations (homeDir/app-support + fixed segments); not user-controlled
 	return writeJSONAtomic(configPath, data)
 }
 

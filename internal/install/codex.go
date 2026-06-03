@@ -35,12 +35,14 @@ func IsCodexDetected() bool {
 // RegisterCodexMCP adds or updates the [mcp_servers.armis_scanner] section
 // in Codex CLI's config.toml.
 func RegisterCodexMCP(pluginDir string) error {
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:pluginDir validated absolute + filepath.Clean below; configPath is ~/.codex/config.toml from os.UserHomeDir (hardcoded segments)
 	if !filepath.IsAbs(pluginDir) {
 		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
 	}
 
 	// Sanitize: resolve symlink-like components (e.g. "..") to prevent
 	// path traversal when the stored path is later used by Codex CLI.
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:pluginDir validated absolute above; filepath.Clean here only normalizes; configPath is ~/.codex/config.toml from os.UserHomeDir (hardcoded segments)
 	pluginDir = filepath.Clean(pluginDir)
 
 	configPath := CodexConfigPath()
@@ -57,6 +59,7 @@ func RegisterCodexMCP(pluginDir string) error {
 		return err
 	}
 
+	// armis:ignore cwe:78 cwe:94 reason:buildCodexSection does not execute commands — it builds a TOML config string with tomlQuote-escaped values; pluginDir was validated absolute and cleaned above
 	newSection := buildCodexSection(pluginDir)
 	updated := replaceTOMLSection(content, codexSectionHeader, newSection)
 
@@ -89,7 +92,9 @@ func DeregisterCodexMCP() (bool, error) {
 }
 
 func buildCodexSection(pluginDir string) string {
+	// armis:ignore cwe:78 cwe:94 cwe:22 cwe:23 cwe:73 reason:builds a TOML config string only (no command execution); pluginDir validated absolute by RegisterCodexMCP; venvPython/filepath.Join produce paths under the validated pluginDir
 	command := venvPython(pluginDir)
+	// armis:ignore cwe:78 cwe:94 cwe:22 cwe:23 cwe:73 reason:filepath.Join of validated pluginDir + hardcoded "server.py"; used only inside a tomlQuote-escaped config string, never executed
 	serverPy := filepath.Join(pluginDir, "server.py")
 	return fmt.Sprintf("%s\ncommand = %s\nargs = [%s]\n",
 		codexSectionHeader,
