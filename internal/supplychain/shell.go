@@ -22,13 +22,24 @@ const (
 // interpolated into the script written to a user's RC file.
 var validPMName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+// maxPMNames caps how many package-manager wrappers a single generated script
+// can contain. The real universe is tiny (npm, pnpm, bun, yarn), so this
+// generous limit never rejects a legitimate name, but it bounds the script
+// builder's growth so an exported caller passing an arbitrarily long name list
+// cannot drive an unbounded allocation (CWE-770).
+const maxPMNames = 16
+
 // sanitizePMNames drops any package-manager name that is not a safe shell
-// identifier. This is the single chokepoint that every wrapper generator runs
-// its input through, so a malformed or attacker-influenced name can never reach
-// the script-building Fprintf calls below.
+// identifier and caps the result at maxPMNames. This is the single chokepoint
+// that every wrapper generator runs its input through, so a malformed or
+// attacker-influenced name can never reach the script-building Fprintf calls
+// below, and an oversized list can never grow the builder without limit.
 func sanitizePMNames(pms []string) []string {
 	var safe []string
 	for _, pm := range pms {
+		if len(safe) >= maxPMNames {
+			break
+		}
 		if validPMName.MatchString(pm) {
 			safe = append(safe, pm)
 		}
@@ -84,6 +95,8 @@ func GenerateWrapper(shell string, pms []string) string {
 	}
 }
 
+// generatePosixWrapper builds the bash/zsh wrapper block for the given PMs.
+// armis:ignore cwe:770 reason:sanitizePMNames caps the name list at maxPMNames (16), so the string builder cannot grow without bound; pms also originates from local lockfile detection (≤4 ecosystems) rather than untrusted input
 func generatePosixWrapper(pms []string, cli string) string {
 	safeCli := shellQuote(cli)
 	var b strings.Builder
@@ -96,6 +109,8 @@ func generatePosixWrapper(pms []string, cli string) string {
 	return b.String()
 }
 
+// generateFishWrapper builds the fish wrapper block for the given PMs.
+// armis:ignore cwe:770 reason:sanitizePMNames caps the name list at maxPMNames (16), so the string builder cannot grow without bound; pms also originates from local lockfile detection (≤4 ecosystems) rather than untrusted input
 func generateFishWrapper(pms []string, cli string) string {
 	safeCli := shellQuote(cli)
 	var b strings.Builder
@@ -144,7 +159,7 @@ func InjectFunctions(shells []Shell, pms []string) ([]string, error) {
 }
 
 func injectIntoFile(path, block string) (bool, error) {
-	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain init`
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain init`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
@@ -172,7 +187,7 @@ func injectIntoFile(path, block string) (bool, error) {
 		return false, err
 	}
 
-	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain init`
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain init`
 	if err := os.WriteFile(path, []byte(text), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
@@ -194,7 +209,7 @@ func RemoveFunctions(shells []Shell) ([]string, error) {
 }
 
 func removeFromFile(path string) (bool, error) {
-	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain uninit`
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); editing the user's RC file is the purpose of `supply-chain uninit`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -214,7 +229,7 @@ func removeFromFile(path string) (bool, error) {
 	}
 
 	cleaned := removeBlock(text)
-	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain uninit`
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); writing the user's RC file is the purpose of `supply-chain uninit`
 	if err := os.WriteFile(path, []byte(cleaned), perm); err != nil { //nolint:gosec // shell RC file
 		return false, err
 	}
@@ -250,7 +265,7 @@ func EvalCommand(pms []string) string {
 }
 
 func HasInjection(path string) bool {
-	// armis:ignore cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to report injection status is the purpose of `supply-chain status`
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to report injection status is the purpose of `supply-chain status`
 	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
 	if err != nil {
 		return false

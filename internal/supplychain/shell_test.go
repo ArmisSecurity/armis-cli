@@ -90,6 +90,28 @@ func TestGenerateWrapper_KeepsValidAlongsideInvalid(t *testing.T) {
 	}
 }
 
+// TestGenerateWrapper_CapsNameCount verifies that an oversized PM list is
+// bounded at maxPMNames so the generated script (and the builder allocating it)
+// cannot grow without limit, even via the exported GenerateWrapper entry point.
+func TestGenerateWrapper_CapsNameCount(t *testing.T) {
+	many := make([]string, maxPMNames+50)
+	for i := range many {
+		many[i] = "npm"
+	}
+
+	got := sanitizePMNames(many)
+	if len(got) != maxPMNames {
+		t.Errorf("expected sanitizePMNames to cap at %d, got %d", maxPMNames, len(got))
+	}
+
+	// The cap must hold through the public wrapper generator too: count the
+	// emitted function definitions rather than trusting the helper alone.
+	wrapper := GenerateWrapper("bash", many)
+	if n := strings.Count(wrapper, "npm()"); n != maxPMNames {
+		t.Errorf("expected %d wrapped functions, got %d", maxPMNames, n)
+	}
+}
+
 func TestInjectAndRemoveFunctions(t *testing.T) {
 	tmpDir := t.TempDir()
 	rcFile := filepath.Join(tmpDir, ".bashrc")
