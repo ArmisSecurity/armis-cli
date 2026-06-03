@@ -35,6 +35,13 @@ func ParsePipRequirements(path string) ([]PackageEntry, error) {
 
 	var entries []PackageEntry
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	// A single requirements.txt line can carry many "--hash=sha256:..." entries
+	// or long URLs and exceed bufio.Scanner's default 64KB token limit, which
+	// would otherwise surface as scanner.Err() = "token too long" and turn a
+	// valid lockfile into a hard failure. Allow one line to grow up to the same
+	// maxLockfileSize cap readLockfile already enforces, so parsing stays robust
+	// without reintroducing an unbounded allocation.
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxLockfileSize)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

@@ -60,6 +60,12 @@ func NewPyPIClientWithHTTP(httpClient *http.Client, baseURL string) *PyPIClient 
 	if baseURL == "" {
 		baseURL = defaultPyPIURL
 	}
+	// Guard the exported constructor against a nil client: callers that pass nil
+	// would otherwise hit a nil-pointer panic at c.httpClient.Do(). Default to
+	// the same timeout-configured client NewPyPIClient uses.
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
 	return &PyPIClient{
 		httpClient: httpClient,
 		baseURL:    baseURL,

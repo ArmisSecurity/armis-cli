@@ -145,17 +145,23 @@ func detectEcosystemFromPath(path string) supplychain.Ecosystem {
 }
 
 // isRequirementsFile reports whether a lowercased path is a pip requirements
-// file. It matches the conventional layouts (requirements.txt, requirements-dev.txt,
-// and the requirements/<name>.txt directory split) by requiring both a
-// "requirements" path segment and a .txt extension. The .txt guard is what keeps
-// pip-tools input files (requirements.in, which hold unpinned specifiers
-// ParsePipRequirements would silently drop) from being misclassified as a pinned
-// lockfile and yielding a false "all clear".
+// file. It matches the conventional layouts — a "requirements*.txt" basename
+// (requirements.txt, requirements-dev.txt) or any *.txt under a "requirements/"
+// directory split — rather than a loose "requirements" substring, so unrelated
+// files like "myrequirements.txt" are not misclassified as a pinned lockfile
+// (which would parse empty and yield a false "all clear"). The .txt guard also
+// keeps pip-tools input files (requirements.in, which hold unpinned specifiers
+// ParsePipRequirements would silently drop) out.
 func isRequirementsFile(lowerPath string) bool {
 	if !strings.HasSuffix(lowerPath, ".txt") {
 		return false
 	}
-	return strings.Contains(filepath.ToSlash(lowerPath), "requirements")
+	slashed := filepath.ToSlash(lowerPath)
+	base := filepath.Base(slashed)
+	if strings.HasPrefix(base, "requirements") {
+		return true
+	}
+	return strings.Contains(slashed, "requirements/")
 }
 
 func diffEntries(current, base []PackageEntry) []PackageEntry {

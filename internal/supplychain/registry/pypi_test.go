@@ -110,6 +110,20 @@ func TestPyPIGetPublishDate(t *testing.T) {
 		}
 	})
 
+	t.Run("nil http client defaults instead of panicking", func(t *testing.T) {
+		// NewPyPIClientWithHTTP is exported, so a caller may pass nil. It must
+		// default to a usable client rather than leave httpClient nil and panic
+		// at httpClient.Do(). Asserting the field is populated keeps the test
+		// hermetic (no real network call).
+		client := NewPyPIClientWithHTTP(nil, "")
+		if client.httpClient == nil {
+			t.Fatal("expected a defaulted http client, got nil")
+		}
+		if client.baseURL != defaultPyPIURL {
+			t.Errorf("expected baseURL to default to %q, got %q", defaultPyPIURL, client.baseURL)
+		}
+	})
+
 	t.Run("caches responses", func(t *testing.T) {
 		calls := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

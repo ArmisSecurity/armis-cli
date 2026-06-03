@@ -95,6 +95,12 @@ func TestDetectEcosystemFromPath(t *testing.T) {
 		{"requirements.txt", supplychain.EcosystemPip},
 		{"/project/requirements-dev.txt", supplychain.EcosystemPip},
 		{"/project/requirements/base.txt", supplychain.EcosystemPip},
+		// A "requirements" substring that is not a path segment (e.g.
+		// "myrequirements.txt") must NOT be classified as pip — it would parse
+		// empty and report a false "all clear". Only a "requirements*" basename
+		// or a file under a "requirements/" directory qualifies.
+		{"myrequirements.txt", supplychain.EcosystemNPM},
+		{"/project/build-requirements-notes.txt", supplychain.EcosystemNPM},
 		// requirements.in (pip-tools input, unpinned) must NOT be treated as a
 		// pinned requirements lockfile — doing so would silently skip every
 		// unpinned line and report a false "all clear". It falls through to the

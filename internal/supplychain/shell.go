@@ -320,9 +320,20 @@ func DetectPipVariants() []string {
 				continue
 			}
 			name := entry.Name()
-			if pipExecutable.MatchString(name) {
-				seen[name] = true
+			if !pipExecutable.MatchString(name) {
+				continue
 			}
+			// A pip-named entry on PATH with no execute bit (a stray data file or
+			// a non-exec script) would yield a wrapper that later fails at
+			// exec.LookPath with a confusing error, so require at least one
+			// execute bit before treating it as a real pip command. Info() reports
+			// the entry's own mode (lstat semantics); a symlink to a real pip keeps
+			// its 0o777 link bits and so still passes, matching what the user can run.
+			info, err := entry.Info()
+			if err != nil || info.Mode().Perm()&0o111 == 0 {
+				continue
+			}
+			seen[name] = true
 		}
 	}
 

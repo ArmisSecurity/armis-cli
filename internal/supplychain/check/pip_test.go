@@ -1,8 +1,11 @@
 package check
 
 import (
+	"bufio"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +77,35 @@ func TestParsePipRequirements(t *testing.T) {
 		_, err := ParsePipRequirements("nonexistent.txt")
 		if err == nil {
 			t.Error("expected error for missing file")
+		}
+	})
+
+	t.Run("parses lines longer than the default scanner token", func(t *testing.T) {
+		// A pinned requirement followed by many "--hash" entries on a single
+		// line-continuation-free line can exceed bufio.Scanner's default 64KB
+		// token limit. Build a line well past that to assert the raised buffer
+		// keeps such a lockfile parseable instead of failing "token too long".
+		var sb strings.Builder
+		sb.WriteString("flask==3.0.0 \\")
+		for i := 0; i < 2000; i++ {
+			sb.WriteString(" --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000")
+		}
+		if sb.Len() <= bufio.MaxScanTokenSize {
+			t.Fatalf("test line is %d bytes, expected > %d to exercise the raised buffer", sb.Len(), bufio.MaxScanTokenSize)
+		}
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "requirements.txt")
+		if err := os.WriteFile(path, []byte(sb.String()+"\n"), 0o600); err != nil {
+			t.Fatalf("writing fixture: %v", err)
+		}
+
+		entries, err := ParsePipRequirements(path)
+		if err != nil {
+			t.Fatalf("unexpected error on long line: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Name != "flask" || entries[0].Version != "3.0.0" {
+			t.Errorf("expected [flask@3.0.0], got %v", entries)
 		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -335,7 +336,7 @@ func TestDetectPipVariants(t *testing.T) {
 
 		got := DetectPipVariants()
 		want := []string{pipExe, "pip3", "pip3.12"}
-		if !equalStrings(got, want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("DetectPipVariants() = %v, want %v", got, want)
 		}
 	})
@@ -368,6 +369,25 @@ func TestDetectPipVariants(t *testing.T) {
 		}
 	})
 
+	t.Run("ignores non-executable pip-named files", func(t *testing.T) {
+		dir := t.TempDir()
+		// An executable pip alongside a pip3 that lacks any execute bit (a stray
+		// data file). Only the runnable one should be wrapped — a wrapper for the
+		// non-exec file would later fail at exec.LookPath.
+		if err := os.WriteFile(filepath.Join(dir, pipExe), []byte{}, 0o755); err != nil { //nolint:gosec
+			t.Fatalf("seed %s: %v", pipExe, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "pip3"), []byte{}, 0o600); err != nil {
+			t.Fatalf("seed pip3: %v", err)
+		}
+		t.Setenv("PATH", dir)
+
+		got := DetectPipVariants()
+		if !slices.Equal(got, []string{pipExe}) {
+			t.Errorf("expected only the executable [pip], got %v", got)
+		}
+	})
+
 	t.Run("falls back to pip when none found", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		got := DetectPipVariants()
@@ -383,16 +403,4 @@ func TestDetectPipVariants(t *testing.T) {
 			t.Errorf("expected [pip] fallback, got %v", got)
 		}
 	})
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
