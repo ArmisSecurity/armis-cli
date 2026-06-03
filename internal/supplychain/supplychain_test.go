@@ -29,6 +29,16 @@ func TestParseDuration(t *testing.T) {
 		{"-Infd", 0, true},
 		{"-3d", 0, true},
 		{"-1w", 0, true},
+		// Extremely large 'd'/'w' values overflow int64 nanoseconds. The float→int
+		// conversion is implementation-defined and can wrap to a negative/tiny
+		// duration, silently disabling min-age enforcement, so these must error.
+		{"200000d", 0, true},
+		{"100000w", 0, true},
+		{"1e30d", 0, true},
+		// Largest day/week counts that still fit must succeed (boundary just below
+		// the int64 nanosecond ceiling).
+		{"106751d", time.Duration(106751 * float64(24*time.Hour)), false},
+		{"15250w", time.Duration(15250 * float64(7*24*time.Hour)), false},
 	}
 
 	for _, tt := range tests {

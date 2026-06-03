@@ -76,13 +76,13 @@ func ParseDuration(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, err
 		}
-		return time.Duration(n * float64(24*time.Hour)), nil
+		return scaleToDuration(s, n, float64(24*time.Hour))
 	case 'w':
 		n, err := parseFiniteNonNegativeFloat(s, s[:len(s)-1])
 		if err != nil {
 			return 0, err
 		}
-		return time.Duration(n * float64(7*24*time.Hour)), nil
+		return scaleToDuration(s, n, float64(7*24*time.Hour))
 	default:
 		d, err := time.ParseDuration(s)
 		if err != nil {
@@ -110,6 +110,22 @@ func parseFiniteNonNegativeFloat(orig, num string) (float64, error) {
 		return 0, fmt.Errorf("invalid duration %q: must not be negative", orig)
 	}
 	return n, nil
+}
+
+// scaleToDuration multiplies a finite, non-negative count by a per-unit
+// nanosecond scale and converts to time.Duration, rejecting results that exceed
+// the int64 nanosecond range. A float64 too large for time.Duration would, on a
+// float→int conversion, produce an implementation-defined result that can wrap
+// to a negative or tiny duration — silently enfeebling min-age enforcement (e.g.
+// "200000d"). math.MaxInt64 is not exactly representable in float64 and rounds up
+// to 2^63, so the boundary check must be ">=" to also exclude exactly 2^63 ns.
+// orig is the full duration string, used only for error context.
+func scaleToDuration(orig string, n, scale float64) (time.Duration, error) {
+	ns := n * scale
+	if ns >= float64(math.MaxInt64) {
+		return 0, fmt.Errorf("invalid duration %q: exceeds maximum representable duration", orig)
+	}
+	return time.Duration(ns), nil
 }
 
 func ViolationToFinding(v Violation, lockfilePath string) model.Finding {
