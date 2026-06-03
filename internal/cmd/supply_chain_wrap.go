@@ -16,10 +16,13 @@ import (
 )
 
 const (
-	envSCActive = "ARMIS_SUPPLY_CHAIN_ACTIVE"
-	envSCOff    = "ARMIS_SUPPLY_CHAIN"
-	scPrefix    = "[armis]"
-	scSepLen    = 45
+	envSCActive        = "ARMIS_SUPPLY_CHAIN_ACTIVE"
+	envSCOff           = "ARMIS_SUPPLY_CHAIN"
+	envSCSkip          = "ARMIS_SUPPLY_CHAIN_SKIP"
+	scPrefix           = "[armis]"
+	scSepLen           = 45
+	maxSkipPackages    = 10000
+	maxSkipPackagesLen = 100 * 1024 // 100 KB max for env var to prevent unbounded parsing
 )
 
 // Supported package-manager names. Centralizing them as constants keeps the
@@ -71,7 +74,8 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	policy := resolveWrapPolicy()
 
 	cfg := supplychain.ProxyConfig{
-		Policy: policy,
+		Policy:       policy,
+		SkipPackages: parseSkipPackages(os.Getenv(envSCSkip)),
 	}
 
 	proxy, err := supplychain.NewProxy(cfg)
@@ -299,6 +303,30 @@ func registryEnvForPM(pm, registryURL string) []string {
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 		}
 	}
+}
+
+// parseSkipPackages turns the ARMIS_SUPPLY_CHAIN_SKIP env var into a list of
+// package names the proxy should pass through without an age check. Entries may
+// be separated by commas or any whitespace (so both "a,b" and "a b c" work).
+// Input size and result count are bounded to prevent DoS via unbounded allocation.
+func parseSkipPackages(raw string) []string {
+	if len(raw) > maxSkipPackagesLen {
+		raw = raw[:maxSkipPackagesLen]
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	var result []string
+	for _, p := range parts {
+		if len(result) >= maxSkipPackages {
+			break
+		}
+		if len(p) > 255 {
+			continue
+		}
+		result = append(result, p)
+	}
+	return result
 }
 
 func resolveWrapPolicy() supplychain.Policy {

@@ -192,10 +192,11 @@ func runSupplyChainStatusJSON(dir string) error {
 		result.Policy.Exclusions = []string{}
 	}
 
-	// DetectEcosystems errors only when no supported lockfile exists, which is a
-	// valid state for `status` (we simply report no ecosystems), so the error is
-	// intentionally not surfaced here — mirroring the human-output path.
-	// armis:ignore cwe:770 cwe:253 reason:result bounded to one entry per known lockfile type (4); the "no lockfile" error is a valid empty state for status output, deliberately ignored
+	// `status` reports a best-effort snapshot: a missing lockfile is a valid
+	// empty state, and an unreadable one (permission/I/O) likewise just yields no
+	// ecosystems here rather than failing the whole status read. Either way the
+	// error is intentionally not surfaced — mirroring the human-output path.
+	// armis:ignore cwe:770 cwe:253 reason:result bounded to one entry per known lockfile type (4); a no-lockfile or unreadable-lockfile error is a valid empty state for status output, deliberately ignored
 	ecosystems, _ := supplychain.DetectEcosystems(dir) //nolint:errcheck // no-lockfile is a valid empty state for status
 	for _, e := range ecosystems {
 		result.Ecosystems = append(result.Ecosystems, statusEcosystemJSON{

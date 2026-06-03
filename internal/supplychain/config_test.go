@@ -14,9 +14,6 @@ func TestLoadConfig(t *testing.T) {
 exclusions:
   - "@myorg/*"
   - typescript
-ecosystems:
-  - npm
-  - pnpm
 fail-open: true
 `
 		os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o600) //nolint:errcheck,gosec
@@ -37,8 +34,29 @@ fail-open: true
 		if !cfg.FailOpen {
 			t.Error("expected fail-open=true")
 		}
-		if len(cfg.Ecosystems) != 2 {
-			t.Errorf("expected 2 ecosystems, got %d", len(cfg.Ecosystems))
+	})
+
+	t.Run("unknown fields like ecosystems are ignored", func(t *testing.T) {
+		// `ecosystems:` was removed from the schema; an existing config that still
+		// carries it must load without error (yaml.v3 ignores unknown keys) so we
+		// stay backward-compatible with files written by older versions.
+		dir := t.TempDir()
+		content := `min-age: 5d
+ecosystems:
+  - npm
+  - pnpm
+`
+		os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o600) //nolint:errcheck,gosec
+
+		cfg, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("expected config, got nil")
+		}
+		if cfg.MinAge != "5d" {
+			t.Errorf("expected min-age=5d, got %s", cfg.MinAge)
 		}
 	})
 

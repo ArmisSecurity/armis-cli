@@ -30,7 +30,8 @@ use a transparent proxy that filters registry responses.
 Four modes are available:
   rc     — Inject shell functions into ~/.bashrc / ~/.zshrc (default, interactive)
   env    — Print an eval command for CI or manual sourcing
-  npmrc  — Write registry override to .npmrc (project-level)
+  npmrc  — Add a marker comment to .npmrc (the registry override itself is set
+           dynamically by 'supply-chain wrap'; use with the rc or env modes)
   config — Generate .armis-supply-chain.yaml policy file for this project
 
 Run 'armis-cli supply-chain uninit' to reverse changes made by this command.`,
@@ -46,7 +47,7 @@ Run 'armis-cli supply-chain uninit' to reverse changes made by this command.`,
   # Print eval command for CI
   armis-cli supply-chain init --mode env
 
-  # Write .npmrc override
+  # Add the supply-chain marker comment to .npmrc
   armis-cli supply-chain init --mode npmrc`,
 	Args: cobra.NoArgs,
 	RunE: runSupplyChainInit,
@@ -84,8 +85,9 @@ func runSupplyChainInit(_ *cobra.Command, _ []string) error {
 func detectWrappablePMs() []string {
 	ecosystems, err := supplychain.DetectEcosystems(".")
 	if err != nil {
-		// DetectEcosystems only errors when no supported lockfile is present.
-		// Default to npm so the generated wrapper still protects the most common
+		// DetectEcosystems errors when no supported lockfile is present, or when
+		// a lockfile exists but can't be stat'd (permissions/I/O). Either way,
+		// default to npm so the generated wrapper still protects the most common
 		// package manager rather than silently wrapping nothing.
 		return []string{pmNPM}
 	}
@@ -308,10 +310,6 @@ func runInitConfig() error {
 	}
 
 	ecosystems, _ := supplychain.DetectEcosystems(".")
-	var ecoNames []string
-	for _, e := range ecosystems {
-		ecoNames = append(ecoNames, string(e.Ecosystem))
-	}
 
 	var exclusionsBlock string
 	scopes := detectOrgScopes(ecosystems)
@@ -325,17 +323,6 @@ func runInitConfig() error {
 		exclusionsBlock = "# exclusions:\n#   - \"@myorg/*\"\n"
 	}
 
-	var ecoBlock string
-	if len(ecoNames) > 0 {
-		var lines []string
-		for _, name := range ecoNames {
-			lines = append(lines, "  - "+name)
-		}
-		ecoBlock = "ecosystems:\n" + strings.Join(lines, "\n") + "\n"
-	} else {
-		ecoBlock = "# ecosystems:\n#   - npm\n"
-	}
-
 	content := fmt.Sprintf(`# armis-cli supply-chain configuration
 # Docs: armis-cli supply-chain --help
 version: 1
@@ -345,11 +332,9 @@ min-age: 72h
 
 # Packages matching these glob patterns bypass age checks
 %s
-# Which package ecosystems to enforce (auto-detected if omitted)
-%s
 # If true, allow installs when the registry is unreachable
 fail-open: false
-`, exclusionsBlock, ecoBlock)
+`, exclusionsBlock)
 
 	if scInitDryRun {
 		fmt.Fprintf(os.Stderr, "%s\n\n", s.MutedText.Render(fmt.Sprintf("Would write %s:", configPath)))

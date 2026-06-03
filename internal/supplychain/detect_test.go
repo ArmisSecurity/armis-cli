@@ -3,6 +3,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +70,29 @@ func TestDetectEcosystems(t *testing.T) {
 		}
 		if ecosystems[0].Ecosystem != EcosystemBun {
 			t.Errorf("expected bun, got %s", ecosystems[0].Ecosystem)
+		}
+	})
+
+	t.Run("surfaces non-not-exist stat errors", func(t *testing.T) {
+		// Use a regular file as the "directory": filepath.Join(file, "package-lock.json")
+		// becomes "<file>/package-lock.json", and stat'ing a path whose parent is a
+		// file fails with ENOTDIR — a non-IsNotExist error. DetectEcosystems must
+		// surface it instead of silently reporting "no lockfile found", so a real
+		// permission/I/O problem isn't mistaken for an absent lockfile.
+		base := t.TempDir()
+		notADir := filepath.Join(base, "not-a-dir")
+		if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+			t.Fatalf("seed file: %v", err)
+		}
+
+		_, err := DetectEcosystems(notADir)
+		if err == nil {
+			t.Fatal("expected error when a lockfile path cannot be stat'd")
+		}
+		// The error must describe an access failure, not the generic "no supported
+		// lockfile found" message that callers map to an empty-but-valid state.
+		if strings.Contains(err.Error(), "no supported lockfile found") {
+			t.Errorf("stat failure should not be reported as a missing lockfile, got: %v", err)
 		}
 	})
 
