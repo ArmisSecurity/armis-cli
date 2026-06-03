@@ -84,7 +84,7 @@ func TestDetectEcosystems(t *testing.T) {
 		// This ENOTDIR behavior is Unix-only: on Windows, stat'ing a path under a
 		// non-directory returns ERROR_PATH_NOT_FOUND, which os.IsNotExist reports as
 		// true, so the error is (correctly) treated as "lockfile absent" there.
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == goosWindows {
 			t.Skip("ENOTDIR-style stat errors are not reproducible on Windows (maps to IsNotExist)")
 		}
 		base := t.TempDir()

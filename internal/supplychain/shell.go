@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -14,6 +15,10 @@ const (
 	markerStart = "# >>> armis-cli supply-chain >>>"
 	markerEnd   = "# <<< armis-cli supply-chain <<<"
 )
+
+// goosWindows is runtime.GOOS on Windows. Centralized so the several
+// platform guards across this package (and its tests) share one literal.
+const goosWindows = "windows"
 
 // validPMName bounds package-manager names to a safe shell identifier: a
 // lowercase letter followed by lowercase letters, digits, or hyphens, with an
@@ -323,15 +328,22 @@ func DetectPipVariants() []string {
 			if !pipExecutable.MatchString(name) {
 				continue
 			}
-			// A pip-named entry on PATH with no execute bit (a stray data file or
-			// a non-exec script) would yield a wrapper that later fails at
-			// exec.LookPath with a confusing error, so require at least one
-			// execute bit before treating it as a real pip command. Info() reports
-			// the entry's own mode (lstat semantics); a symlink to a real pip keeps
-			// its 0o777 link bits and so still passes, matching what the user can run.
-			info, err := entry.Info()
-			if err != nil || info.Mode().Perm()&0o111 == 0 {
-				continue
+			// On Unix, a pip-named entry on PATH with no execute bit (a stray data
+			// file or a non-exec script) would yield a wrapper that later fails at
+			// exec.LookPath with a confusing error, so require at least one execute
+			// bit before treating it as a real pip command. Info() reports the
+			// entry's own mode (lstat semantics); a symlink to a real pip keeps its
+			// 0o777 link bits and so still passes, matching what the user can run.
+			//
+			// Skip this check on Windows: there is no execute-bit concept there
+			// (executability is governed by file extension via PATHEXT), and
+			// os.FileMode.Perm never sets 0o111, so the filter would reject every
+			// real pip and collapse detection to the ["pip"] fallback.
+			if runtime.GOOS != goosWindows {
+				info, err := entry.Info()
+				if err != nil || info.Mode().Perm()&0o111 == 0 {
+					continue
+				}
 			}
 			seen[name] = true
 		}

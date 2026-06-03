@@ -184,7 +184,7 @@ func TestInjectAndRemoveFunctions(t *testing.T) {
 }
 
 func TestRemoveFunctions_PreservesPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		t.Skip("Unix file permissions not supported on Windows")
 	}
 
@@ -370,6 +370,13 @@ func TestDetectPipVariants(t *testing.T) {
 	})
 
 	t.Run("ignores non-executable pip-named files", func(t *testing.T) {
+		if runtime.GOOS == goosWindows {
+			// Windows has no execute-bit concept (executability is governed by
+			// file extension), so DetectPipVariants does not filter on mode there
+			// and this Unix-only behavior cannot be exercised.
+			t.Skip("execute-bit filtering is Unix-only")
+		}
+
 		dir := t.TempDir()
 		// An executable pip alongside a pip3 that lacks any execute bit (a stray
 		// data file). Only the runnable one should be wrapped — a wrapper for the
