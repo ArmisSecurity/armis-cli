@@ -39,6 +39,8 @@ const (
 	pmPoetry = "poetry"
 	pmPipenv = "pipenv"
 	pmPDM    = "pdm"
+	pmMaven  = "mvn"
+	pmGradle = "gradle"
 )
 
 var scWrapCmd = &cobra.Command{
@@ -57,6 +59,7 @@ func init() {
 var allowedPMs = map[string]bool{
 	pmNPM: true, pmPNPM: true, pmBun: true, pmYarn: true,
 	pmPip: true, pmUV: true, pmPoetry: true, pmPipenv: true, pmPDM: true,
+	pmMaven: true, pmGradle: true,
 }
 
 func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
@@ -70,7 +73,7 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 	canonical := canonicalPM(pmName)
 
 	if !allowedPMs[canonical] {
-		return fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm)", pmName)
+		return fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pmName)
 	}
 
 	if os.Getenv(envSCActive) == "1" {
@@ -176,6 +179,10 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 		pmName = pmPipenv
 	case pmPDM:
 		pmName = pmPDM
+	case pmMaven:
+		pmName = pmMaven
+	case pmGradle:
+		pmName = pmGradle
 	default:
 		// Versioned pip variants (pip3, pip3.11, pip3.12) must execute the exact
 		// binary the user invoked so the install lands in that interpreter's
@@ -187,7 +194,7 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 			pmName = pm
 			break
 		}
-		return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm)", pm)
+		return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pm)
 	}
 
 	// armis:ignore cwe:426 cwe:427 reason:pmName is one of the hardcoded string literals selected by the switch above, never the user argument; resolving the user's own PM from PATH is the point of a transparent wrapper
@@ -421,7 +428,7 @@ func resolveWrapPolicy() supplychain.Policy {
 // too-young package.
 func requiresPreInstallBlock(pm string) bool {
 	switch pm {
-	case pmPoetry, pmPipenv, pmPDM:
+	case pmPoetry, pmPipenv, pmPDM, pmMaven, pmGradle:
 		return true
 	}
 	return false
@@ -561,6 +568,10 @@ func pmToEcosystem(pm string) supplychain.Ecosystem {
 		return supplychain.EcosystemPipfile
 	case pmPDM:
 		return supplychain.EcosystemPDM
+	case pmMaven:
+		return supplychain.EcosystemMaven
+	case pmGradle:
+		return supplychain.EcosystemGradle
 	default:
 		return ""
 	}

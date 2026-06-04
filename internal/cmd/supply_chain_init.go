@@ -26,7 +26,8 @@ var scInitCmd = &cobra.Command{
 This wraps your package manager (auto-detected from lockfiles) so that armis-cli
 can enforce age policies on package installations. Node PMs (npm, pnpm, bun, yarn)
 and pip/uv use a transparent proxy that filters registry responses. poetry, pipenv,
-and pdm use a pre-install check that blocks the build if violations are found.
+pdm, mvn, and gradle use a pre-install check that blocks the build if violations
+are found.
 
 Four modes are available:
   rc     — Inject shell functions into ~/.bashrc / ~/.zshrc (default, interactive)
@@ -144,6 +145,10 @@ func ecosystemToPM(eco supplychain.Ecosystem) string {
 		return pmPDM
 	case supplychain.EcosystemUV:
 		return pmUV
+	case supplychain.EcosystemMaven:
+		return pmMaven
+	case supplychain.EcosystemGradle:
+		return pmGradle
 	default:
 		return ""
 	}

@@ -35,9 +35,10 @@ compromised maintainer accounts, or dependency confusion.
 Supported ecosystems:
   Node:   npm, pnpm, bun, yarn (transparent proxy enforcement)
   Python: pip, uv (transparent proxy); poetry, pipenv, pdm (pre-install block)
+  Java:   maven (pom.xml), gradle (gradle.lockfile) (pre-install block)
 
 No Armis Cloud authentication is required — supply-chain queries public registries
-(npm registry, PyPI).`,
+(npm registry, PyPI, Maven Central).`,
 	Example: `  # Audit lockfile for recently-published packages (CI mode)
   armis-cli supply-chain check
 

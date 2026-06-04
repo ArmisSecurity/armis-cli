@@ -18,6 +18,8 @@ const (
 	EcosystemPipfile Ecosystem = "pipfile"
 	EcosystemPDM     Ecosystem = "pdm"
 	EcosystemUV      Ecosystem = "uv"
+	EcosystemMaven   Ecosystem = "maven"
+	EcosystemGradle  Ecosystem = "gradle"
 )
 
 type DetectedEcosystem struct {
@@ -45,6 +47,8 @@ var lockfileChecks = []lockfileCheck{
 	{"pnpm-lock.yaml", EcosystemPNPM, true},
 	{"bun.lock", EcosystemBun, true},
 	{"yarn.lock", EcosystemYarn, true},
+	{"pom.xml", EcosystemMaven, true},
+	{"gradle.lockfile", EcosystemGradle, true},
 	{"poetry.lock", EcosystemPoetry, true},
 	{"Pipfile.lock", EcosystemPipfile, true},
 	{"pdm.lock", EcosystemPDM, true},
@@ -83,7 +87,7 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 	}
 
 	if len(detected) == 0 {
-		return nil, fmt.Errorf("no supported lockfile found in %s\n\n  Supported: package-lock.json, pnpm-lock.yaml, bun.lock, yarn.lock,\n             poetry.lock, Pipfile.lock, pdm.lock, uv.lock, requirements.txt\n  Try:       armis-cli supply-chain check <path-to-project>\n  Or use:    --lockfile <path-to-lockfile>", dir)
+		return nil, fmt.Errorf("no supported lockfile found in %s\n\n  Supported: package-lock.json, pnpm-lock.yaml, bun.lock, yarn.lock,\n             pom.xml, gradle.lockfile, poetry.lock, Pipfile.lock,\n             pdm.lock, uv.lock, requirements.txt\n  Try:       armis-cli supply-chain check <path-to-project>\n  Or use:    --lockfile <path-to-lockfile>", dir)
 	}
 
 	return detected, nil
