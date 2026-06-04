@@ -113,20 +113,36 @@ func (c *MavenClient) GetPublishDate(ctx context.Context, name, version string) 
 	return publishTime, nil
 }
 
+// escapeSolrQueryValue escapes the characters that are special inside a
+// double-quoted Solr query term. URL-escaping alone does not prevent query
+// injection: the value is decoded before Solr parses it, so a raw `"` or `\`
+// in a lockfile-provided version could otherwise break out of the quoted term
+// and change the query's semantics (potentially returning an unrelated
+// artifact's timestamp and bypassing release-age enforcement). Backslash must
+// be escaped first so the backslashes added for quotes are not doubled again.
+func escapeSolrQueryValue(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
+}
+
 func (c *MavenClient) fetchPublishDate(ctx context.Context, groupID, artifactID, version string) (time.Time, error) {
-	q := fmt.Sprintf(`g:"%s" AND a:"%s" AND v:"%s"`, groupID, artifactID, version)
-	// armis:ignore cwe:918 reason:baseURL is a trusted construction-time config value (production NewMavenClient hardcodes the search.maven.org HTTPS constant; the URL-accepting NewMavenClientWithHTTP is test-only); groupID/artifactID/version are regex-validated and the query is QueryEscaped, so the host is not attacker-controlled
+	q := fmt.Sprintf(`g:"%s" AND a:"%s" AND v:"%s"`,
+		escapeSolrQueryValue(groupID),
+		escapeSolrQueryValue(artifactID),
+		escapeSolrQueryValue(version))
+	// armis:ignore cwe:918 reason:baseURL is a trusted construction-time config value (production NewMavenClient hardcodes the search.maven.org HTTPS constant; the URL-accepting NewMavenClientWithHTTP is test-only); groupID/artifactID are regex-validated, every interpolated value is Solr-escaped against query injection, and the whole query is QueryEscaped, so the host is not attacker-controlled
 	reqURL := fmt.Sprintf("%s/solrsearch/select?q=%s&rows=1&wt=json", c.baseURL, url.QueryEscape(q))
 
-	// armis:ignore cwe:918 reason:reqURL is built from the trusted baseURL constant + a QueryEscaped query of regex-validated coordinates, so the host is not attacker-controlled
+	// armis:ignore cwe:918 reason:reqURL is built from the trusted baseURL constant + a QueryEscaped query whose interpolated values are Solr-escaped (group/artifact also regex-validated), so the host is not attacker-controlled
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return time.Time{}, backoff.Permanent(fmt.Errorf("creating request: %w", err))
 	}
 	req.Header.Set("Accept", "application/json")
 
-	// armis:ignore cwe:918 reason:c.baseURL is a trusted construction-time config value (production NewMavenClient hardcodes the search.maven.org HTTPS constant; the URL-accepting NewMavenClientWithHTTP is test-only), so the request host is not attacker-controlled; coordinates are regex-validated and QueryEscaped
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + regex-validated, QueryEscaped coordinates
+	// armis:ignore cwe:918 reason:c.baseURL is a trusted construction-time config value (production NewMavenClient hardcodes the search.maven.org HTTPS constant; the URL-accepting NewMavenClientWithHTTP is test-only), so the request host is not attacker-controlled; group/artifact are regex-validated and every interpolated query value is Solr-escaped then QueryEscaped
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + Solr-escaped, QueryEscaped coordinates
 	if err != nil {
 		return time.Time{}, fmt.Errorf("fetching maven metadata: %w", err)
 	}

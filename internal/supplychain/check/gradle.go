@@ -8,7 +8,10 @@ import (
 )
 
 // ParseGradleLockfile parses a Gradle lockfile (gradle.lockfile).
-// Format: one dependency per line as "group:artifact:version=hash" after a header.
+// Format: one dependency per line as "group:artifact:version=configurations"
+// after a header, where the suffix after "=" is a comma-separated list of the
+// configurations that resolved the dependency (e.g. "compileClasspath,runtimeClasspath").
+// The parser treats everything after "=" as metadata and ignores it.
 // armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
 func ParseGradleLockfile(path string) ([]PackageEntry, error) {
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI reading the user's own lockfile; path is from local detection or an explicit --lockfile flag, not untrusted input crossing a trust boundary
@@ -18,8 +21,9 @@ func ParseGradleLockfile(path string) ([]PackageEntry, error) {
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	// Gradle lockfile lines carry a long resolution hash after "=", so raise the
-	// scanner's per-line cap. data is already size-bounded by readLockfile.
+	// Gradle lockfile lines can carry a long, comma-separated configuration list
+	// after "=", so raise the scanner's per-line cap. data is already size-bounded
+	// by readLockfile.
 	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxLockfileSize)
 
 	var entries []PackageEntry
@@ -41,7 +45,7 @@ func ParseGradleLockfile(path string) ([]PackageEntry, error) {
 			headerPassed = true
 		}
 
-		// Expected: group:artifact:version=hash
+		// Expected: group:artifact:version=configurations
 		eqIdx := strings.Index(line, "=")
 		gav := line
 		if eqIdx > 0 {

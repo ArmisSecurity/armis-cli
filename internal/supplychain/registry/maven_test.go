@@ -82,6 +82,28 @@ func TestMavenGetPublishDate(t *testing.T) {
 		}
 	})
 
+	t.Run("escapes solr query special characters in version", func(t *testing.T) {
+		ts := time.Date(2020, 5, 5, 0, 0, 0, 0, time.UTC).UnixMilli()
+		var gotQuery string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotQuery = r.URL.Query().Get("q")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"response":{"docs":[{"timestamp":%d}]}}`, ts)
+		}))
+		defer server.Close()
+
+		client := NewMavenClientWithHTTP(server.Client(), server.URL)
+		// A version containing a quote and backslash would, unescaped, break out
+		// of the quoted Solr term. After escaping, the decoded query must keep the
+		// value contained inside v:"..." with both characters backslash-escaped.
+		if _, err := client.GetPublishDate(context.Background(), "com.example:lib", `1.0"\inject`); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := `v:"1.0\"\\inject"`; !strings.Contains(gotQuery, want) {
+			t.Errorf("expected escaped version term %q in query, got %q", want, gotQuery)
+		}
+	})
+
 	t.Run("cached result is reused", func(t *testing.T) {
 		ts := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 		var calls int

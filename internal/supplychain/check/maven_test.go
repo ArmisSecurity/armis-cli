@@ -17,11 +17,15 @@ func TestParseMavenDeps(t *testing.T) {
 			return entries[i].Name < entries[j].Name
 		})
 
-		// Should include guava and jackson-core
-		// Should skip: junit (test scope), servlet-api (provided scope), spring-core (${property})
+		// Should include guava, jackson-core, and commons-io (version inherited
+		// from <dependencyManagement>).
+		// Should skip: junit (test scope), servlet-api (provided scope),
+		// spring-core (${property}), and commons-lang3 (managed-only, never
+		// declared under <dependencies>).
 		expected := []PackageEntry{
 			{Name: "com.fasterxml.jackson.core:jackson-core", Version: "2.16.0"},
 			{Name: "com.google.guava:guava", Version: "32.1.3-jre"},
+			{Name: "commons-io:commons-io", Version: "2.15.1"},
 		}
 
 		if len(entries) != len(expected) {
@@ -55,6 +59,37 @@ func TestParseMavenDeps(t *testing.T) {
 		for _, e := range entries {
 			if e.Name == "org.springframework:spring-core" {
 				t.Error("should have skipped property-referenced version")
+			}
+		}
+	})
+
+	t.Run("inherits version from dependencyManagement", func(t *testing.T) {
+		entries, err := ParseMavenDeps(filepath.Join("testdata", "pom.xml"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var found bool
+		for _, e := range entries {
+			if e.Name == "commons-io:commons-io" {
+				found = true
+				if e.Version != "2.15.1" {
+					t.Errorf("expected commons-io to inherit managed version 2.15.1, got %s", e.Version)
+				}
+			}
+		}
+		if !found {
+			t.Error("expected commons-io (versionless dependency) to inherit a managed version")
+		}
+	})
+
+	t.Run("ignores managed-only dependencies", func(t *testing.T) {
+		entries, err := ParseMavenDeps(filepath.Join("testdata", "pom.xml"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, e := range entries {
+			if e.Name == "org.apache.commons:commons-lang3" {
+				t.Error("should not include a dependencyManagement-only entry that is never declared under <dependencies>")
 			}
 		}
 	})
