@@ -101,6 +101,26 @@ func TestDetectWrappablePMs_DefaultsToNpm(t *testing.T) {
 	}
 }
 
+func TestDetectWrappablePMs_HonorsEcosystemScope(t *testing.T) {
+	// Two lockfiles are present (npm + pnpm) but the config scopes enforcement to
+	// pnpm only, so init must wrap only pnpm.
+	dir := chdirTemp(t)
+	for _, f := range []string{"package-lock.json", "pnpm-lock.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
+		[]byte("version: 1\necosystems:\n  - pnpm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pms := detectWrappablePMs()
+	if len(pms) != 1 || pms[0] != "pnpm" {
+		t.Errorf("detectWrappablePMs() = %v, want [pnpm] (npm excluded by config scope)", pms)
+	}
+}
+
 func TestExtractScope(t *testing.T) {
 	tests := []struct {
 		name string

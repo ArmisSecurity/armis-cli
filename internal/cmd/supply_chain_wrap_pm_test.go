@@ -51,6 +51,8 @@ func TestRequiresPreInstallBlock(t *testing.T) {
 		{pmPoetry, true},
 		{pmPipenv, true},
 		{pmPDM, true},
+		{pmMaven, true},
+		{pmGradle, true},
 		{pmPip, false},
 		{pmUV, false},
 		{pmNPM, false},
@@ -76,11 +78,19 @@ func TestPmToEcosystem(t *testing.T) {
 		{pmPoetry, supplychain.EcosystemPoetry},
 		{pmPipenv, supplychain.EcosystemPipfile},
 		{pmPDM, supplychain.EcosystemPDM},
-		// pip/uv use the proxy path, not the pre-install block, so they have no
-		// pre-install ecosystem mapping.
-		{pmPip, ""},
-		{pmUV, ""},
-		{pmNPM, ""},
+		{pmMaven, supplychain.EcosystemMaven},
+		{pmGradle, supplychain.EcosystemGradle},
+		// pmToEcosystem maps every supported PM to its ecosystem — the proxied
+		// ones (npm/pnpm/bun/yarn/pip/uv) as well as the pre-install ones — so the
+		// config "ecosystems" scoping gate can classify any wrapped PM. Pass the
+		// canonical name; a versioned pip variant resolves to pip via canonicalPM.
+		{pmNPM, supplychain.EcosystemNPM},
+		{pmPNPM, supplychain.EcosystemPNPM},
+		{pmBun, supplychain.EcosystemBun},
+		{pmYarn, supplychain.EcosystemYarn},
+		{pmPip, supplychain.EcosystemPip},
+		{pmUV, supplychain.EcosystemUV},
+		{"unknown-pm", ""},
 	}
 
 	for _, tt := range tests {

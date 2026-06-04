@@ -1,0 +1,49 @@
+---
+# GitHub Actions - Supply Chain Release-Age Check
+#
+# Audits your lockfile for packages published too recently — a cheap, effective
+# defense against typosquatting, compromised maintainer accounts, and
+# dependency-confusion attacks, which almost always ship a freshly published
+# malicious version.
+#
+# No Armis Cloud authentication is required: supply-chain queries public
+# registries (npm, PyPI, Maven Central) directly, so this workflow needs no
+# secrets.
+#
+# Notes:
+#   - By default `check` reports only packages that are NEW versus the base
+#     branch lockfile. On PRs this focuses the result on what the PR introduces.
+#   - Findings are MEDIUM/HIGH severity, so --fail-on medium is required to gate
+#     the build (the default --fail-on is CRITICAL, which these never reach).
+#   - Add --fail-open if you would rather pass than block when the registry is
+#     temporarily unreachable.
+
+name: Supply Chain Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  supply-chain:
+    name: Package Release-Age Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Fetch the base branch so `check` can diff against origin/main and
+          # report only newly introduced packages.
+          fetch-depth: 0
+
+      - name: Install armis-cli
+        run: curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
+
+      - name: Audit dependencies for recently-published packages
+        run: |
+          armis-cli supply-chain check \
+            --min-age 72h \
+            --fail-on medium

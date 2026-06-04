@@ -17,8 +17,29 @@ import (
 
 const (
 	defaultUpstreamRegistry = "https://registry.npmjs.org"
+	defaultPyPIIndex        = "https://pypi.org"
 	maxProxyResponseSize    = 20 * 1024 * 1024
 	distTagLatest           = "latest"
+
+	// pypiSimpleJSONAccept is the PEP 691 content type for the PyPI Simple API
+	// JSON representation. The default Simple API response is HTML (PEP 503),
+	// which carries no upload timestamps; only the JSON form exposes the PEP 700
+	// per-file "upload-time" field the age filter needs, so the proxy must send
+	// this Accept header upstream to obtain timestamps at all.
+	pypiSimpleJSONAccept = "application/vnd.pypi.simple.v1+json"
+)
+
+// ProxyMode selects the upstream registry protocol the proxy speaks. The npm
+// registry and the PyPI Simple API are entirely different shapes (one JSON blob
+// with a version→time map vs. a per-file distribution index), so metadata
+// detection and age filtering differ by mode.
+type ProxyMode int
+
+const (
+	// ModeNPM filters the npm registry's package metadata document.
+	ModeNPM ProxyMode = iota
+	// ModePyPI filters the PyPI Simple API (PEP 691/700 JSON) file index.
+	ModePyPI
 )
 
 type BlockedPackage struct {
@@ -34,6 +55,7 @@ type InstalledPackage struct {
 
 type Proxy struct {
 	policy       Policy
+	mode         ProxyMode
 	upstreamURL  *url.URL
 	httpClient   *http.Client
 	revProxy     *httputil.ReverseProxy
@@ -50,6 +72,7 @@ type Proxy struct {
 
 type ProxyConfig struct {
 	Policy       Policy
+	Mode         ProxyMode
 	UpstreamURL  string
 	SkipPackages []string
 }
@@ -57,7 +80,14 @@ type ProxyConfig struct {
 func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	upstream := cfg.UpstreamURL
 	if upstream == "" {
-		upstream = defaultUpstreamRegistry
+		// Default the upstream to match the mode so a PyPI proxy constructed with
+		// only a Mode (the common case) still points at pypi.org rather than the
+		// npm registry.
+		if cfg.Mode == ModePyPI {
+			upstream = defaultPyPIIndex
+		} else {
+			upstream = defaultUpstreamRegistry
+		}
 	}
 
 	upstreamURL, err := url.Parse(upstream)
@@ -70,13 +100,28 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		skipSet[pkg] = true
 	}
 
+	// NewSingleHostReverseProxy rewrites the request URL's scheme/host but
+	// deliberately does NOT rewrite the Host header (see its doc comment). Left
+	// as-is, tarball passthrough requests reach the upstream registry carrying
+	// the local proxy's Host (e.g. "127.0.0.1:61396"). registry.npmjs.org is
+	// fronted by a CDN that routes on Host, so an unknown value returns 403 —
+	// the metadata check passes but the actual .tgz download fails. Wrap the
+	// Director to point Host at the upstream registry so passthrough works.
+	revProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+	baseDirector := revProxy.Director
+	revProxy.Director = func(req *http.Request) {
+		baseDirector(req)
+		req.Host = upstreamURL.Host
+	}
+
 	return &Proxy{
 		policy:      cfg.Policy,
+		mode:        cfg.Mode,
 		upstreamURL: upstreamURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		revProxy:     httputil.NewSingleHostReverseProxy(upstreamURL),
+		revProxy:     revProxy,
 		skipPackages: skipSet,
 		allowed:      make(map[string]string),
 	}, nil
@@ -147,9 +192,17 @@ func (p *Proxy) Close() error {
 }
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
-	pkgName := extractPackageNameFromPath(r.URL.Path)
+	var pkgName string
+	var isMetadata bool
+	if p.mode == ModePyPI {
+		pkgName = extractPyPIPackageNameFromPath(r.URL.Path)
+		isMetadata = isPyPIMetadataRequest(r.URL.Path)
+	} else {
+		pkgName = extractPackageNameFromPath(r.URL.Path)
+		isMetadata = isMetadataRequest(r.URL.Path)
+	}
 
-	if pkgName == "" || r.Method != http.MethodGet || !isMetadataRequest(r.URL.Path) {
+	if pkgName == "" || r.Method != http.MethodGet || !isMetadata {
 		p.reverseProxy(w, r)
 		return
 	}
@@ -176,7 +229,13 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
 		return
 	}
-	upstreamReq.Header.Set("Accept", "application/json")
+	if p.mode == ModePyPI {
+		// Request the PEP 691 JSON form so the response carries PEP 700 per-file
+		// upload-time fields; the default Simple API HTML has no timestamps.
+		upstreamReq.Header.Set("Accept", pypiSimpleJSONAccept)
+	} else {
+		upstreamReq.Header.Set("Accept", "application/json")
+	}
 
 	// armis:ignore cwe:918 reason:p.upstreamURL is a startup-configured trusted host (defaults to registry.npmjs.org); the request host is not attacker-controlled
 	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
@@ -234,7 +293,17 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	filtered, blocked := p.filterMetadata(body, pkgName)
+	var filtered []byte
+	var blocked []BlockedPackage
+	contentType := "application/json"
+	if p.mode == ModePyPI {
+		filtered, blocked = p.filterPyPISimple(body, pkgName)
+		// Echo the PEP 691 JSON content type so pip/uv parse the body as the
+		// Simple API JSON representation rather than guessing.
+		contentType = pypiSimpleJSONAccept
+	} else {
+		filtered, blocked = p.filterMetadata(body, pkgName)
+	}
 	if blocked != nil {
 		p.blockedMu.Lock()
 		p.blocked = append(p.blocked, blocked...)
@@ -249,7 +318,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	// unvalidated upstream header values verbatim is an HTTP-response-splitting
 	// vector (CWE-93). copyCacheHeaders sanitizes each value before writing it.
 	copyCacheHeaders(w.Header(), resp.Header, blocked != nil)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	w.Write(filtered) //nolint:errcheck,gosec
 }
@@ -440,6 +509,112 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	return result, blocked
 }
 
+// filterPyPISimple filters a PEP 691 Simple API JSON document, removing every
+// distribution file whose PEP 700 "upload-time" is younger than the policy
+// threshold. It returns the re-marshaled body and the list of blocked files
+// (one BlockedPackage per file, since PyPI can add a new file to an existing
+// version — per-file filtering catches that where per-version would not).
+//
+// Files are decoded as map[string]json.RawMessage so every untouched field
+// (url, hashes, requires-python, yanked, dist-info-metadata, ...) round-trips
+// verbatim; only "upload-time" is inspected.
+//
+// Fail-closed posture: a file with a missing or unparseable "upload-time" is
+// REMOVED, not kept. The whole point of this control is age verification, so an
+// undatable file (e.g. an HTML response slipping through, or a registry that
+// omits PEP 700 timestamps) must not be silently installable. The version label
+// in BlockedPackage is the filename, which is what the user sees and what makes
+// the block actionable.
+func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []BlockedPackage) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return body, nil
+	}
+
+	filesRaw, ok := doc["files"]
+	if !ok {
+		return body, nil
+	}
+
+	var files []map[string]json.RawMessage
+	if err := json.Unmarshal(filesRaw, &files); err != nil {
+		return body, nil
+	}
+
+	now := time.Now()
+	kept := make([]map[string]json.RawMessage, 0, len(files))
+	var blocked []BlockedPackage
+
+	for _, f := range files {
+		filename := jsonString(f["filename"])
+		age, ok := pypiFileAge(f["upload-time"], now)
+		if !ok || age < p.policy.MinReleaseAge {
+			// Undatable or too-young file: remove it. Record an age of 0 for the
+			// undatable case so the summary still names the blocked file.
+			if !ok {
+				age = 0
+			}
+			blocked = append(blocked, BlockedPackage{Name: pkgName, Version: filename, Age: age})
+			continue
+		}
+		kept = append(kept, f)
+	}
+
+	if len(blocked) == 0 {
+		return body, nil
+	}
+
+	newFiles, err := json.Marshal(kept)
+	if err != nil {
+		return body, blocked
+	}
+	doc["files"] = newFiles
+
+	// PEP 700 also exposes a "versions" array. We intentionally leave it intact:
+	// a version remains "known" to the index even when all its files are filtered
+	// out — pip simply finds no installable distribution for it and reports no
+	// matching distribution, which is the correct fail-closed outcome. Rewriting
+	// it risks desyncing from clients that key off the versions list.
+
+	result, err := json.Marshal(doc)
+	if err != nil {
+		return body, blocked
+	}
+	return result, blocked
+}
+
+// pypiFileAge parses a PEP 700 "upload-time" raw JSON value and returns the age
+// relative to now. The bool is false when the field is absent or unparseable.
+// PEP 700 specifies RFC 3339; some mirrors omit the timezone, so a no-zone
+// fallback is accepted as well (mirroring the PyPI registry client).
+func pypiFileAge(raw json.RawMessage, now time.Time) (time.Duration, bool) {
+	s := jsonString(raw)
+	if s == "" {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05", s)
+		if err != nil {
+			return 0, false
+		}
+	}
+	return now.Sub(t), true
+}
+
+// jsonString decodes a JSON string value, returning "" for absent or non-string
+// values rather than erroring — callers treat both as "field not usable".
+func jsonString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
 func (p *Proxy) reverseProxy(w http.ResponseWriter, r *http.Request) {
 	p.revProxy.ServeHTTP(w, r) //nolint:gosec // G704: single-host reverse proxy to a fixed upstream registry set at construction, not request-controlled
 }
@@ -488,4 +663,37 @@ func isMetadataRequest(path string) bool {
 func isPrerelease(version string) bool {
 	parts := strings.SplitN(version, "-", 2)
 	return len(parts) == 2 && parts[0] != ""
+}
+
+// extractPyPIPackageNameFromPath pulls the project name from a PyPI Simple API
+// request path of the form "/simple/<name>/". It returns "" for the index root
+// ("/simple/") and for any path that is not a single project under /simple/, so
+// only per-project metadata requests are filtered.
+func extractPyPIPackageNameFromPath(path string) string {
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
+	path = strings.Trim(path, "/")
+	const prefix = "simple"
+	if path == prefix {
+		return "" // index root, not a project page
+	}
+	rest, ok := strings.CutPrefix(path, prefix+"/")
+	if !ok {
+		return ""
+	}
+	// rest should be a single project segment (with or without trailing slash,
+	// already trimmed). A nested path (e.g. files) is not a metadata request.
+	if rest == "" || strings.Contains(rest, "/") {
+		return ""
+	}
+	return rest
+}
+
+// isPyPIMetadataRequest reports whether a path targets a PyPI Simple API project
+// page (which the proxy filters) rather than the index root or a file download.
+// File downloads are served from a separate host (files.pythonhosted.org) and
+// never reach this proxy, so a path-based check on "/simple/<name>/" suffices.
+func isPyPIMetadataRequest(path string) bool {
+	return extractPyPIPackageNameFromPath(path) != ""
 }

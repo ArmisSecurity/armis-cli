@@ -296,9 +296,13 @@ func (f *HumanFormatter) FormatWithOptions(result *model.ScanResult, w io.Writer
 	// 1. Header banner (bold text, no box)
 	ew.write("%s\n", s.HeaderBanner.Render("ARMIS SECURITY SCAN RESULTS"))
 
-	// 2. Scan ID & Status with styled labels and values
+	// 2. Scan ID & Status with styled labels and values. Skip the Scan ID line
+	// when there is no ID (e.g. the local `supply-chain check` audit, which has
+	// no cloud scan), so it doesn't render a dangling "Scan ID:" with no value.
 	labelStyle := s.MutedText
-	ew.write("%s  %s\n", labelStyle.Render("Scan ID:"), s.ScanID.Render(result.ScanID))
+	if result.ScanID != "" {
+		ew.write("%s  %s\n", labelStyle.Render("Scan ID:"), s.ScanID.Render(result.ScanID))
+	}
 	ew.write("%s  %s\n", labelStyle.Render("Status:"), s.StatusComplete.Render(result.Status))
 	ew.write("\n")
 

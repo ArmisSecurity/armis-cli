@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `supply-chain` command for enforcing package release-age policies, defending against supply-chain attacks (typosquatting, compromised maintainers, dependency confusion) by flagging or blocking packages published more recently than a configurable threshold (default 72h). No Armis Cloud authentication required — queries public registries directly. (#206, #210, #211)
+  - Supports 11 package managers across three ecosystems: npm, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
+  - Node package managers and pip/uv use a transparent registry proxy that filters out too-young versions during install; poetry, pipenv, pdm, Maven, and Gradle use a pre-install lockfile audit that blocks the build before execution.
+  - `supply-chain check` audits lockfiles in CI; `supply-chain init`/`uninit` set up local shell enforcement; `supply-chain status` reports the active policy and detected ecosystems.
+  - Configurable via `.armis-supply-chain.yaml` (`min-age`, `exclusions`, `ecosystems`, `fail-open`); per-invocation bypass via `ARMIS_SUPPLY_CHAIN_SKIP`; master kill switch via `ARMIS_SUPPLY_CHAIN=off`.
+  - Gradle lockfile staleness detection (warns when `build.gradle` is newer than `gradle.lockfile`), Maven `pom.xml` partial-coverage notice (direct dependencies only), and a warning for unrecognized ecosystem names in the config.
+  - The `ecosystems` config field accepts both `pipenv` (the tool name shown in `--help`) and `pipfile` (the internal name) so either spelling works.
+  - The install summary reports each filtered package on one line showing the too-new version, its age, and the older version installed in its place (e.g. `axios 1.17.0 (1 day old) → 1.16.1 installed`). When every package resolves to a safe version it reads as a success; packages with no older safe version are called out individually. If the package manager itself does not complete (for example a dependency pins a version that only the filtered release satisfies), the summary reports the safe version as "available" rather than claiming it was installed, and explains how to relax or exclude the constraint. A one-time explanation of why fresh releases are withheld is shown on the first filtered install in an interactive terminal (suppressed thereafter and in CI).
+
 ### Changed
 
 ### Deprecated
@@ -17,7 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `supply-chain check`: `--fail-on` now accepts lowercase severities (e.g. `--fail-on medium`) and validates the value, matching `scan repo`/`scan image`. Previously a lowercase or invalid value was silently ignored, so the CI gate never fired and a real violation exited 0.
+- `supply-chain`: an unknown subcommand (e.g. a typo like `chekc`) now exits non-zero with a "Did you mean" suggestion instead of printing help and exiting 0.
+- `supply-chain check`: `--min-age` parse errors no longer print the duration twice; the message now suggests valid formats (`72h`, `3d`, `1w`). Output reads "1 package" (not "1 packages"), and the empty "Scan ID:" line is omitted for the local audit.
+- `supply-chain check`: base-lockfile auto-detection now bounds its `git` subprocesses with a timeout (and honors cancellation), so a wedged or misconfigured `git` invocation can no longer hang the command indefinitely.
+- `supply-chain`: the config `ecosystems` field now actually scopes enforcement. Previously it was parsed and typo-checked but ignored, so `ecosystems: [npm]` still enforced every ecosystem. `check` now skips an out-of-scope lockfile, `wrap` passes an out-of-scope package manager straight through, and `init` only wraps in-scope package managers. The gate fails safe: an empty list (or a list of only unrecognized names) enforces everything, so a typo cannot silently disable the control.
+
 ### Security
+
+- `supply-chain wrap` (pip/uv): age enforcement now actually filters. The local-enforcement proxy previously only understood the npm registry format, so pip and uv installs were pointed at the proxy but their PyPI Simple API requests passed through unfiltered — young packages installed silently. The proxy now speaks the PyPI Simple API (PEP 691/700 JSON), removing distribution files published more recently than the policy threshold; a file with no upload timestamp is removed (fail-closed) rather than allowed.
 
 ---
 

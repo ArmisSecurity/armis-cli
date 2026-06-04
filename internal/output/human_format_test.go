@@ -61,6 +61,32 @@ func TestHumanFormatter_Format(t *testing.T) {
 	}
 }
 
+// TestHumanFormatter_OmitsEmptyScanID confirms the "Scan ID:" label is not
+// rendered when there is no scan ID — e.g. the local `supply-chain check` audit,
+// which has no cloud scan. The Status line must still render.
+func TestHumanFormatter_OmitsEmptyScanID(t *testing.T) {
+	formatter := &HumanFormatter{}
+	result := &model.ScanResult{
+		ScanID:   "",
+		Status:   "completed",
+		Findings: []model.Finding{},
+		Summary:  model.Summary{Total: 0},
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(result, &buf); err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "Scan ID:") {
+		t.Error("expected no 'Scan ID:' label when ScanID is empty")
+	}
+	if !strings.Contains(output, "completed") {
+		t.Error("expected the Status line to still render")
+	}
+}
+
 func TestHumanFormatter_FormatWithOptions(t *testing.T) {
 	formatter := &HumanFormatter{}
 

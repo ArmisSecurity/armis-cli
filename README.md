@@ -25,6 +25,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 - [Verification](#verification)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
+- [Supply Chain Protection](#supply-chain-protection)
 - [Output Formats](#output-formats)
 - [CI/CD Integration](#cicd-integration)
 - [Environment Variables](#environment-variables)
@@ -47,6 +48,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 - Multiple output formats: human, JSON, SARIF, JUnit XML
 - **SBOM generation**: Generate CycloneDX Software Bill of Materials
 - **VEX generation**: Generate Vulnerability Exploitability eXchange documents
+- **Supply chain protection**: Block packages published too recently (typosquatting, compromised maintainers, dependency confusion) across npm, Python, and Java — no Armis Cloud auth required
 - CI/CD ready: GitHub Actions, Jenkins, GitLab, Azure, Bitbucket, CircleCI
 - Configurable exit codes and fail-on severity
 - Secure authentication, size limits, and best practices
@@ -453,6 +455,69 @@ armis-cli scan image nginx:latest --pull=always
 # Never pull, require local image (for air-gapped environments)
 armis-cli scan image nginx:latest --pull=never
 ```
+
+---
+
+## Supply Chain Protection
+
+The `supply-chain` command enforces a minimum **release age** on your dependencies. Packages published more recently than the threshold (default 72h) are flagged or blocked — a cheap, effective defense against typosquatting, compromised maintainer accounts, and dependency-confusion attacks, which almost always rely on a freshly published malicious version.
+
+No Armis Cloud authentication is required: `supply-chain` queries public registries (npm, PyPI, Maven Central) directly.
+
+**Supported ecosystems:** npm, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
+
+### Audit a lockfile (CI)
+
+```bash
+# Audit the lockfile in the current directory (auto-detected)
+armis-cli supply-chain check
+
+# Custom threshold, exclude your own scoped packages, fail the build on findings
+armis-cli supply-chain check --min-age 7d --exclude "@myorg/*" --fail-on medium
+
+# Machine-readable output for CI
+armis-cli supply-chain check --format sarif --fail-on high
+```
+
+By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
+
+> **Fail the build:** `check` reports findings as MEDIUM/HIGH severity. To gate CI, pass `--fail-on medium` (or `high`) — the default `--fail-on` is CRITICAL, which supply-chain findings never reach.
+
+### Enforce locally during installs
+
+```bash
+# Wrap your package managers in ~/.bashrc / ~/.zshrc (interactive)
+armis-cli supply-chain init
+
+# Preview changes without writing
+armis-cli supply-chain init --dry-run
+
+# Generate a committable policy file (.armis-supply-chain.yaml)
+armis-cli supply-chain init --mode config
+
+# Show the active policy, detected ecosystems, and shell status
+armis-cli supply-chain status
+
+# Remove the shell wrappers
+armis-cli supply-chain uninit
+```
+
+### Configuration
+
+Commit a `.armis-supply-chain.yaml` to share policy with your team:
+
+```yaml
+version: 1
+min-age: 72h
+exclusions:
+  - "@myorg/*"
+# ecosystems:        # optional: restrict to specific ecosystems (default: all detected)
+#   - npm
+#   - pip
+fail-open: false
+```
+
+Bypass for a single command with `ARMIS_SUPPLY_CHAIN_SKIP=<pkg>`; disable enforcement entirely with `ARMIS_SUPPLY_CHAIN=off`.
 
 ---
 

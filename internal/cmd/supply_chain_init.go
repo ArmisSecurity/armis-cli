@@ -94,6 +94,14 @@ func detectWrappablePMs() []string {
 		return []string{pmNPM}
 	}
 
+	// Honor the config's "ecosystems" scope so init only wraps the package
+	// managers the user opted to enforce. Loaded best-effort: a nil config (none
+	// found, or load error) enforces everything, matching the check/wrap gates.
+	var cfg *supplychain.Config
+	if dir := supplychain.FindConfigDir("."); dir != "" {
+		cfg, _ = supplychain.LoadConfig(dir)
+	}
+
 	seen := make(map[string]bool)
 	var pms []string
 
@@ -106,6 +114,10 @@ func detectWrappablePMs() []string {
 	}
 
 	for _, e := range ecosystems {
+		// armis:ignore cwe:476 reason:EnforcesEcosystem has an explicit nil-receiver guard (returns true when c==nil), so calling it on a nil cfg is safe by design
+		if !cfg.EnforcesEcosystem(e.Ecosystem) {
+			continue
+		}
 		pm := ecosystemToPM(e.Ecosystem)
 		// A bare requirements.txt is installed with pip, which can be present
 		// under several names (pip, pip3, pip3.12). Wrap every variant on PATH
@@ -120,6 +132,9 @@ func detectWrappablePMs() []string {
 	}
 
 	if len(pms) == 0 {
+		// Every detected ecosystem was excluded by config, or none mapped to a PM.
+		// Fall back to npm so the generated wrapper still protects the most common
+		// package manager rather than silently wrapping nothing.
 		return []string{pmNPM}
 	}
 	return pms
@@ -359,6 +374,12 @@ min-age: 72h
 
 # Packages matching these glob patterns bypass age checks
 %s
+# Restrict enforcement to specific ecosystems (default: all detected).
+# Supported: npm, pnpm, bun, yarn, pip, poetry, pipenv, pdm, uv, maven, gradle
+# ecosystems:
+#   - npm
+#   - pip
+
 # If true, allow installs when the registry is unreachable
 fail-open: false
 `, exclusionsBlock)

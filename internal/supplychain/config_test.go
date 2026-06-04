@@ -37,10 +37,7 @@ fail-open: true
 		}
 	})
 
-	t.Run("unknown fields like ecosystems are ignored", func(t *testing.T) {
-		// `ecosystems:` was removed from the schema; an existing config that still
-		// carries it must load without error (yaml.v3 ignores unknown keys) so we
-		// stay backward-compatible with files written by older versions.
+	t.Run("ecosystems field is parsed", func(t *testing.T) {
 		dir := t.TempDir()
 		content := `min-age: 5d
 ecosystems:
@@ -58,6 +55,9 @@ ecosystems:
 		}
 		if cfg.MinAge != "5d" {
 			t.Errorf("expected min-age=5d, got %s", cfg.MinAge)
+		}
+		if len(cfg.Ecosystems) != 2 || cfg.Ecosystems[0] != "npm" || cfg.Ecosystems[1] != "pnpm" {
+			t.Errorf("expected ecosystems [npm pnpm], got %v", cfg.Ecosystems)
 		}
 	})
 
@@ -207,4 +207,96 @@ func TestFindConfigDir(t *testing.T) {
 			t.Errorf("expected config dir %s, got %s", wantResolved, gotResolved)
 		}
 	})
+}
+
+func TestUnknownEcosystems(t *testing.T) {
+	t.Run("all known returns nil", func(t *testing.T) {
+		cfg := &Config{Ecosystems: []string{"npm", "pip", "maven", "gradle", "uv"}}
+		if got := cfg.UnknownEcosystems(); got != nil {
+			t.Errorf("expected nil for all-known ecosystems, got %v", got)
+		}
+	})
+
+	t.Run("flags unknown names in order", func(t *testing.T) {
+		cfg := &Config{Ecosystems: []string{"npm", "pyhton", "cargo", "pip"}}
+		got := cfg.UnknownEcosystems()
+		want := []string{"pyhton", "cargo"}
+		if len(got) != len(want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("at %d: expected %q, got %q", i, want[i], got[i])
+			}
+		}
+	})
+
+	t.Run("empty config returns nil", func(t *testing.T) {
+		cfg := &Config{}
+		if got := cfg.UnknownEcosystems(); got != nil {
+			t.Errorf("expected nil for empty ecosystems, got %v", got)
+		}
+	})
+
+	t.Run("every supported ecosystem is recognized", func(t *testing.T) {
+		all := []string{
+			string(EcosystemNPM), string(EcosystemPNPM), string(EcosystemBun), string(EcosystemYarn),
+			string(EcosystemPip), string(EcosystemPoetry), string(EcosystemPipfile), string(EcosystemPDM),
+			string(EcosystemUV), string(EcosystemMaven), string(EcosystemGradle),
+		}
+		cfg := &Config{Ecosystems: all}
+		if got := cfg.UnknownEcosystems(); got != nil {
+			t.Errorf("expected all %d ecosystems recognized, got unknown %v", len(all), got)
+		}
+	})
+
+	t.Run("pipenv alias is accepted alongside pipfile", func(t *testing.T) {
+		// --help and the generated config call this ecosystem "pipenv" (the tool
+		// name), while the internal constant is "pipfile". Both must be accepted
+		// so copying "pipenv" from the docs never triggers a false typo warning.
+		cfg := &Config{Ecosystems: []string{ecosystemAliasPipenv, string(EcosystemPipfile)}}
+		if got := cfg.UnknownEcosystems(); got != nil {
+			t.Errorf("expected both pipenv and pipfile recognized, got unknown %v", got)
+		}
+	})
+}
+
+func TestEnforcesEcosystem(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		eco  Ecosystem
+		want bool
+	}{
+		// Fail-safe defaults: no scoping means enforce everything.
+		{"nil config enforces all", nil, EcosystemNPM, true},
+		{"empty list enforces all", &Config{}, EcosystemPip, true},
+		{"nil ecosystems slice enforces all", &Config{Ecosystems: nil}, EcosystemMaven, true},
+
+		// Explicit scoping restricts to the listed ecosystems.
+		{"listed ecosystem enforced", &Config{Ecosystems: []string{"npm", "pip"}}, EcosystemNPM, true},
+		{"unlisted ecosystem not enforced", &Config{Ecosystems: []string{"npm", "pip"}}, EcosystemMaven, false},
+		{"single-entry scope excludes others", &Config{Ecosystems: []string{"npm"}}, EcosystemPNPM, false},
+
+		// The pipenv tool-name alias matches the internal pipfile ecosystem.
+		{"pipenv alias matches pipfile", &Config{Ecosystems: []string{"pipenv"}}, EcosystemPipfile, true},
+		{"pipfile name matches pipfile", &Config{Ecosystems: []string{"pipfile"}}, EcosystemPipfile, true},
+
+		// A list of only-unknown names must NOT silently disable enforcement: a
+		// pure typo should fail safe (enforce everything) rather than turn the
+		// control off. The typo is surfaced separately via UnknownEcosystems.
+		{"all-typo list enforces all (fail safe)", &Config{Ecosystems: []string{"pyhton", "nmp"}}, EcosystemNPM, true},
+		// A mix of one valid + one typo restricts to the valid one (the typo is
+		// ignored for scoping, still warned about elsewhere).
+		{"valid plus typo restricts to valid", &Config{Ecosystems: []string{"npm", "pyhton"}}, EcosystemNPM, true},
+		{"valid plus typo excludes unlisted", &Config{Ecosystems: []string{"npm", "pyhton"}}, EcosystemPip, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.EnforcesEcosystem(tt.eco); got != tt.want {
+				t.Errorf("EnforcesEcosystem(%q) = %v, want %v", tt.eco, got, tt.want)
+			}
+		})
+	}
 }

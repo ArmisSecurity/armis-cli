@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -529,6 +530,43 @@ func TestProxyTarballPassThrough(t *testing.T) {
 	}
 }
 
+// TestProxyPassThroughRewritesHost guards the fix for tarball downloads failing
+// with 403. NewSingleHostReverseProxy does not rewrite the Host header, so
+// without the Director wrapper the upstream registry receives the local proxy's
+// Host (e.g. 127.0.0.1:PORT) and a CDN that routes on Host rejects it. Assert
+// the passed-through request carries the upstream host, not the proxy's.
+func TestProxyPassThroughRewritesHost(t *testing.T) {
+	var gotHost string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		w.Write([]byte("ok")) //nolint:errcheck,gosec
+	}))
+	defer upstream.Close()
+
+	proxy, _ := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		UpstreamURL: upstream.URL,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	resp, err := http.Get("http://" + addr + "/express/-/express-4.18.2.tgz") //nolint:gosec
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()        //nolint:errcheck,gosec
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck,gosec
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	if gotHost != upstreamURL.Host {
+		t.Errorf("passthrough Host = %q, want upstream host %q (proxy addr was %q)", gotHost, upstreamURL.Host, addr)
+	}
+}
+
 func TestProxyPolicyExclusion(t *testing.T) {
 	now := time.Now()
 	youngTime := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
@@ -957,5 +995,314 @@ func TestProxyFailOpen_ResponseTooLarge(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if strings.Contains(string(body), "supply-chain: upstream response too large") {
 		t.Errorf("fail-open should not emit the too-large error; got body %q", string(body))
+	}
+}
+
+func TestProxyAddr(t *testing.T) {
+	t.Run("empty before Start", func(t *testing.T) {
+		p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}})
+		if err != nil {
+			t.Fatalf("NewProxy: %v", err)
+		}
+		if got := p.Addr(); got != "" {
+			t.Errorf("Addr() before Start = %q, want empty", got)
+		}
+	})
+
+	t.Run("matches the bound address after Start", func(t *testing.T) {
+		p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}})
+		if err != nil {
+			t.Fatalf("NewProxy: %v", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		addr, err := p.Start(ctx)
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer p.Close() //nolint:errcheck,gosec
+		if p.Addr() != addr {
+			t.Errorf("Addr() = %q, want %q (the address returned by Start)", p.Addr(), addr)
+		}
+		if !strings.HasPrefix(p.Addr(), "127.0.0.1:") {
+			t.Errorf("Addr() = %q, want a 127.0.0.1 loopback address", p.Addr())
+		}
+	})
+}
+
+// --- PyPI Simple API (ModePyPI) tests ---
+
+// pypiSimpleBody builds a PEP 691 Simple API JSON document for a project with
+// the given files. Each file is {filename, url, hashes, upload-time}; an empty
+// uploadTime omits the field entirely (to exercise the fail-closed path).
+func pypiSimpleBody(name string, files []struct{ filename, uploadTime string }) string {
+	var b strings.Builder
+	b.WriteString(`{"meta":{"api-version":"1.1"},"name":"` + name + `","files":[`)
+	for i, f := range files {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(`{"filename":"` + f.filename + `","url":"https://files.pythonhosted.org/packages/` + f.filename + `","hashes":{"sha256":"deadbeef"}`)
+		if f.uploadTime != "" {
+			b.WriteString(`,"upload-time":"` + f.uploadTime + `"`)
+		}
+		b.WriteString("}")
+	}
+	b.WriteString(`]}`)
+	return b.String()
+}
+
+func pypiFilenames(t *testing.T, body []byte) []string {
+	t.Helper()
+	var doc struct {
+		Files []struct {
+			Filename string `json:"filename"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("unmarshal pypi body: %v\n%s", err, body)
+	}
+	names := make([]string, len(doc.Files))
+	for i, f := range doc.Files {
+		names[i] = f.Filename
+	}
+	return names
+}
+
+func TestProxyFilterPyPISimple(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	young := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	p := &Proxy{policy: Policy{MinReleaseAge: 72 * time.Hour}, mode: ModePyPI}
+
+	t.Run("removes young files keeps old", func(t *testing.T) {
+		body := pypiSimpleBody("requests", []struct{ filename, uploadTime string }{
+			{"requests-2.31.0-py3-none-any.whl", old},
+			{"requests-2.32.0-py3-none-any.whl", young},
+		})
+		filtered, blocked := p.filterPyPISimple([]byte(body), "requests")
+		names := pypiFilenames(t, filtered)
+		if len(names) != 1 || names[0] != "requests-2.31.0-py3-none-any.whl" {
+			t.Errorf("kept files = %v, want only the old wheel", names)
+		}
+		if len(blocked) != 1 || blocked[0].Version != "requests-2.32.0-py3-none-any.whl" {
+			t.Errorf("blocked = %+v, want the young wheel", blocked)
+		}
+	})
+
+	t.Run("all old passes through unchanged", func(t *testing.T) {
+		body := pypiSimpleBody("flask", []struct{ filename, uploadTime string }{
+			{"flask-3.0.0-py3-none-any.whl", old},
+			{"flask-3.0.0.tar.gz", old},
+		})
+		filtered, blocked := p.filterPyPISimple([]byte(body), "flask")
+		if blocked != nil {
+			t.Errorf("expected no blocked files, got %+v", blocked)
+		}
+		if string(filtered) != body {
+			t.Errorf("body should be returned unchanged when nothing is filtered")
+		}
+	})
+
+	t.Run("fail-closed on missing upload-time", func(t *testing.T) {
+		// A file with no upload-time cannot be age-verified, so it must be
+		// removed — the whole point of the control is age verification.
+		body := pypiSimpleBody("mystery", []struct{ filename, uploadTime string }{
+			{"mystery-1.0.0-py3-none-any.whl", ""},
+			{"mystery-0.9.0-py3-none-any.whl", old},
+		})
+		filtered, blocked := p.filterPyPISimple([]byte(body), "mystery")
+		names := pypiFilenames(t, filtered)
+		if len(names) != 1 || names[0] != "mystery-0.9.0-py3-none-any.whl" {
+			t.Errorf("kept files = %v, want only the datable old wheel", names)
+		}
+		if len(blocked) != 1 || blocked[0].Version != "mystery-1.0.0-py3-none-any.whl" {
+			t.Errorf("blocked = %+v, want the undatable wheel", blocked)
+		}
+	})
+
+	t.Run("preserves untouched file fields", func(t *testing.T) {
+		body := pypiSimpleBody("requests", []struct{ filename, uploadTime string }{
+			{"requests-2.31.0-py3-none-any.whl", old},
+			{"requests-2.32.0-py3-none-any.whl", young},
+		})
+		filtered, _ := p.filterPyPISimple([]byte(body), "requests")
+		// The surviving file must retain its url and hashes verbatim.
+		if !strings.Contains(string(filtered), `"url":"https://files.pythonhosted.org/packages/requests-2.31.0-py3-none-any.whl"`) {
+			t.Errorf("surviving file lost its url field: %s", filtered)
+		}
+		if !strings.Contains(string(filtered), `"sha256":"deadbeef"`) {
+			t.Errorf("surviving file lost its hashes: %s", filtered)
+		}
+		// meta and name must round-trip.
+		if !strings.Contains(string(filtered), `"api-version":"1.1"`) {
+			t.Errorf("meta field dropped: %s", filtered)
+		}
+	})
+
+	t.Run("invalid JSON returned as-is", func(t *testing.T) {
+		body := []byte(`not json`)
+		filtered, blocked := p.filterPyPISimple(body, "x")
+		if blocked != nil || string(filtered) != string(body) {
+			t.Errorf("invalid JSON should pass through untouched")
+		}
+	})
+
+	t.Run("no files key returned as-is", func(t *testing.T) {
+		body := []byte(`{"meta":{"api-version":"1.1"},"name":"x"}`)
+		filtered, blocked := p.filterPyPISimple(body, "x")
+		if blocked != nil || string(filtered) != string(body) {
+			t.Errorf("body without files should pass through untouched")
+		}
+	})
+
+	t.Run("no-timezone upload-time accepted", func(t *testing.T) {
+		// PEP 700 says RFC 3339, but some mirrors omit the zone; the parser
+		// accepts the no-zone fallback rather than treating it as undatable.
+		oldNoZone := now.Add(-30 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05")
+		body := pypiSimpleBody("pkg", []struct{ filename, uploadTime string }{
+			{"pkg-1.0.0.tar.gz", oldNoZone},
+		})
+		_, blocked := p.filterPyPISimple([]byte(body), "pkg")
+		if blocked != nil {
+			t.Errorf("no-timezone old file should pass, got blocked %+v", blocked)
+		}
+	})
+}
+
+func TestExtractPyPIPackageNameFromPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/simple/requests/", "requests"},
+		{"/simple/requests", "requests"},
+		{"/simple/Flask/", "Flask"},
+		{"/simple/", ""},      // index root
+		{"/simple", ""},       // index root, no trailing slash
+		{"/", ""},             // not under /simple/
+		{"/other/pkg/", ""},   // wrong prefix
+		{"/simple/a/b/", ""},  // nested, not a project page
+		{"/simple/%41/", "A"}, // percent-decoded
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := extractPyPIPackageNameFromPath(tt.path); got != tt.want {
+				t.Errorf("extractPyPIPackageNameFromPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProxyPyPIEndToEnd drives a full pip-style request through the proxy in
+// PyPI mode against a mock Simple API upstream, asserting young files are
+// filtered, the JSON Accept header is sent upstream, and the response carries
+// the PEP 691 content type.
+func TestProxyPyPIEndToEnd(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	young := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	var gotAccept, gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", pypiSimpleJSONAccept)
+		body := pypiSimpleBody("requests", []struct{ filename, uploadTime string }{
+			{"requests-2.31.0-py3-none-any.whl", old},
+			{"requests-2.32.0-py3-none-any.whl", young},
+		})
+		_, _ = io.WriteString(w, body)
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		Mode:        ModePyPI,
+		UpstreamURL: upstream.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, err := proxy.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	resp, err := http.Get("http://" + addr + "/simple/requests/") //nolint:gosec // local test proxy
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec
+	body, _ := io.ReadAll(resp.Body)
+
+	if gotAccept != pypiSimpleJSONAccept {
+		t.Errorf("upstream Accept = %q, want %q", gotAccept, pypiSimpleJSONAccept)
+	}
+	if gotPath != "/simple/requests/" {
+		t.Errorf("upstream path = %q, want /simple/requests/", gotPath)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != pypiSimpleJSONAccept {
+		t.Errorf("response Content-Type = %q, want %q", ct, pypiSimpleJSONAccept)
+	}
+	names := pypiFilenames(t, body)
+	if len(names) != 1 || names[0] != "requests-2.31.0-py3-none-any.whl" {
+		t.Errorf("served files = %v, want only the old wheel", names)
+	}
+	if blocked := proxy.Blocked(); len(blocked) != 1 {
+		t.Errorf("expected 1 blocked file, got %+v", blocked)
+	}
+	if proxy.Checked() != 1 {
+		t.Errorf("expected 1 checked, got %d", proxy.Checked())
+	}
+}
+
+// TestProxyPyPIIndexRootPassesThrough ensures the /simple/ index root is not
+// treated as a project page (it has no per-package files to filter) and is
+// proxied through untouched.
+func TestProxyPyPIIndexRootPassesThrough(t *testing.T) {
+	var servedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		servedPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"meta":{"api-version":"1.1"},"projects":[]}`)
+	}))
+	defer upstream.Close()
+
+	proxy, _ := NewProxy(ProxyConfig{
+		Policy:      Policy{MinReleaseAge: 72 * time.Hour},
+		Mode:        ModePyPI,
+		UpstreamURL: upstream.URL,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, _ := proxy.Start(ctx)
+	defer proxy.Close() //nolint:errcheck,gosec
+
+	resp, err := http.Get("http://" + addr + "/simple/") //nolint:gosec // local test proxy
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()        //nolint:errcheck,gosec
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck,gosec
+
+	if servedPath != "/simple/" {
+		t.Errorf("upstream path = %q, want /simple/", servedPath)
+	}
+	if proxy.Checked() != 0 {
+		t.Errorf("index root should not count as a checked package, got %d", proxy.Checked())
+	}
+}
+
+func TestNewProxyDefaultsPyPIUpstream(t *testing.T) {
+	p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, Mode: ModePyPI})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+	if p.upstreamURL.String() != defaultPyPIIndex {
+		t.Errorf("PyPI-mode upstream = %q, want %q", p.upstreamURL.String(), defaultPyPIIndex)
 	}
 }

@@ -411,3 +411,48 @@ func TestDetectPipVariants(t *testing.T) {
 		}
 	})
 }
+
+func TestDetectShells(t *testing.T) {
+	// DetectShells resolves RC paths from os.UserHomeDir(), which honors $HOME on
+	// Unix but reads %USERPROFILE% on Windows — so these $HOME-driven cases are
+	// Unix-only.
+	if runtime.GOOS == goosWindows {
+		t.Skip("DetectShells home-dir resolution is exercised via $HOME, which is Unix-only")
+	}
+
+	t.Run("current shell is ordered first", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("SHELL", "/bin/zsh")
+		// Both RC files exist: bash qualifies via fileExists, zsh via the
+		// current-shell match. The current shell must be prepended.
+		for _, f := range []string{".bashrc", ".zshrc"} {
+			if err := os.WriteFile(filepath.Join(home, f), []byte("# rc\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		shells := DetectShells()
+		if len(shells) == 0 {
+			t.Fatal("expected at least one detected shell")
+		}
+		if shells[0].Name != "zsh" {
+			t.Errorf("first shell = %q, want zsh (the current $SHELL)", shells[0].Name)
+		}
+		names := make([]string, len(shells))
+		for i, s := range shells {
+			names[i] = s.Name
+		}
+		if !slices.Contains(names, "bash") {
+			t.Errorf("expected bash among detected shells (its .bashrc exists), got %v", names)
+		}
+	})
+
+	t.Run("no RC files and no SHELL yields nothing", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("SHELL", "")
+		if shells := DetectShells(); len(shells) != 0 {
+			t.Errorf("expected no shells for an empty home with no $SHELL, got %v", shells)
+		}
+	})
+}

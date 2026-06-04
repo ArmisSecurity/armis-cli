@@ -150,3 +150,76 @@ func TestPyPIGetPublishDate(t *testing.T) {
 		}
 	})
 }
+
+func TestPyPIGetPublishDates(t *testing.T) {
+	// A single handler serves metadata for flask and requests, and 404s anything
+	// else, so one server backs every batch sub-case.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/pypi/flask/json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"releases": {"3.0.0": [{"upload_time_iso_8601": "2023-09-30T12:00:00Z"}]}}`))
+		case "/pypi/requests/json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"releases": {"2.31.0": [{"upload_time_iso_8601": "2023-05-22T15:12:00Z"}]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	t.Run("all packages found", func(t *testing.T) {
+		client := NewPyPIClientWithHTTP(server.Client(), server.URL)
+		results := client.GetPublishDates(context.Background(), []PackageRequest{
+			{Name: "flask", Version: "3.0.0"},
+			{Name: "requests", Version: "2.31.0"},
+		})
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+		// Results are index-aligned with the input order.
+		for i, want := range []string{"flask", "requests"} {
+			if results[i].Name != want {
+				t.Errorf("results[%d].Name = %q, want %q", i, results[i].Name, want)
+			}
+			if results[i].Err != nil {
+				t.Errorf("results[%d] unexpected error: %v", i, results[i].Err)
+			}
+			if results[i].PublishTime.IsZero() {
+				t.Errorf("results[%d] has zero publish time", i)
+			}
+		}
+	})
+
+	t.Run("mixed found and missing", func(t *testing.T) {
+		client := NewPyPIClientWithHTTP(server.Client(), server.URL)
+		results := client.GetPublishDates(context.Background(), []PackageRequest{
+			{Name: "flask", Version: "3.0.0"},
+			{Name: "does-not-exist", Version: "1.0.0"},
+		})
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+		if results[0].Err != nil {
+			t.Errorf("flask should resolve, got error: %v", results[0].Err)
+		}
+		if results[1].Err == nil {
+			t.Error("missing package should produce an error, not a silent pass")
+		}
+	})
+
+	t.Run("cancelled context errors every package", func(t *testing.T) {
+		client := NewPyPIClientWithHTTP(server.Client(), server.URL)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // cancel before the calls run
+		results := client.GetPublishDates(ctx, []PackageRequest{
+			{Name: "flask", Version: "3.0.0"},
+			{Name: "requests", Version: "2.31.0"},
+		})
+		for i, r := range results {
+			if r.Err == nil {
+				t.Errorf("results[%d] expected a context error, got nil", i)
+			}
+		}
+	})
+}

@@ -19,7 +19,17 @@ type Result struct {
 	Skipped    int
 }
 
+// registryFn resolves publish dates for a set of packages in an ecosystem. It
+// is the seam queryRegistry satisfies in production; tests inject a closure that
+// returns controlled timestamps (or errors) so the RunCheck pipeline can be
+// exercised without real network calls.
+type registryFn func(ctx context.Context, ecosystem supplychain.Ecosystem, packages []registry.PackageRequest) []registry.QueryResult
+
 func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string) (*Result, error) {
+	return runCheck(ctx, policy, lockfilePath, baseLockfilePath, queryRegistry)
+}
+
+func runCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string, queryRegistryFn registryFn) (*Result, error) {
 	ecosystem := detectEcosystemFromPath(lockfilePath)
 
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls, not untrusted network input (readLockfile also size-bounds the read)
@@ -51,7 +61,7 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 		return &Result{Skipped: skipped}, nil
 	}
 
-	results := queryRegistry(ctx, ecosystem, toCheck)
+	results := queryRegistryFn(ctx, ecosystem, toCheck)
 
 	now := time.Now()
 	var violations []supplychain.Violation
@@ -125,6 +135,14 @@ func queryRegistry(ctx context.Context, ecosystem supplychain.Ecosystem, package
 		client := registry.NewClient()
 		return client.GetPublishDates(ctx, packages)
 	}
+}
+
+// DetectEcosystemFromPath classifies a lockfile path to its ecosystem using the
+// same suffix rules RunCheck applies internally. Exported so callers outside the
+// package (e.g. the check command's ecosystem-scoping gate) classify a lockfile
+// exactly as the audit will, including the requirements*.txt special cases.
+func DetectEcosystemFromPath(path string) supplychain.Ecosystem {
+	return detectEcosystemFromPath(path)
 }
 
 func detectEcosystemFromPath(path string) supplychain.Ecosystem {

@@ -86,7 +86,10 @@ func ParseDuration(s string) (time.Duration, error) {
 	default:
 		d, err := time.ParseDuration(s)
 		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+			// Don't wrap time.ParseDuration's error: it repeats `invalid duration
+			// %q` verbatim, producing a doubled message. Give an actionable hint
+			// about accepted formats instead.
+			return 0, fmt.Errorf("invalid duration %q: use a number with a unit like 72h, 3d, or 1w", s)
 		}
 		// time.ParseDuration accepts signed values (e.g. "-72h"). A negative
 		// min-age is nonsensical and would effectively disable age enforcement,

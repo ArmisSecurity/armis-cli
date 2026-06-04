@@ -72,6 +72,11 @@ func TestClassifySeverity(t *testing.T) {
 		{25 * time.Hour, model.SeverityMedium},
 		{48 * time.Hour, model.SeverityMedium},
 		{71 * time.Hour, model.SeverityMedium},
+		// At and beyond the threshold the package is old enough to pass: the
+		// boundary is `age < threshold` (Medium) vs `age >= threshold` (Low), so
+		// exactly 72h must classify as Low.
+		{72 * time.Hour, model.SeverityLow},
+		{100 * time.Hour, model.SeverityLow},
 	}
 
 	for _, tt := range tests {

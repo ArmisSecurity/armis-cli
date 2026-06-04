@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -14,6 +16,13 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain/check"
 	"github.com/spf13/cobra"
 )
+
+// baseDetectGitTimeout bounds the git subprocesses used to fetch the base
+// lockfile. git base detection only reads local objects, but a misconfigured
+// remote or filesystem can wedge a git invocation indefinitely; this ceiling
+// keeps `supply-chain check` from hanging on it. The parent command context is
+// still honored, so SIGINT cancels sooner than this.
+const baseDetectGitTimeout = 15 * time.Second
 
 var (
 	scMinAge       string
@@ -93,13 +102,32 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("lockfile not found: %s", lockfilePath)
 	}
 
+	// Respect the config's "ecosystems" scope: if it restricts enforcement and
+	// this lockfile's ecosystem is excluded, skip the audit and report a clean
+	// pass rather than checking an out-of-scope ecosystem. loadConfigUpward
+	// returns nil (enforce-all) when no config is present, and EnforcesEcosystem
+	// fails safe on an all-typo list.
+	cfg, _, err := loadConfigUpward(dir)
+	if err != nil {
+		return err
+	}
+	eco := check.DetectEcosystemFromPath(lockfilePath)
+	// armis:ignore cwe:476 reason:EnforcesEcosystem has an explicit nil-receiver guard (returns true when c==nil), so calling it on a nil cfg is safe by design
+	if !cfg.EnforcesEcosystem(eco) {
+		s := output.GetStyles()
+		fmt.Fprintf(os.Stderr, "%s %s\n",
+			s.MutedText.Render("[armis]"),
+			s.MutedText.Render(fmt.Sprintf("supply-chain: %s not in configured ecosystems, skipping", eco)))
+		return nil
+	}
+
 	var baseLockfile string
 	var autoDetectedBase bool
 	if !scAll {
 		if scBaseLockfile != "" {
 			baseLockfile = scBaseLockfile
 		} else {
-			baseLockfile = detectBaseLockfile(lockfilePath)
+			baseLockfile = detectBaseLockfile(cmd.Context(), lockfilePath)
 			autoDetectedBase = baseLockfile != ""
 		}
 	}
@@ -129,8 +157,9 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	s := output.GetStyles()
 	fmt.Fprintf(os.Stderr, "%s %s\n",
 		s.MutedText.Render("[armis]"),
-		s.MutedText.Render(fmt.Sprintf("supply-chain: checked %d packages, %d skipped, %d violations (%s policy)",
-			result.Checked, result.Skipped, len(result.Violations), policy.MinReleaseAge)))
+		s.MutedText.Render(fmt.Sprintf("supply-chain: checked %s, %d skipped, %s (%s policy)",
+			countNoun(result.Checked, "package"), result.Skipped,
+			countNoun(len(result.Violations), "violation"), policy.MinReleaseAge)))
 
 	findings := make([]model.Finding, 0, len(result.Violations))
 	for _, v := range result.Violations {
@@ -161,7 +190,24 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("formatting output: %w", err)
 	}
 
-	return output.CheckExit(scanResult, failOn, exitCode)
+	// Use getFailOn() (not the raw failOn global) so --fail-on is validated and
+	// case-normalized to uppercase. ShouldFail matches severities exactly, so a
+	// lowercase "medium" would otherwise never match a "MEDIUM" finding and the
+	// CI gate would silently pass. The scan commands already route through here.
+	failOnSeverities, err := getFailOn()
+	if err != nil {
+		return err
+	}
+	return output.CheckExit(scanResult, failOnSeverities, exitCode)
+}
+
+// countNoun formats a count with its noun, pluralizing with a trailing "s" when
+// the count is not exactly 1 (e.g. "1 package", "2 packages", "0 violations").
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func buildSummary(findings []model.Finding) model.Summary {
@@ -181,10 +227,15 @@ func buildSummary(findings []model.Finding) model.Summary {
 	return summary
 }
 
-func detectBaseLockfile(lockfilePath string) string {
+func detectBaseLockfile(ctx context.Context, lockfilePath string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
+
+	// Bound every git subprocess so a wedged invocation cannot hang the check.
+	// Derived from the command context, so SIGINT still cancels earlier.
+	ctx, cancel := context.WithTimeout(ctx, baseDetectGitTimeout)
+	defer cancel()
 
 	// Anchor every git invocation to the directory that contains the lockfile,
 	// not the process's cwd. Otherwise `armis-cli supply-chain check
@@ -197,13 +248,13 @@ func detectBaseLockfile(lockfilePath string) string {
 	}
 	gitWorkDir := filepath.Dir(absLockfile)
 
-	gitDir := exec.Command("git", "rev-parse", "--git-dir") //nolint:gosec // detecting git repo
+	gitDir := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir") //nolint:gosec // detecting git repo
 	gitDir.Dir = gitWorkDir
 	if err := gitDir.Run(); err != nil {
 		return ""
 	}
 
-	showTopLevel := exec.Command("git", "rev-parse", "--show-toplevel") //nolint:gosec
+	showTopLevel := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel") //nolint:gosec
 	showTopLevel.Dir = gitWorkDir
 	topLevel, err := showTopLevel.Output()
 	if err != nil {
@@ -233,7 +284,7 @@ func detectBaseLockfile(lockfilePath string) string {
 
 	for _, base := range []string{"origin/main", "origin/master"} {
 		// armis:ignore cwe:22 reason:relPath is confined to the repo tree by the traversal guard above and git resolves the pathspec within the repo; base is one of two hardcoded refs
-		showBase := exec.Command("git", "show", base+":"+relPath) //nolint:gosec // user's git repo
+		showBase := exec.CommandContext(ctx, "git", "show", base+":"+relPath) //nolint:gosec // user's git repo
 		showBase.Dir = gitWorkDir
 		content, err := showBase.Output()
 		if err != nil {
