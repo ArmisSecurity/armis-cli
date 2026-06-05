@@ -95,9 +95,15 @@ func TestDetectWrappablePMs_DefaultsToNpm(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	pms := detectWrappablePMs()
+	pms, detected := detectWrappablePMs()
 	if len(pms) != 1 || pms[0] != "npm" {
 		t.Errorf("detectWrappablePMs() = %v, want [npm]", pms)
+	}
+	// No lockfiles means DetectEcosystems errored, so the detected list is empty —
+	// this is how the caller distinguishes "no lockfiles" (npm fallback) from
+	// "scoped out" (nothing in scope).
+	if len(detected) != 0 {
+		t.Errorf("detectWrappablePMs() detected = %v, want empty (no lockfiles)", detected)
 	}
 }
 
@@ -115,9 +121,38 @@ func TestDetectWrappablePMs_HonorsEcosystemScope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pms := detectWrappablePMs()
+	pms, detected := detectWrappablePMs()
 	if len(pms) != 1 || pms[0] != "pnpm" {
 		t.Errorf("detectWrappablePMs() = %v, want [pnpm] (npm excluded by config scope)", pms)
+	}
+	// Both lockfiles are still reported as detected; scoping only narrows the PM
+	// list, not what was found on disk.
+	if len(detected) != 2 {
+		t.Errorf("detectWrappablePMs() detected = %v, want 2 ecosystems (npm + pnpm)", detected)
+	}
+}
+
+// TestDetectWrappablePMs_AllScopedOut covers the case the npm fallback used to
+// mask: lockfiles exist but the config scopes enforcement away from every one.
+// The PM list must come back empty (so the caller can report "nothing in
+// scope") while the detected list still names what was found.
+func TestDetectWrappablePMs_AllScopedOut(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Scope enforcement to pip only; the sole detected ecosystem (npm) is excluded.
+	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
+		[]byte("version: 1\necosystems:\n  - pip\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pms, detected := detectWrappablePMs()
+	if len(pms) != 0 {
+		t.Errorf("detectWrappablePMs() = %v, want empty (npm scoped out, no npm fallback)", pms)
+	}
+	if len(detected) != 1 || detected[0].Ecosystem != supplychain.EcosystemNPM {
+		t.Errorf("detectWrappablePMs() detected = %v, want [npm]", detected)
 	}
 }
 

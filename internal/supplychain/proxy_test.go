@@ -1212,7 +1212,18 @@ func TestPypiVersionFromFilename(t *testing.T) {
 		{"numpy-1.26.2-cp312-cp312-manylinux_2_17_x86_64.whl", "1.26.2"},
 		{"setuptools-68.0.0.tar.gz", "68.0.0"},
 		{"pkg-1.0.0a1-py3-none-any.whl", "1.0.0a1"},
+		// sdists whose project name contains '-': the version is everything after
+		// the FINAL '-', not the first (which would mis-return "interface"/"yaml").
+		{"zope-interface-6.0.tar.gz", "6.0"},
+		{"backports-zoneinfo-0.2.1.tar.gz", "0.2.1"},
+		{"ruamel-yaml-clib-0.2.8.zip", "0.2.8"},
+		// Hyphenated-name sdist with a build-tagged version (PEP 440 allows '+').
+		{"my-pkg-1.2.3+local.tar.gz", "1.2.3+local"},
+		// Wheels normalize the distribution name (PEP 427 collapses '-' to '_'),
+		// so the version stays the second field even for multi-word projects.
+		{"zope_interface-6.0-cp312-cp312-manylinux1_x86_64.whl", "6.0"},
 		{"noversion.whl", ""},
+		{"trailingdash-.tar.gz", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {

@@ -70,30 +70,81 @@ func init() {
 }
 
 func runSupplyChainInit(_ *cobra.Command, _ []string) error {
-	pms := detectWrappablePMs()
-
 	switch scInitMode {
-	case "env":
-		return runInitEnv(pms)
 	case "npmrc":
+		// npmrc only adds a marker comment; it doesn't wrap package managers, so
+		// it never consults the detected/scoped PM list.
 		return runInitNpmrc()
-	case "rc":
-		return runInitRC(pms)
 	case "config":
+		// config generates the policy file itself; ecosystem scoping doesn't apply
+		// until that file exists, so it also skips PM detection.
 		return runInitConfig()
+	case "env", "rc":
+		pms, detected := detectWrappablePMs()
+		if len(pms) == 0 {
+			// Lockfiles were detected, but the config's `ecosystems` scope excludes
+			// every one — there is nothing in scope to wrap. Report it plainly
+			// instead of falling back to npm: wrapping an ecosystem the user
+			// deliberately scoped enforcement away from would modify their RC files
+			// (rc) or emit an eval they didn't ask for (env), contradicting init's
+			// stated "only wraps in-scope package managers" behavior.
+			return reportNothingInScope(detected)
+		}
+		if scInitMode == "rc" {
+			return runInitRC(pms)
+		}
+		return runInitEnv(pms)
 	default:
 		return fmt.Errorf("unknown mode: %s (valid: rc, env, npmrc, config)", scInitMode)
 	}
 }
 
-func detectWrappablePMs() []string {
+// reportNothingInScope explains that lockfiles were found but the config's
+// `ecosystems` scope excludes all of them, so init has nothing to set up. It
+// returns nil (not an error): scoping enforcement away from every detected
+// ecosystem is a legitimate user choice, so exiting 0 with guidance is the
+// correct, CI-friendly outcome.
+func reportNothingInScope(detected []supplychain.DetectedEcosystem) error {
+	s := output.GetStyles()
+
+	seen := make(map[string]bool)
+	names := make([]string, 0, len(detected))
+	for _, e := range detected {
+		n := string(e.Ecosystem)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		names = append(names, n)
+	}
+
+	fmt.Fprintf(os.Stderr, "%s No package managers in scope to wrap.\n\n", s.WarningText.Render("⚠"))
+	fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(fmt.Sprintf(
+		"Detected %s, but the `ecosystems` scope in %s excludes all of them.",
+		strings.Join(names, ", "), supplychain.ConfigFileName)))
+	fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(
+		"Add one of them to that list (or remove the `ecosystems` key to enforce all) to set up enforcement."))
+	return nil
+}
+
+// detectWrappablePMs returns the package managers init should wrap, plus the
+// raw list of ecosystems that were detected. The two return values let the
+// caller tell apart two cases that both yield an empty PM list:
+//
+//   - No lockfiles at all (detected is empty): DetectEcosystems errored, so we
+//     fall back to npm and the returned PM slice is non-empty.
+//   - Lockfiles present but all scoped out (detected is non-empty, PM slice
+//     empty): the config's `ecosystems` key excludes every detected ecosystem.
+//     The caller reports this instead of wrapping something out of scope.
+func detectWrappablePMs() (pms []string, detected []supplychain.DetectedEcosystem) {
 	ecosystems, err := supplychain.DetectEcosystems(".")
 	if err != nil {
 		// DetectEcosystems errors when no supported lockfile is present, or when
 		// a lockfile exists but can't be stat'd (permissions/I/O). Either way,
 		// default to npm so the generated wrapper still protects the most common
-		// package manager rather than silently wrapping nothing.
-		return []string{pmNPM}
+		// package manager rather than silently wrapping nothing. detected stays
+		// empty, signaling "no lockfiles" rather than "scoped out".
+		return []string{pmNPM}, nil
 	}
 
 	// Honor the config's "ecosystems" scope so init only wraps the package
@@ -105,7 +156,6 @@ func detectWrappablePMs() []string {
 	}
 
 	seen := make(map[string]bool)
-	var pms []string
 
 	addPM := func(pm string) {
 		if pm == "" || seen[pm] {
@@ -133,13 +183,11 @@ func detectWrappablePMs() []string {
 		addPM(pm)
 	}
 
-	if len(pms) == 0 {
-		// Every detected ecosystem was excluded by config, or none mapped to a PM.
-		// Fall back to npm so the generated wrapper still protects the most common
-		// package manager rather than silently wrapping nothing.
-		return []string{pmNPM}
-	}
-	return pms
+	// An empty pms here means every detected ecosystem was scoped out (or none
+	// mapped to a PM). We deliberately do NOT fall back to npm: the caller uses
+	// the non-empty `ecosystems` to report that nothing is in scope, rather than
+	// wrapping a package manager the user asked enforcement to skip.
+	return pms, ecosystems
 }
 
 func ecosystemToPM(eco supplychain.Ecosystem) string {

@@ -635,22 +635,40 @@ func pypiFileAge(raw json.RawMessage, now time.Time) (time.Duration, bool) {
 }
 
 // pypiVersionFromFilename extracts the version component from a wheel or sdist
-// filename. Wheel names follow "{name}-{version}-..." and sdists follow
-// "{name}-{version}.tar.gz" (or .zip). Returns "" if the pattern does not match.
+// filename. Wheels and sdists use different grammars, so they are parsed
+// separately. Returns "" if the pattern does not match.
 func pypiVersionFromFilename(filename string) string {
-	// Strip the file extension first so split position is consistent.
+	// Wheels (and the legacy egg format) carry trailing build/interpreter/
+	// platform tags after the version, e.g.
+	// "{name}-{version}-{python}-{abi}-{platform}.whl". PEP 427 normalizes the
+	// distribution so it never contains '-' (runs of [-_.] collapse to '_'), so
+	// the version is reliably the second '-'-delimited field.
+	if strings.HasSuffix(filename, ".whl") || strings.HasSuffix(filename, ".egg") {
+		base := filename[:strings.LastIndex(filename, ".")]
+		parts := strings.SplitN(base, "-", 3)
+		if len(parts) < 2 {
+			return ""
+		}
+		return parts[1]
+	}
+
+	// sdists are "{name}-{version}{ext}" with no trailing tags. Unlike wheels the
+	// project name is NOT normalized, so it may legitimately contain '-' (e.g.
+	// "zope-interface-6.0.tar.gz"). PEP 440 versions never contain '-', so the
+	// version is everything after the FINAL '-'. Splitting on the first '-' (as a
+	// single shared parser would) misreads such names — yielding "interface".
 	name := filename
-	for _, ext := range []string{".whl", ".tar.gz", ".zip", ".tar.bz2", ".egg"} {
+	for _, ext := range []string{".tar.gz", ".tar.bz2", ".zip"} {
 		if strings.HasSuffix(name, ext) {
 			name = name[:len(name)-len(ext)]
 			break
 		}
 	}
-	parts := strings.SplitN(name, "-", 3)
-	if len(parts) < 2 {
+	idx := strings.LastIndex(name, "-")
+	if idx <= 0 || idx == len(name)-1 {
 		return ""
 	}
-	return parts[1]
+	return name[idx+1:]
 }
 
 // jsonString decodes a JSON string value, returning "" for absent or non-string
