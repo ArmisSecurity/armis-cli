@@ -62,8 +62,28 @@ func TestPrintBlockSummary_AllPass(t *testing.T) {
 	if !strings.Contains(out, "12 packages checked, all pass") {
 		t.Errorf("missing all-pass line; got:\n%s", out)
 	}
+	// Policy phrasing must match the filter path's "(3-day policy)" wording so the
+	// two code paths never drift back to "minimum age" vs "policy".
+	if !strings.Contains(out, "(3-day policy)") {
+		t.Errorf("all-pass line should use unified \"(3-day policy)\" phrasing; got:\n%s", out)
+	}
 	if strings.Contains(out, "package(s)") {
 		t.Errorf("output still uses package(s); got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_AllPassSingular(t *testing.T) {
+	// One package checked → verb agreement: "passed", not the plural "all pass"
+	// ("all" implies more than one).
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		printBlockSummary(nil, nil, 1, testPolicy(), pmNPM, true)
+	})
+	if !strings.Contains(out, "1 package checked, passed") {
+		t.Errorf("singular all-pass line should read \"1 package checked, passed\"; got:\n%s", out)
+	}
+	if strings.Contains(out, "all pass") {
+		t.Errorf("singular case must not use plural \"all pass\"; got:\n%s", out)
 	}
 }
 
@@ -169,6 +189,79 @@ func TestPrintBlockSummary_InstallFailed(t *testing.T) {
 	}
 	if !strings.Contains(out, "Note:") || !strings.Contains(out, "relax the constraint or exclude the package") {
 		t.Errorf("missing remediation note; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_OnlyPrerelease(t *testing.T) {
+	// The only blocked version is a prerelease (alpha). A bare `npm install` resolves
+	// "latest" to the newest stable release and never auto-selects an alpha, so the
+	// filter did not change what the user would have gotten. The summary must NOT
+	// claim it "filtered a too-new release → installed safe version" — that overstates
+	// the tool's effect. It should state honestly that a prerelease was withheld and
+	// the default install was unaffected.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "2.0.0-alpha.1", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
+	})
+
+	if !strings.Contains(out, "withheld 1 prerelease") {
+		t.Errorf("expected honest prerelease framing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "a default install was unaffected") {
+		t.Errorf("expected 'default install unaffected' clause; got:\n%s", out)
+	}
+	if strings.Contains(out, "installed safe version") {
+		t.Errorf("must not claim a protective filter for a prerelease-only block; got:\n%s", out)
+	}
+	if strings.Contains(out, "too-new release") {
+		t.Errorf("prerelease block must not be framed as a too-new release; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_StableStillClaimsFilter(t *testing.T) {
+	// A blocked stable release alongside a blocked prerelease must still read as a
+	// genuine filter: filterRelevantBlocked drops the prerelease, leaving a stable
+	// version a default install WOULD have selected, so the success framing is honest.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "axios", Version: "1.17.0", Age: 24 * time.Hour},
+		{Name: "axios", Version: "2.0.0-alpha.1", Age: 2 * time.Hour},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
+	})
+
+	if !strings.Contains(out, "installed safe version") {
+		t.Errorf("a blocked stable release should still read as a genuine filter; got:\n%s", out)
+	}
+	if strings.Contains(out, "withheld") {
+		t.Errorf("must not use prerelease framing when a stable release was filtered; got:\n%s", out)
+	}
+}
+
+func TestAllResultsPrerelease(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []pkgFilterResult
+		want    bool
+	}{
+		{"empty", nil, false},
+		{"single prerelease", []pkgFilterResult{{OldVersion: testVersion + "-rc.1"}}, true},
+		{"single stable", []pkgFilterResult{{OldVersion: testVersion}}, false},
+		{"mixed", []pkgFilterResult{{OldVersion: testVersion + "-beta"}, {OldVersion: "2.0.0"}}, false},
+		{"all prerelease", []pkgFilterResult{{OldVersion: testVersion + "-alpha"}, {OldVersion: "2.0.0-rc.1"}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := allResultsPrerelease(tt.results); got != tt.want {
+				t.Errorf("allResultsPrerelease(%#v) = %v, want %v", tt.results, got, tt.want)
+			}
+		})
 	}
 }
 

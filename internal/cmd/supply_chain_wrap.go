@@ -284,8 +284,8 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
 				s.MutedText.Render(scPrefix),
 				s.SuccessText.Render(output.IconSuccess),
-				s.SuccessText.Render(fmt.Sprintf("supply-chain: %s checked, all pass", countNoun(checked, "package"))),
-				s.MutedText.Render(fmt.Sprintf("(%s minimum age)", formatDurationShort(policy.MinReleaseAge))))
+				s.SuccessText.Render(fmt.Sprintf("supply-chain: %s", checkedAllPass(checked))),
+				s.MutedText.Render(fmt.Sprintf("(%s policy)", formatPolicyShort(policy.MinReleaseAge))))
 		}
 		return
 	}
@@ -311,6 +311,13 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 	policyShort := formatPolicyShort(policy.MinReleaseAge)
 	verbose := len(results) > maxBlockedDisplay
 
+	// When every displayed package is a prerelease, the filter did not change what
+	// a default install would have done: npm/pip/etc. resolve "latest" to the newest
+	// *stable* release and never auto-select an alpha/beta/rc. Claiming we "installed
+	// a safe version" would overstate the tool's effect — it withheld a prerelease the
+	// resolver wouldn't have picked anyway. Frame that case honestly (see header).
+	onlyPrerelease := allResultsPrerelease(results)
+
 	// "Installed" wording is only truthful when the package manager actually
 	// completed. A repointed "latest" is what the proxy offered, not proof of an
 	// install — a pin that only the filtered version satisfies still fails the PM.
@@ -324,6 +331,14 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 	// fallback, or the PM did not complete; the per-line glyph and the footnote
 	// carry the detail.
 	switch {
+	case onlyPrerelease && installOK:
+		// A bare install would never have selected these prereleases, so don't claim
+		// a save. State plainly what the policy did: withheld a prerelease, no effect
+		// on the default install. Neutral (muted), not green — nothing was at risk.
+		fmt.Fprintf(os.Stderr, "\n%s %s\n",
+			s.MutedText.Render(scPrefix),
+			s.MutedText.Render(fmt.Sprintf("supply-chain: withheld %s; a default install was unaffected (%s policy)",
+				countNoun(len(results), "prerelease"), policyShort)))
 	case success:
 		versionWord := "version"
 		if len(results) > 1 {
@@ -367,7 +382,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 		}
 	}
 	for _, r := range results[:displayCount] {
-		printPkgFilterLine(s, r, !allResolved, installOK, cols)
+		printPkgFilterLine(s, r, !allResolved, installOK, onlyPrerelease, cols)
 	}
 	if remaining := len(results) - displayCount; remaining > 0 {
 		fmt.Fprintf(os.Stderr, "    %s\n",
@@ -439,11 +454,14 @@ func rightPad(s string, width int) string {
 // context: when every package resolved (mixed == false) the header already
 // signals success, so the line shows the severity dot to convey how fresh the
 // blocked version was; in the mixed case the header is neutral, so a per-line
-// ✓/⚠ carries the resolved-vs-unresolved tone. The resolved-version wording is
-// "installed" only when the PM completed (installOK); otherwise it reads
-// "available" — the safe version exists, but we cannot claim it was installed.
-// cols pads each column so the arrows and outcomes line up across rows.
-func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK bool, cols colWidths) {
+// ✓/⚠ carries the resolved-vs-unresolved tone. When the blocked versions were all
+// prereleases (prerelease == true) the policy didn't change a default install, so
+// the line stays neutral — a muted dot, never a colored severity tier that would
+// imply averted risk. The resolved-version wording is "installed" only when the
+// PM completed (installOK); otherwise it reads "available" — the safe version
+// exists, but we cannot claim it was installed. cols pads each column so the
+// arrows and outcomes line up across rows.
+func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, prerelease bool, cols colWidths) {
 	resolvedWord := "installed"
 	if !installOK {
 		resolvedWord = "available"
@@ -454,6 +472,11 @@ func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK bo
 	case r.NewVersion == "":
 		glyph = s.WarningText.Render("⚠")
 		outcome = s.WarningText.Render("no older safe version (install may fail)")
+	case prerelease:
+		// Withheld a prerelease the resolver wouldn't have chosen: no risk tier to
+		// convey, so use a neutral muted dot rather than a severity color.
+		glyph = s.MutedText.Render(output.SeverityDot)
+		outcome = fmt.Sprintf("%s %s", s.SuccessText.Render(r.NewVersion), s.MutedText.Render(resolvedWord))
 	case mixed:
 		glyph = s.SuccessText.Render(output.IconSuccess)
 		outcome = fmt.Sprintf("%s %s", s.SuccessText.Render(r.NewVersion), s.MutedText.Render(resolvedWord))
@@ -502,6 +525,18 @@ func groupBlockedByPackage(blocked []supplychain.BlockedPackage, allowedVersions
 		return results[i].Name < results[j].Name
 	})
 	return results
+}
+
+// checkedAllPass renders the "N packages checked, all pass" clause with verb
+// agreement: countNoun inflects the noun ("1 package" vs "N packages") but not
+// the verb, so the singular case collapses "all pass" → "passed" ("all" implies
+// plural). Centralized so the proxy and pre-install paths phrase it identically
+// and the singular pre-install case never prints "1 packages checked".
+func checkedAllPass(n int) string {
+	if n == 1 {
+		return "1 package checked, passed"
+	}
+	return fmt.Sprintf("%d packages checked, all pass", n)
 }
 
 // formatPolicyShort renders the policy window as a hyphenated adjective for use
@@ -576,6 +611,24 @@ func filterRelevantBlocked(blocked []supplychain.BlockedPackage) []supplychain.B
 func isPrerelease(version string) bool {
 	parts := strings.SplitN(version, "-", 2)
 	return len(parts) == 2 && parts[0] != ""
+}
+
+// allResultsPrerelease reports whether every grouped result is a prerelease. It
+// drives the honest "withheld a prerelease" framing: when this holds, the proxy
+// only blocked versions a default install would never have selected (resolvers
+// pick the newest *stable* release for "latest"), so the summary must not claim
+// it installed a safe version in place of one the user was about to get. An empty
+// slice returns false — there is nothing to characterize.
+func allResultsPrerelease(results []pkgFilterResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		if !isPrerelease(r.OldVersion) {
+			return false
+		}
+	}
+	return true
 }
 
 func severityDot(s *output.Styles, sev model.Severity) string {
@@ -770,8 +823,8 @@ func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) erro
 			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
 				s.MutedText.Render(scPrefix),
 				s.SuccessText.Render(output.IconSuccess),
-				s.SuccessText.Render(fmt.Sprintf("supply-chain: %d packages checked, all pass", result.Checked)),
-				s.MutedText.Render(fmt.Sprintf("(%s minimum age)", formatDurationShort(policy.MinReleaseAge))))
+				s.SuccessText.Render(fmt.Sprintf("supply-chain: %s", checkedAllPass(result.Checked))),
+				s.MutedText.Render(fmt.Sprintf("(%s policy)", formatPolicyShort(policy.MinReleaseAge))))
 		}
 		return exitWithCode(execPMFunc(pmName, pmArgs, nil))
 	}

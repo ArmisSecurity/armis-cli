@@ -1,6 +1,7 @@
 package output
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -165,4 +166,62 @@ func TestNoColorStyles_AllFieldsPlain(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderCodeBlock(t *testing.T) {
+	// NoColorStyles renders without ANSI escapes, so we can assert on the exact
+	// text layout (gutter prefix, indentation) deterministically.
+	styles := NoColorStyles()
+
+	t.Run("prefixes every line with a gutter and indent", func(t *testing.T) {
+		out := styles.RenderCodeBlock("npm() {\n  command foo\n}")
+		lines := strings.Split(out, "\n")
+		want := []string{
+			"  " + IconGutter + " npm() {",
+			"  " + IconGutter + "   command foo",
+			"  " + IconGutter + " }",
+		}
+		if len(lines) != len(want) {
+			t.Fatalf("got %d lines, want %d: %q", len(lines), len(want), out)
+		}
+		for i := range want {
+			if lines[i] != want[i] {
+				t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+			}
+		}
+	})
+
+	t.Run("trims leading and trailing blank lines", func(t *testing.T) {
+		// A snippet that ends in "\n" (as the shell wrapper does) must not emit a
+		// trailing empty gutter row — that was the stray blank line before the
+		// confirmation prompt.
+		out := styles.RenderCodeBlock("\nfoo\n")
+		if out != "  "+IconGutter+" foo" {
+			t.Errorf("got %q, want a single gutter line with no surrounding blanks", out)
+		}
+	})
+
+	t.Run("does not pad short lines to the longest line width", func(t *testing.T) {
+		// The original bug: a long absolute path forced every other line to be
+		// right-padded with spaces, producing a rectangle of trailing whitespace.
+		out := styles.RenderCodeBlock("short\n" + strings.Repeat("x", 100))
+		for _, ln := range strings.Split(out, "\n") {
+			if strings.HasSuffix(ln, " ") {
+				t.Errorf("line has trailing whitespace (block padding regressed): %q", ln)
+			}
+		}
+	})
+
+	t.Run("preserves interior blank lines", func(t *testing.T) {
+		// Blank lines inside the snippet (e.g. between config sections) are kept so
+		// the preview matches the file that gets written.
+		out := styles.RenderCodeBlock("a\n\nb")
+		lines := strings.Split(out, "\n")
+		if len(lines) != 3 {
+			t.Fatalf("got %d lines, want 3: %q", len(lines), out)
+		}
+		if lines[1] != "  "+IconGutter+" " {
+			t.Errorf("interior blank line = %q, want a gutter with empty content", lines[1])
+		}
+	})
 }

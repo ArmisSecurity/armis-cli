@@ -2,7 +2,9 @@
 package output
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -398,6 +400,30 @@ func (s *Styles) GetSeverityText(severity model.Severity) lipgloss.Style {
 	default:
 		return s.InfoText
 	}
+}
+
+// RenderCodeBlock formats a multi-line code/config snippet with a left gutter
+// bar so it reads as a distinct block from the surrounding prose.
+//
+// It renders line by line rather than passing the whole snippet to a single
+// lipgloss style. A style applied to a multi-line string pads every line to the
+// width of the longest one (lipgloss treats it as a box for compositing), which
+// for a snippet containing a long absolute path produces a wide rectangle of
+// trailing whitespace. Per-line rendering keeps each line ragged-right. Leading
+// and trailing blank lines are trimmed so a snippet that ends in "\n" does not
+// emit an empty gutter row.
+func (s *Styles) RenderCodeBlock(snippet string) string {
+	lines := strings.Split(strings.Trim(snippet, "\n"), "\n")
+	gutter := s.DiffGutter.Render(IconGutter)
+	var b strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		// Two-space indent matches the muted "shell:" label above the block.
+		fmt.Fprintf(&b, "  %s %s", gutter, s.MutedText.Render(line))
+	}
+	return b.String()
 }
 
 // Box drawing constants for consistency

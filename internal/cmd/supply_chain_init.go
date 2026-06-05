@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -169,15 +171,50 @@ func ecosystemToPM(eco supplychain.Ecosystem) string {
 	}
 }
 
-// promptYesNo prints an interactive yes/no prompt to stderr and reads the reply
-// from stdin. See readYesNo for the answer semantics.
+// promptYesNo asks the user a yes/no question and reports their answer.
+//
+// On an interactive terminal it renders a themed huh.Confirm, matching the
+// install flow (see install_interactive.go) so the whole CLI shares one look.
+// huh requires a TTY, so when stdin/stderr is piped or redirected — CI, a
+// here-doc, `echo y | ...` — it falls back to the plain readYesNo line reader,
+// which preserves piped-stdin support and fail-closed semantics for the RC-file
+// edits this prompt gates.
 func promptYesNo(prompt string, defaultYes bool) bool {
+	// Blank line separates the confirmation from the preview above it (the code
+	// block / config snippet) so the prompt does not butt against the last line.
+	fmt.Fprintln(os.Stderr)
+
+	if cli.IsInteractive() {
+		return confirmInteractive(prompt, defaultYes)
+	}
+
 	suffix := "[y/N]"
 	if defaultYes {
 		suffix = "[Y/n]"
 	}
-	fmt.Fprintf(os.Stderr, "%s %s ", prompt, suffix)
+	fmt.Fprintf(os.Stderr, "%s %s ", output.GetStyles().Bold.Render(prompt), suffix)
 	return readYesNo(os.Stdin, defaultYes)
+}
+
+// confirmInteractive renders a themed huh confirmation. A form error (including
+// Ctrl-C / huh.ErrUserAborted) declines the action, mirroring readYesNo's
+// fail-closed behavior so an interrupted prompt never edits the user's files.
+func confirmInteractive(prompt string, defaultYes bool) bool {
+	confirmed := defaultYes
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(prompt).
+				Affirmative("Yes").
+				Negative("No").
+				Value(&confirmed),
+		),
+	).WithTheme(getInstallTheme()).WithAccessible(!cli.ColorsEnabled())
+
+	if err := form.Run(); err != nil {
+		return false
+	}
+	return confirmed
 }
 
 // maxPromptInput bounds how much of stdin a single yes/no prompt will read. A
@@ -305,7 +342,7 @@ func runInitRC(pms []string) error {
 	}
 	for _, w := range order {
 		fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(strings.Join(shellsByWrapper[w], ", ")+":"))
-		fmt.Fprintf(os.Stderr, "%s\n", s.CodeBlock.Render(w))
+		fmt.Fprintf(os.Stderr, "%s\n", s.RenderCodeBlock(w))
 	}
 
 	if scInitDryRun {
@@ -314,7 +351,7 @@ func runInitRC(pms []string) error {
 	}
 
 	if !scInitYes {
-		if !promptYesNo(s.Bold.Render("Proceed?"), true) {
+		if !promptYesNo("Proceed?", true) {
 			fmt.Fprintf(os.Stderr, "Aborted.\n")
 			return nil
 		}
@@ -393,8 +430,8 @@ fail-open: false
 
 	if !scInitYes {
 		fmt.Fprintf(os.Stderr, "%s\n\n", s.SectionTitle.Render(fmt.Sprintf("Will create %s:", configPath)))
-		fmt.Fprintf(os.Stderr, "%s\n", s.CodeBlock.Render(content))
-		if !promptYesNo(s.Bold.Render("Proceed?"), true) {
+		fmt.Fprintf(os.Stderr, "%s\n", s.RenderCodeBlock(content))
+		if !promptYesNo("Proceed?", true) {
 			fmt.Fprintf(os.Stderr, "Aborted.\n")
 			return nil
 		}

@@ -18,6 +18,7 @@ const (
 const (
 	IconSuccess = "✓"
 	IconPointer = "►"
+	IconGutter  = "│" // Left bar for code/config blocks (see Styles.RenderCodeBlock)
 )
 
 // GetConfidenceIcon returns an icon based on confidence level
