@@ -669,20 +669,17 @@ func resolveWrapPolicy() supplychain.Policy {
 }
 
 // wrapEcosystemEnforced reports whether the config (searched upward from the
-// current directory) scopes enforcement to exclude this package manager's
-// ecosystem. It loads the config best-effort: any load error or absent config
-// means "enforce" (fail safe), matching resolveWrapPolicy's posture. Pass the
-// canonical PM name so versioned pip variants resolve correctly.
+// current directory) scopes enforcement to include this package manager's
+// ecosystem. It uses loadConfigUpward so unknown-ecosystem warnings are emitted
+// consistently with check/status. Any load error or absent config means
+// "enforce" (fail safe). Pass the canonical PM name so versioned pip variants
+// resolve correctly.
 func wrapEcosystemEnforced(canonicalPMName string) bool {
 	eco := pmToEcosystem(canonicalPMName)
 	if eco == "" {
 		return true
 	}
-	dir := supplychain.FindConfigDir(".")
-	if dir == "" {
-		return true
-	}
-	cfg, err := supplychain.LoadConfig(dir)
+	cfg, _, err := loadConfigUpward(".")
 	if err != nil || cfg == nil {
 		return true
 	}

@@ -564,6 +564,38 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 		return body, nil
 	}
 
+	// Populate the allowed map with the newest safe version so the wrap summary
+	// can report "→ 2.30.0 installed" instead of "no older safe version". PyPI
+	// file objects carry no explicit "version" field, so we parse it from the
+	// wheel/sdist filename (e.g. "requests-2.30.0-py3-none-any.whl" → "2.30.0").
+	// We skip pre-releases (alpha/beta/rc) and pick the newest stable version
+	// still in kept; ties go to the last one encountered (upload order is newest-
+	// first in the Simple API, so the first non-prerelease is the right pick).
+	if p.allowed != nil {
+		var bestVersion string
+		var bestAge time.Duration
+		for _, f := range kept {
+			fname := jsonString(f["filename"])
+			ver := pypiVersionFromFilename(fname)
+			if ver == "" || isPrerelease(ver) {
+				continue
+			}
+			age, ok := pypiFileAge(f["upload-time"], now)
+			if !ok {
+				continue
+			}
+			if bestVersion == "" || age < bestAge {
+				bestVersion = ver
+				bestAge = age
+			}
+		}
+		if bestVersion != "" {
+			p.allowedMu.Lock()
+			p.allowed[pkgName] = bestVersion
+			p.allowedMu.Unlock()
+		}
+	}
+
 	newFiles, err := json.Marshal(kept)
 	if err != nil {
 		return body, blocked
@@ -600,6 +632,25 @@ func pypiFileAge(raw json.RawMessage, now time.Time) (time.Duration, bool) {
 		}
 	}
 	return now.Sub(t), true
+}
+
+// pypiVersionFromFilename extracts the version component from a wheel or sdist
+// filename. Wheel names follow "{name}-{version}-..." and sdists follow
+// "{name}-{version}.tar.gz" (or .zip). Returns "" if the pattern does not match.
+func pypiVersionFromFilename(filename string) string {
+	// Strip the file extension first so split position is consistent.
+	name := filename
+	for _, ext := range []string{".whl", ".tar.gz", ".zip", ".tar.bz2", ".egg"} {
+		if strings.HasSuffix(name, ext) {
+			name = name[:len(name)-len(ext)]
+			break
+		}
+	}
+	parts := strings.SplitN(name, "-", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // jsonString decodes a JSON string value, returning "" for absent or non-string

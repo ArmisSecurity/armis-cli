@@ -1171,6 +1171,59 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 	})
 }
 
+func TestProxyFilterPyPISimple_AllowedPopulated(t *testing.T) {
+	// Proxy.Allowed() must be populated with the newest stable safe version so
+	// the wrap summary can report "→ 2.31.0 installed" rather than "no older
+	// safe version" for pip/uv installs.
+	now := time.Now()
+	old1 := now.Add(-60 * 24 * time.Hour).UTC().Format(time.RFC3339) // 2.30.0
+	old2 := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339) // 2.31.0 — newer of the two safe versions
+	young := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)      // 2.32.0 — blocked
+
+	p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, Mode: ModePyPI})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	body := pypiSimpleBody("requests", []struct{ filename, uploadTime string }{
+		{"requests-2.30.0-py3-none-any.whl", old1},
+		{"requests-2.31.0-py3-none-any.whl", old2},
+		{"requests-2.32.0-py3-none-any.whl", young},
+	})
+	_, blocked := p.filterPyPISimple([]byte(body), "requests")
+	if len(blocked) != 1 {
+		t.Fatalf("expected 1 blocked file, got %d: %+v", len(blocked), blocked)
+	}
+
+	allowed := p.Allowed()
+	if len(allowed) != 1 || allowed[0].Name != "requests" || allowed[0].Version != "2.31.0" {
+		t.Errorf("Allowed() = %+v, want [{requests 2.31.0}]", allowed)
+	}
+}
+
+func TestPypiVersionFromFilename(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"requests-2.31.0-py3-none-any.whl", "2.31.0"},
+		{"requests-2.31.0.tar.gz", "2.31.0"},
+		{"Flask-3.0.0-py3-none-any.whl", "3.0.0"},
+		{"numpy-1.26.2-cp312-cp312-manylinux_2_17_x86_64.whl", "1.26.2"},
+		{"setuptools-68.0.0.tar.gz", "68.0.0"},
+		{"pkg-1.0.0a1-py3-none-any.whl", "1.0.0a1"},
+		{"noversion.whl", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			if got := pypiVersionFromFilename(tt.filename); got != tt.want {
+				t.Errorf("pypiVersionFromFilename(%q) = %q, want %q", tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractPyPIPackageNameFromPath(t *testing.T) {
 	tests := []struct {
 		path string
