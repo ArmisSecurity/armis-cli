@@ -190,7 +190,9 @@ permissions:
 
 ### Option 2: GitHub Action
 
-Use the action directly when you need more control over your workflow.
+Use the action directly when you need more control over your workflow. Pin to the major version
+tag (`@v1`) to automatically receive non-breaking updates, or pin to an exact version (`@v1.10.2`)
+or commit SHA for fully reproducible builds. See [Version Pinning](#supply-chain-security) below.
 
 > **Note:** The GitHub Action currently supports Linux and macOS runners only. For Windows runners (`windows-latest`), use [Option 3: Manual Installation](#option-3-manual-installation) with the PowerShell install script:
 >
@@ -212,7 +214,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Armis Security Scan
-        uses: ArmisSecurity/armis-cli@main
+        uses: ArmisSecurity/armis-cli@v1
         with:
           scan-type: repo
           client-id: ${{ secrets.ARMIS_CLIENT_ID }}
@@ -479,7 +481,7 @@ jobs:
         run: docker build -t myapp:${{ github.sha }} .
 
       - name: Run Armis Image Scan
-        uses: ArmisSecurity/armis-cli@main
+        uses: ArmisSecurity/armis-cli@v1
         with:
           scan-type: image
           scan-target: myapp:${{ github.sha }}
@@ -527,7 +529,7 @@ For images built in a previous job or CI step:
   run: docker save myapp:latest -o image.tar
 
 - name: Scan Image Tarball
-  uses: ArmisSecurity/armis-cli@main
+  uses: ArmisSecurity/armis-cli@v1
   with:
     scan-type: image
     image-tarball: image.tar
@@ -859,13 +861,18 @@ The reusable workflow's "Check for Failures" step differentiates between:
 
 ### Supply Chain Security
 
-- **Pin action versions** to specific tags or commit SHAs:
+- **Pin action versions** to a tag or commit SHA. The action publishes floating
+  major (`v1`) and minor (`v1.10`) tags that always point at the latest matching
+  release, so you can choose how much you want to track automatically:
 
   ```yaml
-  # Good: pinned to version
-  uses: ArmisSecurity/armis-cli@v1.0.0
+  # Good: floating major — receives non-breaking updates automatically
+  uses: ArmisSecurity/armis-cli@v1
 
-  # Better: pinned to commit SHA
+  # Good: pinned to an exact version — fully reproducible
+  uses: ArmisSecurity/armis-cli@v1.10.2
+
+  # Best: pinned to a commit SHA — immutable, recommended for high-security setups
   uses: ArmisSecurity/armis-cli@abc123def456
   ```
 

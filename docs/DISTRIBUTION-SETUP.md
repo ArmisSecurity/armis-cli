@@ -107,6 +107,48 @@ GoReleaser will automatically:
 - Update Homebrew tap formula
 - Update Scoop bucket manifest
 
+## 🛒 Publishing the GitHub Action to the Marketplace
+
+The repository ships a composite GitHub Action defined in the top-level
+[`action.yml`](../action.yml) (`name: Armis Security Scanner`). Consumers reference it as
+`uses: ArmisSecurity/armis-cli@v1`. Publishing it to the GitHub Marketplace is a **one-time
+manual step** done through the GitHub UI — it cannot be automated by the release workflow.
+
+### Prerequisites (already satisfied)
+
+- `action.yml` exists at the repository root with a unique `name`, a `description`, and a
+  `branding:` block (`icon: shield`, `color: blue`). GitHub requires `branding` for Marketplace
+  listing.
+- At least one release tag exists (the latest is created automatically by
+  [`release.yml`](../.github/workflows/release.yml)).
+
+### One-time publish steps
+
+1. Go to the repository's **Releases** page on GitHub and open (or draft) a release for the
+   latest version tag.
+2. Check **"Publish this Action to the GitHub Marketplace"**.
+3. Accept the GitHub Marketplace Developer Agreement (first time only).
+4. Choose a primary category of **Security** (and an optional secondary category such as
+   *Continuous integration*).
+5. Resolve any validation warnings GitHub surfaces (it re-validates `action.yml` and `branding`).
+6. Publish the release.
+
+### Versioning and floating tags
+
+The release workflow maintains **floating major and minor tags** (`v1`, `v1.10`) that always
+point at the latest matching stable release (see the `update-aliases` job in `release.yml`).
+This lets consumers pin at the level of stability they want:
+
+| Reference | Behavior |
+|-----------|----------|
+| `@v1` | Latest `v1.x.y` — non-breaking updates delivered automatically (recommended) |
+| `@v1.10` | Latest `v1.10.x` — patch updates only |
+| `@v1.10.2` | Exact version — fully reproducible |
+| `@<sha>` | Immutable commit pin — strongest supply-chain guarantee |
+
+Re-publishing to the Marketplace is only required when you want the Marketplace listing's
+"latest version" pointer to advance; the floating tags update on every release regardless.
+
 ## 📦 Installation Methods After Setup
 
 Once released, users can install via:

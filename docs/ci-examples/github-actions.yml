@@ -32,7 +32,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Armis Security Scan
-        uses: ArmisSecurity/armis-cli@main
+        # Pin to @v1 for non-breaking updates, or @v1.10.2 / a commit SHA for
+        # fully reproducible builds.
+        uses: ArmisSecurity/armis-cli@v1
         with:
           scan-type: repo
           scan-target: '.'

@@ -613,7 +613,9 @@ jobs:
 
 #### Option 2: GitHub Action
 
-Use the action directly for more control over your workflow:
+Use the action directly for more control over your workflow. Pin to the major version tag
+(`@v1`) to receive non-breaking updates automatically, or pin to an exact tag (`@v1.10.2`) or
+commit SHA for fully reproducible builds:
 
 ```yaml
 name: Security Scan
@@ -627,7 +629,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: ArmisSecurity/armis-cli@main
+      - uses: ArmisSecurity/armis-cli@v1
         with:
           scan-type: repo
           client-id: ${{ secrets.ARMIS_CLIENT_ID }}

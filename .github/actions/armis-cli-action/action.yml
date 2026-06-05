@@ -1,9 +1,19 @@
 ---
-name: 'Armis CLI Action'
+# DEPRECATED: This local composite action is superseded by the top-level
+# `action.yml` (published as `ArmisSecurity/armis-cli@v1`), which offers
+# structured inputs, checksum verification of the downloaded binary, and
+# scan-result outputs. Prefer:
+#
+#   uses: ArmisSecurity/armis-cli@v1
+#
+# This file is retained only for backward compatibility with existing
+# references and may be removed in a future major version.
+#
 # NOTE: This action supports Linux and macOS runners only.
 # For Windows runners, use the PowerShell install script directly:
 #   irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
-description: 'Run the Armis CLI in your workflow (Linux/macOS only)'
+name: 'Armis CLI Action (deprecated)'
+description: 'DEPRECATED — use ArmisSecurity/armis-cli@v1 instead. Run the Armis CLI in your workflow (Linux/macOS only)'
 author: 'ArmisSecurity'
 inputs:
   client-id:

@@ -18,11 +18,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
       - name: Run Armis CLI Action from Marketplace
-        uses: ArmisSecurity/armis-cli-action@v1
+        uses: ArmisSecurity/armis-cli@v1
         with:
+          scan-type: repo
+          scan-target: .
           client-id: ${{ secrets.ARMIS_CLIENT_ID }}
           client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
-          args: scan repo .
 
   scan-basic:
     name: Scan with Basic auth (legacy)
@@ -32,8 +33,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
       - name: Run Armis CLI Action from Marketplace
-        uses: ArmisSecurity/armis-cli-action@v1
+        uses: ArmisSecurity/armis-cli@v1
         with:
+          scan-type: repo
+          scan-target: .
           api-token: ${{ secrets.ARMIS_API_TOKEN }}
           tenant-id: ${{ secrets.ARMIS_TENANT_ID }}
-          args: scan repo .
