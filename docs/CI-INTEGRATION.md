@@ -42,7 +42,7 @@ on:
 
 jobs:
   scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
     secrets:
       client-id: ${{ secrets.ARMIS_CLIENT_ID }}
       client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
@@ -128,7 +128,7 @@ permissions:
 
 jobs:
   security-scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
     with:
       fail-on: 'CRITICAL,HIGH'
       pr-comment: true
@@ -192,7 +192,7 @@ permissions:
 
 Use the action directly when you need more control over your workflow. Pin to the major version
 tag (`@v1`) to automatically receive non-breaking updates, or pin to an exact version (`@v1.10.2`)
-or commit SHA for fully reproducible builds. See [Version Pinning](#supply-chain-security) below.
+or commit SHA for fully reproducible builds. See [Supply Chain Security](#supply-chain-security) below.
 
 > **Note:** The GitHub Action currently supports Linux and macOS runners only. For Windows runners (`windows-latest`), use [Option 3: Manual Installation](#option-3-manual-installation) with the PowerShell install script:
 >
@@ -343,7 +343,7 @@ jobs:
   security-scan:
     needs: get-changed-files
     if: needs.get-changed-files.outputs.any_changed == 'true'
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
     with:
       fail-on: 'CRITICAL,HIGH'
       include-files: ${{ needs.get-changed-files.outputs.files }}
@@ -378,7 +378,7 @@ permissions:
 
 jobs:
   scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
     with:
       fail-on: ''              # Don't fail - monitoring only
       pr-comment: false        # No PR context

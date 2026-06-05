@@ -42,18 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Gradle lockfile staleness detection (warns when `build.gradle` is newer than `gradle.lockfile`), Maven `pom.xml` partial-coverage notice (direct dependencies only), and a warning for unrecognized ecosystem names in the config.
   - The `ecosystems` config field accepts both `pipenv` (the tool name shown in `--help`) and `pipfile` (the internal name) so either spelling works.
   - The install summary reports each filtered package on one line showing the too-new version, its age, and the older version installed in its place (e.g. `axios 1.17.0 (1 day old) → 1.16.1 installed`). When every package resolves to a safe version it reads as a success; packages with no older safe version are called out individually. If the package manager itself does not complete (for example a dependency pins a version that only the filtered release satisfies), the summary reports the safe version as "available" rather than claiming it was installed, and explains how to relax or exclude the constraint. A one-time explanation of why fresh releases are withheld is shown on the first filtered install in an interactive terminal (suppressed thereafter and in CI).
-- Release pipeline now maintains floating major (`v1`) and minor (`v1.10`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#PR)
-- Documented the one-time GitHub Marketplace publishing steps for the Armis CLI Action in `docs/DISTRIBUTION-SETUP.md` (#PR)
+- Release pipeline now maintains floating major (`v1`) and minor (`v1.10`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#213)
+- Documented the one-time GitHub Marketplace publishing steps for the Armis CLI Action in `docs/DISTRIBUTION-SETUP.md` (#213)
 
 ### Changed
 
 - `supply-chain init`: now wraps every supported package manager found on your `PATH` instead of only the ones with a lockfile in the current directory. The injected shell functions are global (they apply in every directory), so detecting from the current project's lockfiles left gaps — e.g. running `init` in a Go repo wrapped only `npm`/`npx`, so a later `pip install` in a Python project ran unenforced. Detection is now machine-wide; per-project enforcement is still decided dynamically at install time from the nearest `.armis-supply-chain.yaml` (the `ecosystems` scope and policy are re-read on each install), so wrapping a package manager never forces enforcement where the project hasn't opted in. When no supported package manager is on `PATH`, `init` still falls back to wrapping `npm`/`npx`.
-- CI/CD documentation and example workflows now recommend pinning the GitHub Action to `@v1` instead of `@main` (#PR)
-- Marketplace sample workflow now references the repository's own `ArmisSecurity/armis-cli@v1` action with structured inputs (#PR)
+- CI/CD documentation and example workflows now recommend pinning the GitHub Action to `@v1` instead of `@main` (#213)
+- Marketplace sample workflow now references the repository's own `ArmisSecurity/armis-cli@v1` action with structured inputs (#213)
 
 ### Deprecated
 
-- The local composite action at `.github/actions/armis-cli-action/` is deprecated in favor of the top-level `action.yml` (`ArmisSecurity/armis-cli@v1`) (#PR)
+- The local composite action at `.github/actions/armis-cli-action/` is deprecated in favor of the top-level `action.yml` (`ArmisSecurity/armis-cli@v1`) (#213)
 
 ### Removed
 
