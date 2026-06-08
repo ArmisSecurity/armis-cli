@@ -18,6 +18,12 @@ const (
 	markerEnd   = "# <<< armis-cli supply-chain <<<"
 )
 
+// cliBinaryName is the armis-cli executable name. resolveCliPath embeds it in
+// the generated wrappers (preferring this bare, PATH-resolved name so upgrades
+// stay transparent) and uses it to probe $PATH; centralizing the literal keeps
+// the two in sync.
+const cliBinaryName = "armis-cli"
+
 // goosWindows is runtime.GOOS on Windows. Centralized so the several
 // platform guards across this package (and its tests) share one literal.
 const goosWindows = "windows"
@@ -114,8 +120,28 @@ func generatePosixWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range sanitizePMNames(pms) {
-		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped
-		fmt.Fprintf(&b, "%s() {\n  command %s supply-chain wrap %s \"$@\"\n}\n", pm, safeCli, pm)
+		// The guard makes the wrapper fail-closed: if armis-cli is not resolvable
+		// at invocation time (e.g. a stale absolute path left by a package-manager
+		// upgrade), the wrapper warns loudly on stderr and runs the real package
+		// manager un-wrapped rather than failing the command outright.
+		//
+		// Two checks, because resolveCliPath() may embed either a bare name or an
+		// absolute path: `[ -x %s ]` reliably accepts an executable at an absolute
+		// path (POSIX `command -v` with a slash-containing argument is unspecified
+		// and some shells report it missing even when it exists), while `command -v`
+		// handles the bare-name PATH lookup. For a bare name `[ -x ]` checks the CWD
+		// (normally absent) and falls through to the PATH lookup.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; both `[ -x ]` and `command -v` are used only for presence detection and their output is discarded
+		fmt.Fprintf(&b,
+			"%s() {\n"+
+				"  if [ -x %s ] || command -v %s >/dev/null 2>&1; then\n"+
+				"    command %s supply-chain wrap %s \"$@\"\n"+
+				"  else\n"+
+				"    printf '[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement\\n' >&2\n"+
+				"    command %s \"$@\"\n"+
+				"  fi\n"+
+				"}\n",
+			pm, safeCli, safeCli, safeCli, pm, pm, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
@@ -128,8 +154,29 @@ func generateFishWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range sanitizePMNames(pms) {
-		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped
-		fmt.Fprintf(&b, "function %s\n  command %s supply-chain wrap %s $argv\nend\n", pm, safeCli, pm)
+		// The guard makes the wrapper fail-closed: if armis-cli is not resolvable
+		// at invocation time (e.g. a stale absolute path left by a package-manager
+		// upgrade), the wrapper warns loudly on stderr and runs the real package
+		// manager un-wrapped rather than failing the command outright.
+		//
+		// Two checks, because resolveCliPath() may embed either a bare name or an
+		// absolute path: `test -x %s` reliably accepts an executable at an absolute
+		// path (fish's `command -q` with a slash-containing argument is unspecified
+		// across versions and can report it missing even when it exists), while
+		// `command -q`/`--query` (fish 3.0+) handles the bare-name PATH lookup and
+		// emits no output. For a bare name `test -x` checks the CWD (normally
+		// absent) and falls through to the PATH lookup.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; both `test -x` and `command -q` are used only for presence detection and their output is discarded
+		fmt.Fprintf(&b,
+			"function %s\n"+
+				"  if test -x %s; or command -q %s\n"+
+				"    command %s supply-chain wrap %s $argv\n"+
+				"  else\n"+
+				"    printf '[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement\\n' >&2\n"+
+				"    command %s $argv\n"+
+				"  end\n"+
+				"end\n",
+			pm, safeCli, safeCli, safeCli, pm, pm, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
@@ -139,20 +186,37 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// resolveCliPath returns the most upgrade-proof reference to the armis-cli
+// binary to embed in the generated shell wrapper functions.
+//
+// Priority order:
+//  1. The bare name "armis-cli" when it is resolvable on $PATH. The shell
+//     re-resolves the name on every invocation, so a package-manager upgrade
+//     (e.g. `brew upgrade armis-cli`, which moves the binary into a new
+//     versioned directory) is transparent — the wrapper never embeds a
+//     version-pinned path that a later upgrade would delete.
+//  2. Otherwise the stable absolute path from filepath.Abs(os.Executable()).
+//     We deliberately do NOT call filepath.EvalSymlinks here: on a Homebrew
+//     install os.Executable() reports the stable /opt/homebrew/bin/armis-cli
+//     symlink, and resolving it would pin the wrapper to the versioned Cellar
+//     path (…/Cellar/armis-cli/<version>/bin/armis-cli) that `brew upgrade`
+//     removes, breaking every wrapped package manager.
+//  3. The literal "armis-cli" if os.Executable() fails — better a PATH-resolved
+//     name than nothing.
 func resolveCliPath() string {
+	// armis:ignore cwe:426 cwe:427 reason:cliBinaryName is the hardcoded literal "armis-cli", not user input; supply-chain init configures the current user's own interactive shell, whose $PATH is not a trust boundary for a local CLI. The generated wrapper already resolves the package manager itself by bare name (e.g. `command npm`), so embedding the bare armis-cli name adds no search-path exposure the shell does not already have — an attacker able to write to a $PATH dir could shadow npm/pip directly.
+	if IsOnPath(cliBinaryName) {
+		return cliBinaryName
+	}
 	exe, err := os.Executable()
 	if err != nil {
-		return "armis-cli"
+		return cliBinaryName
 	}
 	abs, err := filepath.Abs(exe)
 	if err != nil {
 		return exe
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return abs
-	}
-	return resolved
+	return abs
 }
 
 func InjectFunctions(shells []Shell, pms []string) ([]string, error) {
