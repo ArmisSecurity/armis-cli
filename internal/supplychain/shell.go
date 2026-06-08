@@ -189,6 +189,7 @@ func shellQuote(s string) string {
 //  3. The literal "armis-cli" if os.Executable() fails — better a PATH-resolved
 //     name than nothing.
 func resolveCliPath() string {
+	// armis:ignore cwe:426 cwe:427 reason:cliBinaryName is the hardcoded literal "armis-cli", not user input; supply-chain init configures the current user's own interactive shell, whose $PATH is not a trust boundary for a local CLI. The generated wrapper already resolves the package manager itself by bare name (e.g. `command npm`), so embedding the bare armis-cli name adds no search-path exposure the shell does not already have — an attacker able to write to a $PATH dir could shadow npm/pip directly.
 	if IsOnPath(cliBinaryName) {
 		return cliBinaryName
 	}
