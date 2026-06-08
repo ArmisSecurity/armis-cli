@@ -1,4 +1,9 @@
-package cmd
+// Package cmdutil holds command plumbing shared across the cmd package and its
+// subpackages (e.g. supplychain). It exists to break what would otherwise be an
+// import cycle: cmd imports its command subpackages to wire them into the root
+// command, so those subpackages cannot import cmd back. Helpers both sides need
+// live here, the one package both can import.
+package cmdutil
 
 import (
 	"io"
@@ -44,7 +49,7 @@ func (c *OutputConfig) Cleanup() {
 //
 // Example usage:
 //
-//	cfg, err := ResolveOutput(cmd, outputFile, format, colorFlag)
+//	cfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)
 //	if err != nil {
 //	    return err
 //	}

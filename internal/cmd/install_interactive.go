@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/charmbracelet/huh"
@@ -14,7 +15,7 @@ import (
 )
 
 func runInteractiveInstall(force bool) error {
-	theme := getInstallTheme()
+	theme := cmdutil.GetInstallTheme()
 	accessible := !cli.ColorsEnabled()
 
 	fmt.Fprintln(os.Stderr, "")
@@ -22,8 +23,8 @@ func runInteractiveInstall(force bool) error {
 		fmt.Fprintln(os.Stderr, "  Armis AppSec MCP Server Setup")
 		fmt.Fprintln(os.Stderr, "  ─────────────────────────────")
 	} else {
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
-		borderStyle := lipgloss.NewStyle().Foreground(brandSeparator)
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(cmdutil.BrandAccent)
+		borderStyle := lipgloss.NewStyle().Foreground(cmdutil.BrandSeparator)
 		fmt.Fprintf(os.Stderr, "  %s\n", titleStyle.Render("Armis AppSec MCP Server Setup"))
 		fmt.Fprintf(os.Stderr, "  %s\n", borderStyle.Render("─────────────────────────────"))
 	}
@@ -52,9 +53,9 @@ func runInteractiveInstall(force bool) error {
 	if accessible {
 		successMark, failMark, warnMark = "[OK]", "[FAIL]", "[WARN]"
 	} else {
-		successMark = lipgloss.NewStyle().Foreground(brandSuccess).Render("✓")
-		failMark = lipgloss.NewStyle().Foreground(brandError).Render("✗")
-		warnMark = lipgloss.NewStyle().Foreground(brandWarn).Render("⚠")
+		successMark = lipgloss.NewStyle().Foreground(cmdutil.BrandSuccess).Render("✓")
+		failMark = lipgloss.NewStyle().Foreground(cmdutil.BrandError).Render("✗")
+		warnMark = lipgloss.NewStyle().Foreground(cmdutil.BrandWarn).Render("⚠")
 	}
 
 	fmt.Fprintln(os.Stderr, "")
@@ -219,7 +220,7 @@ func runInteractiveInstall(force bool) error {
 			fmt.Fprintln(os.Stderr, "    Run 'armis-cli hook init' in other repos for pre-commit coverage.")
 		}
 	} else {
-		dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
+		dimStyle := lipgloss.NewStyle().Foreground(cmdutil.BrandMuted)
 		fmt.Fprintln(os.Stderr, dimStyle.Render("  Next steps:"))
 		fmt.Fprintln(os.Stderr, dimStyle.Render("    Restart your editors to activate the MCP server."))
 		if installPreCommit {
@@ -347,7 +348,7 @@ func validateAndReport(clientID, clientSecret string, accessible bool) error {
 		if accessible {
 			fmt.Fprintln(os.Stderr, "[FAIL]")
 		} else {
-			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandError).Render("✗"))
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(cmdutil.BrandError).Render("✗"))
 		}
 		for _, line := range strings.Split(err.Error(), "\n") {
 			fmt.Fprintf(os.Stderr, "  %s\n", line)
@@ -358,7 +359,7 @@ func validateAndReport(clientID, clientSecret string, accessible bool) error {
 	if accessible {
 		fmt.Fprintln(os.Stderr, "[OK]")
 	} else {
-		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(brandSuccess).Render("✓"))
+		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(cmdutil.BrandSuccess).Render("✓"))
 	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil
@@ -477,7 +478,7 @@ func offerHookSetup(theme *huh.Theme, accessible bool, hasClaude bool) ([]instal
 			if accessible {
 				fmt.Fprintln(os.Stderr, "  No hook-capable AI clients detected. Skipping hook setup.")
 			} else {
-				dimStyle := lipgloss.NewStyle().Foreground(brandMuted)
+				dimStyle := lipgloss.NewStyle().Foreground(cmdutil.BrandMuted)
 				fmt.Fprintln(os.Stderr, dimStyle.Render("  No hook-capable AI clients detected. Skipping hook setup."))
 			}
 		}

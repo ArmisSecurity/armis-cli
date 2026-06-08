@@ -56,6 +56,9 @@ func TestRequiresPreInstallBlock(t *testing.T) {
 		{pmPip, false},
 		{pmUV, false},
 		{pmNPM, false},
+		// npx is the npm runner: like npm it uses the transparent proxy, never the
+		// pre-install lockfile audit (it has no lockfile of its own).
+		{pmNPX, false},
 		{pmPNPM, false},
 		{pmBun, false},
 		{pmYarn, false},
@@ -81,10 +84,13 @@ func TestPmToEcosystem(t *testing.T) {
 		{pmMaven, supplychain.EcosystemMaven},
 		{pmGradle, supplychain.EcosystemGradle},
 		// pmToEcosystem maps every supported PM to its ecosystem — the proxied
-		// ones (npm/pnpm/bun/yarn/pip/uv) as well as the pre-install ones — so the
+		// ones (npm/npx/pnpm/bun/yarn/pip/uv) as well as the pre-install ones — so the
 		// config "ecosystems" scoping gate can classify any wrapped PM. Pass the
 		// canonical name; a versioned pip variant resolves to pip via canonicalPM.
 		{pmNPM, supplychain.EcosystemNPM},
+		// npx maps to the npm ecosystem so the config "ecosystems" scoping gate
+		// treats it exactly like npm (scoping npm in/out includes npx too).
+		{pmNPX, supplychain.EcosystemNPM},
 		{pmPNPM, supplychain.EcosystemPNPM},
 		{pmBun, supplychain.EcosystemBun},
 		{pmYarn, supplychain.EcosystemYarn},
@@ -116,6 +122,8 @@ func TestRegistryEnvForPM(t *testing.T) {
 		wantVal string
 	}{
 		{pmNPM, "npm_config_registry", url},
+		// npx resolves from the npm registry, so it gets the same env override as npm.
+		{pmNPX, "npm_config_registry", url},
 		{pmPNPM, "npm_config_registry", url},
 		{pmBun, "BUN_CONFIG_REGISTRY", url},
 		{pmYarn, "YARN_NPM_REGISTRY_SERVER", url},

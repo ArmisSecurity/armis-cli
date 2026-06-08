@@ -464,7 +464,7 @@ The `supply-chain` command enforces a minimum **release age** on your dependenci
 
 No Armis Cloud authentication is required: `supply-chain` queries public registries (npm, PyPI, Maven Central) directly.
 
-**Supported ecosystems:** npm, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
+**Supported ecosystems:** npm, npx, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
 
 ### Audit a lockfile (CI)
 

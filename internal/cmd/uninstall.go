@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -67,11 +68,11 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 
 	var titleStyle, separatorStyle, successMark, warnMark, dimStyle lipgloss.Style
 	if styled {
-		titleStyle = lipgloss.NewStyle().Bold(true).Foreground(brandAccent)
-		separatorStyle = lipgloss.NewStyle().Foreground(brandSeparator)
-		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
-		warnMark = lipgloss.NewStyle().Foreground(brandWarn)
-		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
+		titleStyle = lipgloss.NewStyle().Bold(true).Foreground(cmdutil.BrandAccent)
+		separatorStyle = lipgloss.NewStyle().Foreground(cmdutil.BrandSeparator)
+		successMark = lipgloss.NewStyle().Foreground(cmdutil.BrandSuccess)
+		warnMark = lipgloss.NewStyle().Foreground(cmdutil.BrandWarn)
+		dimStyle = lipgloss.NewStyle().Foreground(cmdutil.BrandMuted)
 	}
 
 	if !force {
@@ -194,10 +195,10 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 
 	var successMark, failMark, warnMark, dimStyle lipgloss.Style
 	if styled {
-		successMark = lipgloss.NewStyle().Foreground(brandSuccess)
-		failMark = lipgloss.NewStyle().Foreground(brandError)
-		warnMark = lipgloss.NewStyle().Foreground(brandWarn)
-		dimStyle = lipgloss.NewStyle().Foreground(brandMuted)
+		successMark = lipgloss.NewStyle().Foreground(cmdutil.BrandSuccess)
+		failMark = lipgloss.NewStyle().Foreground(cmdutil.BrandError)
+		warnMark = lipgloss.NewStyle().Foreground(cmdutil.BrandWarn)
+		dimStyle = lipgloss.NewStyle().Foreground(cmdutil.BrandMuted)
 	}
 
 	printSuccess := func(msg string) {

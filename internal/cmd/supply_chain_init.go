@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/charmbracelet/huh"
@@ -25,11 +27,14 @@ var scInitCmd = &cobra.Command{
 	Short: "Set up local package age enforcement",
 	Long: `Configure your shell to enforce package release age policies during installations.
 
-This wraps your package manager (auto-detected from lockfiles) so that armis-cli
-can enforce age policies on package installations. Node PMs (npm, pnpm, bun, yarn)
-and pip/uv use a transparent proxy that filters registry responses. poetry, pipenv,
-pdm, mvn, and gradle use a pre-install check that blocks the build if violations
-are found.
+This wraps every supported package manager found on your PATH so that armis-cli
+can enforce age policies on package installations. The shell functions are global
+(they apply in every directory), so init wraps what is installed on the machine,
+not just what a single project uses; whether enforcement actually runs is decided
+per-project at install time from the nearest .armis-supply-chain.yaml. Node PMs
+(npm, npx, pnpm, bun, yarn) and pip/uv use a transparent proxy that filters
+registry responses. poetry, pipenv, pdm, mvn, and gradle use a pre-install check
+that blocks the build if violations are found.
 
 Four modes are available:
   rc     — Inject shell functions into ~/.bashrc / ~/.zshrc (default, interactive)
@@ -80,15 +85,15 @@ func runSupplyChainInit(_ *cobra.Command, _ []string) error {
 		// until that file exists, so it also skips PM detection.
 		return runInitConfig()
 	case "env", "rc":
-		pms, detected := detectWrappablePMs()
+		pms, installed := detectWrappablePMs()
 		if len(pms) == 0 {
-			// Lockfiles were detected, but the config's `ecosystems` scope excludes
-			// every one — there is nothing in scope to wrap. Report it plainly
-			// instead of falling back to npm: wrapping an ecosystem the user
-			// deliberately scoped enforcement away from would modify their RC files
-			// (rc) or emit an eval they didn't ask for (env), contradicting init's
-			// stated "only wraps in-scope package managers" behavior.
-			return reportNothingInScope(detected)
+			// Package managers were found on PATH, but the config's `ecosystems`
+			// scope excludes every one — there is nothing in scope to wrap. Report
+			// it plainly instead of falling back to npm: wrapping an ecosystem the
+			// user deliberately scoped enforcement away from would modify their RC
+			// files (rc) or emit an eval they didn't ask for (env), contradicting
+			// init's stated "only wraps in-scope package managers" behavior.
+			return reportNothingInScope(installed)
 		}
 		if scInitMode == "rc" {
 			return runInitRC(pms)
@@ -99,57 +104,69 @@ func runSupplyChainInit(_ *cobra.Command, _ []string) error {
 	}
 }
 
-// reportNothingInScope explains that lockfiles were found but the config's
-// `ecosystems` scope excludes all of them, so init has nothing to set up. It
-// returns nil (not an error): scoping enforcement away from every detected
-// ecosystem is a legitimate user choice, so exiting 0 with guidance is the
-// correct, CI-friendly outcome.
-func reportNothingInScope(detected []supplychain.DetectedEcosystem) error {
+// reportNothingInScope explains that package managers were found on PATH but the
+// config's `ecosystems` scope excludes all of them, so init has nothing to set
+// up. It returns nil (not an error): scoping enforcement away from every
+// installed ecosystem is a legitimate user choice, so exiting 0 with guidance is
+// the correct, CI-friendly outcome. installed is the raw list of PM command
+// names found on PATH (e.g. ["npm", "pip3"]).
+func reportNothingInScope(installed []string) error {
 	s := output.GetStyles()
-
-	seen := make(map[string]bool)
-	names := make([]string, 0, len(detected))
-	for _, e := range detected {
-		n := string(e.Ecosystem)
-		if n == "" || seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
-	}
 
 	fmt.Fprintf(os.Stderr, "%s No package managers in scope to wrap.\n\n", s.WarningText.Render("⚠"))
 	fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(fmt.Sprintf(
-		"Detected %s, but the `ecosystems` scope in %s excludes all of them.",
-		strings.Join(names, ", "), supplychain.ConfigFileName)))
+		"Found %s on PATH, but the `ecosystems` scope in %s excludes all of them.",
+		strings.Join(installed, ", "), supplychain.ConfigFileName)))
 	fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(
 		"Add one of them to that list (or remove the `ecosystems` key to enforce all) to set up enforcement."))
 	return nil
 }
 
-// detectWrappablePMs returns the package managers init should wrap, plus the
-// raw list of ecosystems that were detected. The two return values let the
-// caller tell apart two cases that both yield an empty PM list:
+// allSupportedPMs is the set of fixed package-manager command names init looks
+// for on PATH. pip is intentionally omitted: its variants (pip, pip3, pip3.12)
+// are matched by pattern inside DetectInstalledPMs, since each interpreter ships
+// its own pip binary. npx is omitted too — it is not detected directly but paired
+// with npm below, mirroring how the wrap gate treats it as part of the npm
+// ecosystem.
+var allSupportedPMs = []string{
+	pmNPM, pmPNPM, pmBun, pmYarn,
+	pmUV, pmPoetry, pmPipenv, pmPDM,
+	pmMaven, pmGradle,
+}
+
+// detectWrappablePMs returns the package managers init should wrap, plus the raw
+// list of package-manager commands found on PATH. Detection is PATH-based, not
+// lockfile-based: the shell functions init injects are global (they shadow the
+// command in every directory), so the wrapper set should reflect what is
+// installed on the machine rather than which lockfiles happen to sit in the
+// current directory. Per-project enforcement is still decided dynamically at wrap
+// time from the nearest config and policy.
 //
-//   - No lockfiles at all (detected is empty): DetectEcosystems errored, so we
-//     fall back to npm and the returned PM slice is non-empty.
-//   - Lockfiles present but all scoped out (detected is non-empty, PM slice
-//     empty): the config's `ecosystems` key excludes every detected ecosystem.
-//     The caller reports this instead of wrapping something out of scope.
-func detectWrappablePMs() (pms []string, detected []supplychain.DetectedEcosystem) {
-	ecosystems, err := supplychain.DetectEcosystems(".")
-	if err != nil {
-		// DetectEcosystems errors when no supported lockfile is present, or when
-		// a lockfile exists but can't be stat'd (permissions/I/O). Either way,
-		// default to npm so the generated wrapper still protects the most common
-		// package manager rather than silently wrapping nothing. detected stays
-		// empty, signaling "no lockfiles" rather than "scoped out".
-		return []string{pmNPM}, nil
+// The two return values let the caller tell apart two cases that both yield an
+// empty PM list:
+//
+//   - Nothing installed (installed is empty): no supported PM is on PATH, so we
+//     fall back to npm (and its runner npx) and the returned PM slice is
+//     non-empty.
+//   - PMs installed but all scoped out (installed is non-empty, PM slice empty):
+//     the config's `ecosystems` key excludes every installed ecosystem. The
+//     caller reports this instead of wrapping something out of scope.
+func detectWrappablePMs() (pms []string, installed []string) {
+	installed = supplychain.DetectInstalledPMs(allSupportedPMs)
+	if len(installed) == 0 {
+		// No supported package manager is on PATH. Default to npm (and its runner
+		// npx) so the generated wrapper still protects the most common package
+		// manager rather than silently wrapping nothing — and so a one-off
+		// `npx <pkg>` in a machine where npm was not on the scanned PATH (e.g. a
+		// minimal CI image generating an eval block) is still guarded. installed
+		// stays empty, signaling "nothing found" rather than "scoped out".
+		return []string{pmNPM, pmNPX}, nil
 	}
 
 	// Honor the config's "ecosystems" scope so init only wraps the package
-	// managers the user opted to enforce. Loaded best-effort: a nil config (none
-	// found, or load error) enforces everything, matching the check/wrap gates.
+	// managers the user opted to enforce. Loaded best-effort from the current
+	// directory upward: a nil config (none found, or load error) enforces
+	// everything, matching the check/wrap gates.
 	var cfg *supplychain.Config
 	if dir := supplychain.FindConfigDir("."); dir != "" {
 		cfg, _ = supplychain.LoadConfig(dir)
@@ -165,58 +182,94 @@ func detectWrappablePMs() (pms []string, detected []supplychain.DetectedEcosyste
 		pms = append(pms, pm)
 	}
 
-	for _, e := range ecosystems {
+	for _, pm := range installed {
+		// Map each command back to its ecosystem so the config scope applies. pip
+		// variants (pip3, pip3.12) canonicalize to the pip ecosystem; an unknown
+		// name (shouldn't happen — installed comes from our own scan) maps to "" and
+		// is enforced by default.
+		eco := pmToEcosystem(canonicalPM(pm))
 		// armis:ignore cwe:476 reason:EnforcesEcosystem has an explicit nil-receiver guard (returns true when c==nil), so calling it on a nil cfg is safe by design
-		if !cfg.EnforcesEcosystem(e.Ecosystem) {
-			continue
-		}
-		pm := ecosystemToPM(e.Ecosystem)
-		// A bare requirements.txt is installed with pip, which can be present
-		// under several names (pip, pip3, pip3.12). Wrap every variant on PATH
-		// so enforcement holds regardless of which one the user invokes.
-		if pm == pmPip {
-			for _, variant := range supplychain.DetectPipVariants() {
-				addPM(variant)
-			}
+		if eco != "" && !cfg.EnforcesEcosystem(eco) {
 			continue
 		}
 		addPM(pm)
 	}
 
-	// An empty pms here means every detected ecosystem was scoped out (or none
-	// mapped to a PM). We deliberately do NOT fall back to npm: the caller uses
-	// the non-empty `ecosystems` to report that nothing is in scope, rather than
-	// wrapping a package manager the user asked enforcement to skip.
-	return pms, ecosystems
+	// npx ships with npm and resolves from the same registry, so wherever npm is
+	// wrapped its runner should be too: `npx <pkg>` downloads and executes a
+	// package on demand, exactly the supply-chain vector the proxy guards. Pair it
+	// here (after scoping) so it inherits npm's in-scope decision — when npm was
+	// excluded by the `ecosystems` config it stays out, keeping the two in lockstep.
+	// Guard with a PATH check: if npx is not installed, wrapping it would shadow
+	// "command not found" with an Armis wrapper error. Use IsOnPath (single
+	// exec.LookPath call) rather than DetectInstalledPMs which also enumerates
+	// pip variants — unnecessary overhead for a single fixed-name check.
+	if seen[pmNPM] && supplychain.IsOnPath(pmNPX) {
+		addPM(pmNPX)
+	}
+
+	// An empty pms here means every installed PM was scoped out. We deliberately do
+	// NOT fall back to npm: the caller uses the non-empty `installed` list to report
+	// that nothing is in scope, rather than wrapping a package manager the user
+	// asked enforcement to skip.
+	return pms, installed
 }
 
-func ecosystemToPM(eco supplychain.Ecosystem) string {
-	switch eco {
-	case supplychain.EcosystemNPM:
-		return pmNPM
-	case supplychain.EcosystemPNPM:
-		return pmPNPM
-	case supplychain.EcosystemBun:
-		return pmBun
-	case supplychain.EcosystemYarn:
-		return pmYarn
-	case supplychain.EcosystemPip:
-		return pmPip
-	case supplychain.EcosystemPoetry:
-		return pmPoetry
-	case supplychain.EcosystemPipfile:
-		return pmPipenv
-	case supplychain.EcosystemPDM:
-		return pmPDM
-	case supplychain.EcosystemUV:
-		return pmUV
-	case supplychain.EcosystemMaven:
-		return pmMaven
-	case supplychain.EcosystemGradle:
-		return pmGradle
-	default:
-		return ""
+// summarizeDetectedPMs renders the wrapped package managers as a compact,
+// human-readable summary for the init preview. It exists to answer the obvious
+// question the raw wrapper block raises — "were these detected, or did init just
+// add everything it supports?" — by surfacing exactly what was found on PATH:
+//
+//   - pip's interpreter-specific variants (pip3, pip3.11, pip3.12, …) collapse
+//     into a single "pip (N variants)" entry. A multi-Python machine can expose a
+//     dozen of these; listing each by name would bury the summary even though they
+//     all resolve to PyPI and share one policy. The verbatim wrapper block below
+//     still names every variant, so no information is lost — this is the digest.
+//   - npx is annotated "(paired with npm)" rather than listed as a plain find,
+//     because it is the one entry init adds without detecting it: it ships with
+//     npm and is wrapped wherever npm is in scope (see detectWrappablePMs). Making
+//     that explicit keeps the summary honest about what was on PATH vs. inferred.
+//
+// Remaining names are shown as-is, bolded, in sorted order so the line is stable
+// regardless of PATH scan order or where npx was appended.
+func summarizeDetectedPMs(s *output.Styles, pms []string) string {
+	var others []string
+	pipVariants := 0
+	hasNPX := false
+
+	for _, pm := range pms {
+		switch {
+		case pm == pmNPX:
+			hasNPX = true
+		case supplychain.IsPipVariant(pm):
+			pipVariants++
+		default:
+			others = append(others, pm)
+		}
 	}
+	sort.Strings(others)
+
+	parts := make([]string, 0, len(others)+2)
+	for _, pm := range others {
+		parts = append(parts, s.Bold.Render(pm))
+	}
+	if pipVariants > 0 {
+		label := s.Bold.Render(pmPip)
+		// Only flag the variant count when there is more than one binary; a lone
+		// "pip" needs no "(1 variant)" noise.
+		if pipVariants > 1 {
+			label += s.MutedText.Render(fmt.Sprintf(" (%d variants)", pipVariants))
+		}
+		parts = append(parts, label)
+	}
+	if hasNPX {
+		parts = append(parts, s.Bold.Render(pmNPX)+s.MutedText.Render(" (paired with npm)"))
+	}
+
+	// Keep pip and npx at the end of the line: pip carries a parenthetical and npx
+	// is the inferred entry, so trailing them reads more naturally than interleaving
+	// by alphabetical position.
+	return strings.Join(parts, ", ")
 }
 
 // promptYesNo asks the user a yes/no question and reports their answer.
@@ -257,7 +310,7 @@ func confirmInteractive(prompt string, defaultYes bool) bool {
 				Negative("No").
 				Value(&confirmed),
 		),
-	).WithTheme(getInstallTheme()).WithAccessible(!cli.ColorsEnabled())
+	).WithTheme(cmdutil.GetInstallTheme()).WithAccessible(!cli.ColorsEnabled())
 
 	if err := form.Run(); err != nil {
 		return false
@@ -368,12 +421,39 @@ func runInitRC(pms []string) error {
 		return fmt.Errorf("no supported shells detected (bash, zsh, or fish)")
 	}
 
+	// Short-circuit: if every detected shell already has the exact wrapper we
+	// would inject (same binary path, same PM set), nothing needs to change.
+	if !scInitDryRun {
+		alreadyDone := true
+		for _, sh := range shells {
+			if !supplychain.HasCurrentInjection(sh.RCFile, sh.Name, pms) {
+				alreadyDone = false
+				break
+			}
+		}
+		if alreadyDone {
+			fmt.Fprintf(os.Stderr, "%s Supply chain wrappers already configured — nothing to do.\n", s.SuccessText.Render(output.IconSuccess))
+			fmt.Fprintf(os.Stderr, "%s %s\n", s.MutedText.Render("Undo:  "), s.Bold.Render("armis-cli supply-chain uninit"))
+			return nil
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "%s ", s.MutedText.Render("Detected shell(s):"))
 	names := make([]string, 0, len(shells))
 	for _, sh := range shells {
 		names = append(names, s.Bold.Render(sh.Name)+" ("+sh.RCFile+")")
 	}
-	fmt.Fprintf(os.Stderr, "%s\n\n", strings.Join(names, ", "))
+	fmt.Fprintf(os.Stderr, "%s\n", strings.Join(names, ", "))
+
+	// Mirror the shell line with a package-manager line so the user can see what
+	// init found on their PATH before the wrapper preview, rather than inferring it
+	// from the function block. This is the answer to "did we detect these or just
+	// add everything we support?": only PMs actually on PATH appear, npx is marked
+	// as paired (it ships with npm; it is not detected), and pip's interpreter
+	// variants are folded into one entry so a multi-Python machine does not bury
+	// the summary under a dozen near-identical names.
+	fmt.Fprintf(os.Stderr, "%s %s\n\n",
+		s.MutedText.Render("Package manager(s) to wrap:"), summarizeDetectedPMs(s, pms))
 
 	// Preview each distinct wrapper. bash/zsh share the posix wrapper while fish
 	// uses different syntax, so group shells by the wrapper they produce to keep
@@ -382,6 +462,7 @@ func runInitRC(pms []string) error {
 	var order []string
 	shellsByWrapper := make(map[string][]string)
 	for _, sh := range shells {
+		// armis:ignore cwe:78 cwe:77 reason:pms flows through sanitizePMNames inside GenerateWrapper (^[a-z][a-z0-9-]*(\.[0-9]+)?$), so no shell metacharacter can reach the generated wrapper string
 		w := supplychain.GenerateWrapper(sh.Name, pms)
 		if _, seen := shellsByWrapper[w]; !seen {
 			order = append(order, w)
@@ -405,6 +486,7 @@ func runInitRC(pms []string) error {
 		}
 	}
 
+	// armis:ignore cwe:78 cwe:77 reason:pms flows through sanitizePMNames inside InjectFunctions/GenerateWrapper (^[a-z][a-z0-9-]*(\.[0-9]+)?$), so no shell metacharacter can reach the generated wrapper or RC file
 	modified, err := supplychain.InjectFunctions(shells, pms)
 	if err != nil {
 		return err

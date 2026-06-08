@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
@@ -172,7 +173,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		Summary:  buildSummary(findings),
 	}
 
-	outputCfg, err := ResolveOutput(cmd, outputFile, format, colorFlag)
+	outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)
 	if err != nil {
 		return err
 	}
@@ -190,11 +191,11 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("formatting output: %w", err)
 	}
 
-	// Use getFailOn() (not the raw failOn global) so --fail-on is validated and
-	// case-normalized to uppercase. ShouldFail matches severities exactly, so a
+	// Use cmdutil.GetFailOn (not the raw failOn global) so --fail-on is validated
+	// and case-normalized to uppercase. ShouldFail matches severities exactly, so a
 	// lowercase "medium" would otherwise never match a "MEDIUM" finding and the
 	// CI gate would silently pass. The scan commands already route through here.
-	failOnSeverities, err := getFailOn()
+	failOnSeverities, err := cmdutil.GetFailOn(failOn)
 	if err != nil {
 		return err
 	}

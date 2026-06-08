@@ -4,10 +4,12 @@ package supplychain
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -283,8 +285,21 @@ func HasInjection(path string) bool {
 	return strings.Contains(string(content), markerStart)
 }
 
+// HasCurrentInjection reports whether path already contains the exact wrapper
+// block that would be written for the given shell and PMs. Unlike HasInjection,
+// which only checks for the marker, this verifies the content matches so callers
+// can skip the prompt when nothing would change (same binary path, same PM set).
+func HasCurrentInjection(path, shell string, pms []string) bool {
+	// armis:ignore cwe:22 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to check injection status is safe
+	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(content), GenerateWrapper(shell, pms))
+}
+
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Stat(path) //nolint:gosec // path is a shell RC file under the user's own $HOME (see DetectShells)
 	return err == nil
 }
 
@@ -303,60 +318,197 @@ func IsPipVariant(name string) bool {
 	return pipExecutable.MatchString(name)
 }
 
+// pipVariant captures the optional major and minor version numbers out of a
+// validated pip variant name (pip3.11 → ["3", "11"]; pip3 → ["3", ""]).
+var pipVariant = regexp.MustCompile(`^pip(3(?:\.([0-9]+))?)?$`)
+
+// CanonicalPipVariant reconstructs a pip variant command name from its numeric
+// components, breaking any taint that may be associated with the caller's input
+// string. It returns ("", false) when name does not match the pip variant
+// pattern. The returned name is built entirely from integer literals and
+// strconv-formatted ints, so it is safe to pass directly to exec.LookPath
+// without a CWE-426 taint concern.
+func CanonicalPipVariant(name string) (string, bool) {
+	m := pipVariant.FindStringSubmatch(name)
+	if m == nil {
+		return "", false
+	}
+	// m[1] is the "3" or "3.NN" suffix (may be empty for bare "pip").
+	// m[2] is the minor version digits (may be empty).
+	if m[1] == "" {
+		return "pip", true
+	}
+	if m[2] == "" {
+		return "pip3", true
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", false
+	}
+	// Reject non-canonical minor versions (e.g. "011"): reconstructing the name
+	// from the integer would produce a different command than the user invoked.
+	if strconv.Itoa(minor) != m[2] {
+		return "", false
+	}
+	return fmt.Sprintf("pip3.%d", minor), true
+}
+
+// maxScanPathResults caps the number of distinct matches scanPathExecutables
+// will collect. In normal use the supported PM set is ~15 names, so 128 is
+// far above any realistic ceiling while still bounding memory when $PATH
+// contains unusual directories.
+const maxScanPathResults = 128
+
+// scanPathExecutables walks every directory on $PATH and returns the
+// deduplicated, sorted set of entry names for which match(name) is true and
+// (on Unix) the file carries at least one execute bit. It is the single place
+// the PATH traversal, dedup, and execute-bit semantics live, shared by
+// DetectPipVariants and DetectInstalledPMs so the two cannot drift apart.
+// Returns nil when PATH is unset or nothing matches; callers decide their own
+// fallback.
+func scanPathExecutables(match func(name string) bool) []string {
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	const readDirChunk = 32 // entries per ReadDir call; small enough to avoid large allocs
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if len(seen) >= maxScanPathResults {
+			break
+		}
+		// Stream directory entries in chunks so we stop reading as soon as
+		// maxScanPathResults is reached, without loading the full listing into
+		// memory. This bounds both CPU and memory for large PATH entries like
+		// /usr/bin or network mounts.
+		f, err := os.Open(dir) //nolint:gosec // dir comes from PATH, not user input
+		if err != nil {
+			continue
+		}
+		for len(seen) < maxScanPathResults {
+			entries, err := f.ReadDir(readDirChunk)
+			for _, entry := range entries {
+				if len(seen) >= maxScanPathResults {
+					break
+				}
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+				// On Windows, executables carry extensions from PATHEXT (typically
+				// .exe, .cmd, .bat, .com). Strip only those known executable extensions
+				// so that pip.exe and pip3.cmd match the same patterns as bare pip /
+				// pip3 on Unix. filepath.Ext must NOT be used here — it returns the last
+				// dot-separated suffix, so pip3.12 would lose ".12" and match as "pip3".
+				if runtime.GOOS == goosWindows {
+					if ext := strings.ToLower(filepath.Ext(name)); ext == ".exe" || ext == ".cmd" || ext == ".bat" || ext == ".com" {
+						name = strings.TrimSuffix(name, filepath.Ext(name))
+					}
+				}
+				if !match(name) {
+					continue
+				}
+				// On Unix, a matching entry on PATH with no execute bit (a stray data
+				// file or a non-exec script) would yield a wrapper that later fails at
+				// exec.LookPath with a confusing error, so require at least one execute
+				// bit before treating it as a real command. Info() reports the entry's
+				// own mode (lstat semantics); a symlink to a real binary keeps its
+				// 0o777 link bits and so still passes, matching what the user can run.
+				//
+				// Skip this check on Windows: there is no execute-bit concept there
+				// (executability is governed by file extension via PATHEXT), and
+				// os.FileMode.Perm never sets 0o111, so the filter would reject every
+				// real binary and collapse detection to nothing.
+				if runtime.GOOS != goosWindows {
+					info, err := entry.Info()
+					if err != nil || info.Mode().Perm()&0o111 == 0 {
+						continue
+					}
+				}
+				seen[name] = true
+			}
+			if err != nil { // io.EOF or real error — either way, done with this dir
+				break
+			}
+		}
+		f.Close() //nolint:errcheck,gosec // read-only, close error is not actionable
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // DetectPipVariants scans $PATH for pip executables (pip, pip3, pip3.11, …) and
 // returns a deduplicated, sorted list of the command names found. pip installs
 // under several names depending on how Python was set up, and a shell wrapper
 // only shadows the exact name the user types, so all present variants must be
 // wrapped. Falls back to ["pip"] when none are found or PATH is unset.
 func DetectPipVariants() []string {
-	pathEnv := os.Getenv("PATH")
-	if pathEnv == "" {
+	variants := scanPathExecutables(pipExecutable.MatchString)
+	if len(variants) == 0 {
 		return []string{"pip"}
 	}
+	return variants
+}
 
+// DetectInstalledPMs returns the deduplicated, sorted set of supported package
+// managers found on $PATH.
+//
+// Fixed names (npm, pnpm, bun, yarn, uv, poetry, pipenv, pdm, mvn, gradle) are
+// resolved via exec.LookPath — a single stat per name, no directory enumeration.
+// Pip variants (pip, pip3, pip3.11, …) are found via scanPathExecutables because
+// they install under interpreter-specific names that must be enumerated.
+//
+// `supply-chain init` uses PATH-based detection rather than CWD lockfile
+// detection because the injected shell functions are global — they shadow the
+// command in every directory, not just the project init ran in.
+// Returns nil when nothing is found or PATH is unset; the caller supplies the
+// fallback.
+func DetectInstalledPMs(names []string) []string {
 	seen := make(map[string]bool)
-	for _, dir := range filepath.SplitList(pathEnv) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
+
+	// Fixed-name PMs: exec.LookPath is O(PATH-dirs) with early-exit and no
+	// ReadDir — strictly cheaper than directory enumeration for known names.
+	// The returned path is discarded (_); only `n` (the hardcoded input name)
+	// is added to `seen`, so no attacker-controlled path reaches any sink.
+	for _, n := range names {
+		// armis:ignore cwe:426 cwe:427 reason:the resolved path is intentionally discarded; only the hardcoded input name n is used, so no untrusted path flows to any execution sink
+		if _, err := exec.LookPath(n); err == nil {
+			seen[n] = true
 		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if !pipExecutable.MatchString(name) {
-				continue
-			}
-			// On Unix, a pip-named entry on PATH with no execute bit (a stray data
-			// file or a non-exec script) would yield a wrapper that later fails at
-			// exec.LookPath with a confusing error, so require at least one execute
-			// bit before treating it as a real pip command. Info() reports the
-			// entry's own mode (lstat semantics); a symlink to a real pip keeps its
-			// 0o777 link bits and so still passes, matching what the user can run.
-			//
-			// Skip this check on Windows: there is no execute-bit concept there
-			// (executability is governed by file extension via PATHEXT), and
-			// os.FileMode.Perm never sets 0o111, so the filter would reject every
-			// real pip and collapse detection to the ["pip"] fallback.
-			if runtime.GOOS != goosWindows {
-				info, err := entry.Info()
-				if err != nil || info.Mode().Perm()&0o111 == 0 {
-					continue
-				}
-			}
-			seen[name] = true
-		}
+	}
+
+	// Pip variants require enumeration because the names are not fixed
+	// (pip3.11, pip3.12, …). scanPathExecutables handles dedup and execute-bit.
+	for _, v := range scanPathExecutables(pipExecutable.MatchString) {
+		seen[v] = true
 	}
 
 	if len(seen) == 0 {
-		return []string{"pip"}
+		return nil
 	}
-
-	variants := make([]string, 0, len(seen))
+	result := make([]string, 0, len(seen))
 	for name := range seen {
-		variants = append(variants, name)
+		result = append(result, name)
 	}
-	slices.Sort(variants)
-	return variants
+	slices.Sort(result)
+	return result
+}
+
+// IsOnPath reports whether the named fixed-binary is present on $PATH.
+// It uses exec.LookPath (one stat per PATH dir, no directory enumeration) and
+// discards the resolved path so no untrusted value flows to any execution sink.
+// armis:ignore cwe:426 cwe:427 reason:resolved path is intentionally discarded; only the hardcoded input name is used
+func IsOnPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }

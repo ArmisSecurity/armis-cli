@@ -241,7 +241,7 @@ func TestRunSupplyChainCheck_EcosystemScopeSkips(t *testing.T) {
 	scLockfile = "package-lock.json"
 	scAll = true // skip base-lockfile git detection
 	scMinAge = "72h"
-	format = ohFormatJSON
+	format = "json"
 
 	cmd := newWrapTestCmd() // a command with a live context
 	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")

@@ -61,7 +61,7 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	tenantID = testTenantID
 	clientID = ""
 	clientSecret = ""
-	format = "json"
+	format = agentFormatJSON
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true

@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 )
 
@@ -82,77 +84,259 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func TestDetectWrappablePMs_DefaultsToNpm(t *testing.T) {
-	// In a directory with no lockfiles, DetectEcosystems errors; detectWrappablePMs
-	// must fall back to npm rather than silently wrapping nothing.
+// seedPMsOnPath creates a fresh dir, writes an executable stub for each given
+// package-manager command name, and points $PATH at only that dir for the test.
+// detectWrappablePMs scans $PATH (not lockfiles), so this is how a test controls
+// which package managers it "finds installed". Restricting PATH to the seeded
+// dir keeps detection deterministic — a real npm/pip on the developer's machine
+// can't leak into the result.
+//
+// On Windows, exec.LookPath only resolves files matching PATHEXT (.exe, .cmd,
+// etc.), so stubs are written with a ".exe" suffix. scanPathExecutables strips
+// known PATHEXT extensions before applying the match, so pip3.12.exe is still
+// recognized as "pip3.12" rather than losing the ".12" suffix.
+func seedPMsOnPath(t *testing.T, names ...string) {
+	t.Helper()
 	dir := t.TempDir()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
+	for _, name := range names {
+		fname := name
+		if runtime.GOOS == "windows" {
+			fname = name + ".exe"
+		}
+		// 0o755 so the Unix execute-bit filter in scanPathExecutables accepts it;
+		// the bit is ignored on Windows, where the file's mere presence suffices.
+		if err := os.WriteFile(filepath.Join(dir, fname), []byte{}, 0o755); err != nil { //nolint:gosec // test stub on an isolated PATH
+			t.Fatalf("seed %s: %v", fname, err)
+		}
 	}
-	defer os.Chdir(cwd) //nolint:errcheck
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Setenv("PATH", dir)
+}
 
-	pms, detected := detectWrappablePMs()
-	if len(pms) != 1 || pms[0] != "npm" {
-		t.Errorf("detectWrappablePMs() = %v, want [npm]", pms)
+func TestDetectWrappablePMs_DefaultsToNpm(t *testing.T) {
+	// With no supported package manager on PATH, detectWrappablePMs must fall back
+	// to npm (and its runner npx) rather than silently wrapping nothing — a one-off
+	// `npx <pkg>` is exactly the case worth guarding even on a bare machine.
+	seedPMsOnPath(t) // empty PATH dir: nothing installed
+	chdirTemp(t)     // isolated cwd so no stray config scopes the result
+
+	pms, installed := detectWrappablePMs()
+	if len(pms) != 2 || pms[0] != "npm" || pms[1] != "npx" {
+		t.Errorf("detectWrappablePMs() = %v, want [npm npx]", pms)
 	}
-	// No lockfiles means DetectEcosystems errored, so the detected list is empty —
-	// this is how the caller distinguishes "no lockfiles" (npm fallback) from
-	// "scoped out" (nothing in scope).
-	if len(detected) != 0 {
-		t.Errorf("detectWrappablePMs() detected = %v, want empty (no lockfiles)", detected)
+	// Nothing on PATH means installed is empty — this is how the caller
+	// distinguishes "nothing found" (npm fallback) from "scoped out" (nothing in
+	// scope).
+	if len(installed) != 0 {
+		t.Errorf("detectWrappablePMs() installed = %v, want empty (nothing on PATH)", installed)
 	}
 }
 
-func TestDetectWrappablePMs_HonorsEcosystemScope(t *testing.T) {
-	// Two lockfiles are present (npm + pnpm) but the config scopes enforcement to
-	// pnpm only, so init must wrap only pnpm.
-	dir := chdirTemp(t)
-	for _, f := range []string{"package-lock.json", "pnpm-lock.yaml"} {
-		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}"), 0o600); err != nil {
-			t.Fatal(err)
+// containsPM reports whether name is in the PM slice. Used by the npx pairing
+// tests, which care about presence/absence rather than slice position.
+func containsPM(pms []string, name string) bool {
+	for _, p := range pms {
+		if p == name {
+			return true
 		}
 	}
+	return false
+}
+
+func TestDetectWrappablePMs_PairsNpxWithNpm(t *testing.T) {
+	// npm and npx both on PATH: npx must be wrapped alongside npm so ad-hoc
+	// `npx <pkg>` runs are filtered through the same proxy.
+	seedPMsOnPath(t, pmNPM, pmNPX)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if !containsPM(pms, pmNPM) || !containsPM(pms, pmNPX) {
+		t.Errorf("detectWrappablePMs() = %v, want both npm and npx", pms)
+	}
+}
+
+func TestDetectWrappablePMs_NpxNotPairedWithoutNpm(t *testing.T) {
+	// A machine with poetry but no npm never wraps npm, so npx must not appear:
+	// the runner is paired only where npm itself is in scope.
+	seedPMsOnPath(t, pmPoetry)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmNPX) {
+		t.Errorf("detectWrappablePMs() = %v, must not contain npx without npm", pms)
+	}
+}
+
+func TestDetectWrappablePMs_NpxNotWrappedWhenAbsentFromPath(t *testing.T) {
+	// npm on PATH but npx not installed: the pairing guard must prevent wrapping a
+	// missing npx binary. Unconditionally wrapping it would shadow "command not found"
+	// with an Armis wrapper error.
+	seedPMsOnPath(t, pmNPM)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmNPX) {
+		t.Errorf("detectWrappablePMs() = %v, must not wrap npx when it is not on PATH", pms)
+	}
+}
+
+func TestDetectWrappablePMs_NpxAbsentWhenNpmScopedOut(t *testing.T) {
+	// npx is paired AFTER ecosystem scoping, so it must inherit npm's exclusion:
+	// with npm and pnpm both on PATH but the config scoping enforcement to pnpm
+	// only, npm is out of scope — and npx must follow it out, never wrapped on its
+	// own. This pins the invariant explicitly; TestDetectWrappablePMs_HonorsEcosystemScope
+	// only covers it implicitly via a length check that predates npx.
+	seedPMsOnPath(t, pmNPM, pmPNPM)
+	dir := chdirTemp(t)
 	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
 		[]byte("version: 1\necosystems:\n  - pnpm\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	pms, detected := detectWrappablePMs()
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmNPX) {
+		t.Errorf("detectWrappablePMs() = %v, must not contain npx when npm is scoped out", pms)
+	}
+	if !containsPM(pms, pmPNPM) {
+		t.Errorf("detectWrappablePMs() = %v, want pnpm (the in-scope PM)", pms)
+	}
+}
+
+func TestDetectWrappablePMs_HonorsEcosystemScope(t *testing.T) {
+	// npm and pnpm are both on PATH but the config scopes enforcement to pnpm only,
+	// so init must wrap only pnpm.
+	seedPMsOnPath(t, pmNPM, pmPNPM)
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
+		[]byte("version: 1\necosystems:\n  - pnpm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pms, installed := detectWrappablePMs()
 	if len(pms) != 1 || pms[0] != "pnpm" {
 		t.Errorf("detectWrappablePMs() = %v, want [pnpm] (npm excluded by config scope)", pms)
 	}
-	// Both lockfiles are still reported as detected; scoping only narrows the PM
-	// list, not what was found on disk.
-	if len(detected) != 2 {
-		t.Errorf("detectWrappablePMs() detected = %v, want 2 ecosystems (npm + pnpm)", detected)
+	// Both PMs are still reported as installed; scoping only narrows the wrapped
+	// list, not what was found on PATH.
+	if len(installed) != 2 {
+		t.Errorf("detectWrappablePMs() installed = %v, want 2 PMs (npm + pnpm)", installed)
 	}
 }
 
 // TestDetectWrappablePMs_AllScopedOut covers the case the npm fallback used to
-// mask: lockfiles exist but the config scopes enforcement away from every one.
-// The PM list must come back empty (so the caller can report "nothing in
-// scope") while the detected list still names what was found.
+// mask: package managers are installed but the config scopes enforcement away
+// from every one. The PM list must come back empty (so the caller can report
+// "nothing in scope") while the installed list still names what was found.
 func TestDetectWrappablePMs_AllScopedOut(t *testing.T) {
+	seedPMsOnPath(t, pmNPM)
 	dir := chdirTemp(t)
-	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Scope enforcement to pip only; the sole detected ecosystem (npm) is excluded.
+	// Scope enforcement to pip only; the sole installed PM (npm) is excluded.
 	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
 		[]byte("version: 1\necosystems:\n  - pip\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	pms, detected := detectWrappablePMs()
+	pms, installed := detectWrappablePMs()
 	if len(pms) != 0 {
 		t.Errorf("detectWrappablePMs() = %v, want empty (npm scoped out, no npm fallback)", pms)
 	}
-	if len(detected) != 1 || detected[0].Ecosystem != supplychain.EcosystemNPM {
-		t.Errorf("detectWrappablePMs() detected = %v, want [npm]", detected)
+	if len(installed) != 1 || installed[0] != pmNPM {
+		t.Errorf("detectWrappablePMs() installed = %v, want [npm]", installed)
+	}
+}
+
+// TestDetectWrappablePMs_WrapsPipWhenInstalled is the regression for the bug that
+// motivated PATH-based detection: pip on PATH must be wrapped even when the cwd
+// has no Python lockfile (e.g. running init from a Go repo). Lockfile-based
+// detection used to fall back to npm-only here, silently leaving every later
+// `pip install` in any directory unguarded.
+func TestDetectWrappablePMs_WrapsPipWhenInstalled(t *testing.T) {
+	seedPMsOnPath(t, pmPip)
+	chdirTemp(t) // no lockfile, no config — the exact "Go repo" scenario
+
+	pms, _ := detectWrappablePMs()
+	if !containsPM(pms, pmPip) {
+		t.Errorf("detectWrappablePMs() = %v, want pip wrapped (it is on PATH)", pms)
+	}
+}
+
+// TestDetectWrappablePMs_WrapsAllInstalled verifies init wraps every supported
+// PM found on PATH, mixing Node and Python tools, regardless of the cwd's
+// lockfiles. npx is paired in because npm is present.
+func TestDetectWrappablePMs_WrapsAllInstalled(t *testing.T) {
+	// npx is seeded alongside npm: it is paired with npm but only when present
+	// on PATH, so the test must reflect that both are actually installed.
+	seedPMsOnPath(t, pmNPM, pmNPX, pmYarn, pmPip, pmPoetry)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	for _, want := range []string{pmNPM, pmNPX, pmYarn, pmPip, pmPoetry} {
+		if !containsPM(pms, want) {
+			t.Errorf("detectWrappablePMs() = %v, want %q wrapped", pms, want)
+		}
+	}
+}
+
+// TestDetectWrappablePMs_WrapsPipVariants verifies that versioned pip binaries
+// (pip3, pip3.12) are each wrapped: a shell function only shadows the exact name
+// the user types, so every interpreter's pip must get its own wrapper.
+func TestDetectWrappablePMs_WrapsPipVariants(t *testing.T) {
+	seedPMsOnPath(t, "pip3", "pip3.12")
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	for _, want := range []string{"pip3", "pip3.12"} {
+		if !containsPM(pms, want) {
+			t.Errorf("detectWrappablePMs() = %v, want pip variant %q wrapped", pms, want)
+		}
+	}
+}
+
+// TestSummarizeDetectedPMs covers the init preview summary line. forceNoColor
+// (from supply_chain_wrap_summary_test.go, same package) pins the plain style
+// set so the rendered string can be matched without ANSI escapes.
+func TestSummarizeDetectedPMs(t *testing.T) {
+	forceNoColor(t)
+	s := output.GetStyles()
+
+	tests := []struct {
+		name string
+		pms  []string
+		want string
+	}{
+		{
+			// The exact shape that prompted the change: many pip variants must
+			// collapse to one "pip (N variants)" entry, and npx must be marked as
+			// paired rather than listed as a bare detection.
+			name: "pip variants collapse and npx is annotated",
+			pms:  []string{"bun", "npm", "pnpm", "poetry", "uv", "pip", "pip3", "pip3.10", "pip3.11", "pip3.12", "npx"},
+			want: "bun, npm, pnpm, poetry, uv, pip (5 variants), npx (paired with npm)",
+		},
+		{
+			// A single pip binary carries no variant count — "(1 variant)" would be
+			// noise.
+			name: "single pip has no variant count",
+			pms:  []string{"npm", "pip", "npx"},
+			want: "npm, pip, npx (paired with npm)",
+		},
+		{
+			// No npm means no npx; non-pip names sort alphabetically.
+			name: "no npx without npm",
+			pms:  []string{"poetry", "bun"},
+			want: "bun, poetry",
+		},
+		{
+			name: "pip only",
+			pms:  []string{"pip3", "pip3.12"},
+			want: "pip (2 variants)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := summarizeDetectedPMs(s, tt.pms); got != tt.want {
+				t.Errorf("summarizeDetectedPMs(%v) = %q, want %q", tt.pms, got, tt.want)
+			}
+		})
 	}
 }
 
