@@ -3,10 +3,12 @@ name: Release
 on:
   push:
     tags:
-      # Match full semantic versions only (e.g. v1.10.3), NOT the floating
-      # major/minor aliases (v1, v1.10) that update-aliases force-pushes below.
-      # GitHub's tag glob treats "*" as matching dots, so "v*.*.*" requires two
-      # literal dots and excludes the aliases, preventing a release re-trigger loop.
+      # Match tags containing a major.minor.patch segment (e.g. v1.10.3), NOT
+      # the floating major/minor aliases (v1, v1.10) that update-aliases
+      # force-pushes below. GitHub's tag glob treats "*" as matching dots, so
+      # "v*.*.*" requires two literal dots and excludes the aliases, preventing
+      # a release re-trigger loop. Note: pre-release tags like v1.10.3-rc.1
+      # also match; rely on the regex guard in update-aliases for filtering.
       - "v*.*.*"
 
 permissions:

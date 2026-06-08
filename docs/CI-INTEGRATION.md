@@ -42,7 +42,7 @@ on:
 
 jobs:
   scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     secrets:
       client-id: ${{ secrets.ARMIS_CLIENT_ID }}
       client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
@@ -128,7 +128,7 @@ permissions:
 
 jobs:
   security-scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     with:
       fail-on: 'CRITICAL,HIGH'
       pr-comment: true
@@ -343,7 +343,7 @@ jobs:
   security-scan:
     needs: get-changed-files
     if: needs.get-changed-files.outputs.any_changed == 'true'
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     with:
       fail-on: 'CRITICAL,HIGH'
       include-files: ${{ needs.get-changed-files.outputs.files }}
@@ -378,7 +378,7 @@ permissions:
 
 jobs:
   scan:
-    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@v1
+    uses: ArmisSecurity/armis-cli/.github/workflows/reusable-security-scan.yml@main
     with:
       fail-on: ''              # Don't fail - monitoring only
       pr-comment: false        # No PR context
