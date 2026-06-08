@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -89,14 +90,23 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // which package managers it "finds installed". Restricting PATH to the seeded
 // dir keeps detection deterministic — a real npm/pip on the developer's machine
 // can't leak into the result.
+//
+// On Windows, exec.LookPath only resolves files matching PATHEXT (.exe, .cmd,
+// etc.), so stubs are written with a ".exe" suffix. scanPathExecutables strips
+// known PATHEXT extensions before applying the match, so pip3.12.exe is still
+// recognized as "pip3.12" rather than losing the ".12" suffix.
 func seedPMsOnPath(t *testing.T, names ...string) {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range names {
+		fname := name
+		if runtime.GOOS == "windows" {
+			fname = name + ".exe"
+		}
 		// 0o755 so the Unix execute-bit filter in scanPathExecutables accepts it;
 		// the bit is ignored on Windows, where the file's mere presence suffices.
-		if err := os.WriteFile(filepath.Join(dir, name), []byte{}, 0o755); err != nil { //nolint:gosec // test stub on an isolated PATH
-			t.Fatalf("seed %s: %v", name, err)
+		if err := os.WriteFile(filepath.Join(dir, fname), []byte{}, 0o755); err != nil { //nolint:gosec // test stub on an isolated PATH
+			t.Fatalf("seed %s: %v", fname, err)
 		}
 	}
 	t.Setenv("PATH", dir)
@@ -133,9 +143,9 @@ func containsPM(pms []string, name string) bool {
 }
 
 func TestDetectWrappablePMs_PairsNpxWithNpm(t *testing.T) {
-	// npm on PATH puts the npm ecosystem in scope; npx must be wrapped alongside it
-	// so ad-hoc `npx <pkg>` runs are filtered through the same proxy.
-	seedPMsOnPath(t, pmNPM)
+	// npm and npx both on PATH: npx must be wrapped alongside npm so ad-hoc
+	// `npx <pkg>` runs are filtered through the same proxy.
+	seedPMsOnPath(t, pmNPM, pmNPX)
 	chdirTemp(t)
 
 	pms, _ := detectWrappablePMs()
@@ -153,6 +163,19 @@ func TestDetectWrappablePMs_NpxNotPairedWithoutNpm(t *testing.T) {
 	pms, _ := detectWrappablePMs()
 	if containsPM(pms, pmNPX) {
 		t.Errorf("detectWrappablePMs() = %v, must not contain npx without npm", pms)
+	}
+}
+
+func TestDetectWrappablePMs_NpxNotWrappedWhenAbsentFromPath(t *testing.T) {
+	// npm on PATH but npx not installed: the pairing guard must prevent wrapping a
+	// missing npx binary. Unconditionally wrapping it would shadow "command not found"
+	// with an Armis wrapper error.
+	seedPMsOnPath(t, pmNPM)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmNPX) {
+		t.Errorf("detectWrappablePMs() = %v, must not wrap npx when it is not on PATH", pms)
 	}
 }
 

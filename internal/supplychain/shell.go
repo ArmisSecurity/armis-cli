@@ -385,11 +385,13 @@ func scanPathExecutables(match func(name string) bool) []string {
 			}
 			name := entry.Name()
 			// On Windows, executables carry extensions from PATHEXT (typically
-			// .exe, .cmd, .bat). Strip any known extension so that pip.exe and
-			// pip3.cmd match the same patterns as bare pip / pip3 on Unix.
+			// .exe, .cmd, .bat, .com). Strip only those known executable extensions
+			// so that pip.exe and pip3.cmd match the same patterns as bare pip /
+			// pip3 on Unix. filepath.Ext must NOT be used here — it returns the last
+			// dot-separated suffix, so pip3.12 would lose ".12" and match as "pip3".
 			if runtime.GOOS == goosWindows {
-				if ext := filepath.Ext(name); ext != "" {
-					name = strings.TrimSuffix(name, ext)
+				if ext := strings.ToLower(filepath.Ext(name)); ext == ".exe" || ext == ".cmd" || ext == ".bat" || ext == ".com" {
+					name = strings.TrimSuffix(name, filepath.Ext(name))
 				}
 			}
 			if !match(name) {

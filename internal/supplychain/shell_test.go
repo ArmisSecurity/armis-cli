@@ -353,8 +353,12 @@ func TestDetectPipVariants(t *testing.T) {
 	t.Run("finds and sorts variants on PATH", func(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{pipExe, "pip3", "pip3.12"} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte{}, 0o755); err != nil { //nolint:gosec
-				t.Fatalf("seed %s: %v", name, err)
+			fname := name
+			if runtime.GOOS == goosWindows {
+				fname = name + ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(dir, fname), []byte{}, 0o755); err != nil { //nolint:gosec
+				t.Fatalf("seed %s: %v", fname, err)
 			}
 		}
 		t.Setenv("PATH", dir)
@@ -369,8 +373,12 @@ func TestDetectPipVariants(t *testing.T) {
 	t.Run("ignores lookalike commands", func(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{pipExe, "pipx", "pipenv", "pip-compile"} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte{}, 0o755); err != nil { //nolint:gosec
-				t.Fatalf("seed %s: %v", name, err)
+			fname := name
+			if runtime.GOOS == goosWindows {
+				fname = name + ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(dir, fname), []byte{}, 0o755); err != nil { //nolint:gosec
+				t.Fatalf("seed %s: %v", fname, err)
 			}
 		}
 		t.Setenv("PATH", dir)
@@ -384,8 +392,12 @@ func TestDetectPipVariants(t *testing.T) {
 
 	t.Run("deduplicates across PATH dirs", func(t *testing.T) {
 		dir1, dir2 := t.TempDir(), t.TempDir()
-		os.WriteFile(filepath.Join(dir1, pipExe), []byte{}, 0o755) //nolint:errcheck,gosec
-		os.WriteFile(filepath.Join(dir2, pipExe), []byte{}, 0o755) //nolint:errcheck,gosec
+		fname := pipExe
+		if runtime.GOOS == goosWindows {
+			fname = pipExe + ".exe"
+		}
+		os.WriteFile(filepath.Join(dir1, fname), []byte{}, 0o755) //nolint:errcheck,gosec
+		os.WriteFile(filepath.Join(dir2, fname), []byte{}, 0o755) //nolint:errcheck,gosec
 		t.Setenv("PATH", dir1+string(os.PathListSeparator)+dir2)
 
 		got := DetectPipVariants()

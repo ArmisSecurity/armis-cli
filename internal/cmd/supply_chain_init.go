@@ -200,7 +200,9 @@ func detectWrappablePMs() (pms []string, installed []string) {
 	// package on demand, exactly the supply-chain vector the proxy guards. Pair it
 	// here (after scoping) so it inherits npm's in-scope decision — when npm was
 	// excluded by the `ecosystems` config it stays out, keeping the two in lockstep.
-	if seen[pmNPM] {
+	// Guard with a PATH check: if npx is not installed, wrapping it would shadow
+	// "command not found" with an Armis wrapper error.
+	if seen[pmNPM] && len(supplychain.DetectInstalledPMs([]string{pmNPX})) > 0 {
 		addPM(pmNPX)
 	}
 
