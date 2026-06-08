@@ -386,10 +386,7 @@ func scanPathExecutables(match func(name string) bool) []string {
 		if err != nil {
 			continue
 		}
-		for {
-			if len(seen) >= maxScanPathResults {
-				break
-			}
+		for len(seen) < maxScanPathResults {
 			entries, err := f.ReadDir(readDirChunk)
 			for _, entry := range entries {
 				if len(seen) >= maxScanPathResults {
