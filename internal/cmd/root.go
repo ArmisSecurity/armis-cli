@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -318,32 +317,4 @@ func validatePageLimit(limit int) error {
 		return fmt.Errorf("page limit must be between 1 and 1000, got %d", limit)
 	}
 	return nil
-}
-
-// validSeverities contains the valid severity level strings for the --fail-on flag.
-var validSeverities = []string{"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
-
-func validateFailOn(severities []string) error {
-	validSet := make(map[string]bool)
-	for _, s := range validSeverities {
-		validSet[s] = true
-	}
-
-	for i, sev := range severities {
-		// Normalize to uppercase for case-insensitive matching
-		upper := strings.ToUpper(sev)
-		if !validSet[upper] {
-			return fmt.Errorf("invalid severity level %q: must be one of %v", sev, validSeverities)
-		}
-		// Update the slice with normalized value
-		severities[i] = upper
-	}
-	return nil
-}
-
-func getFailOn() ([]string, error) {
-	if err := validateFailOn(failOn); err != nil {
-		return nil, err
-	}
-	return failOn, nil
 }

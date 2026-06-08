@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `supply-chain` command for enforcing package release-age policies, defending against supply-chain attacks (typosquatting, compromised maintainers, dependency confusion) by flagging or blocking packages published more recently than a configurable threshold (default 72h). No Armis Cloud authentication required — queries public registries directly. (#206, #210, #211)
-  - Supports 11 package managers across three ecosystems: npm, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
+  - Supports 12 package managers across three ecosystems: npm, npx, pnpm, bun, yarn (Node); pip, uv, poetry, pipenv, pdm (Python); Maven, Gradle (Java).
   - Node package managers and pip/uv use a transparent registry proxy that filters out too-young versions during install; poetry, pipenv, pdm, Maven, and Gradle use a pre-install lockfile audit that blocks the build before execution.
+  - `npx` is wrapped alongside `npm` (it ships with npm and resolves from the same registry), so ad-hoc `npx <pkg>` runs are filtered through the same proxy. Enforcement applies to packages npx fetches from the registry; a package already in the npx cache or a binary already in `node_modules/.bin` runs without a registry round-trip and is not re-checked. The sibling runners `pnpm dlx` and `yarn dlx` are already covered as subcommands of the existing pnpm/yarn wrappers; `bunx` (a separate binary) is not yet wrapped.
   - `supply-chain check` audits lockfiles in CI; `supply-chain init`/`uninit` set up local shell enforcement; `supply-chain status` reports the active policy and detected ecosystems.
   - Configurable via `.armis-supply-chain.yaml` (`min-age`, `exclusions`, `ecosystems`, `fail-open`); per-invocation bypass via `ARMIS_SUPPLY_CHAIN_SKIP`; master kill switch via `ARMIS_SUPPLY_CHAIN=off`.
   - Gradle lockfile staleness detection (warns when `build.gradle` is newer than `gradle.lockfile`), Maven `pom.xml` partial-coverage notice (direct dependencies only), and a warning for unrecognized ecosystem names in the config.
@@ -19,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The install summary reports each filtered package on one line showing the too-new version, its age, and the older version installed in its place (e.g. `axios 1.17.0 (1 day old) → 1.16.1 installed`). When every package resolves to a safe version it reads as a success; packages with no older safe version are called out individually. If the package manager itself does not complete (for example a dependency pins a version that only the filtered release satisfies), the summary reports the safe version as "available" rather than claiming it was installed, and explains how to relax or exclude the constraint. A one-time explanation of why fresh releases are withheld is shown on the first filtered install in an interactive terminal (suppressed thereafter and in CI).
 
 ### Changed
+
+- `supply-chain init`: now wraps every supported package manager found on your `PATH` instead of only the ones with a lockfile in the current directory. The injected shell functions are global (they apply in every directory), so detecting from the current project's lockfiles left gaps — e.g. running `init` in a Go repo wrapped only `npm`/`npx`, so a later `pip install` in a Python project ran unenforced. Detection is now machine-wide; per-project enforcement is still decided dynamically at install time from the nearest `.armis-supply-chain.yaml` (the `ecosystems` scope and policy are re-read on each install), so wrapping a package manager never forces enforcement where the project hasn't opted in. When no supported package manager is on `PATH`, `init` still falls back to wrapping `npm`/`npx`.
 
 ### Deprecated
 

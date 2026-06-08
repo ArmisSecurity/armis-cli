@@ -46,7 +46,9 @@ are flagged or blocked to prevent supply chain attacks via typosquatting,
 compromised maintainer accounts, or dependency confusion.
 
 Supported ecosystems:
-  Node:   npm, pnpm, bun, yarn (transparent proxy enforcement)
+  Node:   npm, npx, pnpm, bun, yarn (transparent proxy enforcement)
+          npx enforces packages it fetches; a package already in the npx cache
+          or a binary in node_modules/.bin runs without a registry round-trip.
   Python: pip, uv (transparent proxy); poetry, pipenv, pdm (pre-install block)
   Java:   maven (pom.xml), gradle (gradle.lockfile) (pre-install block)
 

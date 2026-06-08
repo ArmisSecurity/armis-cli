@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 )
@@ -40,10 +41,12 @@ func TestSupplyChainUnknownSubcommand(t *testing.T) {
 }
 
 // TestSupplyChainCheckFailOnCaseInsensitive is the regression test for the
-// CI-gate bypass: `supply-chain check` routes --fail-on through getFailOn(),
-// which uppercases and validates it. A lowercase "medium" must therefore trip
-// the gate on a MEDIUM finding (ShouldFail matches severities exactly), and an
-// invalid value must be rejected rather than silently ignored.
+// CI-gate bypass: `supply-chain check` routes --fail-on through
+// cmdutil.GetFailOn, which uppercases and validates it. A lowercase "medium"
+// must therefore trip the gate on a MEDIUM finding (ShouldFail matches
+// severities exactly), and an invalid value must be rejected rather than
+// silently ignored. It feeds the failOn global (the bound flag value) through
+// the same call the command makes, end-to-end into output.ShouldFail.
 func TestSupplyChainCheckFailOnCaseInsensitive(t *testing.T) {
 	medium := &model.ScanResult{
 		Findings: []model.Finding{{Severity: model.SeverityMedium}},
@@ -51,9 +54,9 @@ func TestSupplyChainCheckFailOnCaseInsensitive(t *testing.T) {
 
 	t.Run("lowercase fail-on still fails the gate", func(t *testing.T) {
 		failOn = []string{"medium"}
-		normalized, err := getFailOn()
+		normalized, err := cmdutil.GetFailOn(failOn)
 		if err != nil {
-			t.Fatalf("getFailOn rejected a valid lowercase severity: %v", err)
+			t.Fatalf("GetFailOn rejected a valid lowercase severity: %v", err)
 		}
 		if !output.ShouldFail(medium, normalized) {
 			t.Error("lowercase --fail-on medium should fail on a MEDIUM finding after normalization")
@@ -62,8 +65,8 @@ func TestSupplyChainCheckFailOnCaseInsensitive(t *testing.T) {
 
 	t.Run("invalid fail-on is rejected", func(t *testing.T) {
 		failOn = []string{"banana"}
-		if _, err := getFailOn(); err == nil {
-			t.Error("getFailOn should reject an invalid severity, not silently ignore it")
+		if _, err := cmdutil.GetFailOn(failOn); err == nil {
+			t.Error("GetFailOn should reject an invalid severity, not silently ignore it")
 		}
 	})
 

@@ -275,6 +275,31 @@ func TestHasInjection(t *testing.T) {
 	}
 }
 
+func TestHasCurrentInjection(t *testing.T) {
+	tmpDir := t.TempDir()
+	rcFile := filepath.Join(tmpDir, ".bashrc")
+
+	os.WriteFile(rcFile, []byte("# empty\n"), 0o644) //nolint:errcheck,gosec
+
+	// Before injection, neither HasInjection nor HasCurrentInjection match.
+	if HasCurrentInjection(rcFile, "bash", []string{"npm"}) {
+		t.Error("should return false for clean file")
+	}
+
+	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	InjectFunctions(shells, []string{"npm"}) //nolint:errcheck,gosec
+
+	// After injection the exact wrapper is present.
+	if !HasCurrentInjection(rcFile, "bash", []string{"npm"}) {
+		t.Error("should return true after injecting npm wrapper for bash")
+	}
+
+	// A different PM set does not match the already-injected block.
+	if HasCurrentInjection(rcFile, "bash", []string{"npm", "pnpm"}) {
+		t.Error("should return false when PM set differs from what was injected")
+	}
+}
+
 func TestEvalCommand(t *testing.T) {
 	cmd := EvalCommand([]string{"npm"})
 	if !strings.Contains(cmd, markerStart) {

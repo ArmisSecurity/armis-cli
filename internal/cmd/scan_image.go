@@ -7,6 +7,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -63,7 +64,7 @@ var scanImageCmd = &cobra.Command{
 			return err
 		}
 
-		failOnSeverities, err := getFailOn()
+		failOnSeverities, err := cmdutil.GetFailOn(failOn)
 		if err != nil {
 			return err
 		}
@@ -126,7 +127,7 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		// Resolve output destination and format (handles file creation, format auto-detection, colors)
-		outputCfg, err := ResolveOutput(cmd, outputFile, format, colorFlag)
+		outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)
 		if err != nil {
 			return err
 		}
