@@ -17,9 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `supply-chain init`: the injected shell wrappers no longer break after an `armis-cli` upgrade. The wrapper now references `armis-cli` by bare name (resolved from `PATH` on every call) when it is on `PATH`, falling back to the stable symlink path otherwise — previously it embedded the fully symlink-resolved binary path, which on Homebrew was the version-pinned Cellar directory (e.g. `…/Cellar/armis-cli/1.11.0/…`). After `brew upgrade armis-cli` deleted that directory, every wrapped package manager (npm, pnpm, bun, pip, uv, poetry, npx) failed to run in new shells. The wrappers are also now fail-closed: if `armis-cli` cannot be found at invocation time, the wrapper prints a loud warning to stderr that enforcement has lapsed and runs the real package manager un-wrapped, so installs never silently break. Wrappers injected before this fix must be refreshed by re-running `armis-cli supply-chain init` once.
-
 ### Security
+
+---
+
+## [1.11.1] - 2026-06-08
+
+### Fixed
+
+- `supply-chain init`: the injected shell wrappers no longer break after an `armis-cli` upgrade. The wrapper now references `armis-cli` by bare name (resolved from `PATH` on every call) when it is on `PATH`, falling back to the stable symlink path otherwise — previously it embedded the fully symlink-resolved binary path, which on Homebrew was the version-pinned Cellar directory (e.g. `…/Cellar/armis-cli/1.11.0/…`). After `brew upgrade armis-cli` deleted that directory, every wrapped package manager (npm, pnpm, bun, pip, uv, poetry, npx) failed to run in new shells. The wrappers are also now fail-closed: if `armis-cli` cannot be found at invocation time, the wrapper prints a loud warning to stderr that enforcement has lapsed and runs the real package manager un-wrapped, so installs never silently break. The fish guard now uses fish-native `command -q` (POSIX `command -v` errored under fish and silently disabled enforcement), and the guard adds an executable-path check so an absolute fallback path is detected reliably across shells. Wrappers injected before this fix must be refreshed by re-running `armis-cli supply-chain init` once. (#216)
 
 ---
 
@@ -441,7 +447,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...HEAD
+[1.11.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.2...v1.11.0
 [1.10.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.0...v1.10.1
