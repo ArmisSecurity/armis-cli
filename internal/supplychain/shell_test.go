@@ -493,3 +493,85 @@ func TestDetectShells(t *testing.T) {
 		}
 	})
 }
+
+// TestGenerateWrapper_PosixContainsGuard verifies the bash/zsh wrapper is
+// fail-closed: it guards the armis-cli invocation with `command -v`, warns on
+// stderr when the binary is missing, and falls back to running the real package
+// manager so an install never silently breaks after an armis-cli upgrade.
+func TestGenerateWrapper_PosixContainsGuard(t *testing.T) {
+	wrapper := GenerateWrapper("bash", []string{"npm"})
+
+	if !strings.Contains(wrapper, "if command -v") {
+		t.Errorf("posix wrapper missing `command -v` guard:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "armis-cli not found") {
+		t.Errorf("posix wrapper missing the missing-binary warning:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, `command npm "$@"`) {
+		t.Errorf("posix wrapper missing the un-wrapped fallback `command npm \"$@\"`:\n%s", wrapper)
+	}
+}
+
+// TestGenerateWrapper_FishContainsGuard is the fish-syntax counterpart to
+// TestGenerateWrapper_PosixContainsGuard.
+func TestGenerateWrapper_FishContainsGuard(t *testing.T) {
+	wrapper := GenerateWrapper("fish", []string{"npm"})
+
+	if !strings.Contains(wrapper, "if command -v") {
+		t.Errorf("fish wrapper missing `command -v` guard:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "armis-cli not found") {
+		t.Errorf("fish wrapper missing the missing-binary warning:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "command npm $argv") {
+		t.Errorf("fish wrapper missing the un-wrapped fallback `command npm $argv`:\n%s", wrapper)
+	}
+}
+
+// TestGenerateWrapper_WarningReferencesPMName verifies the fallback warning names
+// the package manager the user actually invoked (not a hard-coded "npm"), for
+// every shell and including versioned pip variants.
+func TestGenerateWrapper_WarningReferencesPMName(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		for _, pm := range []string{"npm", "pip3.12", "poetry"} {
+			wrapper := GenerateWrapper(shell, []string{pm})
+			want := "running " + pm + " WITHOUT supply-chain enforcement"
+			if !strings.Contains(wrapper, want) {
+				t.Errorf("%s wrapper for %q missing PM name in warning %q:\n%s", shell, pm, want, wrapper)
+			}
+		}
+	}
+}
+
+// TestResolveCliPath_PrefersBareNameWhenOnPath verifies that when armis-cli is
+// resolvable on $PATH, the wrapper embeds the bare name so the shell re-resolves
+// it on every call — surviving package-manager upgrades that move the binary.
+func TestResolveCliPath_PrefersBareNameWhenOnPath(t *testing.T) {
+	dir := t.TempDir()
+	fname := cliBinaryName
+	if runtime.GOOS == goosWindows {
+		fname = cliBinaryName + ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, fname), []byte{}, 0o755); err != nil { //nolint:gosec
+		t.Fatalf("seed %s: %v", cliBinaryName, err)
+	}
+	t.Setenv("PATH", dir)
+
+	if got := resolveCliPath(); got != cliBinaryName {
+		t.Errorf("resolveCliPath() = %q, want %q (bare name when on PATH)", got, cliBinaryName)
+	}
+}
+
+// TestResolveCliPath_FallsBackToAbsWhenNotOnPath verifies that when armis-cli is
+// not on $PATH, resolveCliPath returns an absolute path (or the bare-name
+// fallback) — but never resolves symlinks, so it cannot return a version-pinned
+// Cellar-style path that an upgrade would delete.
+func TestResolveCliPath_FallsBackToAbsWhenNotOnPath(t *testing.T) {
+	// Non-empty but empty dir: armis-cli is not resolvable on PATH.
+	t.Setenv("PATH", t.TempDir())
+
+	got := resolveCliPath()
+	if got != cliBinaryName && !filepath.IsAbs(got) {
+		t.Errorf("resolveCliPath() = %q, want an absolute path or the %q fallback", got, cliBinaryName)
+	}
+}
