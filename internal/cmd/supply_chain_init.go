@@ -449,7 +449,7 @@ func runInitRC(pms []string) error {
 	// variants are folded into one entry so a multi-Python machine does not bury
 	// the summary under a dozen near-identical names.
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
-		s.MutedText.Render("Detected package manager(s):"), summarizeDetectedPMs(s, pms))
+		s.MutedText.Render("Package manager(s) to wrap:"), summarizeDetectedPMs(s, pms))
 
 	// Preview each distinct wrapper. bash/zsh share the posix wrapper while fish
 	// uses different syntax, so group shells by the wrapper they produce to keep

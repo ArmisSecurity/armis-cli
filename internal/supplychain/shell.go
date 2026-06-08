@@ -4,6 +4,7 @@ package supplychain
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -383,6 +384,14 @@ func scanPathExecutables(match func(name string) bool) []string {
 				continue
 			}
 			name := entry.Name()
+			// On Windows, executables carry extensions from PATHEXT (typically
+			// .exe, .cmd, .bat). Strip any known extension so that pip.exe and
+			// pip3.cmd match the same patterns as bare pip / pip3 on Unix.
+			if runtime.GOOS == goosWindows {
+				if ext := filepath.Ext(name); ext != "" {
+					name = strings.TrimSuffix(name, ext)
+				}
+			}
 			if !match(name) {
 				continue
 			}
@@ -432,27 +441,43 @@ func DetectPipVariants() []string {
 	return variants
 }
 
-// DetectInstalledPMs scans $PATH for every supported package manager actually
-// installed and returns the deduplicated, sorted set of command names found.
-// names is the list of fixed package-manager command names to look for (npm,
-// pnpm, bun, mvn, …); pip variants (pip, pip3, pip3.12) are matched separately
-// via the pip pattern, since pip installs under several interpreter-specific
-// names and each must be wrapped independently.
+// DetectInstalledPMs returns the deduplicated, sorted set of supported package
+// managers found on $PATH.
 //
-// `supply-chain init` uses this rather than CWD lockfile detection because the
-// shell wrappers it injects are global — they shadow the package-manager command
-// in every directory, not just the project init happened to run in. Per-project
-// enforcement is still decided dynamically at wrap time (the ecosystems config
-// and policy are re-read on each invocation), so the wrapper set should reflect
-// what is installed on the machine, not which lockfiles sit in one directory.
+// Fixed names (npm, pnpm, bun, yarn, uv, poetry, pipenv, pdm, mvn, gradle) are
+// resolved via exec.LookPath — a single stat per name, no directory enumeration.
+// Pip variants (pip, pip3, pip3.11, …) are found via scanPathExecutables because
+// they install under interpreter-specific names that must be enumerated.
+//
+// `supply-chain init` uses PATH-based detection rather than CWD lockfile
+// detection because the injected shell functions are global — they shadow the
+// command in every directory, not just the project init ran in.
 // Returns nil when nothing is found or PATH is unset; the caller supplies the
 // fallback.
 func DetectInstalledPMs(names []string) []string {
-	want := make(map[string]bool, len(names))
+	seen := make(map[string]bool)
+
+	// Fixed-name PMs: exec.LookPath is O(PATH-dirs) with early-exit and no
+	// ReadDir — strictly cheaper than directory enumeration for known names.
 	for _, n := range names {
-		want[n] = true
+		if _, err := exec.LookPath(n); err == nil {
+			seen[n] = true
+		}
 	}
-	return scanPathExecutables(func(name string) bool {
-		return want[name] || pipExecutable.MatchString(name)
-	})
+
+	// Pip variants require enumeration because the names are not fixed
+	// (pip3.11, pip3.12, …). scanPathExecutables handles dedup and execute-bit.
+	for _, v := range scanPathExecutables(pipExecutable.MatchString) {
+		seen[v] = true
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(seen))
+	for name := range seen {
+		result = append(result, name)
+	}
+	slices.Sort(result)
+	return result
 }
