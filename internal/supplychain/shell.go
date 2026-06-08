@@ -459,7 +459,10 @@ func DetectInstalledPMs(names []string) []string {
 
 	// Fixed-name PMs: exec.LookPath is O(PATH-dirs) with early-exit and no
 	// ReadDir — strictly cheaper than directory enumeration for known names.
+	// The returned path is discarded (_); only `n` (the hardcoded input name)
+	// is added to `seen`, so no attacker-controlled path reaches any sink.
 	for _, n := range names {
+		// armis:ignore cwe:426 cwe:427 reason:the resolved path is intentionally discarded; only the hardcoded input name n is used, so no untrusted path flows to any execution sink
 		if _, err := exec.LookPath(n); err == nil {
 			seen[n] = true
 		}
