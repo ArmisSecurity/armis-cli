@@ -298,7 +298,7 @@ func HasCurrentInjection(path, shell string, pms []string) bool {
 }
 
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Stat(path) //nolint:gosec // path is a shell RC file under the user's own $HOME (see DetectShells)
 	return err == nil
 }
 
