@@ -147,14 +147,16 @@ func generateFishWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range sanitizePMNames(pms) {
-		// The `command -v` guard makes the wrapper fail-closed: if armis-cli is
+		// The `command -q` guard makes the wrapper fail-closed: if armis-cli is
 		// not resolvable at invocation time (e.g. a stale absolute path left by a
 		// package-manager upgrade), the wrapper warns loudly on stderr and runs the
 		// real package manager un-wrapped rather than failing the command outright.
-		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; command -v is used only for presence detection and its output is discarded
+		// fish's `command` builtin has no POSIX `-v`; `-q`/`--query` (fish 3.0+) is
+		// the native presence check and emits no output, so no redirect is needed.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; command -q is used only for presence detection and its output is discarded
 		fmt.Fprintf(&b,
 			"function %s\n"+
-				"  if command -v %s >/dev/null 2>&1\n"+
+				"  if command -q %s\n"+
 				"    command %s supply-chain wrap %s $argv\n"+
 				"  else\n"+
 				"    printf '[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement\\n' >&2\n"+

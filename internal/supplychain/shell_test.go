@@ -513,12 +513,14 @@ func TestGenerateWrapper_PosixContainsGuard(t *testing.T) {
 }
 
 // TestGenerateWrapper_FishContainsGuard is the fish-syntax counterpart to
-// TestGenerateWrapper_PosixContainsGuard.
+// TestGenerateWrapper_PosixContainsGuard. The guard uses fish-native `command -q`
+// (not POSIX `command -v`, which fish's `command` builtin does not accept — using
+// it would make the guard always fail and silently disable enforcement for fish).
 func TestGenerateWrapper_FishContainsGuard(t *testing.T) {
 	wrapper := GenerateWrapper("fish", []string{"npm"})
 
-	if !strings.Contains(wrapper, "if command -v") {
-		t.Errorf("fish wrapper missing `command -v` guard:\n%s", wrapper)
+	if !strings.Contains(wrapper, "if command -q") {
+		t.Errorf("fish wrapper missing `command -q` guard:\n%s", wrapper)
 	}
 	if !strings.Contains(wrapper, "armis-cli not found") {
 		t.Errorf("fish wrapper missing the missing-binary warning:\n%s", wrapper)
