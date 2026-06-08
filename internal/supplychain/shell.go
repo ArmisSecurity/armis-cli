@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -283,6 +284,19 @@ func HasInjection(path string) bool {
 	return strings.Contains(string(content), markerStart)
 }
 
+// HasCurrentInjection reports whether path already contains the exact wrapper
+// block that would be written for the given shell and PMs. Unlike HasInjection,
+// which only checks for the marker, this verifies the content matches so callers
+// can skip the prompt when nothing would change (same binary path, same PM set).
+func HasCurrentInjection(path, shell string, pms []string) bool {
+	// armis:ignore cwe:22 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to check injection status is safe
+	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(content), GenerateWrapper(shell, pms))
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -303,42 +317,86 @@ func IsPipVariant(name string) bool {
 	return pipExecutable.MatchString(name)
 }
 
-// DetectPipVariants scans $PATH for pip executables (pip, pip3, pip3.11, …) and
-// returns a deduplicated, sorted list of the command names found. pip installs
-// under several names depending on how Python was set up, and a shell wrapper
-// only shadows the exact name the user types, so all present variants must be
-// wrapped. Falls back to ["pip"] when none are found or PATH is unset.
-func DetectPipVariants() []string {
+// pipVariant captures the optional major and minor version numbers out of a
+// validated pip variant name (pip3.11 → ["3", "11"]; pip3 → ["3", ""]).
+var pipVariant = regexp.MustCompile(`^pip(3(?:\.([0-9]+))?)?$`)
+
+// CanonicalPipVariant reconstructs a pip variant command name from its numeric
+// components, breaking any taint that may be associated with the caller's input
+// string. It returns ("", false) when name does not match the pip variant
+// pattern. The returned name is built entirely from integer literals and
+// strconv-formatted ints, so it is safe to pass directly to exec.LookPath
+// without a CWE-426 taint concern.
+func CanonicalPipVariant(name string) (string, bool) {
+	m := pipVariant.FindStringSubmatch(name)
+	if m == nil {
+		return "", false
+	}
+	// m[1] is the "3" or "3.NN" suffix (may be empty for bare "pip").
+	// m[2] is the minor version digits (may be empty).
+	if m[1] == "" {
+		return "pip", true
+	}
+	if m[2] == "" {
+		return "pip3", true
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("pip3.%d", minor), true
+}
+
+// maxScanPathResults caps the number of distinct matches scanPathExecutables
+// will collect. In normal use the supported PM set is ~15 names, so 128 is
+// far above any realistic ceiling while still bounding memory when $PATH
+// contains unusual directories.
+const maxScanPathResults = 128
+
+// scanPathExecutables walks every directory on $PATH and returns the
+// deduplicated, sorted set of entry names for which match(name) is true and
+// (on Unix) the file carries at least one execute bit. It is the single place
+// the PATH traversal, dedup, and execute-bit semantics live, shared by
+// DetectPipVariants and DetectInstalledPMs so the two cannot drift apart.
+// Returns nil when PATH is unset or nothing matches; callers decide their own
+// fallback.
+func scanPathExecutables(match func(name string) bool) []string {
 	pathEnv := os.Getenv("PATH")
 	if pathEnv == "" {
-		return []string{"pip"}
+		return nil
 	}
 
 	seen := make(map[string]bool)
 	for _, dir := range filepath.SplitList(pathEnv) {
+		if len(seen) >= maxScanPathResults {
+			break
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
 		for _, entry := range entries {
+			if len(seen) >= maxScanPathResults {
+				break
+			}
 			if entry.IsDir() {
 				continue
 			}
 			name := entry.Name()
-			if !pipExecutable.MatchString(name) {
+			if !match(name) {
 				continue
 			}
-			// On Unix, a pip-named entry on PATH with no execute bit (a stray data
+			// On Unix, a matching entry on PATH with no execute bit (a stray data
 			// file or a non-exec script) would yield a wrapper that later fails at
 			// exec.LookPath with a confusing error, so require at least one execute
-			// bit before treating it as a real pip command. Info() reports the
-			// entry's own mode (lstat semantics); a symlink to a real pip keeps its
+			// bit before treating it as a real command. Info() reports the entry's
+			// own mode (lstat semantics); a symlink to a real binary keeps its
 			// 0o777 link bits and so still passes, matching what the user can run.
 			//
 			// Skip this check on Windows: there is no execute-bit concept there
 			// (executability is governed by file extension via PATHEXT), and
 			// os.FileMode.Perm never sets 0o111, so the filter would reject every
-			// real pip and collapse detection to the ["pip"] fallback.
+			// real binary and collapse detection to nothing.
 			if runtime.GOOS != goosWindows {
 				info, err := entry.Info()
 				if err != nil || info.Mode().Perm()&0o111 == 0 {
@@ -350,13 +408,51 @@ func DetectPipVariants() []string {
 	}
 
 	if len(seen) == 0 {
-		return []string{"pip"}
+		return nil
 	}
 
-	variants := make([]string, 0, len(seen))
+	names := make([]string, 0, len(seen))
 	for name := range seen {
-		variants = append(variants, name)
+		names = append(names, name)
 	}
-	slices.Sort(variants)
+	slices.Sort(names)
+	return names
+}
+
+// DetectPipVariants scans $PATH for pip executables (pip, pip3, pip3.11, …) and
+// returns a deduplicated, sorted list of the command names found. pip installs
+// under several names depending on how Python was set up, and a shell wrapper
+// only shadows the exact name the user types, so all present variants must be
+// wrapped. Falls back to ["pip"] when none are found or PATH is unset.
+func DetectPipVariants() []string {
+	variants := scanPathExecutables(pipExecutable.MatchString)
+	if len(variants) == 0 {
+		return []string{"pip"}
+	}
 	return variants
+}
+
+// DetectInstalledPMs scans $PATH for every supported package manager actually
+// installed and returns the deduplicated, sorted set of command names found.
+// names is the list of fixed package-manager command names to look for (npm,
+// pnpm, bun, mvn, …); pip variants (pip, pip3, pip3.12) are matched separately
+// via the pip pattern, since pip installs under several interpreter-specific
+// names and each must be wrapped independently.
+//
+// `supply-chain init` uses this rather than CWD lockfile detection because the
+// shell wrappers it injects are global — they shadow the package-manager command
+// in every directory, not just the project init happened to run in. Per-project
+// enforcement is still decided dynamically at wrap time (the ecosystems config
+// and policy are re-read on each invocation), so the wrapper set should reflect
+// what is installed on the machine, not which lockfiles sit in one directory.
+// Returns nil when nothing is found or PATH is unset; the caller supplies the
+// fallback.
+func DetectInstalledPMs(names []string) []string {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	return scanPathExecutables(func(name string) bool {
+		return want[name] || pipExecutable.MatchString(name)
+	})
 }

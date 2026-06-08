@@ -33,6 +33,7 @@ const (
 // scattering the literals across the file.
 const (
 	pmNPM    = "npm"
+	pmNPX    = "npx"
 	pmPNPM   = "pnpm"
 	pmBun    = "bun"
 	pmYarn   = "yarn"
@@ -59,7 +60,7 @@ func init() {
 }
 
 var allowedPMs = map[string]bool{
-	pmNPM: true, pmPNPM: true, pmBun: true, pmYarn: true,
+	pmNPM: true, pmNPX: true, pmPNPM: true, pmBun: true, pmYarn: true,
 	pmPip: true, pmUV: true, pmPoetry: true, pmPipenv: true, pmPDM: true,
 	pmMaven: true, pmGradle: true,
 }
@@ -82,7 +83,7 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 	canonical := canonicalPM(pmName)
 
 	if !allowedPMs[canonical] {
-		return fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pmName)
+		return fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pmName)
 	}
 
 	if os.Getenv(envSCActive) == "1" {
@@ -128,7 +129,7 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 
 	// pip and uv resolve from the PyPI Simple API, a different protocol from the
 	// npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
-	// filtering). All other proxied PMs (npm/pnpm/bun/yarn) speak the npm registry.
+	// filtering). All other proxied PMs (npm/npx/pnpm/bun/yarn) speak the npm registry.
 	mode := supplychain.ModeNPM
 	switch canonicalPM(pmName) {
 	case pmPip, pmUV:
@@ -195,6 +196,8 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 	switch pm {
 	case pmNPM:
 		pmName = pmNPM
+	case pmNPX:
+		pmName = pmNPX
 	case pmPNPM:
 		pmName = pmPNPM
 	case pmBun:
@@ -218,15 +221,13 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 	default:
 		// Versioned pip variants (pip3, pip3.11, pip3.12) must execute the exact
 		// binary the user invoked so the install lands in that interpreter's
-		// environment. IsPipVariant enforces a strict pattern (letters, digits, a
-		// single dotted numeric suffix), so the value reaching exec.LookPath is
-		// still a bounded, shell-metacharacter-free name rather than arbitrary
-		// user input — preserving the CWE-426 guarantee the literal cases provide.
-		if supplychain.IsPipVariant(pm) {
-			pmName = pm
-			break
+		// environment. CanonicalPipVariant reconstructs the name from its parsed
+		// numeric components so no taint flows from pm into pmName.
+		canonical, ok := supplychain.CanonicalPipVariant(pm)
+		if !ok {
+			return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pm)
 		}
-		return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pm)
+		pmName = canonical
 	}
 
 	// armis:ignore cwe:426 cwe:427 reason:pmName is one of the hardcoded string literals selected by the switch above, never the user argument; resolving the user's own PM from PATH is the point of a transparent wrapper
@@ -902,6 +903,13 @@ func blockedViolationNames(violations []supplychain.Violation) []string {
 func pmToEcosystem(pm string) supplychain.Ecosystem {
 	switch pm {
 	case pmNPM:
+		return supplychain.EcosystemNPM
+	case pmNPX:
+		// npx is the npm package runner, not a distinct ecosystem: it resolves from
+		// the npm registry and has no lockfile of its own. Mapping it to
+		// EcosystemNPM lets the config "ecosystems" scoping gate treat npx exactly
+		// like npm — `ecosystems: [npm]` enforces both, and scoping npm out
+		// (e.g. `ecosystems: [pip]`) passes npx through too, so the two never diverge.
 		return supplychain.EcosystemNPM
 	case pmPNPM:
 		return supplychain.EcosystemPNPM
