@@ -345,6 +345,11 @@ func CanonicalPipVariant(name string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	// Reject non-canonical minor versions (e.g. "011"): reconstructing the name
+	// from the integer would produce a different command than the user invoked.
+	if strconv.Itoa(minor) != m[2] {
+		return "", false
+	}
 	return fmt.Sprintf("pip3.%d", minor), true
 }
 
@@ -368,54 +373,69 @@ func scanPathExecutables(match func(name string) bool) []string {
 	}
 
 	seen := make(map[string]bool)
+	const readDirChunk = 32 // entries per ReadDir call; small enough to avoid large allocs
 	for _, dir := range filepath.SplitList(pathEnv) {
 		if len(seen) >= maxScanPathResults {
 			break
 		}
-		entries, err := os.ReadDir(dir)
+		// Stream directory entries in chunks so we stop reading as soon as
+		// maxScanPathResults is reached, without loading the full listing into
+		// memory. This bounds both CPU and memory for large PATH entries like
+		// /usr/bin or network mounts.
+		f, err := os.Open(dir) //nolint:gosec // dir comes from PATH, not user input
 		if err != nil {
 			continue
 		}
-		for _, entry := range entries {
+		for {
 			if len(seen) >= maxScanPathResults {
 				break
 			}
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			// On Windows, executables carry extensions from PATHEXT (typically
-			// .exe, .cmd, .bat, .com). Strip only those known executable extensions
-			// so that pip.exe and pip3.cmd match the same patterns as bare pip /
-			// pip3 on Unix. filepath.Ext must NOT be used here — it returns the last
-			// dot-separated suffix, so pip3.12 would lose ".12" and match as "pip3".
-			if runtime.GOOS == goosWindows {
-				if ext := strings.ToLower(filepath.Ext(name)); ext == ".exe" || ext == ".cmd" || ext == ".bat" || ext == ".com" {
-					name = strings.TrimSuffix(name, filepath.Ext(name))
+			entries, err := f.ReadDir(readDirChunk)
+			for _, entry := range entries {
+				if len(seen) >= maxScanPathResults {
+					break
 				}
-			}
-			if !match(name) {
-				continue
-			}
-			// On Unix, a matching entry on PATH with no execute bit (a stray data
-			// file or a non-exec script) would yield a wrapper that later fails at
-			// exec.LookPath with a confusing error, so require at least one execute
-			// bit before treating it as a real command. Info() reports the entry's
-			// own mode (lstat semantics); a symlink to a real binary keeps its
-			// 0o777 link bits and so still passes, matching what the user can run.
-			//
-			// Skip this check on Windows: there is no execute-bit concept there
-			// (executability is governed by file extension via PATHEXT), and
-			// os.FileMode.Perm never sets 0o111, so the filter would reject every
-			// real binary and collapse detection to nothing.
-			if runtime.GOOS != goosWindows {
-				info, err := entry.Info()
-				if err != nil || info.Mode().Perm()&0o111 == 0 {
+				if entry.IsDir() {
 					continue
 				}
+				name := entry.Name()
+				// On Windows, executables carry extensions from PATHEXT (typically
+				// .exe, .cmd, .bat, .com). Strip only those known executable extensions
+				// so that pip.exe and pip3.cmd match the same patterns as bare pip /
+				// pip3 on Unix. filepath.Ext must NOT be used here — it returns the last
+				// dot-separated suffix, so pip3.12 would lose ".12" and match as "pip3".
+				if runtime.GOOS == goosWindows {
+					if ext := strings.ToLower(filepath.Ext(name)); ext == ".exe" || ext == ".cmd" || ext == ".bat" || ext == ".com" {
+						name = strings.TrimSuffix(name, filepath.Ext(name))
+					}
+				}
+				if !match(name) {
+					continue
+				}
+				// On Unix, a matching entry on PATH with no execute bit (a stray data
+				// file or a non-exec script) would yield a wrapper that later fails at
+				// exec.LookPath with a confusing error, so require at least one execute
+				// bit before treating it as a real command. Info() reports the entry's
+				// own mode (lstat semantics); a symlink to a real binary keeps its
+				// 0o777 link bits and so still passes, matching what the user can run.
+				//
+				// Skip this check on Windows: there is no execute-bit concept there
+				// (executability is governed by file extension via PATHEXT), and
+				// os.FileMode.Perm never sets 0o111, so the filter would reject every
+				// real binary and collapse detection to nothing.
+				if runtime.GOOS != goosWindows {
+					info, err := entry.Info()
+					if err != nil || info.Mode().Perm()&0o111 == 0 {
+						continue
+					}
+				}
+				seen[name] = true
 			}
-			seen[name] = true
+			if err != nil { // io.EOF or real error — either way, done with this dir
+				break
+			}
 		}
+		f.Close() //nolint:errcheck,gosec // read-only, close error is not actionable
 	}
 
 	if len(seen) == 0 {
@@ -485,4 +505,13 @@ func DetectInstalledPMs(names []string) []string {
 	}
 	slices.Sort(result)
 	return result
+}
+
+// IsOnPath reports whether the named fixed-binary is present on $PATH.
+// It uses exec.LookPath (one stat per PATH dir, no directory enumeration) and
+// discards the resolved path so no untrusted value flows to any execution sink.
+// armis:ignore cwe:426 cwe:427 reason:resolved path is intentionally discarded; only the hardcoded input name is used
+func IsOnPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }

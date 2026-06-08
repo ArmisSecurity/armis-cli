@@ -263,7 +263,9 @@ func TestDetectWrappablePMs_WrapsPipWhenInstalled(t *testing.T) {
 // PM found on PATH, mixing Node and Python tools, regardless of the cwd's
 // lockfiles. npx is paired in because npm is present.
 func TestDetectWrappablePMs_WrapsAllInstalled(t *testing.T) {
-	seedPMsOnPath(t, pmNPM, pmYarn, pmPip, pmPoetry)
+	// npx is seeded alongside npm: it is paired with npm but only when present
+	// on PATH, so the test must reflect that both are actually installed.
+	seedPMsOnPath(t, pmNPM, pmNPX, pmYarn, pmPip, pmPoetry)
 	chdirTemp(t)
 
 	pms, _ := detectWrappablePMs()

@@ -201,8 +201,10 @@ func detectWrappablePMs() (pms []string, installed []string) {
 	// here (after scoping) so it inherits npm's in-scope decision — when npm was
 	// excluded by the `ecosystems` config it stays out, keeping the two in lockstep.
 	// Guard with a PATH check: if npx is not installed, wrapping it would shadow
-	// "command not found" with an Armis wrapper error.
-	if seen[pmNPM] && len(supplychain.DetectInstalledPMs([]string{pmNPX})) > 0 {
+	// "command not found" with an Armis wrapper error. Use IsOnPath (single
+	// exec.LookPath call) rather than DetectInstalledPMs which also enumerates
+	// pip variants — unnecessary overhead for a single fixed-name check.
+	if seen[pmNPM] && supplychain.IsOnPath(pmNPX) {
 		addPM(pmNPX)
 	}
 
