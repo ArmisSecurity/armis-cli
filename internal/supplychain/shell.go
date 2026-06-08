@@ -120,21 +120,28 @@ func generatePosixWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range sanitizePMNames(pms) {
-		// The `command -v` guard makes the wrapper fail-closed: if armis-cli is
-		// not resolvable at invocation time (e.g. a stale absolute path left by a
-		// package-manager upgrade), the wrapper warns loudly on stderr and runs the
-		// real package manager un-wrapped rather than failing the command outright.
-		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; command -v is used only for presence detection and its output is discarded
+		// The guard makes the wrapper fail-closed: if armis-cli is not resolvable
+		// at invocation time (e.g. a stale absolute path left by a package-manager
+		// upgrade), the wrapper warns loudly on stderr and runs the real package
+		// manager un-wrapped rather than failing the command outright.
+		//
+		// Two checks, because resolveCliPath() may embed either a bare name or an
+		// absolute path: `[ -x %s ]` reliably accepts an executable at an absolute
+		// path (POSIX `command -v` with a slash-containing argument is unspecified
+		// and some shells report it missing even when it exists), while `command -v`
+		// handles the bare-name PATH lookup. For a bare name `[ -x ]` checks the CWD
+		// (normally absent) and falls through to the PATH lookup.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; both `[ -x ]` and `command -v` are used only for presence detection and their output is discarded
 		fmt.Fprintf(&b,
 			"%s() {\n"+
-				"  if command -v %s >/dev/null 2>&1; then\n"+
+				"  if [ -x %s ] || command -v %s >/dev/null 2>&1; then\n"+
 				"    command %s supply-chain wrap %s \"$@\"\n"+
 				"  else\n"+
 				"    printf '[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement\\n' >&2\n"+
 				"    command %s \"$@\"\n"+
 				"  fi\n"+
 				"}\n",
-			pm, safeCli, safeCli, pm, pm, pm)
+			pm, safeCli, safeCli, safeCli, pm, pm, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()
@@ -147,23 +154,29 @@ func generateFishWrapper(pms []string, cli string) string {
 	var b strings.Builder
 	b.WriteString(markerStart + "\n")
 	for _, pm := range sanitizePMNames(pms) {
-		// The `command -q` guard makes the wrapper fail-closed: if armis-cli is
-		// not resolvable at invocation time (e.g. a stale absolute path left by a
-		// package-manager upgrade), the wrapper warns loudly on stderr and runs the
-		// real package manager un-wrapped rather than failing the command outright.
-		// fish's `command` builtin has no POSIX `-v`; `-q`/`--query` (fish 3.0+) is
-		// the native presence check and emits no output, so no redirect is needed.
-		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; command -q is used only for presence detection and its output is discarded
+		// The guard makes the wrapper fail-closed: if armis-cli is not resolvable
+		// at invocation time (e.g. a stale absolute path left by a package-manager
+		// upgrade), the wrapper warns loudly on stderr and runs the real package
+		// manager un-wrapped rather than failing the command outright.
+		//
+		// Two checks, because resolveCliPath() may embed either a bare name or an
+		// absolute path: `test -x %s` reliably accepts an executable at an absolute
+		// path (fish's `command -q` with a slash-containing argument is unspecified
+		// across versions and can report it missing even when it exists), while
+		// `command -q`/`--query` (fish 3.0+) handles the bare-name PATH lookup and
+		// emits no output. For a bare name `test -x` checks the CWD (normally
+		// absent) and falls through to the PATH lookup.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*(\.[0-9]+)?$ by sanitizePMNames, so any dot is followed only by digits (not a shell metacharacter); safeCli is shellQuote-escaped; both `test -x` and `command -q` are used only for presence detection and their output is discarded
 		fmt.Fprintf(&b,
 			"function %s\n"+
-				"  if command -q %s\n"+
+				"  if test -x %s; or command -q %s\n"+
 				"    command %s supply-chain wrap %s $argv\n"+
 				"  else\n"+
 				"    printf '[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement\\n' >&2\n"+
 				"    command %s $argv\n"+
 				"  end\n"+
 				"end\n",
-			pm, safeCli, safeCli, pm, pm, pm)
+			pm, safeCli, safeCli, safeCli, pm, pm, pm)
 	}
 	b.WriteString(markerEnd + "\n")
 	return b.String()

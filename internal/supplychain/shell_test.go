@@ -495,13 +495,18 @@ func TestDetectShells(t *testing.T) {
 }
 
 // TestGenerateWrapper_PosixContainsGuard verifies the bash/zsh wrapper is
-// fail-closed: it guards the armis-cli invocation with `command -v`, warns on
-// stderr when the binary is missing, and falls back to running the real package
-// manager so an install never silently breaks after an armis-cli upgrade.
+// fail-closed: it guards the armis-cli invocation with a `command -v` PATH lookup
+// (alongside an `[ -x ]` absolute-path check), warns on stderr when the binary is
+// missing, and falls back to running the real package manager so an install never
+// silently breaks after an armis-cli upgrade.
+//
+// The assertion matches the `command -v` substring rather than the exact `if`
+// prefix so the guard can be extended (e.g. with the `[ -x … ]` path check) without
+// breaking this test, as long as the fail-closed PATH lookup remains.
 func TestGenerateWrapper_PosixContainsGuard(t *testing.T) {
 	wrapper := GenerateWrapper("bash", []string{"npm"})
 
-	if !strings.Contains(wrapper, "if command -v") {
+	if !strings.Contains(wrapper, "command -v") {
 		t.Errorf("posix wrapper missing `command -v` guard:\n%s", wrapper)
 	}
 	if !strings.Contains(wrapper, "armis-cli not found") {
@@ -516,10 +521,14 @@ func TestGenerateWrapper_PosixContainsGuard(t *testing.T) {
 // TestGenerateWrapper_PosixContainsGuard. The guard uses fish-native `command -q`
 // (not POSIX `command -v`, which fish's `command` builtin does not accept — using
 // it would make the guard always fail and silently disable enforcement for fish).
+//
+// The assertion matches the `command -q` substring rather than the exact `if`
+// prefix so the guard can be extended (e.g. with the `test -x …` path check) without
+// breaking this test, as long as the fish-native presence check remains.
 func TestGenerateWrapper_FishContainsGuard(t *testing.T) {
 	wrapper := GenerateWrapper("fish", []string{"npm"})
 
-	if !strings.Contains(wrapper, "if command -q") {
+	if !strings.Contains(wrapper, "command -q") {
 		t.Errorf("fish wrapper missing `command -q` guard:\n%s", wrapper)
 	}
 	if !strings.Contains(wrapper, "armis-cli not found") {
@@ -527,6 +536,35 @@ func TestGenerateWrapper_FishContainsGuard(t *testing.T) {
 	}
 	if !strings.Contains(wrapper, "command npm $argv") {
 		t.Errorf("fish wrapper missing the un-wrapped fallback `command npm $argv`:\n%s", wrapper)
+	}
+}
+
+// TestGenerateWrapper_AbsolutePathGuardChecksExecutable verifies that when
+// resolveCliPath falls back to an absolute path (armis-cli not on PATH at init
+// time), the guard includes an executable-path check on that path. A bare
+// `command -v`/`command -q` with a slash-containing argument is unspecified across
+// shells and can report the binary missing even when it exists, which would make
+// the wrapper always take the `else` branch and silently bypass enforcement. The
+// `[ -x … ]` / `test -x …` check makes the absolute-path case reliable.
+func TestGenerateWrapper_AbsolutePathGuardChecksExecutable(t *testing.T) {
+	const absPath = "/opt/homebrew/bin/armis-cli"
+	quoted := shellQuote(absPath)
+
+	posix := generatePosixWrapper([]string{"npm"}, absPath)
+	if !strings.Contains(posix, "[ -x "+quoted+" ]") {
+		t.Errorf("posix wrapper missing `[ -x <abs> ]` executable check for an absolute CLI path:\n%s", posix)
+	}
+	// The PATH lookup must remain alongside the path check for the bare-name case.
+	if !strings.Contains(posix, "command -v "+quoted) {
+		t.Errorf("posix wrapper missing `command -v` PATH lookup alongside the path check:\n%s", posix)
+	}
+
+	fish := generateFishWrapper([]string{"npm"}, absPath)
+	if !strings.Contains(fish, "test -x "+quoted) {
+		t.Errorf("fish wrapper missing `test -x <abs>` executable check for an absolute CLI path:\n%s", fish)
+	}
+	if !strings.Contains(fish, "command -q "+quoted) {
+		t.Errorf("fish wrapper missing `command -q` PATH lookup alongside the path check:\n%s", fish)
 	}
 }
 
