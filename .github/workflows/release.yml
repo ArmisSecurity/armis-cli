@@ -149,6 +149,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch all tags
+        # update-aliases reads the full local tag set (git tag --sort=-v:refname)
+        # to compute LATEST_FOR_MAJOR. checkout populates tags, but mirror the
+        # goreleaser job's explicit fetch so the set is guaranteed complete and
+        # the script can't compute a stale alias or fail under set -euo pipefail.
+        run: git fetch --force --tags
+
       - name: Move major and minor tags to this release
         env:
           # The released version tag that triggered this run, e.g. "v1.10.3".

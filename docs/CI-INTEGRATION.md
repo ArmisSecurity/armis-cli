@@ -192,7 +192,9 @@ permissions:
 
 Use the action directly when you need more control over your workflow. Pin to the major version
 tag (`@v1`) to automatically receive non-breaking updates, or pin to an exact version (`@v1.10.2`)
-or commit SHA for fully reproducible builds. See [Supply Chain Security](#supply-chain-security) below.
+or commit SHA to freeze the action definition. Note that the action installs the latest released
+CLI binary by default, so pinning the action ref alone does not pin the CLI version. See
+[Supply Chain Security](#supply-chain-security) below.
 
 > **Note:** The GitHub Action currently supports Linux and macOS runners only. For Windows runners (`windows-latest`), use [Option 3: Manual Installation](#option-3-manual-installation) with the PowerShell install script:
 >
@@ -869,12 +871,16 @@ The reusable workflow's "Check for Failures" step differentiates between:
   # Good: floating major — receives non-breaking updates automatically
   uses: ArmisSecurity/armis-cli@v1
 
-  # Good: pinned to an exact version — fully reproducible
+  # Good: pinned to an exact version — frozen action definition
   uses: ArmisSecurity/armis-cli@v1.10.2
 
   # Best: pinned to a commit SHA — immutable, recommended for high-security setups
   uses: ArmisSecurity/armis-cli@abc123def456
   ```
+
+  These refs pin the **action definition**, not the CLI binary. The action installs the
+  latest released CLI by default (from `releases/latest`), so the CLI version can still
+  advance between runs even with the action ref pinned.
 
 - The CLI installation verifies **checksums** automatically
 - Release binaries include **SLSA provenance** for verification

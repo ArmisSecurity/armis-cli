@@ -143,8 +143,12 @@ This lets consumers pin at the level of stability they want:
 |-----------|----------|
 | `@v1` | Latest `v1.x.y` — non-breaking updates delivered automatically (recommended) |
 | `@v1.10` | Latest `v1.10.x` — patch updates only |
-| `@v1.10.2` | Exact version — fully reproducible |
+| `@v1.10.2` | Exact action definition — frozen action logic |
 | `@<sha>` | Immutable commit pin — strongest supply-chain guarantee |
+
+> **Note:** These refs pin the *action definition*, not the CLI binary. The action installs the
+> latest released CLI by default (`releases/latest`), so the scanned-with CLI version can advance
+> even when the action ref is pinned.
 
 Re-publishing to the Marketplace is only required when you want the Marketplace listing's
 "latest version" pointer to advance; the floating tags update on every release regardless.

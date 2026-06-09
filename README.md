@@ -615,7 +615,8 @@ jobs:
 
 Use the action directly for more control over your workflow. Pin to the major version tag
 (`@v1`) to receive non-breaking updates automatically, or pin to an exact tag (`@v1.10.2`) or
-commit SHA for fully reproducible builds:
+commit SHA to freeze the action definition. Note that the action installs the latest released
+CLI binary by default, so pinning the action ref alone does not pin the CLI version itself:
 
 ```yaml
 name: Security Scan
