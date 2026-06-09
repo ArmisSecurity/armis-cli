@@ -352,7 +352,8 @@ func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatc
 		}
 
 		if !info.IsDir() {
-			file, err := os.Open(path) // #nosec G304 - path is from filepath.Walk within repo
+			// armis:ignore cwe:22 reason:path is yielded by filepath.Walk(sourcePath,...) which only produces descendants of sourcePath; symlinks are skipped above preventing escape
+			file, err := os.Open(path) // #nosec G304 G122 - path is from filepath.Walk within repo; os.Root API not available in Go 1.25
 			if err != nil {
 				return err
 			}

@@ -263,7 +263,7 @@ func TestClient_StartIngest(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			// Attempt to parse the multipart form - this reads the body
 			// The reader error will cause this to fail, but we still send a response
-			_ = r.ParseMultipartForm(32 << 20)
+			_ = r.ParseMultipartForm(32 << 20) //nolint:gosec // G120: test server with bounded 32MB limit
 			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
 		})
 
@@ -302,7 +302,7 @@ func TestClient_StartIngest(t *testing.T) {
 
 	t.Run("sends SBOM and VEX flags when set", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
+			if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // G120: test server with bounded 32MB limit
 				t.Fatalf("Failed to parse multipart form: %v", err)
 			}
 

@@ -402,16 +402,16 @@ func buildCursorHooks(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{
 		"beforeShellExecution": []interface{}{
 			map[string]interface{}{
-				"command": cmd,
-				"matcher": `git\s+(commit|push)|gh\s+pr\s+create`,
-				"timeout": 10,
+				jsonKeyCommand: cmd,
+				jsonKeyMatcher: `git\s+(commit|push)|gh\s+pr\s+create`,
+				jsonKeyTimeout: 10,
 			},
 		},
 		"preToolUse": []interface{}{
 			map[string]interface{}{
-				"command": cmd,
-				"matcher": "Write|Edit",
-				"timeout": 5,
+				jsonKeyCommand: cmd,
+				jsonKeyMatcher: "Write|Edit",
+				jsonKeyTimeout: 5,
 			},
 		},
 	}
@@ -425,12 +425,12 @@ func buildGeminiHooks(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{
 		"BeforeTool": []interface{}{
 			map[string]interface{}{
-				"matcher": "shell|bash|run_shell_command|write_file|edit_file|patch_file",
-				"hooks": []interface{}{
+				jsonKeyMatcher: "shell|bash|run_shell_command|write_file|edit_file|patch_file",
+				jsonKeyHooks: []interface{}{
 					map[string]interface{}{
-						"type":    "command",
-						"command": cmd,
-						"timeout": 10000,
+						jsonKeyType:    jsonTypeCommand,
+						jsonKeyCommand: cmd,
+						jsonKeyTimeout: 10000,
 					},
 				},
 			},
@@ -446,22 +446,22 @@ func buildCodexHooks(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{
 		"PreToolUse": []interface{}{
 			map[string]interface{}{
-				"matcher": "shell",
-				"hooks": []interface{}{
+				jsonKeyMatcher: "shell",
+				jsonKeyHooks: []interface{}{
 					map[string]interface{}{
-						"type":    "command",
-						"command": cmd,
-						"timeout": 10,
+						jsonKeyType:    jsonTypeCommand,
+						jsonKeyCommand: cmd,
+						jsonKeyTimeout: 10,
 					},
 				},
 			},
 			map[string]interface{}{
-				"matcher": "write_file|apply_patch|edit_file",
-				"hooks": []interface{}{
+				jsonKeyMatcher: "write_file|apply_patch|edit_file",
+				jsonKeyHooks: []interface{}{
 					map[string]interface{}{
-						"type":    "command",
-						"command": cmd,
-						"timeout": 5,
+						jsonKeyType:    jsonTypeCommand,
+						jsonKeyCommand: cmd,
+						jsonKeyTimeout: 5,
 					},
 				},
 			},
@@ -477,10 +477,10 @@ func buildCopilotHooks(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{
 		"preToolUse": []interface{}{
 			map[string]interface{}{
-				"type":       "command",
-				"bash":       cmd,
-				"matcher":    "bash|shell|terminal|powershell|create|edit",
-				"timeoutSec": 10,
+				jsonKeyType:    jsonTypeCommand,
+				"bash":         cmd,
+				jsonKeyMatcher: "bash|shell|terminal|powershell|create|edit",
+				"timeoutSec":   10,
 			},
 		},
 	}
@@ -580,11 +580,12 @@ func removeLegacyFileIfArmisOnly(path string) {
 		}
 	}
 	for key := range data {
-		if key != "version" && key != "hooks" {
+		if key != jsonKeyVersion && key != jsonKeyHooks {
 			return
 		}
 	}
-	_ = os.Remove(filepath.Clean(path)) //nolint:gosec // armis:ignore cwe:22 cwe:73 reason:path from hardcoded OS config dirs
+	// armis:ignore cwe:22 cwe:73 reason:path from hardcoded OS config dirs; only called after verifying file contains only armis-generated content
+	_ = os.Remove(filepath.Clean(path)) //nolint:gosec
 }
 
 // posixQuote wraps a string in POSIX-safe single quotes, escaping embedded single quotes.

@@ -117,7 +117,7 @@ func extractBerryPackageName(key string) string {
 }
 
 func shouldSkipYarnResolution(resolution string) bool {
-	for _, proto := range []string{"workspace:", "link:", "file:", "portal:", "patch:", "exec:"} {
+	for _, proto := range []string{"workspace:", protocolLink, protocolFile, "portal:", "patch:", "exec:"} {
 		if strings.Contains(resolution, proto) {
 			return true
 		}
@@ -197,7 +197,7 @@ func extractClassicPackageName(line string) string {
 }
 
 func shouldSkipClassicProtocol(line string) bool {
-	for _, proto := range []string{"workspace:", "link:", "file:", "portal:", "https://", "http://", "git+", "git://", "git@"} {
+	for _, proto := range []string{"workspace:", protocolLink, protocolFile, "portal:", "https://", "http://", "git+", "git://", "git@"} {
 		if strings.Contains(line, proto) {
 			return true
 		}

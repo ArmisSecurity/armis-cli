@@ -13,33 +13,41 @@ import (
 	"golang.org/x/term"
 )
 
+// Tailwind CSS color hex values referenced by multiple palette entries.
+const (
+	colorRed600    = "#DC2626"
+	colorOrange600 = "#EA580C"
+	colorBlue600   = "#2563EB"
+	colorGray500   = "#6B7280"
+)
+
 // Color palette - using Tailwind CSS color system for consistency
 // AdaptiveColor automatically selects Light/Dark variant based on terminal background
 var (
 	// Severity colors (background) - high saturation works on both themes
-	colorCriticalBg = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#DC2626"} // red-600
-	colorHighBg     = lipgloss.AdaptiveColor{Light: "#EA580C", Dark: "#EA580C"} // orange-600
-	colorMediumBg   = lipgloss.AdaptiveColor{Light: "#CA8A04", Dark: "#CA8A04"} // yellow-600
-	colorLowBg      = lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#2563EB"} // blue-600
-	colorInfoBg     = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#6B7280"} // gray-500
+	colorCriticalBg = lipgloss.AdaptiveColor{Light: colorRed600, Dark: colorRed600}       // red-600
+	colorHighBg     = lipgloss.AdaptiveColor{Light: colorOrange600, Dark: colorOrange600} // orange-600
+	colorMediumBg   = lipgloss.AdaptiveColor{Light: "#CA8A04", Dark: "#CA8A04"}           // yellow-600
+	colorLowBg      = lipgloss.AdaptiveColor{Light: colorBlue600, Dark: colorBlue600}     // blue-600
+	colorInfoBg     = lipgloss.AdaptiveColor{Light: colorGray500, Dark: colorGray500}     // gray-500
 
 	// Severity colors (foreground for text) - darker on light bg for contrast
-	colorCriticalFg = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#EF4444"} // red-600 / red-500
-	colorHighFg     = lipgloss.AdaptiveColor{Light: "#EA580C", Dark: "#F97316"} // orange-600 / orange-500
-	colorMediumFg   = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#EAB308"} // yellow-700 / yellow-500
-	colorLowFg      = lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#3B82F6"} // blue-600 / blue-500
-	colorInfoFg     = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"} // gray-500 / gray-400
+	colorCriticalFg = lipgloss.AdaptiveColor{Light: colorRed600, Dark: "#EF4444"}    // red-600 / red-500
+	colorHighFg     = lipgloss.AdaptiveColor{Light: colorOrange600, Dark: "#F97316"} // orange-600 / orange-500
+	colorMediumFg   = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#EAB308"}      // yellow-700 / yellow-500
+	colorLowFg      = lipgloss.AdaptiveColor{Light: colorBlue600, Dark: "#3B82F6"}   // blue-600 / blue-500
+	colorInfoFg     = lipgloss.AdaptiveColor{Light: colorGray500, Dark: "#9CA3AF"}   // gray-500 / gray-400
 
 	// Semantic colors - darker on light bg for contrast
-	colorSuccess = lipgloss.AdaptiveColor{Light: "#16A34A", Dark: "#22C55E"} // green-600 / green-500
-	colorWarning = lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"} // amber-600 / amber-500
-	colorMuted   = lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#6B7280"} // gray-600 / gray-500
-	colorAccent  = lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#7c3aed"} // purple-600 (Armis brand)
+	colorSuccess = lipgloss.AdaptiveColor{Light: "#16A34A", Dark: "#22C55E"}    // green-600 / green-500
+	colorWarning = lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}    // amber-600 / amber-500
+	colorMuted   = lipgloss.AdaptiveColor{Light: "#4B5563", Dark: colorGray500} // gray-600 / gray-500
+	colorAccent  = lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#7c3aed"}    // purple-600 (Armis brand)
 
 	// Diff colors - darker on light bg for contrast
-	colorDiffAdd    = lipgloss.AdaptiveColor{Light: "#16A34A", Dark: "#22C55E"} // green-600 / green-500
-	colorDiffRemove = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#EF4444"} // red-600 / red-500
-	colorDiffHunk   = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#6B7280"} // gray-500
+	colorDiffAdd    = lipgloss.AdaptiveColor{Light: "#16A34A", Dark: "#22C55E"}       // green-600 / green-500
+	colorDiffRemove = lipgloss.AdaptiveColor{Light: colorRed600, Dark: "#EF4444"}     // red-600 / red-500
+	colorDiffHunk   = lipgloss.AdaptiveColor{Light: colorGray500, Dark: colorGray500} // gray-500
 
 	// Diff background colors - light tints on light bg, dark tints on dark bg
 	colorDiffAddBg    = lipgloss.AdaptiveColor{Light: "#dcfce7", Dark: "#0f2918"} // green-50 / dark green
@@ -49,8 +57,8 @@ var (
 	colorVulnBg = lipgloss.AdaptiveColor{Light: "#fef3c7", Dark: "#422006"} // amber-100 / amber-950
 
 	// UI colors - inverted for light/dark themes
-	colorBorder = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#374151"} // gray-300 / gray-700
-	colorDim    = lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#6B7280"} // gray-600 / gray-500
+	colorBorder = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#374151"}    // gray-300 / gray-700
+	colorDim    = lipgloss.AdaptiveColor{Light: "#4B5563", Dark: colorGray500} // gray-600 / gray-500
 
 	// Bright text color - dark on light bg, white on dark bg
 	colorBright = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#FFFFFF"} // gray-800 / white

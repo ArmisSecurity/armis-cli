@@ -28,6 +28,17 @@ const cliBinaryName = "armis-cli"
 // platform guards across this package (and its tests) share one literal.
 const goosWindows = "windows"
 
+// Shell name constants used by DetectShells and GenerateWrapper.
+const (
+	shellBash = "bash"
+	shellZsh  = "zsh"
+	shellFish = "fish"
+)
+
+// pipExeBase is the bare pip executable name. DetectPipVariants falls back to
+// this when no pip binary is found on $PATH.
+const pipExeBase = "pip"
+
 // validPMName bounds package-manager names to a safe shell identifier: a
 // lowercase letter followed by lowercase letters, digits, or hyphens, with an
 // optional trailing `.<digits>` version suffix so versioned pip variants
@@ -83,11 +94,11 @@ func DetectShells() []Shell {
 	// of `supply-chain init`, and $HOME is not a trust boundary for a local CLI.
 	candidates := []Shell{
 		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with a hardcoded filename; configuring the user's own shell RC is the purpose of `supply-chain init`
-		{Name: "bash", RCFile: filepath.Join(home, ".bashrc")},
+		{Name: shellBash, RCFile: filepath.Join(home, ".bashrc")},
 		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with a hardcoded filename; configuring the user's own shell RC is the purpose of `supply-chain init`
-		{Name: "zsh", RCFile: filepath.Join(home, ".zshrc")},
+		{Name: shellZsh, RCFile: filepath.Join(home, ".zshrc")},
 		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with hardcoded path segments; configuring the user's own shell RC is the purpose of `supply-chain init`
-		{Name: "fish", RCFile: filepath.Join(home, ".config", "fish", "config.fish")},
+		{Name: shellFish, RCFile: filepath.Join(home, ".config", "fish", "config.fish")},
 	}
 
 	currentShell := filepath.Base(os.Getenv("SHELL"))
@@ -106,7 +117,7 @@ func DetectShells() []Shell {
 func GenerateWrapper(shell string, pms []string) string {
 	cli := resolveCliPath()
 	switch shell {
-	case "fish":
+	case shellFish:
 		return generateFishWrapper(pms, cli)
 	default:
 		return generatePosixWrapper(pms, cli)
@@ -519,7 +530,7 @@ func scanPathExecutables(match func(name string) bool) []string {
 func DetectPipVariants() []string {
 	variants := scanPathExecutables(pipExecutable.MatchString)
 	if len(variants) == 0 {
-		return []string{"pip"}
+		return []string{pipExeBase}
 	}
 	return variants
 }

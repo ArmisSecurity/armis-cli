@@ -145,14 +145,14 @@ func stripPeerFromKey(key string) string {
 }
 
 func shouldSkipPnpmPackage(key string, info pnpmPackageInfo) bool {
-	if strings.HasPrefix(key, "file:") || strings.HasPrefix(key, "link:") {
+	if strings.HasPrefix(key, protocolFile) || strings.HasPrefix(key, protocolLink) {
 		return true
 	}
 	if info.Resolution.Type == "directory" || info.Resolution.Type == "git" {
 		return true
 	}
 	tarball := info.Resolution.Tarball
-	if strings.HasPrefix(tarball, "file:") || strings.Contains(tarball, ".git") {
+	if strings.HasPrefix(tarball, protocolFile) || strings.Contains(tarball, ".git") {
 		return true
 	}
 	return false

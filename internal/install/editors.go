@@ -9,7 +9,23 @@ import (
 	"runtime"
 )
 
-const mcpServerName = "armis-appsec"
+const (
+	mcpServerName       = "armis-appsec"
+	maxEditorConfigSize = 10 << 20 // 10 MB — matches the settings file limit in hooks.go
+)
+
+// JSON key constants shared across MCP/hook config builders.
+const (
+	jsonKeyType    = "type"
+	jsonKeyCommand = "command"
+	jsonKeyArgs    = "args"
+	jsonKeyMatcher = "matcher"
+	jsonKeyHooks   = "hooks"
+	jsonKeyTimeout = "timeout"
+	jsonKeyVersion = "version"
+
+	jsonTypeCommand = "command"
+)
 
 // EditorID identifies a supported editor.
 type EditorID string
@@ -302,10 +318,10 @@ func registerVSCodeFormat(pluginDir, configFile string) error {
 		servers = make(map[string]interface{})
 	}
 	servers[mcpServerName] = map[string]interface{}{
-		"type":    "stdio",
-		"command": venvPython(pluginDir),
-		"args":    []string{filepath.Join(pluginDir, "server.py")},
-		"envFile": filepath.Join(pluginDir, ".env"),
+		jsonKeyType:    "stdio",
+		jsonKeyCommand: venvPython(pluginDir),
+		jsonKeyArgs:    []string{filepath.Join(pluginDir, "server.py")},
+		"envFile":      filepath.Join(pluginDir, ".env"),
 	}
 	data["servers"] = servers
 
@@ -321,9 +337,9 @@ func registerZedFormat(pluginDir, configFile string) error {
 		servers = make(map[string]interface{})
 	}
 	servers[mcpServerName] = map[string]interface{}{
-		"command": map[string]interface{}{
-			"path": venvPython(pluginDir),
-			"args": []string{filepath.Join(pluginDir, "server.py")},
+		jsonKeyCommand: map[string]interface{}{
+			"path":      venvPython(pluginDir),
+			jsonKeyArgs: []string{filepath.Join(pluginDir, "server.py")},
 		},
 		"settings": map[string]interface{}{},
 	}
@@ -334,16 +350,20 @@ func registerZedFormat(pluginDir, configFile string) error {
 
 func stdServerEntry(pluginDir string) map[string]interface{} {
 	return map[string]interface{}{
-		"command": venvPython(pluginDir),
-		"args":    []string{filepath.Join(pluginDir, "server.py")},
+		jsonKeyCommand: venvPython(pluginDir),
+		jsonKeyArgs:    []string{filepath.Join(pluginDir, "server.py")},
 	}
 }
 
 func readJSONFileAsMap(path string) map[string]interface{} {
 	data := make(map[string]interface{})
+	clean := filepath.Clean(path)
 	// armis:ignore cwe:22 reason:path from filepath.Join with known base dirs; filepath.Clean applied
-	// armis:ignore cwe:253 reason:ReadFile error handled by err == nil guard; non-critical config read
-	if b, err := os.ReadFile(filepath.Clean(path)); err == nil {
+	if info, err := os.Stat(clean); err != nil || info.Size() > maxEditorConfigSize {
+		return data
+	}
+	// armis:ignore cwe:22 cwe:253 reason:path from filepath.Join with known base dirs; filepath.Clean applied; ReadFile error handled by err == nil guard
+	if b, err := os.ReadFile(clean); err == nil { //nolint:gosec
 		_ = json.Unmarshal(b, &data)
 	}
 	return data

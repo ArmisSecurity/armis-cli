@@ -15,7 +15,7 @@ import (
 const pipExe = "pip"
 
 func TestGenerateWrapper_Posix(t *testing.T) {
-	wrapper := GenerateWrapper("bash", []string{"npm"})
+	wrapper := GenerateWrapper(shellBash, []string{"npm"})
 
 	if !strings.Contains(wrapper, markerStart) {
 		t.Error("missing start marker")
@@ -29,7 +29,7 @@ func TestGenerateWrapper_Posix(t *testing.T) {
 }
 
 func TestGenerateWrapper_Fish(t *testing.T) {
-	wrapper := GenerateWrapper("fish", []string{"npm"})
+	wrapper := GenerateWrapper(shellFish, []string{"npm"})
 
 	if !strings.Contains(wrapper, "function npm") {
 		t.Error("missing fish function declaration")
@@ -40,7 +40,7 @@ func TestGenerateWrapper_Fish(t *testing.T) {
 }
 
 func TestGenerateWrapper_MultiplePMs(t *testing.T) {
-	wrapper := GenerateWrapper("zsh", []string{"npm", "npx"})
+	wrapper := GenerateWrapper(shellZsh, []string{"npm", "npx"})
 
 	if !strings.Contains(wrapper, "npm()") {
 		t.Error("missing npm function")
@@ -67,7 +67,7 @@ func TestGenerateWrapper_RejectsUnsafeNames(t *testing.T) {
 		"npm'quote", // embedded quote
 	}
 
-	for _, shell := range []string{"bash", "zsh", "fish"} {
+	for _, shell := range []string{shellBash, shellZsh, shellFish} {
 		for _, name := range malicious {
 			wrapper := GenerateWrapper(shell, []string{name})
 			// The only content should be the marker block; the unsafe name must
@@ -83,7 +83,7 @@ func TestGenerateWrapper_RejectsUnsafeNames(t *testing.T) {
 // per-entry: a valid PM name is still wrapped even when an unsafe one is present
 // in the same list.
 func TestGenerateWrapper_KeepsValidAlongsideInvalid(t *testing.T) {
-	wrapper := GenerateWrapper("bash", []string{"npm", "evil; rm -rf ~", "pnpm"})
+	wrapper := GenerateWrapper(shellBash, []string{"npm", "evil; rm -rf ~", "pnpm"})
 
 	if !strings.Contains(wrapper, "npm()") {
 		t.Error("valid npm wrapper should be present")
@@ -112,7 +112,7 @@ func TestGenerateWrapper_CapsNameCount(t *testing.T) {
 
 	// The cap must hold through the public wrapper generator too: count the
 	// emitted function definitions rather than trusting the helper alone.
-	wrapper := GenerateWrapper("bash", many)
+	wrapper := GenerateWrapper(shellBash, many)
 	if n := strings.Count(wrapper, "npm()"); n != maxPMNames {
 		t.Errorf("expected %d wrapped functions, got %d", maxPMNames, n)
 	}
@@ -125,7 +125,7 @@ func TestInjectAndRemoveFunctions(t *testing.T) {
 	existing := "# existing config\nexport PATH=$PATH:/usr/local/bin\n"
 	os.WriteFile(rcFile, []byte(existing), 0o644) //nolint:errcheck,gosec
 
-	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	shells := []Shell{{Name: shellBash, RCFile: rcFile}}
 	pms := []string{"npm"}
 
 	modified, err := InjectFunctions(shells, pms)
@@ -196,7 +196,7 @@ func TestRemoveFunctions_PreservesPermissions(t *testing.T) {
 		t.Fatalf("write rc: %v", err)
 	}
 
-	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	shells := []Shell{{Name: shellBash, RCFile: rcFile}}
 	if _, err := InjectFunctions(shells, []string{"npm"}); err != nil {
 		t.Fatalf("InjectFunctions: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRemoveFunctions_NoBlock(t *testing.T) {
 	rcFile := filepath.Join(tmpDir, ".zshrc")
 	os.WriteFile(rcFile, []byte("# clean file\n"), 0o644) //nolint:errcheck,gosec
 
-	shells := []Shell{{Name: "zsh", RCFile: rcFile}}
+	shells := []Shell{{Name: shellZsh, RCFile: rcFile}}
 	removed, err := RemoveFunctions(shells)
 	if err != nil {
 		t.Fatalf("RemoveFunctions: %v", err)
@@ -229,7 +229,7 @@ func TestRemoveFunctions_NoBlock(t *testing.T) {
 }
 
 func TestRemoveFunctions_MissingFile(t *testing.T) {
-	shells := []Shell{{Name: "bash", RCFile: "/tmp/nonexistent-rc-file-test"}}
+	shells := []Shell{{Name: shellBash, RCFile: "/tmp/nonexistent-rc-file-test"}}
 	removed, err := RemoveFunctions(shells)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -243,7 +243,7 @@ func TestInjectFunctions_CreatesFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	rcFile := filepath.Join(tmpDir, "subdir", ".bashrc")
 
-	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	shells := []Shell{{Name: shellBash, RCFile: rcFile}}
 	modified, err := InjectFunctions(shells, []string{"npm"})
 	if err != nil {
 		t.Fatalf("InjectFunctions: %v", err)
@@ -267,7 +267,7 @@ func TestHasInjection(t *testing.T) {
 		t.Error("should return false for clean file")
 	}
 
-	shells := []Shell{{Name: "bash", RCFile: rcFile}}
+	shells := []Shell{{Name: shellBash, RCFile: rcFile}}
 	InjectFunctions(shells, []string{"npm"}) //nolint:errcheck,gosec
 
 	if !HasInjection(rcFile) {
@@ -340,7 +340,7 @@ func TestIsPipVariant(t *testing.T) {
 // validPMName fix, the dot in "pip3.12" caused sanitizePMNames to drop it, so
 // `pip3.12 install` silently bypassed enforcement.
 func TestGenerateWrapper_WrapsVersionedPip(t *testing.T) {
-	wrapper := GenerateWrapper("bash", []string{"pip3.12"})
+	wrapper := GenerateWrapper(shellBash, []string{"pip3.12"})
 	if !strings.Contains(wrapper, "pip3.12()") {
 		t.Errorf("versioned pip variant should be wrapped, got:\n%s", wrapper)
 	}
@@ -473,14 +473,14 @@ func TestDetectShells(t *testing.T) {
 		if len(shells) == 0 {
 			t.Fatal("expected at least one detected shell")
 		}
-		if shells[0].Name != "zsh" {
+		if shells[0].Name != shellZsh {
 			t.Errorf("first shell = %q, want zsh (the current $SHELL)", shells[0].Name)
 		}
 		names := make([]string, len(shells))
 		for i, s := range shells {
 			names[i] = s.Name
 		}
-		if !slices.Contains(names, "bash") {
+		if !slices.Contains(names, shellBash) {
 			t.Errorf("expected bash among detected shells (its .bashrc exists), got %v", names)
 		}
 	})

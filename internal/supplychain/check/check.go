@@ -12,6 +12,13 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain/registry"
 )
 
+// protocolFile and protocolLink are URL schemes used in lockfiles to denote
+// local path and symlink dependencies. Shared across npm, pnpm, yarn, and bun parsers.
+const (
+	protocolFile = "file:"
+	protocolLink = "link:"
+)
+
 type Result struct {
 	Violations []supplychain.Violation
 	Warnings   []string

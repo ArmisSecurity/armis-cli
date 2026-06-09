@@ -20,30 +20,47 @@ const (
 	suppressionTypeRule = "rule"
 )
 
+// File extension constants referenced in multiple maps below.
+const (
+	extPy    = ".py"
+	extRb    = ".rb"
+	extJs    = ".js"
+	extTS    = ".ts"
+	extJsx   = ".jsx"
+	extTsx   = ".tsx"
+	extKt    = ".kt"
+	extScala = ".scala"
+
+	commentHTML = "<!--"
+
+	kwDef      = "def "
+	kwFunction = "function "
+)
+
 // funcSigByExt maps file extensions to the function/method signature prefixes
 // valid for that language. Only unambiguous declaration keywords are included;
 // prefixes like "public "/"private " are excluded because they also match
 // field/property declarations and would cause false transparency.
 var funcSigByExt = map[string][]string{
 	".go":    {"func "},
-	".py":    {"def "},
-	".rb":    {"def "},
-	".js":    {"function "},
-	".ts":    {"function "},
-	".jsx":   {"function "},
-	".tsx":   {"function "},
-	".php":   {"function "},
+	extPy:    {kwDef},
+	extRb:    {kwDef},
+	extJs:    {kwFunction},
+	extTS:    {kwFunction},
+	extJsx:   {kwFunction},
+	extTsx:   {kwFunction},
+	".php":   {kwFunction},
 	".rs":    {"fn ", "pub fn "},
-	".kt":    {"fun "},
-	".scala": {"def "},
+	extKt:    {"fun "},
+	extScala: {kwDef},
 	".swift": {"func "},
 }
 
 // classKeywordExts are extensions where `class` is a language keyword for
 // type declarations (not a valid identifier prefix).
 var classKeywordExts = map[string]bool{
-	".py": true, ".rb": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
-	".java": true, ".kt": true, ".scala": true, ".cs": true, ".dart": true,
+	extPy: true, extRb: true, extJs: true, extTS: true, extJsx: true, extTsx: true,
+	".java": true, extKt: true, extScala: true, ".cs": true, ".dart": true,
 }
 
 // InlineDirective represents a parsed armis:ignore comment.
@@ -73,7 +90,7 @@ var commentPrefixes = map[string][]string{
 
 	".ini": {";"}, ".cfg": {";"},
 
-	".html": {"<!--"}, ".xml": {"<!--"}, ".svg": {"<!--"},
+	".html": {commentHTML}, ".xml": {commentHTML}, ".svg": {commentHTML},
 
 	".css": {"/*"}, ".scss": {"/*", "//"}, ".less": {"/*", "//"},
 }

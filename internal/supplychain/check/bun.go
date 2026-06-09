@@ -79,8 +79,8 @@ func shouldSkipBunPackage(tuple []interface{}) bool {
 	}
 	if resolved, ok := tuple[1].(string); ok {
 		if strings.HasPrefix(resolved, "git+") ||
-			strings.HasPrefix(resolved, "file:") ||
-			strings.HasPrefix(resolved, "link:") ||
+			strings.HasPrefix(resolved, protocolFile) ||
+			strings.HasPrefix(resolved, protocolLink) ||
 			strings.HasPrefix(resolved, "workspace:") {
 			return true
 		}

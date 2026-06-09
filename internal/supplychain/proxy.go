@@ -21,6 +21,13 @@ const (
 	maxProxyResponseSize    = 20 * 1024 * 1024
 	distTagLatest           = "latest"
 
+	// npmTimeKeyCreated and npmTimeKeyModified are metadata-only keys in the npm
+	// registry's "time" object that record when the package was first published
+	// and last modified. They are not version strings and must be skipped when
+	// iterating over the version→timestamp map.
+	npmTimeKeyCreated  = "created"
+	npmTimeKeyModified = "modified"
+
 	// pypiSimpleJSONAccept is the PEP 691 content type for the PyPI Simple API
 	// JSON representation. The default Simple API response is HTML (PEP 503),
 	// which carries no upload timestamps; only the JSON form exposes the PEP 700
@@ -391,7 +398,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	versionsToRemove := make(map[string]bool)
 
 	for version, timeStr := range timeMap {
-		if version == "created" || version == "modified" {
+		if version == npmTimeKeyCreated || version == npmTimeKeyModified {
 			continue
 		}
 		publishTime, err := time.Parse(time.RFC3339, timeStr)
@@ -432,7 +439,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	if latestVersion == "" {
 		var latestTime time.Time
 		for version, timeStr := range timeMap {
-			if version == "created" || version == "modified" {
+			if version == npmTimeKeyCreated || version == npmTimeKeyModified {
 				continue
 			}
 			if isPrerelease(version) {

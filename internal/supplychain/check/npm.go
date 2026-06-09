@@ -85,7 +85,7 @@ func shouldSkipResolved(resolved string) bool {
 	if resolved == "" {
 		return false
 	}
-	for _, prefix := range []string{"git+", "git://", "git@", "file:", "link:"} {
+	for _, prefix := range []string{"git+", "git://", "git@", protocolFile, protocolLink} {
 		if strings.HasPrefix(resolved, prefix) {
 			return true
 		}

@@ -454,7 +454,7 @@ func severityToSarifLevel(severity model.Severity) string {
 	case model.SeverityLow, model.SeverityInfo:
 		return "note"
 	default:
-		return "none"
+		return groupByNone
 	}
 }
 

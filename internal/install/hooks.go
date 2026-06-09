@@ -33,7 +33,7 @@ func installHooksToFile(settingsPath string) error {
 	if info, err := os.Stat(settingsPath); err == nil && info.Size() > maxSettingsSize {
 		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
 	}
-	// armis:ignore cwe:59 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); no user input
+	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); size bounded by maxSettingsSize guard above
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading settings: %w", err)
@@ -47,7 +47,7 @@ func installHooksToFile(settingsPath string) error {
 		}
 	}
 
-	hooks, _ := settings["hooks"].(map[string]interface{})
+	hooks, _ := settings[jsonKeyHooks].(map[string]interface{})
 	if hooks == nil {
 		hooks = make(map[string]interface{})
 	}
@@ -57,11 +57,11 @@ func installHooksToFile(settingsPath string) error {
 	// Check if Armis hook already exists
 	for _, entry := range preToolUse {
 		if m, ok := entry.(map[string]interface{}); ok {
-			if matcher, _ := m["matcher"].(string); matcher == armisHookMatcher {
-				if innerHooks, _ := m["hooks"].([]interface{}); len(innerHooks) > 0 {
+			if matcher, _ := m[jsonKeyMatcher].(string); matcher == armisHookMatcher {
+				if innerHooks, _ := m[jsonKeyHooks].([]interface{}); len(innerHooks) > 0 {
 					for _, h := range innerHooks {
 						if hm, ok := h.(map[string]interface{}); ok {
-							if cmd, _ := hm["command"].(string); cmd != "" && isArmisHookCommand(cmd) {
+							if cmd, _ := hm[jsonKeyCommand].(string); cmd != "" && isArmisHookCommand(cmd) {
 								return nil // already installed
 							}
 						}
@@ -72,18 +72,18 @@ func installHooksToFile(settingsPath string) error {
 	}
 
 	armisHook := map[string]interface{}{
-		"matcher": armisHookMatcher,
-		"hooks": []map[string]interface{}{
+		jsonKeyMatcher: armisHookMatcher,
+		jsonKeyHooks: []map[string]interface{}{
 			{
-				"type":    "command",
-				"command": "armis-cli scan repo --format json --no-progress --fail-on CRITICAL . >/dev/null 2>&1",
+				jsonKeyType:    jsonTypeCommand,
+				jsonKeyCommand: "armis-cli scan repo --format json --no-progress --fail-on CRITICAL . >/dev/null 2>&1",
 			},
 		},
 	}
 
 	preToolUse = append(preToolUse, armisHook)
 	hooks["PreToolUse"] = preToolUse
-	settings["hooks"] = hooks
+	settings[jsonKeyHooks] = hooks
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o750); err != nil {
 		return fmt.Errorf("creating settings directory: %w", err)
@@ -112,7 +112,7 @@ func removeHooksFromFile(settingsPath string) error {
 	} else if info.Size() > maxSettingsSize {
 		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
 	}
-	// armis:ignore cwe:59 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); no user input
+	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); size bounded by maxSettingsSize guard above
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil {
 		return fmt.Errorf("reading settings: %w", err)
@@ -123,7 +123,7 @@ func removeHooksFromFile(settingsPath string) error {
 		return fmt.Errorf("parsing settings: %w", err)
 	}
 
-	hooks, _ := settings["hooks"].(map[string]interface{})
+	hooks, _ := settings[jsonKeyHooks].(map[string]interface{})
 	if hooks == nil {
 		return nil
 	}
@@ -152,9 +152,9 @@ func removeHooksFromFile(settingsPath string) error {
 	}
 
 	if len(hooks) == 0 {
-		delete(settings, "hooks")
+		delete(settings, jsonKeyHooks)
 	} else {
-		settings["hooks"] = hooks
+		settings[jsonKeyHooks] = hooks
 	}
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o750); err != nil {
@@ -164,10 +164,10 @@ func removeHooksFromFile(settingsPath string) error {
 }
 
 func isArmisHookEntry(m map[string]interface{}) bool {
-	innerHooks, _ := m["hooks"].([]interface{})
+	innerHooks, _ := m[jsonKeyHooks].([]interface{})
 	for _, h := range innerHooks {
 		if hm, ok := h.(map[string]interface{}); ok {
-			if cmd, _ := hm["command"].(string); isArmisHookCommand(cmd) {
+			if cmd, _ := hm[jsonKeyCommand].(string); isArmisHookCommand(cmd) {
 				return true
 			}
 		}

@@ -10,6 +10,9 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// mockTenantID is the tenant identifier returned by the mock API server.
+const mockTenantID = "test-tenant"
+
 // MockAPIConfig configures the mock API server behavior.
 type MockAPIConfig struct {
 	// Findings to return in normalized-results endpoint
@@ -77,7 +80,7 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,
 				ArtifactType: "tar",
-				TenantID:     "test-tenant",
+				TenantID:     mockTenantID,
 				Filename:     "upload.tar.gz",
 				Message:      "Upload successful",
 			})
@@ -102,7 +105,7 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 					{
 						ScanID:       config.ScanID,
 						ScanStatus:   status,
-						TenantID:     "test-tenant",
+						TenantID:     mockTenantID,
 						ArtifactType: "tar",
 						ScanType:     "repository",
 						LastError:    lastError,
@@ -116,7 +119,7 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results") && r.Method == http.MethodGet {
 			JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
 				Data: model.NormalizedResultsData{
-					TenantID: "test-tenant",
+					TenantID: mockTenantID,
 					ScanResults: []model.ScanResultData{
 						{
 							ScanID:   config.ScanID,

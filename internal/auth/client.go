@@ -105,8 +105,8 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		Region:       regionHint,
 	}
 
-	// armis:ignore cwe:770 reason:credentials are bounded by caller input (CLI flags/env); request is a single fixed-structure JSON with context timeout
-	jsonBody, err := json.Marshal(reqBody)
+	// armis:ignore cwe:522 cwe:770 reason:marshaling credentials is intentional for the auth token endpoint; sent over HTTPS; bounded by caller input
+	jsonBody, err := json.Marshal(reqBody) //nolint:gosec // G117: ClientSecret is a credential field; marshaling is intentional for the auth token request
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
