@@ -30,10 +30,15 @@ func InstallHooks() error {
 func installHooksToFile(settingsPath string) error {
 	settings := make(map[string]interface{})
 
-	if info, err := os.Stat(settingsPath); err == nil && info.Size() > maxSettingsSize {
-		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
+	if info, err := os.Stat(settingsPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("settings file is not a regular file: %s", settingsPath)
+		}
+		if info.Size() > maxSettingsSize {
+			return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
+		}
 	}
-	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); size bounded by maxSettingsSize guard above
+	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); regular-file + size bounded by guards above
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading settings: %w", err)
@@ -109,10 +114,12 @@ func removeHooksFromFile(settingsPath string) error {
 			return nil
 		}
 		return fmt.Errorf("reading settings: %w", err)
+	} else if !info.Mode().IsRegular() {
+		return fmt.Errorf("settings file is not a regular file: %s", settingsPath)
 	} else if info.Size() > maxSettingsSize {
 		return fmt.Errorf("settings file too large (%d bytes): %s", info.Size(), settingsPath)
 	}
-	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); size bounded by maxSettingsSize guard above
+	// armis:ignore cwe:59 cwe:770 reason:settingsPath from filepath.Join(UserHomeDir, hardcoded ".claude/settings.json"); regular-file + size bounded by guards above
 	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from UserHomeDir + hardcoded segments
 	if err != nil {
 		return fmt.Errorf("reading settings: %w", err)

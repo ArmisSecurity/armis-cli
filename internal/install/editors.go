@@ -359,11 +359,14 @@ func readJSONFileAsMap(path string) map[string]interface{} {
 	data := make(map[string]interface{})
 	clean := filepath.Clean(path)
 	// armis:ignore cwe:22 reason:path from filepath.Join with known base dirs; filepath.Clean applied
-	if info, err := os.Stat(clean); err != nil || info.Size() > maxEditorConfigSize {
+	// Reject non-regular files (devices, FIFOs): they can report Size()==0 yet
+	// stream unbounded data into os.ReadFile, defeating the size cap (CWE-770).
+	if info, err := os.Stat(clean); err != nil || !info.Mode().IsRegular() || info.Size() > maxEditorConfigSize {
 		return data
 	}
 	// armis:ignore cwe:22 cwe:253 reason:path from filepath.Join with known base dirs; filepath.Clean applied; ReadFile error handled by err == nil guard
 	if b, err := os.ReadFile(clean); err == nil { //nolint:gosec
+		// armis:ignore cwe:502 cwe:770 reason:Go encoding/json into map[string]interface{} has no gadget/polymorphic deserialization; input is the user's own local editor config, size-bounded by the maxEditorConfigSize guard above
 		_ = json.Unmarshal(b, &data)
 	}
 	return data

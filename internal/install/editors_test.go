@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -284,6 +285,56 @@ func TestRegisterPreservesExistingConfig(t *testing.T) {
 	}
 	if _, ok := servers[mcpServerName]; !ok {
 		t.Error("armis-appsec not registered")
+	}
+}
+
+func TestRegisterSkipsOversizedConfig(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "mcp.json")
+	pluginDir := filepath.Join(dir, "plugin")
+
+	// Write a valid-but-oversized config: a real mcpServers entry plus padding
+	// that pushes the file past maxEditorConfigSize. readJSONFileAsMap must skip
+	// reading it, so registration starts fresh and the padded entry is dropped.
+	padding := strings.Repeat("a", maxEditorConfigSize+1)
+	existing := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"other-server": map[string]interface{}{
+				"command": "node",
+				"args":    []string{"server.js"},
+			},
+		},
+		"_pad": padding,
+	}
+	b, _ := json.Marshal(existing)
+	if err := os.WriteFile(configFile, b, 0o600); err != nil {
+		t.Fatalf("seeding config: %v", err)
+	}
+
+	configPathOverrides = map[EditorID]string{EditorCursor: configFile}
+	defer func() { configPathOverrides = nil }()
+
+	e, _ := EditorByID(EditorCursor)
+	if err := e.Register(pluginDir); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+
+	// The rewritten config must be valid JSON with armis-appsec registered.
+	var data map[string]interface{}
+	out, _ := os.ReadFile(filepath.Clean(configFile))
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("rewritten config is not valid JSON: %v", err)
+	}
+	servers, ok := data["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("mcpServers key missing after register")
+	}
+	if _, ok := servers[mcpServerName]; !ok {
+		t.Error("armis-appsec not registered")
+	}
+	// The oversized file was skipped, so its prior contents were not merged in.
+	if _, ok := servers["other-server"]; ok {
+		t.Error("oversized config was read instead of skipped (other-server survived)")
 	}
 }
 

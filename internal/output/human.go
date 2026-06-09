@@ -23,8 +23,14 @@ import (
 )
 
 const (
+	// noneValue is the neutral "none" literal shared across unrelated domains
+	// (the group-by option and the SARIF "none" level). Domain-specific
+	// constants derive from it so call sites reference the name that matches
+	// their own semantics rather than borrowing another domain's.
+	noneValue = "none"
+
 	groupBySeverity = "severity"
-	groupByNone     = "none"
+	groupByNone     = noneValue
 	noCWELabel      = "No CWE"
 
 	// Resource limits for snippet loading to prevent memory exhaustion (CWE-770)
