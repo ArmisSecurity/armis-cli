@@ -13,6 +13,15 @@ linters:
     - gosec
     - goconst
     - misspell
+  exclusions:
+    rules:
+      # The test/ directory holds standalone integration-test scaffolding
+      # (e.g. mock-server.go, package main). goconst's ignore-tests only
+      # matches *_test.go files, so exempt the whole test/ tree explicitly —
+      # constant-extraction adds no value to throwaway test harnesses.
+      - path: ^test/
+        linters:
+          - goconst
   settings:
     goconst:
       ignore-tests: true
