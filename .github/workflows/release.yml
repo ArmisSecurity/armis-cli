@@ -165,15 +165,35 @@ jobs:
 
           MAJOR="${RELEASE_TAG%%.*}"   # v1.10.3 -> v1
           MINOR="${RELEASE_TAG%.*}"    # v1.10.3 -> v1.10
-          echo "Pointing $MAJOR and $MINOR at $RELEASE_TAG ($GITHUB_SHA)"
+
+          # Find the highest stable tag for this major line so we never move
+          # the floating alias backwards (e.g. if v1.9.9 is released after
+          # v1.10.3, v1 must stay on v1.10.3, not regress to v1.9.9).
+          LATEST_FOR_MAJOR=$(git tag --sort=-v:refname \
+            | grep -E "^${MAJOR}\.[0-9]+\.[0-9]+$" \
+            | head -1)
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git tag -f "$MAJOR" "$GITHUB_SHA"
+          # Always update the minor alias — a backport to v1.9.x never shares
+          # the same minor, so this is always monotonic.
+          echo "Pointing $MINOR at $RELEASE_TAG ($GITHUB_SHA)"
           git tag -f "$MINOR" "$GITHUB_SHA"
+
+          # Only update the major alias if this release is the highest semver
+          # tag for this major line.
+          if [ "$LATEST_FOR_MAJOR" = "$RELEASE_TAG" ]; then
+            echo "Pointing $MAJOR at $RELEASE_TAG ($GITHUB_SHA)"
+            git tag -f "$MAJOR" "$GITHUB_SHA"
+          else
+            echo "Skipping $MAJOR update: $RELEASE_TAG is not the latest for $MAJOR (latest is $LATEST_FOR_MAJOR)"
+          fi
 
           # Force-push the aliases. These pushes use GITHUB_TOKEN and target
           # tags excluded by the "v*.*.*" trigger filter, so they do not
           # re-trigger this release workflow.
-          git push -f origin "$MAJOR" "$MINOR"
+          git push -f origin "$MINOR"
+          if [ "$LATEST_FOR_MAJOR" = "$RELEASE_TAG" ]; then
+            git push -f origin "$MAJOR"
+          fi
