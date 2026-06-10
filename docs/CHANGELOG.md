@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Release pipeline now maintains floating major (`v1`) and minor (`v1.12`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#213)
 - Documented the one-time GitHub Marketplace publishing steps for the Armis CLI Action in `docs/DISTRIBUTION-SETUP.md` (#213)
+- `supply-chain`: `uvx` (uv's on-demand tool runner) is now wrapped alongside `uv`, the PyPI analogue of how `npx` is paired with `npm`. `uvx <tool>` fetches a tool from PyPI and runs it — exactly the supply-chain vector the proxy guards — so wherever `uv` is enforced, `uvx` is too. It shares uv's resolver and config, so it routes through the same transparent PyPI proxy (`UV_INDEX_URL`) and inherits uv's `ecosystems`-scope decision. Enforcement applies to tools `uvx` fetches from the registry; a tool already in the uv tool cache runs without a registry round-trip and is not re-checked. Re-run `armis-cli supply-chain init` to wrap `uvx` on machines where it is installed.
 
 ### Changed
 

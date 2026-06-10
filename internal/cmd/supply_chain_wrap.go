@@ -39,6 +39,7 @@ const (
 	pmYarn   = "yarn"
 	pmPip    = "pip"
 	pmUV     = "uv"
+	pmUVX    = "uvx"
 	pmPoetry = "poetry"
 	pmPipenv = "pipenv"
 	pmPDM    = "pdm"
@@ -61,7 +62,7 @@ func init() {
 
 var allowedPMs = map[string]bool{
 	pmNPM: true, pmNPX: true, pmPNPM: true, pmBun: true, pmYarn: true,
-	pmPip: true, pmUV: true, pmPoetry: true, pmPipenv: true, pmPDM: true,
+	pmPip: true, pmUV: true, pmUVX: true, pmPoetry: true, pmPipenv: true, pmPDM: true,
 	pmMaven: true, pmGradle: true,
 }
 
@@ -83,7 +84,7 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 	canonical := canonicalPM(pmName)
 
 	if !allowedPMs[canonical] {
-		return fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pmName)
+		return fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, uvx, poetry, pipenv, pdm, mvn, gradle)", pmName)
 	}
 
 	if os.Getenv(envSCActive) == "1" {
@@ -127,12 +128,12 @@ func canonicalPM(pm string) string {
 func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	policy := resolveWrapPolicy()
 
-	// pip and uv resolve from the PyPI Simple API, a different protocol from the
-	// npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
+	// pip, uv, and uvx resolve from the PyPI Simple API, a different protocol from
+	// the npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
 	// filtering). All other proxied PMs (npm/npx/pnpm/bun/yarn) speak the npm registry.
 	mode := supplychain.ModeNPM
 	switch canonicalPM(pmName) {
-	case pmPip, pmUV:
+	case pmPip, pmUV, pmUVX:
 		mode = supplychain.ModePyPI
 	}
 
@@ -208,6 +209,8 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 		pmName = pmPip
 	case pmUV:
 		pmName = pmUV
+	case pmUVX:
+		pmName = pmUVX
 	case pmPoetry:
 		pmName = pmPoetry
 	case pmPipenv:
@@ -225,7 +228,7 @@ func execPM(pm string, args []string, extraEnv []string) (int, error) {
 		// numeric components so no taint flows from pm into pmName.
 		canonical, ok := supplychain.CanonicalPipVariant(pm)
 		if !ok {
-			return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, poetry, pipenv, pdm, mvn, gradle)", pm)
+			return 1, fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, uvx, poetry, pipenv, pdm, mvn, gradle)", pm)
 		}
 		pmName = canonical
 	}
@@ -663,7 +666,9 @@ func registryEnvForPM(pm, registryURL string) []string {
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("YARN_NPM_REGISTRY_SERVER=%s", registryURL),
 		}
-	case pmUV:
+	case pmUV, pmUVX:
+		// uvx is uv's on-demand tool runner (`uvx X` ≡ `uv tool run X`); it shares
+		// uv's resolver and config, so it honors the same UV_INDEX_URL override.
 		// registryURL is built by the caller with a trailing slash, so trim it
 		// before appending the PEP 503 "/simple/" path to avoid a "//simple/"
 		// double slash. Clients normalize it today, but the PyPI proxy handler
@@ -920,6 +925,13 @@ func pmToEcosystem(pm string) supplychain.Ecosystem {
 	case pmPip:
 		return supplychain.EcosystemPip
 	case pmUV:
+		return supplychain.EcosystemUV
+	case pmUVX:
+		// uvx is uv's package runner, not a distinct ecosystem: it resolves from
+		// PyPI and has no lockfile of its own. Mapping it to EcosystemUV lets the
+		// config "ecosystems" scoping gate treat uvx exactly like uv — `ecosystems:
+		// [uv]` enforces both, and scoping uv out (e.g. `ecosystems: [npm]`) passes
+		// uvx through too, so the two never diverge. Mirrors npx → EcosystemNPM.
 		return supplychain.EcosystemUV
 	case pmPoetry:
 		return supplychain.EcosystemPoetry
