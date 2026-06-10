@@ -235,10 +235,13 @@ func detectWrappablePMs() (pms []string, installed []string) {
 //     all resolve to PyPI and share one policy. The verbatim wrapper block below
 //     still names every variant, so no information is lost — this is the digest.
 //   - npx is annotated "(paired with npm)" and uvx "(paired with uv)" rather than
-//     listed as plain finds, because they are the entries init adds without
-//     detecting them: each ships with / shares config with its base PM and is
-//     wrapped wherever that PM is in scope (see detectWrappablePMs). Making that
-//     explicit keeps the summary honest about what was on PATH vs. inferred.
+//     listed as plain finds, because neither is part of the primary detection set
+//     (allSupportedPMs omits both). Each is paired with its base PM — and wrapped
+//     only when confirmed present on PATH via the IsOnPath guards in
+//     detectWrappablePMs — rather than being scanned for independently. The
+//     annotation tells the user these came along with their base PM (npm/uv), so
+//     the summary stays honest about which entries the main scan surfaced vs.
+//     which the pairing logic added.
 //
 // Remaining names are shown as-is, bolded, in sorted order so the line is stable
 // regardless of PATH scan order or where npx/uvx were appended.
