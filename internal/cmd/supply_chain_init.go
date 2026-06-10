@@ -32,7 +32,7 @@ can enforce age policies on package installations. The shell functions are globa
 (they apply in every directory), so init wraps what is installed on the machine,
 not just what a single project uses; whether enforcement actually runs is decided
 per-project at install time from the nearest .armis-supply-chain.yaml. Node PMs
-(npm, npx, pnpm, bun, yarn) and pip/uv use a transparent proxy that filters
+(npm, npx, pnpm, bun, yarn) and pip/uv/uvx use a transparent proxy that filters
 registry responses. poetry, pipenv, pdm, mvn, and gradle use a pre-install check
 that blocks the build if violations are found.
 
@@ -125,9 +125,9 @@ func reportNothingInScope(installed []string) error {
 // allSupportedPMs is the set of fixed package-manager command names init looks
 // for on PATH. pip is intentionally omitted: its variants (pip, pip3, pip3.12)
 // are matched by pattern inside DetectInstalledPMs, since each interpreter ships
-// its own pip binary. npx is omitted too — it is not detected directly but paired
-// with npm below, mirroring how the wrap gate treats it as part of the npm
-// ecosystem.
+// its own pip binary. npx and uvx are omitted too — they are not detected
+// directly but paired with npm/uv below, mirroring how the wrap gate treats them
+// as part of the npm/uv ecosystem.
 var allSupportedPMs = []string{
 	pmNPM, pmPNPM, pmBun, pmYarn,
 	pmUV, pmPoetry, pmPipenv, pmPDM,
@@ -208,6 +208,15 @@ func detectWrappablePMs() (pms []string, installed []string) {
 		addPM(pmNPX)
 	}
 
+	// uvx is uv's on-demand tool runner (`uvx X` ≡ `uv tool run X`), the PyPI
+	// analogue of npx: it fetches a tool from PyPI and runs it, so wherever uv is
+	// wrapped its runner should be too. Pair it after scoping so it inherits uv's
+	// in-scope decision, and guard with a PATH check so a missing uvx binary is
+	// never shadowed by an Armis wrapper error. Mirrors the npx pairing above.
+	if seen[pmUV] && supplychain.IsOnPath(pmUVX) {
+		addPM(pmUVX)
+	}
+
 	// An empty pms here means every installed PM was scoped out. We deliberately do
 	// NOT fall back to npm: the caller uses the non-empty `installed` list to report
 	// that nothing is in scope, rather than wrapping a package manager the user
@@ -225,22 +234,26 @@ func detectWrappablePMs() (pms []string, installed []string) {
 //     dozen of these; listing each by name would bury the summary even though they
 //     all resolve to PyPI and share one policy. The verbatim wrapper block below
 //     still names every variant, so no information is lost — this is the digest.
-//   - npx is annotated "(paired with npm)" rather than listed as a plain find,
-//     because it is the one entry init adds without detecting it: it ships with
-//     npm and is wrapped wherever npm is in scope (see detectWrappablePMs). Making
-//     that explicit keeps the summary honest about what was on PATH vs. inferred.
+//   - npx is annotated "(paired with npm)" and uvx "(paired with uv)" rather than
+//     listed as plain finds, because they are the entries init adds without
+//     detecting them: each ships with / shares config with its base PM and is
+//     wrapped wherever that PM is in scope (see detectWrappablePMs). Making that
+//     explicit keeps the summary honest about what was on PATH vs. inferred.
 //
 // Remaining names are shown as-is, bolded, in sorted order so the line is stable
-// regardless of PATH scan order or where npx was appended.
+// regardless of PATH scan order or where npx/uvx were appended.
 func summarizeDetectedPMs(s *output.Styles, pms []string) string {
 	var others []string
 	pipVariants := 0
 	hasNPX := false
+	hasUVX := false
 
 	for _, pm := range pms {
 		switch {
 		case pm == pmNPX:
 			hasNPX = true
+		case pm == pmUVX:
+			hasUVX = true
 		case supplychain.IsPipVariant(pm):
 			pipVariants++
 		default:
@@ -249,7 +262,7 @@ func summarizeDetectedPMs(s *output.Styles, pms []string) string {
 	}
 	sort.Strings(others)
 
-	parts := make([]string, 0, len(others)+2)
+	parts := make([]string, 0, len(others)+3)
 	for _, pm := range others {
 		parts = append(parts, s.Bold.Render(pm))
 	}
@@ -265,10 +278,13 @@ func summarizeDetectedPMs(s *output.Styles, pms []string) string {
 	if hasNPX {
 		parts = append(parts, s.Bold.Render(pmNPX)+s.MutedText.Render(" (paired with npm)"))
 	}
+	if hasUVX {
+		parts = append(parts, s.Bold.Render(pmUVX)+s.MutedText.Render(" (paired with uv)"))
+	}
 
-	// Keep pip and npx at the end of the line: pip carries a parenthetical and npx
-	// is the inferred entry, so trailing them reads more naturally than interleaving
-	// by alphabetical position.
+	// Keep pip and the paired runners (npx, uvx) at the end of the line: pip carries
+	// a parenthetical and the runners are inferred entries, so trailing them reads
+	// more naturally than interleaving by alphabetical position.
 	return strings.Join(parts, ", ")
 }
 

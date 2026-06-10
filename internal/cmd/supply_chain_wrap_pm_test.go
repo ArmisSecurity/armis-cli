@@ -17,6 +17,8 @@ func TestCanonicalPM(t *testing.T) {
 		{"pip3.11", pmPip},
 		{"pip3.12", pmPip},
 		{pmUV, pmUV},
+		// uvx is a distinct binary, not a pip/uv variant — it must not collapse.
+		{pmUVX, pmUVX},
 		{pmNPM, pmNPM},
 		{pmPoetry, pmPoetry},
 		// pipx / pipenv are distinct tools, not pip variants — must not collapse.
@@ -55,6 +57,9 @@ func TestRequiresPreInstallBlock(t *testing.T) {
 		{pmGradle, true},
 		{pmPip, false},
 		{pmUV, false},
+		// uvx is uv's runner: like uv it uses the transparent proxy, never the
+		// pre-install lockfile audit (it has no lockfile of its own).
+		{pmUVX, false},
 		{pmNPM, false},
 		// npx is the npm runner: like npm it uses the transparent proxy, never the
 		// pre-install lockfile audit (it has no lockfile of its own).
@@ -96,6 +101,9 @@ func TestPmToEcosystem(t *testing.T) {
 		{pmYarn, supplychain.EcosystemYarn},
 		{pmPip, supplychain.EcosystemPip},
 		{pmUV, supplychain.EcosystemUV},
+		// uvx maps to the uv ecosystem so the config "ecosystems" scoping gate
+		// treats it exactly like uv (scoping uv in/out includes uvx too).
+		{pmUVX, supplychain.EcosystemUV},
 		{"unknown-pm", ""},
 	}
 
@@ -129,6 +137,8 @@ func TestRegistryEnvForPM(t *testing.T) {
 		{pmYarn, "YARN_NPM_REGISTRY_SERVER", url},
 		{pmPip, "PIP_INDEX_URL", "http://127.0.0.1:9999/simple/"},
 		{pmUV, "UV_INDEX_URL", "http://127.0.0.1:9999/simple/"},
+		// uvx shares uv's config, so it gets the same PyPI index override as uv.
+		{pmUVX, "UV_INDEX_URL", "http://127.0.0.1:9999/simple/"},
 	}
 
 	for _, tt := range tests {

@@ -201,6 +201,63 @@ func TestDetectWrappablePMs_NpxAbsentWhenNpmScopedOut(t *testing.T) {
 	}
 }
 
+func TestDetectWrappablePMs_PairsUvxWithUv(t *testing.T) {
+	// uv and uvx both on PATH: uvx must be wrapped alongside uv so ad-hoc
+	// `uvx <tool>` runs are filtered through the same PyPI proxy.
+	seedPMsOnPath(t, pmUV, pmUVX)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if !containsPM(pms, pmUV) || !containsPM(pms, pmUVX) {
+		t.Errorf("detectWrappablePMs() = %v, want both uv and uvx", pms)
+	}
+}
+
+func TestDetectWrappablePMs_UvxNotPairedWithoutUv(t *testing.T) {
+	// A machine with poetry but no uv never wraps uv, so uvx must not appear:
+	// the runner is paired only where uv itself is in scope.
+	seedPMsOnPath(t, pmPoetry)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmUVX) {
+		t.Errorf("detectWrappablePMs() = %v, must not contain uvx without uv", pms)
+	}
+}
+
+func TestDetectWrappablePMs_UvxNotWrappedWhenAbsentFromPath(t *testing.T) {
+	// uv on PATH but uvx not installed: the pairing guard must prevent wrapping a
+	// missing uvx binary. Unconditionally wrapping it would shadow "command not found"
+	// with an Armis wrapper error.
+	seedPMsOnPath(t, pmUV)
+	chdirTemp(t)
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmUVX) {
+		t.Errorf("detectWrappablePMs() = %v, must not wrap uvx when it is not on PATH", pms)
+	}
+}
+
+func TestDetectWrappablePMs_UvxAbsentWhenUvScopedOut(t *testing.T) {
+	// uvx is paired AFTER ecosystem scoping, so it must inherit uv's exclusion:
+	// with uv and npm both on PATH but the config scoping enforcement to npm only,
+	// uv is out of scope — and uvx must follow it out, never wrapped on its own.
+	seedPMsOnPath(t, pmUV, pmNPM)
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, supplychain.ConfigFileName),
+		[]byte("version: 1\necosystems:\n  - npm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pms, _ := detectWrappablePMs()
+	if containsPM(pms, pmUVX) {
+		t.Errorf("detectWrappablePMs() = %v, must not contain uvx when uv is scoped out", pms)
+	}
+	if !containsPM(pms, pmNPM) {
+		t.Errorf("detectWrappablePMs() = %v, want npm (the in-scope PM)", pms)
+	}
+}
+
 func TestDetectWrappablePMs_HonorsEcosystemScope(t *testing.T) {
 	// npm and pnpm are both on PATH but the config scopes enforcement to pnpm only,
 	// so init must wrap only pnpm.
@@ -328,6 +385,13 @@ func TestSummarizeDetectedPMs(t *testing.T) {
 			name: "pip only",
 			pms:  []string{"pip3", "pip3.12"},
 			want: "pip (2 variants)",
+		},
+		{
+			// uvx is annotated "(paired with uv)" and trails the line, mirroring npx.
+			// When both runners are present, npx precedes uvx (npm before uv).
+			name: "uvx is annotated as paired with uv",
+			pms:  []string{"uv", "npm", "uvx", "npx"},
+			want: "npm, uv, npx (paired with npm), uvx (paired with uv)",
 		},
 	}
 

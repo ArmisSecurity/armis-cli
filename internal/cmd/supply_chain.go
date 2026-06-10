@@ -49,7 +49,9 @@ Supported ecosystems:
   Node:   npm, npx, pnpm, bun, yarn (transparent proxy enforcement)
           npx enforces packages it fetches; a package already in the npx cache
           or a binary in node_modules/.bin runs without a registry round-trip.
-  Python: pip, uv (transparent proxy); poetry, pipenv, pdm (pre-install block)
+  Python: pip, uv, uvx (transparent proxy); poetry, pipenv, pdm (pre-install block)
+          uvx (uv's tool runner) enforces tools it fetches; a tool already in the
+          uv tool cache runs without a registry round-trip.
   Java:   maven (pom.xml), gradle (gradle.lockfile) (pre-install block)
 
 No Armis Cloud authentication is required — supply-chain queries public registries
