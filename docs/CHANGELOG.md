@@ -9,7 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Release pipeline now maintains floating major (`v1`) and minor (`v1.10`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#213)
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+---
+
+## [1.12.0] - 2026-06-10
+
+### Added
+
+- Release pipeline now maintains floating major (`v1`) and minor (`v1.12`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#213)
 - Documented the one-time GitHub Marketplace publishing steps for the Armis CLI Action in `docs/DISTRIBUTION-SETUP.md` (#213)
 
 ### Changed
@@ -20,12 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - The local composite action at `.github/actions/armis-cli-action/` is deprecated in favor of the top-level `action.yml` (`ArmisSecurity/armis-cli@v1`) (#213)
-
-### Removed
-
-### Fixed
-
-### Security
 
 ---
 
@@ -455,7 +465,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.2...v1.11.0
 [1.10.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.1...v1.10.2
