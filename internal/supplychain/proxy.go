@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -467,7 +468,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 			if version == npmTimeKeyCreated || version == npmTimeKeyModified {
 				continue
 			}
-			if isPrerelease(version) {
+			if IsPrerelease(version) {
 				continue
 			}
 			t, err := time.Parse(time.RFC3339, timeStr)
@@ -626,7 +627,7 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 		for _, f := range kept {
 			fname := jsonString(f["filename"])
 			ver := pypiVersionFromFilename(fname)
-			if ver == "" || isPrerelease(ver) {
+			if ver == "" || IsPrerelease(ver) {
 				continue
 			}
 			age, ok := pypiFileAge(f["upload-time"], now)
@@ -778,9 +779,31 @@ func isMetadataRequest(path string) bool {
 	return true
 }
 
-func isPrerelease(version string) bool {
-	parts := strings.SplitN(version, "-", 2)
-	return len(parts) == 2 && parts[0] != ""
+// pep440Prerelease matches a PEP 440 pre-release (aN/bN/cN/rcN and the long
+// spellings alpha/beta/pre/preview) or development-release (devN) segment. These
+// attach to the numeric release with an optional ".", "-", or "_" separator and,
+// unlike SemVer, without a leading "-" tag — e.g. "1.0.0rc1", "1.0.0b2",
+// "1.0.0.dev1". Longer spellings precede shorter ones in the alternation so
+// "alpha" is preferred over a bare "a" (Go's regexp is leftmost-first). PEP 440
+// post-releases (".postN") are stable and are intentionally NOT matched.
+var pep440Prerelease = regexp.MustCompile(`(?i)[0-9][._-]?(?:alpha|beta|preview|pre|rc|dev|a|b|c)[0-9]*`)
+
+// IsPrerelease reports whether a version string denotes a pre-release in either
+// ecosystem's grammar. It is the single source of truth shared by the proxy and
+// the CLI summary so the two can never drift (a past divergence is what let PyPI
+// filenames be misclassified). It recognizes:
+//
+//   - SemVer/npm: any "-" suffix on a non-empty version ("2.0.0-alpha.1").
+//   - PyPI/PEP 440: dash-less pre/dev markers on the release ("2.0.0rc1",
+//     "1.0.0b2", "1.0.0.dev1").
+//
+// Valid stable versions in one ecosystem never match the other's pre-release
+// syntax, so a unified check is safe for both. Post-releases stay stable.
+func IsPrerelease(version string) bool {
+	if i := strings.IndexByte(version, '-'); i > 0 {
+		return true
+	}
+	return pep440Prerelease.MatchString(version)
 }
 
 // extractPyPIPackageNameFromPath pulls the project name from a PyPI Simple API

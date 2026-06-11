@@ -177,6 +177,32 @@ func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_UndatableSkippedOmitsAge(t *testing.T) {
+	// A PyPI file the proxy could not date is blocked with Age == 0 (fail-closed).
+	// The skipped clause must NOT claim a precise "(0 minutes old)" — it should
+	// name the version and omit the age entirely.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "mystery", Version: "mystery-1.0.0.tar.gz", DisplayVersion: "1.0.0", Age: 0},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "mystery", Version: "0.9.0", Age: 30 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 1, testPolicy(), pmUV, true)
+	})
+
+	if strings.Contains(out, "0 minutes old") {
+		t.Errorf("undatable skipped version must not claim a precise age; got:\n%s", out)
+	}
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "— skipped 1.0.0") {
+		t.Errorf("expected the skipped version named without an age; got:\n%s", out)
+	}
+	if strings.Contains(flat, "skipped 1.0.0 (") {
+		t.Errorf("skipped clause should carry no age token for an undatable file; got:\n%s", out)
+	}
+}
+
 func TestPrintBlockSummary_MixedUnresolved(t *testing.T) {
 	// Tier C: one package resolved, one with no safe fallback → neutral header
 	// (no "installed safe"), per-line warning for the unresolved package.
@@ -300,6 +326,9 @@ func TestAllResultsPrerelease(t *testing.T) {
 		{"single stable", []pkgFilterResult{{OldVersion: testVersion}}, false},
 		{"mixed", []pkgFilterResult{{OldVersion: testVersion + "-beta"}, {OldVersion: "2.0.0"}}, false},
 		{"all prerelease", []pkgFilterResult{{OldVersion: testVersion + "-alpha"}, {OldVersion: "2.0.0-rc.1"}}, true},
+		// PEP 440 prereleases (no SemVer dash) must count as prereleases too.
+		{"pep440 rc", []pkgFilterResult{{OldVersion: "1.0.0rc1"}}, true},
+		{"pep440 mixed with stable", []pkgFilterResult{{OldVersion: "1.0.0b2"}, {OldVersion: "2.0.0"}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
