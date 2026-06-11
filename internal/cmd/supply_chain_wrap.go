@@ -460,9 +460,10 @@ func ageToken(age time.Duration) string {
 	return fmt.Sprintf("(%s old)", formatDurationShort(age))
 }
 
-// optionalAgeToken is ageToken for the installed version, which may be unknown
-// (age 0 — e.g. an undatable release the proxy could not stamp). It returns ""
-// in that case so the line omits the age rather than printing "(0 minutes old)".
+// optionalAgeToken is ageToken for an age that may be unknown — the resolved
+// version's age, or a blocked PyPI file the proxy could not stamp (Age == 0), or
+// a non-positive value from clock skew. It returns "" in those cases so the line
+// omits the age rather than printing a false "(0 minutes old)".
 func optionalAgeToken(age time.Duration) string {
 	if age <= 0 {
 		return ""
@@ -501,7 +502,13 @@ func rightPad(s string, width int) string {
 // it leads with a warning instead of an install. cols pads the columns so the
 // skipped clauses line up across rows.
 func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, prerelease bool, cols colWidths) {
-	skipped := fmt.Sprintf("— skipped %s %s", r.OldVersion, ageToken(r.OldAge))
+	// Omit the age when it is unknown (OldAge == 0 for an undatable PyPI file, or
+	// non-positive under clock skew) rather than claiming a precise "(0 minutes
+	// old)". The version alone is still actionable.
+	skipped := fmt.Sprintf("— skipped %s", r.OldVersion)
+	if tok := optionalAgeToken(r.OldAge); tok != "" {
+		skipped += " " + tok
+	}
 
 	// No safe fallback: there is nothing "installed" to lead with, so invert the
 	// line — warn first, then name what was skipped.
@@ -645,10 +652,10 @@ func markRationaleShown() {
 func filterRelevantBlocked(blocked []supplychain.BlockedPackage) []supplychain.BlockedPackage {
 	relevant := make([]supplychain.BlockedPackage, 0, len(blocked))
 	for _, b := range blocked {
-		// Classify on the normalized semver, never the raw Version: a PyPI
+		// Classify on the normalized version, never the raw Version: a PyPI
 		// Version is a filename ("filelock-3.29.2.tar.gz") whose first '-' would
-		// fool isPrerelease into treating every package as a prerelease.
-		if isPrerelease(blockedDisplayVersion(b)) {
+		// fool the SemVer check into treating every package as a prerelease.
+		if supplychain.IsPrerelease(blockedDisplayVersion(b)) {
 			continue
 		}
 		relevant = append(relevant, b)
@@ -669,11 +676,6 @@ func blockedDisplayVersion(b supplychain.BlockedPackage) string {
 	return b.Version
 }
 
-func isPrerelease(version string) bool {
-	parts := strings.SplitN(version, "-", 2)
-	return len(parts) == 2 && parts[0] != ""
-}
-
 // allResultsPrerelease reports whether every grouped result is a prerelease. It
 // drives the honest "withheld a prerelease" framing: when this holds, the proxy
 // only blocked versions a default install would never have selected (resolvers
@@ -685,7 +687,7 @@ func allResultsPrerelease(results []pkgFilterResult) bool {
 		return false
 	}
 	for _, r := range results {
-		if !isPrerelease(r.OldVersion) {
+		if !supplychain.IsPrerelease(r.OldVersion) {
 			return false
 		}
 	}

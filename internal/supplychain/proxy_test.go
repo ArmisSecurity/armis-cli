@@ -1201,6 +1201,71 @@ func TestProxyFilterPyPISimple_AllowedPopulated(t *testing.T) {
 	}
 }
 
+func TestProxyFilterPyPISimple_SkipsPEP440PrereleaseFallback(t *testing.T) {
+	// A PEP 440 prerelease (1.0.0rc1 — no SemVer '-') that is old enough to pass
+	// the age policy must NOT be chosen as the resolved "safe" version: a default
+	// pip/uv install resolves to the newest *stable* release, so offering an rc as
+	// the fallback would install something the user never asked for. The newest
+	// stable release should win instead.
+	now := time.Now()
+	oldStable := now.Add(-60 * 24 * time.Hour).UTC().Format(time.RFC3339) // 1.0.0  — stable, safe
+	oldRC := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)     // 1.1.0rc1 — prerelease, safe by age but must be skipped
+	young := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)           // 1.2.0  — blocked (too new)
+
+	p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, Mode: ModePyPI})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	body := pypiSimpleBody("widget", []struct{ filename, uploadTime string }{
+		{"widget-1.0.0-py3-none-any.whl", oldStable},
+		{"widget-1.1.0rc1-py3-none-any.whl", oldRC},
+		{"widget-1.2.0-py3-none-any.whl", young},
+	})
+	if _, blocked := p.filterPyPISimple([]byte(body), "widget"); len(blocked) != 1 {
+		t.Fatalf("expected 1 blocked file, got %d: %+v", len(blocked), blocked)
+	}
+
+	allowed := p.Allowed()
+	if len(allowed) != 1 || allowed[0].Version != "1.0.0" {
+		t.Errorf("Allowed() = %+v, want the newest STABLE [{widget 1.0.0}], not the rc", allowed)
+	}
+}
+
+func TestIsPrerelease(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		// Stable — SemVer and PEP 440 release/post forms.
+		{"3.29.2", false},
+		{"0.2.5", false},
+		{"6.0", false},
+		{"1.2.3+local", false},
+		{"1.0.0.post1", false}, // post-release is a stable release
+		// SemVer prereleases carry a '-' suffix.
+		{"2.0.0-alpha.1", true},
+		{"2.0.0-rc.1", true},
+		// PEP 440 prereleases are dash-less: a/b/c/rc/alpha/beta/pre/preview/dev.
+		{"1.0.0a1", true},
+		{"1.0.0b2", true},
+		{"1.0.0c1", true},
+		{"1.0.0rc1", true},
+		{"1.0.0.dev1", true},
+		{"1.0.0alpha", true},
+		{"1.0.0beta3", true},
+		{"1.0.0preview1", true},
+		{"1.0.0.post1.dev2", true}, // a dev release on top of a post is still pre-final
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if got := IsPrerelease(tt.version); got != tt.want {
+				t.Errorf("IsPrerelease(%q) = %v, want %v", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPypiVersionFromFilename(t *testing.T) {
 	tests := []struct {
 		filename string
