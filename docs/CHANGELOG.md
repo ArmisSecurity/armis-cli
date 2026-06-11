@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `supply-chain`: the filter summary for PyPI installs no longer mislabels withheld stable releases as prereleases. Package filenames (e.g. `filelock-3.29.2.tar.gz`) were being read as prereleases, which printed the misleading `withheld N prereleases; a default install was unaffected` line for versions a default `uv`/`uvx`/`pip` install would have selected. The summary now reflects the real outcome — `filtered N too-new releases → installed safe versions` — and each line leads with the installed safe version and its age, with the skipped version shown as a trailing clause (PPSC-958)
+
 ### Security
 
 ---

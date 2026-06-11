@@ -700,7 +700,7 @@ func TestProxyFilterMetadata_DistTagsUpdated(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "express")
@@ -764,7 +764,7 @@ func TestProxyFilterMetadata_UnblockedChannelTagPreserved(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "express")
@@ -810,7 +810,7 @@ func TestProxyFilterMetadata_AllBlocked(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "evil-pkg")
