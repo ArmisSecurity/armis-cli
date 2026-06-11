@@ -99,11 +99,12 @@ func TestPrintBlockSummary_AllPassZeroChecked(t *testing.T) {
 }
 
 func TestPrintBlockSummary_SingleResolved(t *testing.T) {
-	// Tier B: one package filtered and resolved → success header, old→new line,
-	// terse Disable hint, and NO divider/heavy chrome.
+	// Tier B: one package filtered and resolved → success header, an
+	// installed-leads/skipped-trails line, terse Disable hint, and NO
+	// divider/heavy chrome.
 	forceNoColor(t)
-	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", Age: 24 * time.Hour}}
-	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
 		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
@@ -112,10 +113,10 @@ func TestPrintBlockSummary_SingleResolved(t *testing.T) {
 	wantSubstrings := []string{
 		"filtered 1 too-new release → installed safe version (3-day policy)",
 		"axios",
-		"1.17.0",
-		"(1 day old)",
-		"→",
-		"1.16.1 installed",
+		// The line leads with what was installed and its age...
+		"1.16.1 installed (10 days old)",
+		// ...and trails with the skipped version and its age.
+		"— skipped 1.17.0 (1 day old)",
 		"Disable: ARMIS_SUPPLY_CHAIN=off",
 	}
 	for _, want := range wantSubstrings {
@@ -123,12 +124,82 @@ func TestPrintBlockSummary_SingleResolved(t *testing.T) {
 			t.Errorf("missing %q; got:\n%s", want, out)
 		}
 	}
+	// The installed (resolved) version must appear before the skipped one on the
+	// line — the flip is the whole point of the layout.
+	if i, j := strings.Index(out, "1.16.1 installed"), strings.Index(out, "skipped 1.17.0"); i < 0 || j < 0 || i > j {
+		t.Errorf("installed version should lead the skipped version; got:\n%s", out)
+	}
 	// Short list must not draw the divider or the full copy-paste incantation.
 	if strings.Contains(out, strings.Repeat("─", scSepLen)) {
 		t.Errorf("short list should not draw a divider; got:\n%s", out)
 	}
 	if strings.Contains(out, "ARMIS_SUPPLY_CHAIN=off npm install") {
 		t.Errorf("short list should use the terse disable hint; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
+	// Regression: a PyPI BlockedPackage carries a *filename* in Version
+	// ("filelock-3.29.2.tar.gz"). The summary must classify on DisplayVersion, not
+	// the filename — splitting the filename on its first '-' would otherwise read
+	// every PyPI package as a "filelock" prerelease and wrongly print "withheld N
+	// prereleases; a default install was unaffected". These are real stable
+	// releases the proxy downgraded, so the honest framing is a successful filter.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "filelock", Version: "filelock-3.29.2.tar.gz", DisplayVersion: "3.29.2", Age: 11 * time.Minute},
+		{Name: "superdialog", Version: "superdialog-0.2.5.tar.gz", DisplayVersion: "0.2.5", Age: 6 * time.Hour},
+	}
+	allowed := []supplychain.InstalledPackage{
+		{Name: "filelock", Version: "3.29.1", Age: 9 * 24 * time.Hour},
+		{Name: "superdialog", Version: "0.2.3", Age: 8 * 24 * time.Hour},
+	}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 2, testPolicy(), pmUV, true)
+	})
+
+	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
+		t.Errorf("PyPI filenames must not be misread as prereleases; got:\n%s", out)
+	}
+	if !strings.Contains(out, "filtered 2 too-new releases → installed safe versions (3-day policy)") {
+		t.Errorf("expected a genuine-filter success header; got:\n%s", out)
+	}
+	// Clean parsed versions on the line, never the raw filename.
+	if strings.Contains(out, ".tar.gz") {
+		t.Errorf("line should show the parsed version, not the filename; got:\n%s", out)
+	}
+	// Collapse runs of spaces so column-alignment padding does not break the
+	// substring match (versions are right-padded to a common width).
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "0.2.3 installed (8 days old) — skipped 0.2.5 (6 hours old)") {
+		t.Errorf("expected installed-leads/skipped-trails layout with parsed versions; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UndatableSkippedOmitsAge(t *testing.T) {
+	// A PyPI file the proxy could not date is blocked with Age == 0 (fail-closed).
+	// The skipped clause must NOT claim a precise "(0 minutes old)" — it should
+	// name the version and omit the age entirely.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "mystery", Version: "mystery-1.0.0.tar.gz", DisplayVersion: "1.0.0", Age: 0},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "mystery", Version: "0.9.0", Age: 30 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 1, testPolicy(), pmUV, true)
+	})
+
+	if strings.Contains(out, "0 minutes old") {
+		t.Errorf("undatable skipped version must not claim a precise age; got:\n%s", out)
+	}
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "— skipped 1.0.0") {
+		t.Errorf("expected the skipped version named without an age; got:\n%s", out)
+	}
+	if strings.Contains(flat, "skipped 1.0.0 (") {
+		t.Errorf("skipped clause should carry no age token for an undatable file; got:\n%s", out)
 	}
 }
 
@@ -255,6 +326,9 @@ func TestAllResultsPrerelease(t *testing.T) {
 		{"single stable", []pkgFilterResult{{OldVersion: testVersion}}, false},
 		{"mixed", []pkgFilterResult{{OldVersion: testVersion + "-beta"}, {OldVersion: "2.0.0"}}, false},
 		{"all prerelease", []pkgFilterResult{{OldVersion: testVersion + "-alpha"}, {OldVersion: "2.0.0-rc.1"}}, true},
+		// PEP 440 prereleases (no SemVer dash) must count as prereleases too.
+		{"pep440 rc", []pkgFilterResult{{OldVersion: "1.0.0rc1"}}, true},
+		{"pep440 mixed with stable", []pkgFilterResult{{OldVersion: "1.0.0b2"}, {OldVersion: "2.0.0"}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -303,7 +377,9 @@ func TestGroupBlockedByPackage_CollapsesToYoungest(t *testing.T) {
 		{Name: "axios", Version: "1.17.0", Age: 48 * time.Hour},
 		{Name: "axios", Version: "1.18.0", Age: 2 * time.Hour},
 	}
-	allowed := map[string]string{"axios": "1.16.1"}
+	allowed := map[string]supplychain.InstalledPackage{
+		"axios": {Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour},
+	}
 
 	got := groupBlockedByPackage(blocked, allowed, 72*time.Hour)
 	if len(got) != 1 {
@@ -318,6 +394,11 @@ func TestGroupBlockedByPackage_CollapsesToYoungest(t *testing.T) {
 	if got[0].NewVersion != "1.16.1" {
 		t.Errorf("NewVersion = %q, want 1.16.1", got[0].NewVersion)
 	}
+	// The resolved version's age must flow through so the line can show
+	// "1.16.1 installed (10 days old)".
+	if got[0].NewAge != 10*24*time.Hour {
+		t.Errorf("NewAge = %v, want 240h", got[0].NewAge)
+	}
 }
 
 func TestGroupBlockedByPackage_SortYoungestFirst(t *testing.T) {
@@ -327,7 +408,7 @@ func TestGroupBlockedByPackage_SortYoungestFirst(t *testing.T) {
 		{Name: "fresh", Version: "1.0.0", Age: 1 * time.Hour},
 		{Name: "mid", Version: "1.0.0", Age: 12 * time.Hour},
 	}
-	got := groupBlockedByPackage(blocked, map[string]string{}, 72*time.Hour)
+	got := groupBlockedByPackage(blocked, map[string]supplychain.InstalledPackage{}, 72*time.Hour)
 	wantOrder := []string{"fresh", "mid", "old"}
 	for i, w := range wantOrder {
 		if got[i].Name != w {

@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -50,14 +51,36 @@ const (
 )
 
 type BlockedPackage struct {
-	Name    string
+	Name string
+	// Version is the raw artifact identifier the proxy removed: a wheel/sdist
+	// filename for PyPI (e.g. "filelock-3.29.2.tar.gz"), a semver string for npm.
+	// It records exactly which file/version was withheld and is what the proxy
+	// tests assert against.
 	Version string
-	Age     time.Duration
+	// DisplayVersion is the normalized semver shown to the user and used for
+	// prerelease classification. For npm it equals Version; for PyPI it is parsed
+	// out of the filename (e.g. "3.29.2"). Empty when a filename cannot be parsed,
+	// in which case callers fall back to Version. Keeping classification on this
+	// field — not the raw Version — stops a PyPI filename like
+	// "filelock-3.29.2.tar.gz" from being misread as a "filelock" prerelease.
+	DisplayVersion string
+	Age            time.Duration
 }
 
 type InstalledPackage struct {
 	Name    string
 	Version string
+	// Age is how old the resolved safe version was at install time — the figure
+	// behind the summary's "0.2.3 installed (8 days old)". Zero when unknown.
+	Age time.Duration
+}
+
+// allowedVersion is the proxy's internal record of the safe version it resolved
+// "latest" to for one package, paired with that version's age so the summary can
+// report how old the installed version was, not just its number.
+type allowedVersion struct {
+	version string
+	age     time.Duration
 }
 
 type Proxy struct {
@@ -70,7 +93,7 @@ type Proxy struct {
 	server       *http.Server
 	blocked      []BlockedPackage
 	blockedMu    sync.Mutex
-	allowed      map[string]string // package name → latest allowed version
+	allowed      map[string]allowedVersion // package name → resolved safe version
 	allowedMu    sync.Mutex
 	checked      int
 	checkedMu    sync.Mutex
@@ -130,7 +153,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		},
 		revProxy:     revProxy,
 		skipPackages: skipSet,
-		allowed:      make(map[string]string),
+		allowed:      make(map[string]allowedVersion),
 	}, nil
 }
 
@@ -185,8 +208,8 @@ func (p *Proxy) Allowed() []InstalledPackage {
 	p.allowedMu.Lock()
 	defer p.allowedMu.Unlock()
 	result := make([]InstalledPackage, 0, len(p.allowed))
-	for name, version := range p.allowed {
-		result = append(result, InstalledPackage{Name: name, Version: version})
+	for name, av := range p.allowed {
+		result = append(result, InstalledPackage{Name: name, Version: av.version, Age: av.age})
 	}
 	return result
 }
@@ -409,9 +432,12 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		if age < p.policy.MinReleaseAge {
 			versionsToRemove[version] = true
 			blocked = append(blocked, BlockedPackage{
-				Name:    pkgName,
-				Version: version,
-				Age:     age,
+				Name: pkgName,
+				// npm versions are already semver, so the raw and display forms
+				// coincide — no filename to parse, unlike PyPI.
+				Version:        version,
+				DisplayVersion: version,
+				Age:            age,
 			})
 		}
 	}
@@ -442,7 +468,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 			if version == npmTimeKeyCreated || version == npmTimeKeyModified {
 				continue
 			}
-			if isPrerelease(version) {
+			if IsPrerelease(version) {
 				continue
 			}
 			t, err := time.Parse(time.RFC3339, timeStr)
@@ -456,8 +482,17 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		}
 	}
 	if latestVersion != "" && p.allowed != nil {
+		// Age of the resolved version, parsed from the (still-present) time map
+		// entry. Unparseable or absent → zero, and the summary simply omits the
+		// age rather than guessing.
+		var latestAge time.Duration
+		if ts, ok := timeMap[latestVersion]; ok {
+			if t, err := time.Parse(time.RFC3339, ts); err == nil {
+				latestAge = now.Sub(t)
+			}
+		}
 		p.allowedMu.Lock()
-		p.allowed[pkgName] = latestVersion
+		p.allowed[pkgName] = allowedVersion{version: latestVersion, age: latestAge}
 		p.allowedMu.Unlock()
 	}
 
@@ -561,7 +596,15 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 			if !ok {
 				age = 0
 			}
-			blocked = append(blocked, BlockedPackage{Name: pkgName, Version: filename, Age: age})
+			// Version is the filename (what the user sees and what makes the block
+			// actionable); DisplayVersion is the semver parsed from it, used for
+			// prerelease classification and the clean number shown in the summary.
+			blocked = append(blocked, BlockedPackage{
+				Name:           pkgName,
+				Version:        filename,
+				DisplayVersion: pypiVersionFromFilename(filename),
+				Age:            age,
+			})
 			continue
 		}
 		kept = append(kept, f)
@@ -584,7 +627,7 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 		for _, f := range kept {
 			fname := jsonString(f["filename"])
 			ver := pypiVersionFromFilename(fname)
-			if ver == "" || isPrerelease(ver) {
+			if ver == "" || IsPrerelease(ver) {
 				continue
 			}
 			age, ok := pypiFileAge(f["upload-time"], now)
@@ -598,7 +641,7 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 		}
 		if bestVersion != "" {
 			p.allowedMu.Lock()
-			p.allowed[pkgName] = bestVersion
+			p.allowed[pkgName] = allowedVersion{version: bestVersion, age: bestAge}
 			p.allowedMu.Unlock()
 		}
 	}
@@ -736,9 +779,31 @@ func isMetadataRequest(path string) bool {
 	return true
 }
 
-func isPrerelease(version string) bool {
-	parts := strings.SplitN(version, "-", 2)
-	return len(parts) == 2 && parts[0] != ""
+// pep440Prerelease matches a PEP 440 pre-release (aN/bN/cN/rcN and the long
+// spellings alpha/beta/pre/preview) or development-release (devN) segment. These
+// attach to the numeric release with an optional ".", "-", or "_" separator and,
+// unlike SemVer, without a leading "-" tag — e.g. "1.0.0rc1", "1.0.0b2",
+// "1.0.0.dev1". Longer spellings precede shorter ones in the alternation so
+// "alpha" is preferred over a bare "a" (Go's regexp is leftmost-first). PEP 440
+// post-releases (".postN") are stable and are intentionally NOT matched.
+var pep440Prerelease = regexp.MustCompile(`(?i)[0-9][._-]?(?:alpha|beta|preview|pre|rc|dev|a|b|c)[0-9]*`)
+
+// IsPrerelease reports whether a version string denotes a pre-release in either
+// ecosystem's grammar. It is the single source of truth shared by the proxy and
+// the CLI summary so the two can never drift (a past divergence is what let PyPI
+// filenames be misclassified). It recognizes:
+//
+//   - SemVer/npm: any "-" suffix on a non-empty version ("2.0.0-alpha.1").
+//   - PyPI/PEP 440: dash-less pre/dev markers on the release ("2.0.0rc1",
+//     "1.0.0b2", "1.0.0.dev1").
+//
+// Valid stable versions in one ecosystem never match the other's pre-release
+// syntax, so a unified check is safe for both. Post-releases stay stable.
+func IsPrerelease(version string) bool {
+	if i := strings.IndexByte(version, '-'); i > 0 {
+		return true
+	}
+	return pep440Prerelease.MatchString(version)
 }
 
 // extractPyPIPackageNameFromPath pulls the project name from a PyPI Simple API
