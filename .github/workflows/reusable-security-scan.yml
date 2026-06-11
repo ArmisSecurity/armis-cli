@@ -124,9 +124,51 @@ jobs:
           script: |
             const fs = require('fs');
 
+            // Build a map of {filename: Set<lineNumber>} for lines visible in the PR diff.
+            // These are the only lines GitHub Code Scanning annotates inline (added/context lines).
+            function parseDiffLineNumbers(patch) {
+              const lines = new Set();
+              if (!patch) return lines;
+              let currentLine = 0;
+              for (const raw of patch.split('\n')) {
+                const m = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                if (m) { currentLine = parseInt(m[1], 10); continue; }
+                if (currentLine === 0) continue;
+                if (raw.startsWith('-')) continue;
+                lines.add(currentLine++);
+              }
+              return lines;
+            }
+
+            const diffLines = {};
+            let page = 1;
+            while (true) {
+              const { data: files } = await github.rest.pulls.listFiles({
+                ...context.repo,
+                pull_number: context.issue.number,
+                per_page: 100,
+                page,
+              });
+              if (!files.length) break;
+              for (const f of files) {
+                if (f.patch) diffLines[f.filename] = parseDiffLineNumbers(f.patch);
+              }
+              if (files.length < 100) break;
+              page++;
+            }
+
             // Read SARIF results
             const sarif = JSON.parse(fs.readFileSync('armis-results.sarif', 'utf8'));
-            const results = sarif.runs?.[0]?.results || [];
+            const allResults = sarif.runs?.[0]?.results || [];
+
+            // Keep only findings whose (file, line) falls on a diff-visible line —
+            // these are the only ones GitHub Code Scanning will annotate inline.
+            const results = allResults.filter(r => {
+              const file = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || '';
+              const line = r.locations?.[0]?.physicalLocation?.region?.startLine;
+              if (!file || !line) return false;
+              return diffLines[file]?.has(line) ?? false;
+            });
 
             // Count by severity - read from properties.severity if available
             const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
