@@ -167,6 +167,14 @@ func (p *Proxy) Addr() string {
 	return p.listener.Addr().String()
 }
 
+// Upstream returns the scheme://host origin of the configured upstream
+// registry (e.g. "https://registry.npmjs.org"). Callers use it to rewrite the
+// ephemeral proxy origin back to the real registry in artifacts a package
+// manager persisted it into.
+func (p *Proxy) Upstream() string {
+	return p.upstreamURL.Scheme + "://" + p.upstreamURL.Host
+}
+
 func (p *Proxy) Blocked() []BlockedPackage {
 	p.blockedMu.Lock()
 	defer p.blockedMu.Unlock()

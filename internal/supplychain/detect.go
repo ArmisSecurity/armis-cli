@@ -105,14 +105,21 @@ func FindEcosystemLockfile(startDir string, ecosystem Ecosystem) string {
 	if lockfileName == "" {
 		return ""
 	}
+	return FindUpward(startDir, lockfileName)
+}
 
+// FindUpward walks up from startDir to the filesystem root probing each
+// directory for filename, returning the first match or "" when none exists.
+// filename must be a bare leaf name (a well-known lockfile or sibling artifact),
+// and only os.Stat (an existence check) is performed on the joined paths.
+func FindUpward(startDir, filename string) string {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		dir = startDir
 	}
 	for {
-		// armis:ignore cwe:22 cwe:23 cwe:73 reason:lockfileName is a constant literal selected by ecosystemLockfileName and only os.Stat (existence check) runs; the walked dirs are the user's own project tree, not externally controllable across a trust boundary
-		path := filepath.Join(dir, lockfileName)
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:filename is a constant literal lockfile leaf supplied by callers and only os.Stat (existence check) runs; the walked dirs are the user's own project tree, not externally controllable across a trust boundary
+		path := filepath.Join(dir, filename)
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}

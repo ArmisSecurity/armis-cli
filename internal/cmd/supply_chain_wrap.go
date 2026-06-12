@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -170,6 +171,16 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	extraEnv = append(extraEnv, fmt.Sprintf("%s=1", envSCActive))
 
 	exitCode, err := execPMFunc(pmName, pmArgs, extraEnv)
+
+	// Some package managers persist the registry origin they were invoked with:
+	// bun's `update` records full tarball URLs in bun.lock, `uv tool install`
+	// records index-url in its receipt, and older npm/yarn releases recorded the
+	// configured registry in resolved fields. The proxy origin dies with this
+	// process, so any artifact it leaked into is corrupt for every run outside
+	// the wrapper. Sweep those artifacts and rewrite the origin back to the real
+	// upstream — even when the PM exited non-zero, since a failed install can
+	// still have rewritten the lockfile first.
+	normalizeProxyResidue(canonicalPM(pmName), "http://"+addr, proxy.Upstream())
 
 	// installOK reflects what the package manager actually did, not what the proxy
 	// offered: proxy.Allowed() only records the version "latest" was repointed to,
@@ -937,6 +948,77 @@ func blockedViolationNames(violations []supplychain.Violation) []string {
 		}
 	}
 	return names
+}
+
+// normalizeProxyResidue rewrites the ephemeral proxy origin back to the real
+// upstream origin in every artifact the just-run package manager may have
+// persisted it into. For the Node PMs that is the project lockfile: bun.lock
+// is the confirmed offender (`bun update` records full tarball URLs), and the
+// other node lockfiles are swept defensively because older npm/yarn releases
+// recorded the configured registry in resolved fields — a clean lockfile is a
+// no-op read. For uv (whose only proxied subcommands are the lockfile-free
+// `pip` and `tool`) it is the per-tool receipts: `uv tool install` records the
+// index-url it was invoked with, which would break every later
+// `uv tool upgrade` against the dead proxy address. Failures are reported but
+// never block: the install itself already completed, and a residue warning the
+// user can act on beats failing the build after the fact.
+func normalizeProxyResidue(pm, proxyOrigin, upstreamOrigin string) {
+	var paths []string
+	switch pm {
+	case pmNPM, pmNPX, pmPNPM, pmBun, pmYarn:
+		for _, eco := range []supplychain.Ecosystem{
+			supplychain.EcosystemBun, supplychain.EcosystemNPM,
+			supplychain.EcosystemPNPM, supplychain.EcosystemYarn,
+		} {
+			if p := supplychain.FindEcosystemLockfile(".", eco); p != "" {
+				paths = append(paths, p)
+			}
+		}
+		// bun's legacy binary lockfile encodes lengths, so a text substitution
+		// would corrupt it. Detect the residue and tell the user how to repair.
+		if lockb := supplychain.FindUpward(".", "bun.lockb"); lockb != "" && supplychain.FileContainsString(lockb, proxyOrigin) {
+			fmt.Fprintf(os.Stderr, "%s warning: %s contains the ephemeral proxy address and cannot be rewritten in place.\n", scPrefix, lockb)
+			fmt.Fprintf(os.Stderr, "  Repair with: ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile\n")
+		}
+	case pmUV, pmUVX:
+		paths = uvToolReceipts()
+	}
+
+	for _, p := range paths {
+		changed, err := supplychain.NormalizeArtifact(p, proxyOrigin, upstreamOrigin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s supply-chain: could not remove proxy address from %s: %v\n", scPrefix, p, err)
+			continue
+		}
+		if changed {
+			s := output.GetStyles()
+			fmt.Fprintf(os.Stderr, "%s %s\n",
+				s.MutedText.Render(scPrefix),
+				s.MutedText.Render(fmt.Sprintf("supply-chain: restored registry address in %s", filepath.Base(p))))
+		}
+	}
+}
+
+// uvToolReceipts returns the uv-receipt.toml paths of every installed uv tool.
+// The receipts directory resolution mirrors uv's own: $UV_TOOL_DIR, then
+// $XDG_DATA_HOME/uv/tools, then ~/.local/share/uv/tools. The glob pattern is
+// fixed, so only receipt files of installed tools are ever returned.
+func uvToolReceipts() []string {
+	dir := os.Getenv("UV_TOOL_DIR")
+	if dir == "" {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			dir = filepath.Join(xdg, "uv", "tools")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, ".local", "share", "uv", "tools")
+		} else {
+			return nil
+		}
+	}
+	receipts, err := filepath.Glob(filepath.Join(dir, "*", "uv-receipt.toml"))
+	if err != nil {
+		return nil
+	}
+	return receipts
 }
 
 // pmToEcosystem maps a (canonical) package-manager name to its ecosystem. It
