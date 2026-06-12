@@ -124,9 +124,65 @@ jobs:
           script: |
             const fs = require('fs');
 
+            // Build a map of {filename: Set<lineNumber>} for lines visible in the PR diff.
+            // These are the only lines GitHub Code Scanning annotates inline (added/context lines).
+            // Only '+' (added) and ' ' (context) lines are included; '-' (removed) lines are skipped
+            // because they don't exist in the new file. Lines starting with '\' (e.g. "\ No newline
+            // at end of file") are also skipped to avoid misaligning the computed line numbers.
+            function parseDiffLineNumbers(patch) {
+              const lines = new Set();
+              if (!patch) return lines;
+              let currentLine = 0;
+              for (const raw of patch.split('\n')) {
+                const m = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                if (m) { currentLine = parseInt(m[1], 10); continue; }
+                if (currentLine === 0) continue;
+                if (raw.startsWith('-') || raw.startsWith('\\')) continue;
+                if (raw.startsWith('+') || raw.startsWith(' ')) {
+                  lines.add(currentLine++);
+                }
+              }
+              return lines;
+            }
+
+            // Use a null-prototype object to avoid prototype pollution from filenames
+            // like '__proto__' or 'constructor' that would corrupt a regular object.
+            // null sentinel means the file is changed but has no patch (e.g. large diffs
+            // or binary files) — findings for those files are always included so we never
+            // silently under-report issues on files GitHub couldn't supply a patch for.
+            const diffLines = Object.create(null);
+            let page = 1;
+            while (true) {
+              const { data: files } = await github.rest.pulls.listFiles({
+                ...context.repo,
+                pull_number: context.issue.number,
+                per_page: 100,
+                page,
+              });
+              if (!files.length) break;
+              for (const f of files) {
+                diffLines[f.filename] = f.patch ? parseDiffLineNumbers(f.patch) : null;
+              }
+              if (files.length < 100) break;
+              page++;
+            }
+
             // Read SARIF results
             const sarif = JSON.parse(fs.readFileSync('armis-results.sarif', 'utf8'));
-            const results = sarif.runs?.[0]?.results || [];
+            const allResults = sarif.runs?.[0]?.results || [];
+
+            // Keep only findings whose (file, line) falls on a diff-visible line —
+            // these are the only ones GitHub Code Scanning will annotate inline.
+            // Findings for files with no patch data (null sentinel) are always kept
+            // to avoid under-reporting on large or binary files.
+            const results = allResults.filter(r => {
+              const file = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || '';
+              const line = r.locations?.[0]?.physicalLocation?.region?.startLine;
+              if (!file || !line) return false;
+              if (!(file in diffLines)) return false;
+              const lineSet = diffLines[file];
+              return lineSet === null || lineSet.has(line);
+            });
 
             // Count by severity - read from properties.severity if available
             const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
