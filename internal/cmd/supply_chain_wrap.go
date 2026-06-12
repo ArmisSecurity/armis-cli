@@ -103,11 +103,13 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 		return exitWithCode(execPMFunc(pmName, pmArgs, nil))
 	}
 
-	// poetry, pipenv, and pdm resolve dependencies through their own lockfiles
-	// rather than honoring an npm-style registry override, so they cannot be
-	// enforced via the transparent proxy. Instead we audit the lockfile and
-	// hard-block the build before it runs if any package is too young.
-	if requiresPreInstallBlock(canonical) {
+	// poetry/pipenv/pdm/maven/gradle cannot be enforced via the transparent
+	// proxy at all, and uv commands that write uv.lock must not be (uv would
+	// persist the ephemeral proxy URL into the lockfile); see
+	// requiresPreInstallBlock. Those invocations are enforced by auditing the
+	// lockfile and hard-blocking the build before it runs if any package is
+	// too young.
+	if requiresPreInstallBlock(canonical, pmArgs) {
 		return runPreInstallBlock(cmd, pmName, pmArgs)
 	}
 
@@ -131,6 +133,8 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// pip, uv, and uvx resolve from the PyPI Simple API, a different protocol from
 	// the npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
 	// filtering). All other proxied PMs (npm/npx/pnpm/bun/yarn) speak the npm registry.
+	// uv reaches the proxy only for its lockfile-free `pip`/`tool` subcommands;
+	// lockfile-writing uv commands take the audit path (see requiresPreInstallBlock).
 	mode := supplychain.ModeNPM
 	switch canonicalPM(pmName) {
 	case pmPip, pmUV, pmUVX:
@@ -745,15 +749,50 @@ func wrapEcosystemEnforced(canonicalPMName string) bool {
 	return cfg.EnforcesEcosystem(eco)
 }
 
-// requiresPreInstallBlock reports whether a package manager must be enforced via
-// a pre-install lockfile audit rather than the transparent registry proxy.
+// requiresPreInstallBlock reports whether an invocation must be enforced via a
+// pre-install lockfile audit rather than the transparent registry proxy.
 // poetry, pipenv, and pdm resolve from their own lockfiles and do not honor an
 // npm-style registry override, so the proxy cannot filter young versions for
 // them; instead the build is blocked up front if the lockfile contains a
 // too-young package.
-func requiresPreInstallBlock(pm string) bool {
+//
+// uv is the inverse case: it honors an index override (UV_INDEX_URL) but
+// persists it — every lockfile-writing command (sync, lock, add, remove,
+// run, …) records the configured index as each package's source.registry in
+// uv.lock, and an index that differs from the recorded one marks the lock
+// outdated and triggers a full re-lock. Proxying those commands therefore
+// stamps the ephemeral http://127.0.0.1:<port> proxy address into uv.lock,
+// corrupting it for every install that runs outside the wrapper (Docker
+// builds, CI, teammates). Only `uv pip` and `uv tool`, which never touch
+// uv.lock, are safe to proxy (see uvProxySafe); every other uv invocation
+// takes the audit path. uvx (a separate binary with no project lockfile) is
+// unaffected and stays on the proxy.
+//
+// Pass the canonical PM name (canonicalPM) and the PM's arguments.
+func requiresPreInstallBlock(pm string, pmArgs []string) bool {
 	switch pm {
 	case pmPoetry, pmPipenv, pmPDM, pmMaven, pmGradle:
+		return true
+	case pmUV:
+		return !uvProxySafe(pmArgs)
+	}
+	return false
+}
+
+// uvProxySafe reports whether a uv invocation can be routed through the
+// transparent proxy without the index URL leaking into uv.lock. Only the
+// `uv pip …` (ad-hoc pip interface) and `uv tool …` (tool runner) subcommands
+// never write the project lockfile. The subcommand is recognized only when it
+// is the first argument: uv's global flags can take values (e.g.
+// --directory <dir>), so scanning past flags could mistake a flag value for
+// the subcommand and proxy a lock-writing command. Anything unrecognized
+// fails safe to the lockfile audit, which can never corrupt the lock.
+func uvProxySafe(pmArgs []string) bool {
+	if len(pmArgs) == 0 {
+		return false
+	}
+	switch pmArgs[0] {
+	case "pip", "tool":
 		return true
 	}
 	return false

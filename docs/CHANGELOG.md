@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `supply-chain`: wrapped `uv` commands that write `uv.lock` (`uv sync`, `uv lock`, `uv add`, `uv run`, …) no longer corrupt the lockfile. uv records the configured index URL as each package's `source.registry` in `uv.lock`, and an index differing from the recorded one triggers a full re-lock — so routing these commands through the transparent proxy stamped the ephemeral `http://127.0.0.1:<port>/simple/` proxy address into every package entry, breaking any subsequent sync outside the wrapper (Docker builds, CI, teammates). Lockfile-writing `uv` invocations now use the same pre-install lockfile audit as poetry/pipenv/pdm: `uv.lock` is checked for too-young packages and the build is blocked before it runs, while uv itself resolves against the real index so the lockfile stays pristine. `uv pip …` and `uv tool …` (which never touch `uv.lock`) and `uvx` keep the transparent proxy. A lockfile already corrupted by an earlier version can be repaired by re-running `uv lock` outside the wrapper (or with `ARMIS_SUPPLY_CHAIN=off`).
+
 ### Security
 
 ---

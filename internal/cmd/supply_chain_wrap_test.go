@@ -164,6 +164,62 @@ func TestRunProxyWrap_PipEnvPointsAtProxy(t *testing.T) {
 	}
 }
 
+// TestRunSupplyChainWrap_UVSyncAuditsLockfileNotProxy pins the fix for uv.lock
+// corruption: uv records the configured index URL as each package's
+// source.registry in uv.lock, and an index that differs from the recorded one
+// triggers a full re-lock. Routing a lockfile-writing uv command through the
+// proxy therefore persisted the ephemeral http://127.0.0.1:<port> address into
+// the lock, breaking every sync run outside the wrapper (Docker builds, CI).
+// Such commands must take the pre-install audit path with no UV_INDEX_URL
+// injected.
+func TestRunSupplyChainWrap_UVSyncAuditsLockfileNotProxy(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	// An empty uv.lock parses to zero registry-backed packages, so the audit
+	// has nothing to query (no network) and the build is allowed to run.
+	if err := os.WriteFile(filepath.Join(dir, "uv.lock"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cap := stubExecPM(t, 0)
+
+	if err := runSupplyChainWrap(newWrapTestCmd(), []string{"uv", "sync"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cap.called {
+		t.Fatal("expected execPMFunc to be called")
+	}
+	if cap.pm != pmUV {
+		t.Errorf("pm = %q, want %q", cap.pm, pmUV)
+	}
+	if v, ok := envValue(cap.extraEnv, "UV_INDEX_URL"); ok {
+		t.Errorf("uv sync must not be proxied (UV_INDEX_URL=%q leaks into uv.lock)", v)
+	}
+}
+
+// TestRunSupplyChainWrap_UVPipKeepsProxy asserts the lockfile-free `uv pip`
+// interface still gets live proxy filtering: it never writes uv.lock, so the
+// index override cannot leak anywhere persistent.
+func TestRunSupplyChainWrap_UVPipKeepsProxy(t *testing.T) {
+	chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	cap := stubExecPM(t, 0)
+
+	if err := runSupplyChainWrap(newWrapTestCmd(), []string{"uv", "pip", "install", "requests"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	idx, ok := envValue(cap.extraEnv, "UV_INDEX_URL")
+	if !ok {
+		t.Fatalf("UV_INDEX_URL not set for uv pip; extraEnv=%v", cap.extraEnv)
+	}
+	if !strings.HasPrefix(idx, "http://127.0.0.1:") || !strings.HasSuffix(idx, "/simple/") {
+		t.Errorf("UV_INDEX_URL = %q, want http://127.0.0.1:<port>/simple/", idx)
+	}
+}
+
 func TestRunPreInstallBlock_AllPassRunsPM(t *testing.T) {
 	// A poetry.lock whose only entry is a git-sourced package: the parser drops
 	// it, so RunCheck has nothing to query (Checked == 0), no network is touched,

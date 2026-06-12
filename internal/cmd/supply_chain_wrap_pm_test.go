@@ -47,32 +47,48 @@ func TestCanonicalPMAllowed(t *testing.T) {
 
 func TestRequiresPreInstallBlock(t *testing.T) {
 	tests := []struct {
+		name string
 		pm   string
+		args []string
 		want bool
 	}{
-		{pmPoetry, true},
-		{pmPipenv, true},
-		{pmPDM, true},
-		{pmMaven, true},
-		{pmGradle, true},
-		{pmPip, false},
-		{pmUV, false},
-		// uvx is uv's runner: like uv it uses the transparent proxy, never the
-		// pre-install lockfile audit (it has no lockfile of its own).
-		{pmUVX, false},
-		{pmNPM, false},
+		{"poetry", pmPoetry, []string{"install"}, true},
+		{"pipenv", pmPipenv, []string{"install"}, true},
+		{"pdm", pmPDM, []string{"install"}, true},
+		{"maven", pmMaven, []string{"package"}, true},
+		{"gradle", pmGradle, []string{"build"}, true},
+		{"pip", pmPip, []string{"install", "requests"}, false},
+		// uv persists the configured index URL into uv.lock on every
+		// lockfile-writing command (and re-locks when the index differs from the
+		// recorded one), so proxying those commands would corrupt the lockfile
+		// with the ephemeral 127.0.0.1 proxy address. They take the audit path.
+		{"uv no args", pmUV, nil, true},
+		{"uv sync", pmUV, []string{"sync"}, true},
+		{"uv lock", pmUV, []string{"lock"}, true},
+		{"uv add", pmUV, []string{"add", "requests"}, true},
+		{"uv run", pmUV, []string{"run", "script.py"}, true},
+		// `uv pip` and `uv tool` never touch uv.lock — they keep the proxy.
+		{"uv pip install", pmUV, []string{"pip", "install", "requests"}, false},
+		{"uv tool run", pmUV, []string{"tool", "run", "ruff"}, false},
+		// A global flag before the subcommand may carry a value, so the
+		// subcommand is only recognized in first position; fail safe to audit.
+		{"uv flag before pip subcommand", pmUV, []string{"--directory", "svc", "pip", "install"}, true},
+		// uvx is uv's runner: it has no project lockfile, so it stays on the
+		// transparent proxy, never the pre-install lockfile audit.
+		{"uvx", pmUVX, []string{"ruff"}, false},
+		{"npm", pmNPM, []string{"install"}, false},
 		// npx is the npm runner: like npm it uses the transparent proxy, never the
 		// pre-install lockfile audit (it has no lockfile of its own).
-		{pmNPX, false},
-		{pmPNPM, false},
-		{pmBun, false},
-		{pmYarn, false},
+		{"npx", pmNPX, []string{"cowsay"}, false},
+		{"pnpm", pmPNPM, []string{"install"}, false},
+		{"bun", pmBun, []string{"install"}, false},
+		{"yarn", pmYarn, []string{"install"}, false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.pm, func(t *testing.T) {
-			if got := requiresPreInstallBlock(tt.pm); got != tt.want {
-				t.Errorf("requiresPreInstallBlock(%q) = %v, want %v", tt.pm, got, tt.want)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requiresPreInstallBlock(tt.pm, tt.args); got != tt.want {
+				t.Errorf("requiresPreInstallBlock(%q, %v) = %v, want %v", tt.pm, tt.args, got, tt.want)
 			}
 		})
 	}
