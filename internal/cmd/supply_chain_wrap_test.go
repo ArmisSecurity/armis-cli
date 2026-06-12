@@ -304,6 +304,69 @@ func TestRunProxyWrap_NormalizesUVToolReceipt(t *testing.T) {
 	}
 }
 
+// TestRunProxyWrap_NormalizesUVCompileOutput pins the output-file sweep:
+// `uv pip compile --emit-index-url -o FILE` writes the configured index — the
+// proxy URL — into the generated requirements file (verified on uv 0.8).
+func TestRunProxyWrap_NormalizesUVCompileOutput(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	out := filepath.Join(dir, "requirements.txt")
+
+	// The stub plays the role of uv pip compile: it emits the index URL it was
+	// invoked with into the -o output file.
+	t.Cleanup(func() { execPMFunc = execPM })
+	execPMFunc = func(pm string, args, extraEnv []string) (int, error) {
+		idx, ok := envValue(extraEnv, "UV_INDEX_URL")
+		if !ok {
+			t.Fatal("UV_INDEX_URL not set; the proxy was not injected")
+		}
+		return 0, os.WriteFile(out, []byte("--index-url "+idx+"\nsix==1.17.0\n"), 0o600)
+	}
+
+	args := []string{"pip", "compile", "pyproject.toml", "-o", out, "--emit-index-url"}
+	if err := runProxyWrap(newWrapTestCmd(), pmUV, args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(out) //nolint:gosec // test reads its own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "127.0.0.1") {
+		t.Errorf("compiled requirements still contain the proxy origin:\n%s", got)
+	}
+	if !strings.Contains(string(got), "--index-url https://pypi.org/simple/") {
+		t.Errorf("index URL not restored to PyPI:\n%s", got)
+	}
+	if !strings.Contains(string(got), "six==1.17.0") {
+		t.Errorf("pinned requirement was not preserved:\n%s", got)
+	}
+}
+
+func TestUVCompileOutputFile(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"short flag", []string{"pip", "compile", "in.toml", "-o", "req.txt"}, "req.txt"},
+		{"long flag", []string{"pip", "compile", "in.toml", "--output-file", "req.txt"}, "req.txt"},
+		{"long flag attached", []string{"pip", "compile", "--output-file=req.txt", "in.toml"}, "req.txt"},
+		{"no output flag", []string{"pip", "compile", "in.toml"}, ""},
+		{"dangling flag", []string{"pip", "compile", "-o"}, ""},
+		{"no args", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := uvCompileOutputFile(tt.args); got != tt.want {
+				t.Errorf("uvCompileOutputFile(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunPreInstallBlock_AllPassRunsPM(t *testing.T) {
 	// A poetry.lock whose only entry is a git-sourced package: the parser drops
 	// it, so RunCheck has nothing to query (Checked == 0), no network is touched,

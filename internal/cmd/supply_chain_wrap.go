@@ -180,7 +180,7 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// the wrapper. Sweep those artifacts and rewrite the origin back to the real
 	// upstream — even when the PM exited non-zero, since a failed install can
 	// still have rewritten the lockfile first.
-	normalizeProxyResidue(canonicalPM(pmName), "http://"+addr, proxy.Upstream())
+	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, proxy.Upstream())
 
 	// installOK reflects what the package manager actually did, not what the proxy
 	// offered: proxy.Allowed() only records the version "latest" was repointed to,
@@ -680,6 +680,11 @@ func registryEnvForPM(pm, registryURL string) []string {
 		return []string{
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("YARN_NPM_REGISTRY_SERVER=%s", registryURL),
+			// Yarn Berry (2+) refuses plain-http registries unless the host is
+			// whitelisted, failing every wrapped install with YN0081 — and the wrap
+			// proxy is necessarily plain http on loopback. Whitelist exactly that
+			// host; Yarn classic (1.x) ignores the variable.
+			"YARN_UNSAFE_HTTP_WHITELIST=127.0.0.1",
 		}
 	case pmUV, pmUVX:
 		// uvx is uv's on-demand tool runner (`uvx X` ≡ `uv tool run X`); it shares
@@ -962,7 +967,7 @@ func blockedViolationNames(violations []supplychain.Violation) []string {
 // `uv tool upgrade` against the dead proxy address. Failures are reported but
 // never block: the install itself already completed, and a residue warning the
 // user can act on beats failing the build after the fact.
-func normalizeProxyResidue(pm, proxyOrigin, upstreamOrigin string) {
+func normalizeProxyResidue(pm string, pmArgs []string, proxyOrigin, upstreamOrigin string) {
 	var paths []string
 	switch pm {
 	case pmNPM, pmNPX, pmPNPM, pmBun, pmYarn:
@@ -974,6 +979,13 @@ func normalizeProxyResidue(pm, proxyOrigin, upstreamOrigin string) {
 				paths = append(paths, p)
 			}
 		}
+		// npm-shrinkwrap.json is package-lock.json's publishable twin: `npm
+		// shrinkwrap` converts the lock in place and later installs update it the
+		// same way, so it carries the same resolved URLs and deserves the same
+		// defensive sweep.
+		if p := supplychain.FindUpward(".", "npm-shrinkwrap.json"); p != "" {
+			paths = append(paths, p)
+		}
 		// bun's legacy binary lockfile encodes lengths, so a text substitution
 		// would corrupt it. Detect the residue and tell the user how to repair.
 		if lockb := supplychain.FindUpward(".", "bun.lockb"); lockb != "" && supplychain.FileContainsString(lockb, proxyOrigin) {
@@ -982,6 +994,15 @@ func normalizeProxyResidue(pm, proxyOrigin, upstreamOrigin string) {
 		}
 	case pmUV, pmUVX:
 		paths = uvToolReceipts()
+		// `uv pip compile --emit-index-url -o FILE` writes the configured index —
+		// here the proxy URL — into the generated requirements file (verified on
+		// uv 0.8). Sweep the explicit output file; output redirected to stdout by
+		// the user's shell happens outside this process and cannot be intercepted,
+		// which is one reason `supply-chain check` also flags loopback registry
+		// references in lockfiles.
+		if out := uvCompileOutputFile(pmArgs); out != "" {
+			paths = append(paths, out)
+		}
 	}
 
 	for _, p := range paths {
@@ -997,6 +1018,26 @@ func normalizeProxyResidue(pm, proxyOrigin, upstreamOrigin string) {
 				s.MutedText.Render(fmt.Sprintf("supply-chain: restored registry address in %s", filepath.Base(p))))
 		}
 	}
+}
+
+// uvCompileOutputFile returns the path passed to a uv invocation's
+// -o/--output-file flag (as used by `uv pip compile`), or "" when absent. Both
+// the space-separated and =-attached spellings are recognized; an unrecognized
+// spelling simply leaves the file to the loopback-residue warning in
+// `supply-chain check` rather than risking a wrong-file sweep.
+func uvCompileOutputFile(pmArgs []string) string {
+	for i := 0; i < len(pmArgs); i++ {
+		switch {
+		case pmArgs[i] == "-o" || pmArgs[i] == "--output-file":
+			if i+1 < len(pmArgs) {
+				return pmArgs[i+1]
+			}
+			return ""
+		case strings.HasPrefix(pmArgs[i], "--output-file="):
+			return strings.TrimPrefix(pmArgs[i], "--output-file=")
+		}
+	}
+	return ""
 }
 
 // uvToolReceipts returns the uv-receipt.toml paths of every installed uv tool.

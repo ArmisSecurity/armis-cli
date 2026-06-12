@@ -151,6 +151,9 @@ func TestRegistryEnvForPM(t *testing.T) {
 		{pmPNPM, "npm_config_registry", url},
 		{pmBun, "BUN_CONFIG_REGISTRY", url},
 		{pmYarn, "YARN_NPM_REGISTRY_SERVER", url},
+		// Yarn Berry refuses plain-http registries unless the host is whitelisted
+		// (YN0081); without this every wrapped Berry install fails outright.
+		{pmYarn, "YARN_UNSAFE_HTTP_WHITELIST", "127.0.0.1"},
 		{pmPip, "PIP_INDEX_URL", "http://127.0.0.1:9999/simple/"},
 		{pmUV, "UV_INDEX_URL", "http://127.0.0.1:9999/simple/"},
 		// uvx shares uv's config, so it gets the same PyPI index override as uv.

@@ -94,6 +94,39 @@ func TestNormalizeArtifact(t *testing.T) {
 		}
 	})
 
+	t.Run("symlinked lockfile rewrites the target and keeps the link", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "real-bun.lock")
+		link := filepath.Join(dir, "bun.lock")
+		if err := os.WriteFile(target, []byte(`"`+testProxyOrigin+`/axios.tgz"`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+
+		changed, err := NormalizeArtifact(link, testProxyOrigin, testUpstreamOrigin)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !changed {
+			t.Fatal("expected the artifact to be reported as changed")
+		}
+
+		// The link must survive and the target must carry the rewrite.
+		fi, err := os.Lstat(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			t.Error("symlink was replaced by a regular file")
+		}
+		got, _ := os.ReadFile(target) //nolint:gosec // test reads its own temp file
+		if !strings.Contains(string(got), testUpstreamOrigin) {
+			t.Errorf("target content not rewritten: %s", got)
+		}
+	})
+
 	t.Run("missing file is not an error", func(t *testing.T) {
 		changed, err := NormalizeArtifact(filepath.Join(t.TempDir(), "absent.lock"), testProxyOrigin, testUpstreamOrigin)
 		if err != nil {
@@ -120,6 +153,46 @@ func TestFileContainsString(t *testing.T) {
 	}
 	if FileContainsString(filepath.Join(dir, "absent"), testProxyOrigin) {
 		t.Error("missing file reported as containing the needle")
+	}
+}
+
+func TestDetectLoopbackRegistry(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	tests := []struct {
+		name     string
+		content  string
+		wantHost string
+		want     bool
+	}{
+		{"stale proxy residue", `"resolved": "http://127.0.0.1:39801/axios.tgz"`, "127.0.0.1", true},
+		{"localhost registry", `registry = "http://localhost:4873/simple"`, "localhost", true},
+		{"ipv6 loopback", `url = "http://[::1]:8080/npm/"`, "[::1]", true},
+		{"clean upstream", `"resolved": "https://registry.npmjs.org/axios.tgz"`, "", false},
+		// A bare IP outside a URL (e.g. in a comment or hash) must not trip it.
+		{"non-URL mention", `# tested against 127.0.0.1 locally`, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := write("lock-"+strings.ReplaceAll(tt.name, " ", "-"), tt.content)
+			host, found := DetectLoopbackRegistry(p)
+			if found != tt.want || host != tt.wantHost {
+				t.Errorf("DetectLoopbackRegistry = (%q, %v), want (%q, %v)", host, found, tt.wantHost, tt.want)
+			}
+		})
+	}
+
+	if _, found := DetectLoopbackRegistry(filepath.Join(dir, "absent")); found {
+		t.Error("missing file reported as containing a loopback registry")
 	}
 }
 

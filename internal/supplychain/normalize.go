@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxNormalizeFileSize bounds how large an artifact NormalizeArtifact is
@@ -33,6 +34,15 @@ const maxNormalizeFileSize = 64 * 1024 * 1024
 // lockfile. A missing file is not an error — the package manager simply did
 // not write that artifact.
 func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
+	// A lockfile may itself be a symlink (Nix setups, monorepo link farms).
+	// Rename-over-path would replace the symlink with a regular file and orphan
+	// the target, so resolve to the real file first; the rename then lands on
+	// the target and the link stays intact. EvalSymlinks errors on a missing
+	// path, in which case the original is kept and the stat below reports it.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI rewriting the user's own lockfile/receipt; path comes from well-known lockfile names found in the user's project tree or the uv tools dir, not untrusted input crossing a trust boundary
 	info, err := os.Stat(path)
 	if err != nil {
@@ -85,6 +95,27 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 		return false, fmt.Errorf("replacing %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// loopbackMarkers are URL fragments indicating a loopback-hosted registry
+// reference in a lockfile or generated artifact.
+var loopbackMarkers = []string{"://127.0.0.1:", "://localhost:", "://[::1]:"}
+
+// DetectLoopbackRegistry reports whether the artifact at path references a
+// loopback-hosted registry URL, returning the first host marker matched (e.g.
+// "127.0.0.1"). The wrap's residue sweep can only remove the origin of the
+// proxy instance that just ran; a wrapper killed mid-install leaves a stale
+// port behind that no later run can recognize, and versions before the sweep
+// existed left residue routinely. This lets `supply-chain check` flag such
+// lockfiles in CI. A loopback reference may equally be a deliberate local
+// registry (e.g. Verdaccio), which is why detection only ever warns.
+func DetectLoopbackRegistry(path string) (string, bool) {
+	for _, m := range loopbackMarkers {
+		if FileContainsString(path, m) {
+			return strings.Trim(m, ":/"), true
+		}
+	}
+	return "", false
 }
 
 // FileContainsString reports whether the file at path contains needle. It is
