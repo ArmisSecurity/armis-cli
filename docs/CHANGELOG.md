@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `supply-chain check` now warns when the audited lockfile references a loopback registry (`127.0.0.1`, `localhost`, `[::1]`). The wrap's residue sweep can only remove the proxy origin of the run that just finished — a wrapper killed mid-install leaves a stale port behind, and versions before the sweep existed left residue routinely — so this gives CI a way to catch a corrupted lockfile before it breaks builds that resolve outside the wrapper. The warning is advisory: a deliberate local registry (e.g. Verdaccio) also matches.
-
 ### Changed
 
 ### Deprecated
@@ -19,12 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `supply-chain`: wrapped Yarn Berry (2+) installs no longer fail with `YN0081: Unsafe http requests must be explicitly whitelisted`. Berry honors the wrap's registry override but refuses plain-http registries — and the filtering proxy is necessarily plain http on loopback — so every wrapped Berry install errored out with no mention of the wrapper. The wrap now sets `YARN_UNSAFE_HTTP_WHITELIST=127.0.0.1` alongside the registry override (Yarn classic ignores the variable). Verified on Berry 4.16: wrapped installs are filtered by the age policy and Berry's registry-agnostic `yarn.lock` stays clean.
-- `supply-chain`: a wrapped `uv pip compile --emit-index-url -o FILE` no longer writes the ephemeral proxy URL as the `--index-url` of the generated requirements file; the post-run sweep restores `https://pypi.org/simple/` in the output file. Output redirected to stdout by the shell happens outside the wrapper and cannot be intercepted — the new `supply-chain check` loopback warning covers that case.
-- `supply-chain`: the residue sweep also covers `npm-shrinkwrap.json` (package-lock.json's publishable twin), and rewrites symlinked lockfiles through to their target instead of replacing the link with a regular file.
-- `supply-chain`: a wrapped `bun update` no longer leaves the ephemeral proxy address in `bun.lock`. bun records the full tarball URL it fetched from when re-resolving, so the proxy's `http://127.0.0.1:<port>/…` origin was persisted into the lockfile (verified on bun 1.3; `bun add`/`bun install` are unaffected — they record registry-relative entries). After every proxied run the wrapper now sweeps the project's lockfiles and rewrites any occurrence of the proxy origin back to the real upstream registry; the rewrite is atomic and produces exactly the URLs an unwrapped run would have recorded (the proxy forwards tarball paths to the upstream 1:1). The sweep also covers `package-lock.json`, `yarn.lock`, and `pnpm-lock.yaml` defensively — current npm/yarn/pnpm record upstream URLs (verified on npm 10, yarn 1.22, pnpm 10), but older releases recorded the configured registry. A legacy binary `bun.lockb` cannot be rewritten in place; if proxy residue is detected there, a warning explains how to repair (`ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile`).
-- `supply-chain`: a wrapped `uv tool install` no longer breaks subsequent `uv tool upgrade` runs. uv records the index it was invoked with as `index-url` in the tool's `uv-receipt.toml`, so upgrades would target the dead ephemeral proxy address; the post-run sweep now restores `https://pypi.org/simple/` in tool receipts. Receipts already poisoned by an earlier version can be repaired by re-running `uv tool install <tool> --force` through the wrapper, or editing the receipt's `index-url` by hand.
-- `supply-chain`: wrapped `uv` commands that write `uv.lock` (`uv sync`, `uv lock`, `uv add`, `uv run`, …) no longer corrupt the lockfile. uv records the configured index URL as each package's `source.registry` in `uv.lock`, and an index differing from the recorded one triggers a full re-lock — so routing these commands through the transparent proxy stamped the ephemeral `http://127.0.0.1:<port>/simple/` proxy address into every package entry, breaking any subsequent sync outside the wrapper (Docker builds, CI, teammates). Lockfile-writing `uv` invocations now use the same pre-install lockfile audit as poetry/pipenv/pdm: `uv.lock` is checked for too-young packages and the build is blocked before it runs, while uv itself resolves against the real index so the lockfile stays pristine. `uv pip …` and `uv tool …` (which never touch `uv.lock`) and `uvx` keep the transparent proxy. A lockfile already corrupted by an earlier version can be repaired by re-running `uv lock` outside the wrapper (or with `ARMIS_SUPPLY_CHAIN=off`).
+### Security
+
+---
+
+## [1.13.0] - 2026-06-16
+
+### Added
+
+- `supply-chain`: `uvx` (uv's on-demand tool runner) is now wrapped alongside `uv`, the PyPI analogue of how `npx` is paired with `npm`. `uvx <tool>` fetches a tool from PyPI and runs it — exactly the supply-chain vector the proxy guards — so wherever `uv` is enforced, `uvx` is too. It shares uv's resolver and config, so it routes through the same transparent PyPI proxy (`UV_INDEX_URL`) and inherits uv's `ecosystems`-scope decision. Enforcement applies to tools `uvx` fetches from the registry; a tool already in the uv tool cache runs without a registry round-trip and is not re-checked. Re-run `armis-cli supply-chain init` to wrap `uvx` on machines where it is installed. (#219)
+- `supply-chain check` now warns when the audited lockfile references a loopback registry (`127.0.0.1`, `localhost`, `[::1]`). The wrap's residue sweep can only remove the proxy origin of the run that just finished — a wrapper killed mid-install leaves a stale port behind, and versions before the sweep existed left residue routinely — so this gives CI a way to catch a corrupted lockfile before it breaks builds that resolve outside the wrapper. The warning is advisory: a deliberate local registry (e.g. Verdaccio) also matches. (#226)
+
+### Fixed
+
+- `supply-chain`: wrapped `uv` commands that write `uv.lock` (`uv sync`, `uv lock`, `uv add`, `uv run`, …) no longer corrupt the lockfile. uv records the configured index URL as each package's `source.registry` in `uv.lock`, and an index differing from the recorded one triggers a full re-lock — so routing these commands through the transparent proxy stamped the ephemeral `http://127.0.0.1:<port>/simple/` proxy address into every package entry, breaking any subsequent sync outside the wrapper (Docker builds, CI, teammates). Lockfile-writing `uv` invocations now use the same pre-install lockfile audit as poetry/pipenv/pdm: `uv.lock` is checked for too-young packages and the build is blocked before it runs, while uv itself resolves against the real index so the lockfile stays pristine. `uv pip …` and `uv tool …` (which never touch `uv.lock`) and `uvx` keep the transparent proxy. A lockfile already corrupted by an earlier version can be repaired by re-running `uv lock` outside the wrapper (or with `ARMIS_SUPPLY_CHAIN=off`). (#226)
+- `supply-chain`: a wrapped `bun update` no longer leaves the ephemeral proxy address in `bun.lock`. bun records the full tarball URL it fetched from when re-resolving, so the proxy's `http://127.0.0.1:<port>/…` origin was persisted into the lockfile (verified on bun 1.3; `bun add`/`bun install` are unaffected — they record registry-relative entries). After every proxied run the wrapper now sweeps the project's lockfiles and rewrites any occurrence of the proxy origin back to the real upstream registry; the rewrite is atomic and produces exactly the URLs an unwrapped run would have recorded (the proxy forwards tarball paths to the upstream 1:1). The sweep also covers `package-lock.json`, `yarn.lock`, and `pnpm-lock.yaml` defensively — current npm/yarn/pnpm record upstream URLs (verified on npm 10, yarn 1.22, pnpm 10), but older releases recorded the configured registry. A legacy binary `bun.lockb` cannot be rewritten in place; if proxy residue is detected there, a warning explains how to repair (`ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile`). (#226)
+- `supply-chain`: a wrapped `uv tool install` no longer breaks subsequent `uv tool upgrade` runs. uv records the index it was invoked with as `index-url` in the tool's `uv-receipt.toml`, so upgrades would target the dead ephemeral proxy address; the post-run sweep now restores `https://pypi.org/simple/` in tool receipts. Receipts already poisoned by an earlier version can be repaired by re-running `uv tool install <tool> --force` through the wrapper, or editing the receipt's `index-url` by hand. (#226)
+- `supply-chain`: a wrapped `uv pip compile --emit-index-url -o FILE` no longer writes the ephemeral proxy URL as the `--index-url` of the generated requirements file; the post-run sweep restores `https://pypi.org/simple/` in the output file. Output redirected to stdout by the shell happens outside the wrapper and cannot be intercepted — the new `supply-chain check` loopback warning covers that case. (#226)
+- `supply-chain`: wrapped Yarn Berry (2+) installs no longer fail with `YN0081: Unsafe http requests must be explicitly whitelisted`. Berry honors the wrap's registry override but refuses plain-http registries — and the filtering proxy is necessarily plain http on loopback — so every wrapped Berry install errored out with no mention of the wrapper. The wrap now sets `YARN_UNSAFE_HTTP_WHITELIST=127.0.0.1` alongside the registry override (Yarn classic ignores the variable). Verified on Berry 4.16: wrapped installs are filtered by the age policy and Berry's registry-agnostic `yarn.lock` stays clean. (#226)
+- `supply-chain`: the residue sweep also covers `npm-shrinkwrap.json` (package-lock.json's publishable twin), and rewrites symlinked lockfiles through to their target instead of replacing the link with a regular file. (#226)
 
 ### Security
 
@@ -36,7 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Release pipeline now maintains floating major (`v1`) and minor (`v1.12`) version tags, so the GitHub Action can be consumed via `uses: ArmisSecurity/armis-cli@v1` and receive non-breaking updates automatically (#213)
 - Documented the one-time GitHub Marketplace publishing steps for the Armis CLI Action in `docs/DISTRIBUTION-SETUP.md` (#213)
-- `supply-chain`: `uvx` (uv's on-demand tool runner) is now wrapped alongside `uv`, the PyPI analogue of how `npx` is paired with `npm`. `uvx <tool>` fetches a tool from PyPI and runs it — exactly the supply-chain vector the proxy guards — so wherever `uv` is enforced, `uvx` is too. It shares uv's resolver and config, so it routes through the same transparent PyPI proxy (`UV_INDEX_URL`) and inherits uv's `ecosystems`-scope decision. Enforcement applies to tools `uvx` fetches from the registry; a tool already in the uv tool cache runs without a registry round-trip and is not re-checked. Re-run `armis-cli supply-chain init` to wrap `uvx` on machines where it is installed.
 
 ### Changed
 
@@ -475,7 +485,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.10.2...v1.11.0
