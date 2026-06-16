@@ -2,7 +2,6 @@
 package testutil
 
 import (
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -81,6 +80,7 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		// `host` is set when the handler runs since httptest's URL is
 		// not known at construction time.
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url") && r.Method == http.MethodPost {
+			AssertHasAuthorization(t, r)
 			s3URL := SchemeFromRequest(r) + "://" + r.Host + "/_s3/upload"
 			JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 				ScanID:       config.ScanID,
@@ -100,16 +100,20 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 
 		// Fake S3 multipart-POST receiver. The CLI's uploadToPresignedURL
 		// builds a multipart body; we accept it with 204 to match real S3.
+		// AssertValidS3Upload mirrors the real S3 contract (Content-Length,
+		// no Authorization header, file part last, etc.) — failures are
+		// reported via t.Errorf so envelope drift surfaces as a unit-test
+		// failure here instead of a 411 from real S3 in staging.
 		if strings.HasPrefix(r.URL.Path, "/_s3/") && r.Method == http.MethodPost {
-			// Drain (and discard) the body so the writer goroutine doesn't
-			// block. Cap at 64 MiB — well above any test fixture.
-			_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 64*1024*1024))
+			r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+			AssertValidS3Upload(t, r)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
 		// POST /api/v1/ingest/scan — confirms upload and triggers scan.
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost {
+			AssertHasAuthorization(t, r)
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,
 				ScanStatus:   "INITIATED",

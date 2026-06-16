@@ -110,6 +110,12 @@ All styles are defined in `internal/output/styles.go` using `lipgloss.AdaptiveCo
 
 Tests use table-driven patterns. Mock HTTP responses with `internal/testutil/httptest.go`. The `test/` directory contains a mock server and sample repository for integration testing.
 
+### PPSC-895 ingest flow — gotchas worth remembering
+
+- **Real S3 requires `Content-Length` on POST.** `internal/api/client.go::buildMultipartEnvelope` precomputes the total length so the HTTP client can set it; do not add a streaming-body variant without preserving this. Real S3 returns 411 otherwise. The `testutil.AssertValidS3Upload` helper asserts the contract on every fake-S3 handler.
+- **Race detector runs only on Linux** (`.github/workflows/ci.yml::matrix`). The orchestrator reads `PresignedUploadResponse` fields after kicking off the multipart writer; today everything is read-only post-hand-off. If anyone caches the response across goroutines or mutates `Fields`, ensure the race build still passes — better yet, add a `-race` job to the macOS/Windows matrix.
+- **Per-leg timing is currently coarse.** `StartIngest` reports total elapsed; the three legs (`/presigned-url`, S3 multipart POST, `/scan`) are not measured separately. If you add upload-time telemetry, instrument each leg so a regression in any one is attributable.
+
 ## Linting
 
 Uses golangci-lint v2 config (`.golangci.yml`) with: errcheck, govet, ineffassign, staticcheck, unused, gosec, goconst, misspell.

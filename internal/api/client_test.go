@@ -69,6 +69,7 @@ func newIngestFlowServer(t *testing.T) (*httptest.Server, *ingestFlowState) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url") && r.Method == http.MethodPost:
+			testutil.AssertHasAuthorization(t, r)
 			state.mu.Lock()
 			state.presignedCalls++
 			override := state.overridePresigned
@@ -101,11 +102,14 @@ func newIngestFlowServer(t *testing.T) (*httptest.Server, *ingestFlowState) {
 				override(w, r)
 				return
 			}
-			// Drain the body so the writer goroutine doesn't block.
-			_, _ = io.Copy(io.Discard, r.Body)
+			// Validate the upload matches the real S3 contract before
+			// returning 204. Mirrors what real S3 enforces (Content-Length,
+			// no Authorization, file part last).
+			testutil.AssertValidS3Upload(t, r)
 			w.WriteHeader(http.StatusNoContent)
 
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost:
+			testutil.AssertHasAuthorization(t, r)
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 			state.mu.Lock()
 			state.scanCalls++

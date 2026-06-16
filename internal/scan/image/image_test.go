@@ -3,7 +3,6 @@ package image
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -531,6 +530,7 @@ func TestScanTarball(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
 				scheme := testhelpers.SchemeFromRequest(r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID:       "scan-123",
@@ -547,10 +547,11 @@ func TestScanTarball(t *testing.T) {
 				})
 
 			case strings.HasPrefix(r.URL.Path, "/_s3/"):
-				_, _ = io.Copy(io.Discard, r.Body)
+				testutil.AssertValidS3Upload(t, r)
 				w.WriteHeader(http.StatusNoContent)
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 					ScanID:       "scan-123",
 					ScanStatus:   "INITIATED",
@@ -694,15 +695,17 @@ func TestScanTarball(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
 				scheme := testhelpers.SchemeFromRequest(r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
 					Fields: map[string]string{"key": "k"}, MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
 				})
 			case strings.HasPrefix(r.URL.Path, "/_s3/"):
-				_, _ = io.Copy(io.Discard, r.Body)
+				testutil.AssertValidS3Upload(t, r)
 				w.WriteHeader(http.StatusNoContent)
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 					ScanID: "scan-123", ScanStatus: "INITIATED",
 				})
@@ -736,15 +739,17 @@ func TestScanTarball(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
 				scheme := testhelpers.SchemeFromRequest(r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
 					Fields: map[string]string{"key": "k"}, MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
 				})
 			case strings.HasPrefix(r.URL.Path, "/_s3/"):
-				_, _ = io.Copy(io.Discard, r.Body)
+				testutil.AssertValidS3Upload(t, r)
 				w.WriteHeader(http.StatusNoContent)
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 					ScanID: "scan-123", ScanStatus: "INITIATED",
 				})
@@ -877,4 +882,57 @@ func TestScanTarballEdgeCases(t *testing.T) {
 			t.Error("Expected error when path is a directory")
 		}
 	})
+}
+
+// TestScanTarball_ServerCapRejection verifies that the image scanner
+// surfaces the orchestrator's server-side max_upload_bytes pre-check.
+// Image's local MaxImageSize (5 GB) is wider than the server's default
+// (2 GB); without this pre-check, a 3 GB image would only fail after a
+// fruitless upload attempt.
+func TestScanTarball_ServerCapRejection(t *testing.T) {
+	tmpDir := t.TempDir()
+	tarballPath := filepath.Join(tmpDir, "big-image.tar")
+	testhelpers.WriteMinimalTar(t, tarballPath)
+
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+			testutil.AssertHasAuthorization(t, r)
+			scheme := testhelpers.SchemeFromRequest(r)
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:       "scan-cap",
+				ArtifactType: "image",
+				TenantID:     "tenant-456",
+				PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+				// Tiny cap → orchestrator rejects locally before uploading.
+				Fields:         map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+				MaxUploadBytes: 32,
+				ExpiresIn:      1800,
+			})
+		case strings.HasPrefix(r.URL.Path, "/_s3/"):
+			t.Errorf("S3 must not be called when upload exceeds server cap")
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+			t.Errorf("/scan must not be called when upload exceeds server cap")
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-cap"})
+		}
+	})
+
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+		api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).
+		WithPollInterval(10 * time.Millisecond)
+
+	_, err = scanner.ScanTarball(context.Background(), tarballPath)
+	if err == nil {
+		t.Fatal("expected error from server-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "exceeds server limit") {
+		t.Errorf("expected 'exceeds server limit' error, got: %v", err)
+	}
 }

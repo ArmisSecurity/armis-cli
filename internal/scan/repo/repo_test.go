@@ -1313,6 +1313,7 @@ func TestScan(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
 				scheme := testhelpers.SchemeFromRequest(r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID:       testScanID,
@@ -1329,10 +1330,11 @@ func TestScan(t *testing.T) {
 				})
 
 			case strings.HasPrefix(r.URL.Path, "/_s3/"):
-				_, _ = io.Copy(io.Discard, r.Body)
+				testutil.AssertValidS3Upload(t, r)
 				w.WriteHeader(http.StatusNoContent)
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 					ScanID:       testScanID,
 					ScanStatus:   "INITIATED",
@@ -1518,6 +1520,7 @@ func TestScan(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
 				scheme := testhelpers.SchemeFromRequest(r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID:       testScanID,
@@ -1531,9 +1534,10 @@ func TestScan(t *testing.T) {
 					ExpiresIn:      1800,
 				})
 			case strings.HasPrefix(r.URL.Path, "/_s3/"):
-				_, _ = io.Copy(io.Discard, r.Body)
+				testutil.AssertValidS3Upload(t, r)
 				w.WriteHeader(http.StatusNoContent)
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
 				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 					ScanID: testScanID, ScanStatus: "INITIATED",
 				})
@@ -1932,5 +1936,55 @@ func TestGenerateFindingTitle(t *testing.T) {
 				t.Errorf("generateFindingTitle() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestScan_TempFileCleanedUpOnCancel guards the new flow's temp-file
+// hygiene: the repo scanner spools the tar.gz to a temp file before
+// upload, and a deferred Remove() must run even when the context is
+// cancelled mid-flight.
+func TestScan_TempFileCleanedUpOnCancel(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatalf("create main.go: %v", err)
+	}
+
+	// Capture the initial set of armis-repo-* temp files so we can detect
+	// any leak afterwards. A clean local TempDir would normally have none,
+	// but we don't assume that.
+	prefix := "armis-repo-"
+	beforeFiles, _ := filepath.Glob(filepath.Join(os.TempDir(), prefix+"*.tar.gz"))
+	beforeSet := map[string]bool{}
+	for _, f := range beforeFiles {
+		beforeSet[f] = true
+	}
+
+	// Cancel the context immediately so Scan returns before reaching the
+	// upload step. The temp file must still be removed.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	apiClient, err := api.NewClient("https://localhost", testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+		api.WithHTTPClient(httpClient))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).
+		WithPollInterval(10 * time.Millisecond)
+
+	_, err = scanner.Scan(ctx, tmpDir)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+
+	// Allow filesystem caches a moment, then assert no new armis-repo-*
+	// temp files remain.
+	afterFiles, _ := filepath.Glob(filepath.Join(os.TempDir(), prefix+"*.tar.gz"))
+	for _, f := range afterFiles {
+		if !beforeSet[f] {
+			t.Errorf("temp file leaked after cancelled scan: %s", f)
+		}
 	}
 }
