@@ -70,7 +70,8 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		baseURL := getAPIBaseURL()
-		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute,
+			clientOptionsForBaseURL(baseURL)...)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}

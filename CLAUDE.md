@@ -64,12 +64,16 @@ go test -v ./internal/output/... -run TestHumanFormatter
 ### Scan Flow
 
 1. Scanner creates compressed archive (repo tar.gz with `.armisignore` filtering) or exports image to tarball via docker/podman
-2. API client uploads to `/api/v1/ingest/tar` with progress tracking
-3. Client polls `/api/v1/ingest/status/` with spinner status updates until scan completes
-4. Client fetches paginated results from `/api/v1/ingest/normalized-results` (cursor-based)
-5. `NormalizedFinding` converted to internal `model.Finding` (type classification, secret masking, code location extraction)
-6. Results formatted for output; SBOM/VEX downloaded from presigned S3 URLs if requested
-7. `ExitIfNeeded()` checks findings against `--fail-on` severity levels
+2. For user-supplied tarballs (`scan image --tarball`), client validates extension + magic bytes before upload (`internal/scan/validate.go`)
+3. API client runs the **split-flow ingest** (PPSC-894/895):
+   - `POST /api/v1/ingest/presigned-url` — reserves a `scan_id`, returns a pre-signed S3 POST whose policy carries a `content-length-range` cap up to `MAX_UPLOAD_SIZE_MB`.
+   - Multipart-POST the tarball directly to S3 using the returned `presigned_url` + `fields`. The CLI never sets an Authorization header on the S3 request — the signed `policy` field is the credential.
+   - `POST /api/v1/ingest/scan` — the API head_objects the upload, transitions PENDING_UPLOAD → INITIATED, and dispatches to Prefect or SQS.
+4. Client polls `/api/v1/ingest/status/` with spinner status updates until scan completes
+5. Client fetches paginated results from `/api/v1/ingest/normalized-results` (cursor-based)
+6. `NormalizedFinding` converted to internal `model.Finding` (type classification, secret masking, code location extraction)
+7. Results formatted for output; SBOM/VEX downloaded from presigned S3 URLs if requested
+8. `ExitIfNeeded()` checks findings against `--fail-on` severity levels
 
 ### Key Constants
 

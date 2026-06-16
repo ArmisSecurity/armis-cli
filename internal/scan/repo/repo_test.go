@@ -1307,35 +1307,50 @@ func TestScan(t *testing.T) {
 			t.Fatalf("failed to create helper.go: %v", err)
 		}
 
-		// Create mock server
+		// Create mock server. The new ingest flow has 3 calls
+		// (presigned-url + S3 multipart POST + scan); we route them all
+		// through this one handler.
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
-			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
-				// StartIngest
-				response := model.IngestUploadResponse{
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID:       testScanID,
 					ArtifactType: "repo",
 					TenantID:     "tenant-456",
-					Filename:     "test-repo.tar.gz",
-					Message:      "Upload successful",
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+					PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{
+						"key":             "ingest/tenant-456/" + testScanID + "/test-repo.tar.gz",
+						"policy":          "test-policy",
+						"x-amz-signature": "test-sig",
+					},
+					MaxUploadBytes: 2 << 30,
+					ExpiresIn:      1800,
+				})
+
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.WriteHeader(http.StatusNoContent)
+
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID:       testScanID,
+					ScanStatus:   "INITIATED",
+					ArtifactType: "repo",
+					TenantID:     "tenant-456",
+					Filename:     "test-repo",
+					Message:      "Upload confirmed and scan initiated successfully",
+				})
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
-				// WaitForIngest
-				response := model.IngestStatusResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
 					Data: []model.IngestStatusData{
-						{
-							ScanID:     testScanID,
-							ScanStatus: "completed",
-						},
+						{ScanID: testScanID, ScanStatus: "completed"},
 					},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
-				// FetchAllNormalizedResults
-				response := model.NormalizedResultsResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
 					Data: model.NormalizedResultsData{
 						TenantID: "tenant-456",
 						ScanResults: []model.ScanResultData{
@@ -1359,8 +1374,7 @@ func TestScan(t *testing.T) {
 							},
 						},
 					},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 
 			default:
 				t.Errorf("Unexpected request path: %s", r.URL.Path)
@@ -1368,9 +1382,12 @@ func TestScan(t *testing.T) {
 			}
 		})
 
-		// Create API client pointing to mock server
+		// Create API client pointing to mock server. allowLocalURLs is set
+		// so the SSRF guard accepts the test server's host as the S3 endpoint.
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -1500,21 +1517,39 @@ func TestScan(t *testing.T) {
 
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
-			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
-				response := model.IngestUploadResponse{ScanID: testScanID}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+					ScanID:       testScanID,
+					ArtifactType: "repo",
+					TenantID:     "tenant-456",
+					PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{
+						"key": "ingest/tenant-456/" + testScanID + "/test.tar.gz",
+					},
+					MaxUploadBytes: 2 << 30,
+					ExpiresIn:      1800,
+				})
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.WriteHeader(http.StatusNoContent)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID: testScanID, ScanStatus: "INITIATED",
+				})
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
-				response := model.IngestStatusResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
 					Data: []model.IngestStatusData{{ScanID: testScanID, ScanStatus: "completed"}},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
 				testutil.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch results")
 			}
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}

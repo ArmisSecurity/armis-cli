@@ -4,10 +4,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
@@ -289,6 +292,24 @@ func getAPIBaseURL() string {
 		return devBaseURL
 	}
 	return productionBaseURL
+}
+
+// clientOptionsForBaseURL returns the api.ClientOptions that vary by the
+// configured base URL. When the operator points the CLI at a localhost API
+// (via ARMIS_API_URL during local dev or in tests), we allow the SSRF guard
+// on the new presigned-URL flow to accept localhost as a valid S3 endpoint
+// — the test harness serves both the API and a fake S3 path on the same
+// listener. Production URLs (HTTPS) get the strict allowlist.
+func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" {
+		return []api.ClientOption{api.WithAllowLocalURLs(true)}
+	}
+	return nil
 }
 
 // getAuthProvider creates an AuthProvider based on the provided credentials.

@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -75,7 +76,53 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 	var pollCount int32
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// POST /api/v1/ingest/tar - Upload endpoint
+		// POST /api/v1/ingest/presigned-url — reserves scan_id, returns a
+		// presigned POST that points back at this same server's /_s3/... path.
+		// `host` is set when the handler runs since httptest's URL is
+		// not known at construction time.
+		if strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url") && r.Method == http.MethodPost {
+			s3URL := SchemeFromRequest(r) + "://" + r.Host + "/_s3/upload"
+			JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:       config.ScanID,
+				ArtifactType: "repo",
+				TenantID:     mockTenantID,
+				PresignedURL: s3URL,
+				Fields: map[string]string{
+					"key":             "ingest/" + mockTenantID + "/" + config.ScanID + "/upload.tar.gz",
+					"policy":          "test-policy",
+					"x-amz-signature": "test-sig",
+				},
+				MaxUploadBytes: 2 * 1024 * 1024 * 1024,
+				ExpiresIn:      1800,
+			})
+			return
+		}
+
+		// Fake S3 multipart-POST receiver. The CLI's uploadToPresignedURL
+		// builds a multipart body; we accept it with 204 to match real S3.
+		if strings.HasPrefix(r.URL.Path, "/_s3/") && r.Method == http.MethodPost {
+			// Drain (and discard) the body so the writer goroutine doesn't
+			// block. Cap at 64 MiB — well above any test fixture.
+			_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 64*1024*1024))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// POST /api/v1/ingest/scan — confirms upload and triggers scan.
+		if strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost {
+			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+				ScanID:       config.ScanID,
+				ScanStatus:   "INITIATED",
+				ArtifactType: "repo",
+				TenantID:     mockTenantID,
+				Filename:     "upload",
+				Message:      "Upload confirmed and scan initiated successfully",
+			})
+			return
+		}
+
+		// Legacy POST /api/v1/ingest/tar kept for any tests that still hit it
+		// directly. Newer tests should rely on the split-flow above.
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/tar") && r.Method == http.MethodPost {
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,
