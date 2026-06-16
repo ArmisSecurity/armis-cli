@@ -3,6 +3,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,17 @@ func TestNormalizeArtifact(t *testing.T) {
 	})
 
 	t.Run("preserves file permissions", func(t *testing.T) {
+		// A 0o400 (read-only) file cannot be exercised here on Windows: os.Rename
+		// refuses to replace a destination with the read-only attribute ("Access is
+		// denied"), and Go reports a read-only file as 0o444 rather than 0o400, so
+		// the permission assertion could not hold regardless. The cross-platform
+		// rewrite behavior is covered by the 0o600 subtests above; the production
+		// caller (normalizeProxyResidue) is best-effort and only warns on such a
+		// failure. Mirrors the Windows skip on TestRemoveFunctions_PreservesPermissions.
+		if runtime.GOOS == goosWindows {
+			t.Skip("Unix file permissions not supported on Windows")
+		}
+
 		dir := t.TempDir()
 		path := filepath.Join(dir, "uv-receipt.toml")
 		if err := os.WriteFile(path, []byte(`index-url = "`+testProxyOrigin+`/simple/"`), 0o400); err != nil {
