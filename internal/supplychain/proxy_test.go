@@ -1243,6 +1243,12 @@ func TestIsPrerelease(t *testing.T) {
 		{"6.0", false},
 		{"1.2.3+local", false},
 		{"1.0.0.post1", false}, // post-release is a stable release
+		// Raw PyPI filenames reach IsPrerelease when pypiVersionFromFilename
+		// fails to parse them and callers fall back to the raw Version. A hyphen
+		// in the project name must NOT be read as a SemVer prerelease tag — the
+		// SemVer branch requires a digit before the "-".
+		{"filelock-3.29.2.tar.gz", false},
+		{"my-package-1.0.tar.gz", false},
 		// SemVer prereleases carry a '-' suffix.
 		{"2.0.0-alpha.1", true},
 		{"2.0.0-rc.1", true},

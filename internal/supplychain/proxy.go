@@ -57,11 +57,12 @@ type BlockedPackage struct {
 	// It records exactly which file/version was withheld and is what the proxy
 	// tests assert against.
 	Version string
-	// DisplayVersion is the normalized semver shown to the user and used for
-	// prerelease classification. For npm it equals Version; for PyPI it is parsed
-	// out of the filename (e.g. "3.29.2"). Empty when a filename cannot be parsed,
-	// in which case callers fall back to Version. Keeping classification on this
-	// field — not the raw Version — stops a PyPI filename like
+	// DisplayVersion is the normalized version string shown to the user and used
+	// for prerelease classification. For npm it equals Version (a SemVer string);
+	// for PyPI it is parsed out of the filename and may be a PEP 440 version
+	// ("3.29.2", "1.0.0rc1", "1.0.0.dev1"). Empty when a filename cannot be
+	// parsed, in which case callers fall back to Version. Keeping classification
+	// on this field — not the raw Version — stops a PyPI filename like
 	// "filelock-3.29.2.tar.gz" from being misread as a "filelock" prerelease.
 	DisplayVersion string
 	Age            time.Duration
@@ -813,14 +814,19 @@ var pep440Prerelease = regexp.MustCompile(`(?i)[0-9][._-]?(?:alpha|beta|preview|
 // the CLI summary so the two can never drift (a past divergence is what let PyPI
 // filenames be misclassified). It recognizes:
 //
-//   - SemVer/npm: any "-" suffix on a non-empty version ("2.0.0-alpha.1").
+//   - SemVer/npm: a "-" suffix on a version whose head is numeric
+//     ("2.0.0-alpha.1").
 //   - PyPI/PEP 440: dash-less pre/dev markers on the release ("2.0.0rc1",
 //     "1.0.0b2", "1.0.0.dev1").
 //
-// Valid stable versions in one ecosystem never match the other's pre-release
-// syntax, so a unified check is safe for both. Post-releases stay stable.
+// The SemVer branch requires a digit before the "-" so a raw, unparseable PyPI
+// filename used as a fallback (e.g. "filelock-3.29.2.tar.gz", head "filelock")
+// is not misread as a prerelease — the very failure mode this helper exists to
+// prevent. Valid stable versions in one ecosystem never match the other's
+// pre-release syntax, so a unified check is safe for both. Post-releases stay
+// stable.
 func IsPrerelease(version string) bool {
-	if i := strings.IndexByte(version, '-'); i > 0 {
+	if i := strings.IndexByte(version, '-'); i > 0 && strings.ContainsAny(version[:i], "0123456789") {
 		return true
 	}
 	return pep440Prerelease.MatchString(version)

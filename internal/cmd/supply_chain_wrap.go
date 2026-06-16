@@ -289,7 +289,7 @@ const maxBlockedDisplay = 5
 // empty NewVersion when no safe fallback existed.
 type pkgFilterResult struct {
 	Name       string
-	OldVersion string         // youngest blocked version, normalized semver (what the PM wanted)
+	OldVersion string         // youngest blocked version, normalized version string — SemVer (npm) or PEP 440 (PyPI) (what the PM wanted)
 	OldAge     time.Duration  // age of that version at install time
 	Severity   model.Severity // severity classification of that age
 	NewVersion string         // resolved fallback version, "" if none was available
