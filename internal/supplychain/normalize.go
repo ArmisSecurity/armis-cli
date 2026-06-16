@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -70,6 +71,7 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 	updated := bytes.ReplaceAll(data, []byte(proxyOrigin), []byte(upstreamOrigin))
 
 	// armis:ignore cwe:377 reason:standard safe atomic-replace idiom — os.CreateTemp generates a random name and opens O_EXCL (an attacker cannot predict or pre-seed it), and the temp lives in the target's own directory in the user's project tree (required for os.Rename to be atomic), not a shared tmp dir
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:same path as the stat/read sinks above — a well-known lockfile/receipt leaf discovered in the user's own project tree (FindEcosystemLockfile/FindUpward, now fail-closed on non-leaf names) or the uv tools dir, not untrusted input crossing a trust boundary; the temp file and rename target are both derived from that same path's own directory
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".armis-normalize-*")
 	if err != nil {
 		return false, fmt.Errorf("creating temp file for %s: %w", path, err)
@@ -92,6 +94,22 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 		return false, fmt.Errorf("closing temp file for %s: %w", path, err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
+		// On Windows, Rename cannot atomically replace an existing destination —
+		// it fails when path already exists. Remove the destination and retry, the
+		// same workaround the plugin installer uses (internal/install/plugin.go).
+		// The brief window between remove and rename is acceptable here: the file
+		// being replaced is the user's own lockfile/receipt, and a crash in that
+		// window leaves the original gone but the rewritten temp recoverable,
+		// versus the alternative of never succeeding on Windows at all. On Unix,
+		// Rename already replaces atomically, so this branch never runs.
+		if runtime.GOOS == goosWindows {
+			os.Remove(path) //nolint:errcheck,gosec // best-effort: clears the destination so the retry rename can land
+			if retryErr := os.Rename(tmpName, path); retryErr != nil {
+				os.Remove(tmpName) //nolint:errcheck,gosec // best-effort cleanup on the error path
+				return false, fmt.Errorf("replacing %s: %w", path, retryErr)
+			}
+			return true, nil
+		}
 		os.Remove(tmpName) //nolint:errcheck,gosec // best-effort cleanup on the error path
 		return false, fmt.Errorf("replacing %s: %w", path, err)
 	}

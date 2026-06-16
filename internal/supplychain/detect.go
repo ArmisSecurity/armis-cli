@@ -112,7 +112,18 @@ func FindEcosystemLockfile(startDir string, ecosystem Ecosystem) string {
 // directory for filename, returning the first match or "" when none exists.
 // filename must be a bare leaf name (a well-known lockfile or sibling artifact),
 // and only os.Stat (an existence check) is performed on the joined paths.
+//
+// The bare-leaf contract is enforced fail-closed: a filename carrying a path
+// separator, or "."/".."/"", returns "" without probing. Joining such a value
+// onto each walked directory would let it climb out of the intended tree (e.g.
+// "../../etc/passwd" or an absolute path that filepath.Join would not actually
+// anchor under dir), so a caller that accidentally passes a path gets "no
+// match" rather than a probe of somewhere unexpected.
 func FindUpward(startDir, filename string) string {
+	if filename == "" || filename == "." || filename == ".." || filepath.Base(filename) != filename {
+		return ""
+	}
+
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		dir = startDir

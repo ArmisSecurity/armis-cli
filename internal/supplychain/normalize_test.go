@@ -226,3 +226,34 @@ func TestFindUpward(t *testing.T) {
 		t.Errorf("FindUpward for a missing file = %q, want empty", got)
 	}
 }
+
+func TestFindUpwardRejectsNonLeafNames(t *testing.T) {
+	// FindUpward's contract is that filename is a bare leaf. A path-bearing or
+	// dot name must fail closed (return "") rather than probe somewhere the
+	// caller did not intend — even when a matching file genuinely exists at the
+	// resolved location, so the rejection is about the name's shape, not absence.
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Plant a file that a "../"-style traversal from nested could otherwise reach,
+	// to prove the rejection is by name shape and not by the target being absent.
+	if err := os.WriteFile(filepath.Join(root, "a", "secret.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rejected := []string{
+		"",
+		".",
+		"..",
+		"../secret.txt",
+		filepath.Join("sub", "bun.lock"),
+		string(filepath.Separator) + filepath.Join("etc", "passwd"),
+	}
+	for _, name := range rejected {
+		if got := FindUpward(nested, name); got != "" {
+			t.Errorf("FindUpward(%q) = %q, want empty (non-leaf name must fail closed)", name, got)
+		}
+	}
+}
