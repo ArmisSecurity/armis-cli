@@ -803,6 +803,8 @@ func requiresPreInstallBlock(pm string, pmArgs []string) bool {
 // --directory <dir>), so scanning past flags could mistake a flag value for
 // the subcommand and proxy a lock-writing command. Anything unrecognized
 // fails safe to the lockfile audit, which can never corrupt the lock.
+//
+// armis:ignore cwe:628 reason:examining only pmArgs[0] is the deliberate safe design, not a flaw — an unrecognized first arg (e.g. a global flag prepended before a subcommand) returns false, routing the invocation to the lockfile audit that never injects the proxy, so prepended flags make enforcement stricter, not laxer (pinned by TestRequiresPreInstallBlock "uv flag before pip subcommand")
 func uvProxySafe(pmArgs []string) bool {
 	if len(pmArgs) == 0 {
 		return false

@@ -69,6 +69,7 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 
 	updated := bytes.ReplaceAll(data, []byte(proxyOrigin), []byte(upstreamOrigin))
 
+	// armis:ignore cwe:377 reason:standard safe atomic-replace idiom — os.CreateTemp generates a random name and opens O_EXCL (an attacker cannot predict or pre-seed it), and the temp lives in the target's own directory in the user's project tree (required for os.Rename to be atomic), not a shared tmp dir
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".armis-normalize-*")
 	if err != nil {
 		return false, fmt.Errorf("creating temp file for %s: %w", path, err)
