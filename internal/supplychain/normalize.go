@@ -97,16 +97,26 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 		// On Windows, Rename cannot atomically replace an existing destination —
 		// it fails when path already exists. Remove the destination and retry, the
 		// same workaround the plugin installer uses (internal/install/plugin.go).
-		// The brief window between remove and rename is acceptable here: the file
-		// being replaced is the user's own lockfile/receipt, and a crash in that
-		// window leaves the original gone but the rewritten temp recoverable,
-		// versus the alternative of never succeeding on Windows at all. On Unix,
-		// Rename already replaces atomically, so this branch never runs.
+		// On Unix, Rename already replaces atomically, so this branch never runs.
+		//
+		// The invariant through this dance is that at least one complete copy of
+		// the content always exists — either the original at path or the rewritten
+		// temp — so a failure can never leave the user with no lockfile:
+		//   - If removing the destination fails, the original is untouched; clean
+		//     up the temp and report, exactly as the non-Windows path does.
+		//   - Once the destination is removed, the temp holds the only copy. If the
+		//     retry rename then fails, we must NOT delete the temp — that would
+		//     destroy the last copy. Leave it in place and point the user to it.
 		if runtime.GOOS == goosWindows {
-			os.Remove(path) //nolint:errcheck,gosec // best-effort: clears the destination so the retry rename can land
+			if rmErr := os.Remove(path); rmErr != nil {
+				os.Remove(tmpName) //nolint:errcheck,gosec // original is intact; safe to discard the temp
+				return false, fmt.Errorf("replacing %s: %w", path, rmErr)
+			}
 			if retryErr := os.Rename(tmpName, path); retryErr != nil {
-				os.Remove(tmpName) //nolint:errcheck,gosec // best-effort cleanup on the error path
-				return false, fmt.Errorf("replacing %s: %w", path, retryErr)
+				// The original is already gone and the temp is the only surviving
+				// copy of the rewritten content — keep it and name it so the user
+				// can recover by moving it back into place.
+				return false, fmt.Errorf("replacing %s failed after the original was removed; the rewritten content is preserved at %s — move it back manually: %w", path, tmpName, retryErr)
 			}
 			return true, nil
 		}

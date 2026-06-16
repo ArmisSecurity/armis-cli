@@ -1370,3 +1370,32 @@ func TestNewProxyDefaultsPyPIUpstream(t *testing.T) {
 		t.Errorf("PyPI-mode upstream = %q, want %q", p.upstreamURL.String(), defaultPyPIIndex)
 	}
 }
+
+func TestProxyUpstreamPreservesBasePath(t *testing.T) {
+	// Upstream() feeds residue normalization, which rewrites the ephemeral proxy
+	// origin back to this string. The reverse proxy joins the upstream's base
+	// path onto every request, so a base-path registry (Artifactory/Nexus) must
+	// keep that path here — dropping it would rewrite lockfile URLs to a
+	// host-rooted address that 404s.
+	tests := []struct {
+		name     string
+		upstream string
+		want     string
+	}{
+		{"default npm registry has no base path", defaultUpstreamRegistry, "https://registry.npmjs.org"},
+		{"artifactory repo path is preserved", "https://registry.example.com/npm", "https://registry.example.com/npm"},
+		{"trailing slash is trimmed", "https://registry.example.com/artifactory/api/npm/npm/", "https://registry.example.com/artifactory/api/npm/npm"},
+		{"nested base path is preserved", "https://nexus.example.com/repository/npm-proxy", "https://nexus.example.com/repository/npm-proxy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, UpstreamURL: tt.upstream})
+			if err != nil {
+				t.Fatalf("NewProxy: %v", err)
+			}
+			if got := p.Upstream(); got != tt.want {
+				t.Errorf("Upstream() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
