@@ -167,6 +167,26 @@ func (p *Proxy) Addr() string {
 	return p.listener.Addr().String()
 }
 
+// Upstream returns the configured upstream registry origin that callers use to
+// rewrite the ephemeral proxy origin back to the real registry in artifacts a
+// package manager persisted it into. It is scheme://host plus any base path
+// (e.g. "https://registry.npmjs.org", or "https://registry.example.com/npm" for
+// an Artifactory/Nexus repo path).
+//
+// The base path is essential: NewSingleHostReverseProxy joins the upstream's
+// path onto every forwarded request, so an artifact the PM recorded as
+// <proxy-origin>/axios/-/axios.tgz resolves upstream to <host>/npm/axios/-/...
+// Dropping the /npm here would rewrite the residue to a host-rooted URL that
+// 404s. A trailing slash is trimmed because the recorded URLs already begin the
+// path segment (".../npm" + "/axios", not ".../npm/" + "/axios").
+func (p *Proxy) Upstream() string {
+	origin := p.upstreamURL.Scheme + "://" + p.upstreamURL.Host
+	if path := strings.TrimSuffix(p.upstreamURL.Path, "/"); path != "" {
+		origin += path
+	}
+	return origin
+}
+
 func (p *Proxy) Blocked() []BlockedPackage {
 	p.blockedMu.Lock()
 	defer p.blockedMu.Unlock()

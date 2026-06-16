@@ -103,6 +103,15 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("lockfile not found: %s", lockfilePath)
 	}
 
+	// The wrap's residue sweep can only remove the proxy origin of the run that
+	// just finished; a wrapper killed mid-install leaves a stale loopback origin
+	// behind, and versions before the sweep existed left residue routinely. Flag
+	// any loopback registry reference so CI catches a corrupted lockfile before
+	// it breaks builds that resolve outside the wrapper.
+	if host, found := supplychain.DetectLoopbackRegistry(lockfilePath); found {
+		cli.PrintWarningf("%s references a loopback registry (%s). If this is residue from an interrupted or pre-fix wrapped install, re-resolve against the real registry (e.g. ARMIS_SUPPLY_CHAIN=off <pm> install) or restore the lockfile from version control. If you intentionally use a local registry, ignore this warning.", lockfilePath, host)
+	}
+
 	// Respect the config's "ecosystems" scope: if it restricts enforcement and
 	// this lockfile's ecosystem is excluded, skip the audit and report a clean
 	// pass rather than checking an out-of-scope ecosystem. loadConfigUpward

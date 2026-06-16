@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -103,11 +104,13 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 		return exitWithCode(execPMFunc(pmName, pmArgs, nil))
 	}
 
-	// poetry, pipenv, and pdm resolve dependencies through their own lockfiles
-	// rather than honoring an npm-style registry override, so they cannot be
-	// enforced via the transparent proxy. Instead we audit the lockfile and
-	// hard-block the build before it runs if any package is too young.
-	if requiresPreInstallBlock(canonical) {
+	// poetry/pipenv/pdm/maven/gradle cannot be enforced via the transparent
+	// proxy at all, and uv commands that write uv.lock must not be (uv would
+	// persist the ephemeral proxy URL into the lockfile); see
+	// requiresPreInstallBlock. Those invocations are enforced by auditing the
+	// lockfile and hard-blocking the build before it runs if any package is
+	// too young.
+	if requiresPreInstallBlock(canonical, pmArgs) {
 		return runPreInstallBlock(cmd, pmName, pmArgs)
 	}
 
@@ -131,6 +134,8 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// pip, uv, and uvx resolve from the PyPI Simple API, a different protocol from
 	// the npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
 	// filtering). All other proxied PMs (npm/npx/pnpm/bun/yarn) speak the npm registry.
+	// uv reaches the proxy only for its lockfile-free `pip`/`tool` subcommands;
+	// lockfile-writing uv commands take the audit path (see requiresPreInstallBlock).
 	mode := supplychain.ModeNPM
 	switch canonicalPM(pmName) {
 	case pmPip, pmUV, pmUVX:
@@ -166,6 +171,16 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	extraEnv = append(extraEnv, fmt.Sprintf("%s=1", envSCActive))
 
 	exitCode, err := execPMFunc(pmName, pmArgs, extraEnv)
+
+	// Some package managers persist the registry origin they were invoked with:
+	// bun's `update` records full tarball URLs in bun.lock, `uv tool install`
+	// records index-url in its receipt, and older npm/yarn releases recorded the
+	// configured registry in resolved fields. The proxy origin dies with this
+	// process, so any artifact it leaked into is corrupt for every run outside
+	// the wrapper. Sweep those artifacts and rewrite the origin back to the real
+	// upstream — even when the PM exited non-zero, since a failed install can
+	// still have rewritten the lockfile first.
+	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, proxy.Upstream())
 
 	// installOK reflects what the package manager actually did, not what the proxy
 	// offered: proxy.Allowed() only records the version "latest" was repointed to,
@@ -665,6 +680,11 @@ func registryEnvForPM(pm, registryURL string) []string {
 		return []string{
 			fmt.Sprintf("npm_config_registry=%s", registryURL),
 			fmt.Sprintf("YARN_NPM_REGISTRY_SERVER=%s", registryURL),
+			// Yarn Berry (2+) refuses plain-http registries unless the host is
+			// whitelisted, failing every wrapped install with YN0081 — and the wrap
+			// proxy is necessarily plain http on loopback. Whitelist exactly that
+			// host; Yarn classic (1.x) ignores the variable.
+			"YARN_UNSAFE_HTTP_WHITELIST=127.0.0.1",
 		}
 	case pmUV, pmUVX:
 		// uvx is uv's on-demand tool runner (`uvx X` ≡ `uv tool run X`); it shares
@@ -745,15 +765,52 @@ func wrapEcosystemEnforced(canonicalPMName string) bool {
 	return cfg.EnforcesEcosystem(eco)
 }
 
-// requiresPreInstallBlock reports whether a package manager must be enforced via
-// a pre-install lockfile audit rather than the transparent registry proxy.
+// requiresPreInstallBlock reports whether an invocation must be enforced via a
+// pre-install lockfile audit rather than the transparent registry proxy.
 // poetry, pipenv, and pdm resolve from their own lockfiles and do not honor an
 // npm-style registry override, so the proxy cannot filter young versions for
 // them; instead the build is blocked up front if the lockfile contains a
 // too-young package.
-func requiresPreInstallBlock(pm string) bool {
+//
+// uv is the inverse case: it honors an index override (UV_INDEX_URL) but
+// persists it — every lockfile-writing command (sync, lock, add, remove,
+// run, …) records the configured index as each package's source.registry in
+// uv.lock, and an index that differs from the recorded one marks the lock
+// outdated and triggers a full re-lock. Proxying those commands therefore
+// stamps the ephemeral http://127.0.0.1:<port> proxy address into uv.lock,
+// corrupting it for every install that runs outside the wrapper (Docker
+// builds, CI, teammates). Only `uv pip` and `uv tool`, which never touch
+// uv.lock, are safe to proxy (see uvProxySafe); every other uv invocation
+// takes the audit path. uvx (a separate binary with no project lockfile) is
+// unaffected and stays on the proxy.
+//
+// Pass the canonical PM name (canonicalPM) and the PM's arguments.
+func requiresPreInstallBlock(pm string, pmArgs []string) bool {
 	switch pm {
 	case pmPoetry, pmPipenv, pmPDM, pmMaven, pmGradle:
+		return true
+	case pmUV:
+		return !uvProxySafe(pmArgs)
+	}
+	return false
+}
+
+// uvProxySafe reports whether a uv invocation can be routed through the
+// transparent proxy without the index URL leaking into uv.lock. Only the
+// `uv pip …` (ad-hoc pip interface) and `uv tool …` (tool runner) subcommands
+// never write the project lockfile. The subcommand is recognized only when it
+// is the first argument: uv's global flags can take values (e.g.
+// --directory <dir>), so scanning past flags could mistake a flag value for
+// the subcommand and proxy a lock-writing command. Anything unrecognized
+// fails safe to the lockfile audit, which can never corrupt the lock.
+//
+// armis:ignore cwe:628 reason:examining only pmArgs[0] is the deliberate safe design, not a flaw — an unrecognized first arg (e.g. a global flag prepended before a subcommand) returns false, routing the invocation to the lockfile audit that never injects the proxy, so prepended flags make enforcement stricter, not laxer (pinned by TestRequiresPreInstallBlock "uv flag before pip subcommand")
+func uvProxySafe(pmArgs []string) bool {
+	if len(pmArgs) == 0 {
+		return false
+	}
+	switch pmArgs[0] {
+	case "pip", "tool":
 		return true
 	}
 	return false
@@ -898,6 +955,113 @@ func blockedViolationNames(violations []supplychain.Violation) []string {
 		}
 	}
 	return names
+}
+
+// normalizeProxyResidue rewrites the ephemeral proxy origin back to the real
+// upstream origin in every artifact the just-run package manager may have
+// persisted it into. For the Node PMs that is the project lockfile: bun.lock
+// is the confirmed offender (`bun update` records full tarball URLs), and the
+// other node lockfiles are swept defensively because older npm/yarn releases
+// recorded the configured registry in resolved fields — a clean lockfile is a
+// no-op read. For uv (whose only proxied subcommands are the lockfile-free
+// `pip` and `tool`) it is the per-tool receipts: `uv tool install` records the
+// index-url it was invoked with, which would break every later
+// `uv tool upgrade` against the dead proxy address. Failures are reported but
+// never block: the install itself already completed, and a residue warning the
+// user can act on beats failing the build after the fact.
+func normalizeProxyResidue(pm string, pmArgs []string, proxyOrigin, upstreamOrigin string) {
+	var paths []string
+	switch pm {
+	case pmNPM, pmNPX, pmPNPM, pmBun, pmYarn:
+		for _, eco := range []supplychain.Ecosystem{
+			supplychain.EcosystemBun, supplychain.EcosystemNPM,
+			supplychain.EcosystemPNPM, supplychain.EcosystemYarn,
+		} {
+			if p := supplychain.FindEcosystemLockfile(".", eco); p != "" {
+				paths = append(paths, p)
+			}
+		}
+		// npm-shrinkwrap.json is package-lock.json's publishable twin: `npm
+		// shrinkwrap` converts the lock in place and later installs update it the
+		// same way, so it carries the same resolved URLs and deserves the same
+		// defensive sweep.
+		if p := supplychain.FindUpward(".", "npm-shrinkwrap.json"); p != "" {
+			paths = append(paths, p)
+		}
+		// bun's legacy binary lockfile encodes lengths, so a text substitution
+		// would corrupt it. Detect the residue and tell the user how to repair.
+		if lockb := supplychain.FindUpward(".", "bun.lockb"); lockb != "" && supplychain.FileContainsString(lockb, proxyOrigin) {
+			fmt.Fprintf(os.Stderr, "%s warning: %s contains the ephemeral proxy address and cannot be rewritten in place.\n", scPrefix, lockb)
+			fmt.Fprintf(os.Stderr, "  Repair with: ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile\n")
+		}
+	case pmUV, pmUVX:
+		paths = uvToolReceipts()
+		// `uv pip compile --emit-index-url -o FILE` writes the configured index —
+		// here the proxy URL — into the generated requirements file (verified on
+		// uv 0.8). Sweep the explicit output file; output redirected to stdout by
+		// the user's shell happens outside this process and cannot be intercepted,
+		// which is one reason `supply-chain check` also flags loopback registry
+		// references in lockfiles.
+		if out := uvCompileOutputFile(pmArgs); out != "" {
+			paths = append(paths, out)
+		}
+	}
+
+	for _, p := range paths {
+		changed, err := supplychain.NormalizeArtifact(p, proxyOrigin, upstreamOrigin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s supply-chain: could not remove proxy address from %s: %v\n", scPrefix, p, err)
+			continue
+		}
+		if changed {
+			s := output.GetStyles()
+			fmt.Fprintf(os.Stderr, "%s %s\n",
+				s.MutedText.Render(scPrefix),
+				s.MutedText.Render(fmt.Sprintf("supply-chain: restored registry address in %s", filepath.Base(p))))
+		}
+	}
+}
+
+// uvCompileOutputFile returns the path passed to a uv invocation's
+// -o/--output-file flag (as used by `uv pip compile`), or "" when absent. Both
+// the space-separated and =-attached spellings are recognized; an unrecognized
+// spelling simply leaves the file to the loopback-residue warning in
+// `supply-chain check` rather than risking a wrong-file sweep.
+func uvCompileOutputFile(pmArgs []string) string {
+	for i := 0; i < len(pmArgs); i++ {
+		switch {
+		case pmArgs[i] == "-o" || pmArgs[i] == "--output-file":
+			if i+1 < len(pmArgs) {
+				return pmArgs[i+1]
+			}
+			return ""
+		case strings.HasPrefix(pmArgs[i], "--output-file="):
+			return strings.TrimPrefix(pmArgs[i], "--output-file=")
+		}
+	}
+	return ""
+}
+
+// uvToolReceipts returns the uv-receipt.toml paths of every installed uv tool.
+// The receipts directory resolution mirrors uv's own: $UV_TOOL_DIR, then
+// $XDG_DATA_HOME/uv/tools, then ~/.local/share/uv/tools. The glob pattern is
+// fixed, so only receipt files of installed tools are ever returned.
+func uvToolReceipts() []string {
+	dir := os.Getenv("UV_TOOL_DIR")
+	if dir == "" {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			dir = filepath.Join(xdg, "uv", "tools")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, ".local", "share", "uv", "tools")
+		} else {
+			return nil
+		}
+	}
+	receipts, err := filepath.Glob(filepath.Join(dir, "*", "uv-receipt.toml"))
+	if err != nil {
+		return nil
+	}
+	return receipts
 }
 
 // pmToEcosystem maps a (canonical) package-manager name to its ecosystem. It
