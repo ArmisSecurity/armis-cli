@@ -126,6 +126,11 @@ func TestGetEnvOrDefaultInt(t *testing.T) {
 func TestGetAPIBaseURL(t *testing.T) {
 	const testRegion = "eu1"
 
+	// Keep the test hermetic: a developer/CI ARMIS_API_URL export must not leak
+	// into the dev/production/regional subtests, which expect the resolved URL.
+	// The override-specific subtests below set ARMIS_API_URL explicitly.
+	t.Setenv("ARMIS_API_URL", "")
+
 	t.Run("returns dev URL when useDev is true", func(t *testing.T) {
 		useDev = true
 		defer func() { useDev = false }()

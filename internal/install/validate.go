@@ -24,11 +24,11 @@ func ValidateCredentials(clientID, clientSecret string) error {
 	return validateCredentialsWithURL(clientID, clientSecret, resolveBaseURL())
 }
 
-// armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; HTTPS enforced by auth.NewAuthClient below
 func resolveBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
-		return override // armis:ignore cwe:918 reason:operator-configured env var; HTTPS enforced by NewAuthClient caller
+		return override // armis:ignore cwe:918 reason:operator-configured env var; HTTPS enforced by auth.NewAuthClient
 	}
+	// The region path is allowlisted in auth.RegionalBaseURL (no host interpolation), so it needs no suppression.
 	return auth.RegionalBaseURL(os.Getenv("ARMIS_REGION"))
 }
 
