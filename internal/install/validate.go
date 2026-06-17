@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 )
-
-var validRegion = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 const (
 	validateTimeout    = 15 * time.Second
@@ -32,13 +29,7 @@ func resolveBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
 		return override // armis:ignore cwe:918 reason:operator-configured env var; HTTPS enforced by NewAuthClient caller
 	}
-	if region := os.Getenv("ARMIS_REGION"); region != "" {
-		if !validRegion.MatchString(region) {
-			return auth.ProductionBaseURL
-		}
-		return "https://moose." + region + ".armis.com"
-	}
-	return auth.ProductionBaseURL
+	return auth.RegionalBaseURL(os.Getenv("ARMIS_REGION"))
 }
 
 func validateCredentialsWithURL(clientID, clientSecret, baseURL string) error {

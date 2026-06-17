@@ -77,3 +77,28 @@ func TestAuthClient_SuccessfulAuth(t *testing.T) {
 		t.Errorf("expected region 'us-east-1', got %q", result.Region)
 	}
 }
+
+func TestRegionalBaseURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		region string
+		want   string
+	}{
+		{"empty region falls back to production", "", ProductionBaseURL},
+		{"eu1 maps to EU data plane", "eu1", "https://eu.moose.armis.com"},
+		{"us1 (primary) uses production host", "us1", ProductionBaseURL},
+		{"au1 has no data plane yet, uses production host", "au1", ProductionBaseURL},
+		{"unknown region falls back to production", "mars1", ProductionBaseURL},
+		{"injection attempt falls back to production", "eu1.evil.com", ProductionBaseURL},
+		{"path injection falls back to production", "eu1/path", ProductionBaseURL},
+		{"uppercase region falls back to production", "EU1", ProductionBaseURL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RegionalBaseURL(tt.region); got != tt.want {
+				t.Errorf("RegionalBaseURL(%q) = %q, want %q", tt.region, got, tt.want)
+			}
+		})
+	}
+}

@@ -280,13 +280,19 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 }
 
 // getAPIBaseURL returns the Armis API base URL, allowing override via ARMIS_API_URL env var for testing.
-// armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
+//
+// Precedence: ARMIS_API_URL override > --dev > --region > production. The region
+// must feed the upload endpoint as well as the token exchange; otherwise a
+// region-scoped JWT is presented to the global host and rejected with a 401.
 func getAPIBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
-		return override
+		return override // armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
 	}
 	if useDev {
 		return devBaseURL
+	}
+	if region != "" {
+		return auth.RegionalBaseURL(region)
 	}
 	return productionBaseURL
 }
