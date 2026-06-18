@@ -174,6 +174,7 @@ runs:
         INPUT_REGION: ${{ inputs.region }}
         INPUT_API_TOKEN: ${{ inputs.api-token }}
         INPUT_TENANT_ID: ${{ inputs.tenant-id }}
+        INPUT_API_URL: ${{ inputs.api-url }}
         SCAN_TYPE: ${{ inputs.scan-type }}
         SCAN_TARGET: ${{ inputs.scan-target }}
         OUTPUT_FORMAT: ${{ inputs.format }}
@@ -193,6 +194,7 @@ runs:
         if [ -n "$INPUT_REGION" ]; then export ARMIS_REGION="$INPUT_REGION"; fi
         if [ -n "$INPUT_API_TOKEN" ]; then export ARMIS_API_TOKEN="$INPUT_API_TOKEN"; fi
         if [ -n "$INPUT_TENANT_ID" ]; then export ARMIS_TENANT_ID="$INPUT_TENANT_ID"; fi
+        if [ -n "$INPUT_API_URL" ]; then export ARMIS_API_URL="$INPUT_API_URL"; fi
 
         # Validate authentication: require JWT (client-id + client-secret) OR Basic (api-token + tenant-id)
         if [ -n "$ARMIS_CLIENT_ID" ] && [ -z "$ARMIS_CLIENT_SECRET" ]; then
@@ -294,8 +296,10 @@ runs:
 
         # 1. Resolve API base URL: ARMIS_API_URL/api-url override -> region -> production.
         # The base URL comes from operator-controlled action config (not PR content);
-        # we still require HTTPS so the credential sent below can never traverse
-        # plaintext, mirroring the CLI's NewAuthClient HTTPS enforcement.
+        # we still require HTTPS for ALL base URLs so the credential sent below can
+        # never traverse plaintext. This is stricter than the CLI's NewAuthClient,
+        # which additionally permits http://localhost / http://127.0.0.1 for local
+        # development — an exception that has no use case in CI.
         # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), HTTPS-enforced; not derived from untrusted request data
         BASE_URL="${INPUT_API_URL:-${ARMIS_API_URL:-}}"
         if [ -z "$BASE_URL" ]; then
