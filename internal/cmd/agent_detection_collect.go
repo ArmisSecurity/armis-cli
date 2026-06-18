@@ -38,6 +38,12 @@ func runAgentDetectionCollect(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
+	// Defensive nil-check — getAuthProvider's contract is (nil, err)
+	// or (non-nil, nil). Make the invariant explicit so a future
+	// refactor can't drop a nil through the err check.
+	if authProvider == nil {
+		return fmt.Errorf("internal error: nil auth provider")
+	}
 
 	tid, err := authProvider.GetTenantID(ctx)
 	if err != nil {

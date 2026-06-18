@@ -79,6 +79,43 @@ func TestAssertPathInsideTempDir(t *testing.T) {
 	}
 }
 
+// TestAssertPathInsideTempDir_RejectsSymlinkOutsideTemp guards the
+// symlink-traversal variant of CWE-22: a malicious symlink in the parent
+// directory could redirect a write outside the temp tree even though the
+// supplied path string looks safe. assertPathInsideTempDir uses
+// filepath.EvalSymlinks on the parent to catch that.
+func TestAssertPathInsideTempDir_RejectsSymlinkOutsideTemp(t *testing.T) {
+	if runtimeIsWindows() {
+		t.Skip("symlink creation requires elevated privileges on Windows CI runners")
+	}
+	tmp := t.TempDir()
+
+	// Plant a symlink inside tmp that points to a directory outside tmp
+	// (one level above the cleaned temp root, by construction outside).
+	outside := filepath.Dir(filepath.Clean(os.TempDir()))
+	link := filepath.Join(tmp, "evil-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// A write through evil-link/foo.tar would escape t.TempDir() on disk,
+	// even though the string never contains "..". The guard must reject.
+	err := assertPathInsideTempDir(filepath.Join(link, "foo.tar"))
+	if err == nil {
+		t.Fatal("expected rejection of symlink-traversal path")
+	}
+	if !strings.Contains(err.Error(), "outside the OS temp directory") {
+		t.Errorf("expected 'outside' rejection, got: %v", err)
+	}
+}
+
+// runtimeIsWindows is a tiny indirection to avoid pulling runtime.GOOS
+// into the rest of the file. Used to skip the symlink test where
+// non-elevated CI runners can't create symlinks.
+func runtimeIsWindows() bool {
+	return os.PathSeparator == '\\'
+}
+
 // TestWriteMinimalTar_HappyPath confirms a valid path under t.TempDir()
 // produces a real tar file on disk.
 func TestWriteMinimalTar_HappyPath(t *testing.T) {

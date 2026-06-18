@@ -59,8 +59,10 @@ func WriteMinimalTar(t *testing.T, path string) {
 // The check rejects:
 //   - empty paths
 //   - paths containing ".." segments (path traversal)
-//   - absolute paths outside the OS temp tree
 //   - paths whose parent directory does not exist (avoids surprising creates)
+//   - paths whose resolved parent (after following any symlinks in the
+//     ancestor chain) escapes the OS temp tree — covers symlink-based
+//     traversal in addition to plain string traversal
 //
 // armis:ignore cwe:22 reason:this function IS the path-traversal mitigation
 func assertPathInsideTempDir(path string) error {
@@ -79,33 +81,44 @@ func assertPathInsideTempDir(path string) error {
 	if err != nil {
 		return err
 	}
+
+	// The path itself usually doesn't exist yet (we're about to create
+	// it), so EvalSymlinks won't work on `abs` directly. Resolve symlinks
+	// on the parent — that's enough to catch a malicious symlink anywhere
+	// in the ancestor chain redirecting the write outside the temp tree.
+	parent := filepath.Dir(abs)
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return errors.New("parent directory does not exist or is not accessible")
+	}
+	if !parentInfo.IsDir() {
+		return errors.New("parent is not a directory")
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return errors.New("failed to resolve parent symlinks")
+	}
+
 	tmpRoot, err := filepath.Abs(os.TempDir())
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(tmpRoot, abs)
+	// EvalSymlinks tmpRoot too — on macOS /tmp is itself a symlink to
+	// /private/tmp, so a string compare against the unresolved form
+	// would always fail.
+	resolvedRoot, err := filepath.EvalSymlinks(tmpRoot)
 	if err != nil {
-		// On Windows, filepath.Rel returns an error when the two paths
-		// live on different volumes (e.g. tmp on C: but the supplied
-		// path on D:). That is by definition "outside the OS temp dir",
-		// so map it to the explicit rejection rather than leaking the
-		// raw "Rel:" error string.
+		return err
+	}
+
+	rel, err := filepath.Rel(resolvedRoot, resolvedParent)
+	if err != nil {
+		// Cross-volume on Windows or otherwise unrelatable: by
+		// definition outside the temp tree.
 		return errors.New("path resolves outside the OS temp directory")
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return errors.New("path resolves outside the OS temp directory")
-	}
-
-	// Refuse if the parent directory does not already exist. This stops a
-	// caller from accidentally creating fixtures outside their t.TempDir()
-	// sandbox; legitimate tests always pre-create or pass a known dir.
-	parent := filepath.Dir(abs)
-	info, err := os.Stat(parent)
-	if err != nil {
-		return errors.New("parent directory does not exist or is not accessible")
-	}
-	if !info.IsDir() {
-		return errors.New("parent is not a directory")
 	}
 	return nil
 }
