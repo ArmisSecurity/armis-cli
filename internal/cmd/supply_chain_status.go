@@ -19,6 +19,11 @@ var scStatusCmd = &cobra.Command{
 	Short: "Show current supply-chain policy and configuration",
 	Long: `Display the current supply-chain policy and where enforcement is wired in.
 
+The first line is the verdict — whether protection is on right now:
+  Protected   wrappers are installed and ARMIS_SUPPLY_CHAIN is not off
+  Disabled    ARMIS_SUPPLY_CHAIN=off overrides all enforcement
+  Not active  no shell wrappers installed (run: armis-cli supply-chain init)
+
 Sections:
   Policy            Active rules (min age, exclusions), from the nearest
                     .armis-supply-chain.yaml searched upward, or defaults.
@@ -40,6 +45,95 @@ func init() {
 	supplyChainCmd.AddCommand(scStatusCmd)
 }
 
+// computeVerdict mirrors the wrap-time gate (supply_chain_wrap.go): an explicit
+// ARMIS_SUPPLY_CHAIN=off disables everything regardless of how it is wired up;
+// otherwise protection is live only if at least one shell has the wrappers
+// installed. uniqueWrapped is the deduplicated command set across shells. The
+// result feeds both the human headline and the --json `verdict` object, so the
+// two can never disagree.
+func computeVerdict(uniqueWrapped []string) statusVerdictJSON {
+	if strings.EqualFold(os.Getenv("ARMIS_SUPPLY_CHAIN"), "off") {
+		return statusVerdictJSON{
+			State:    "disabled",
+			Headline: "Disabled — ARMIS_SUPPLY_CHAIN=off overrides all enforcement",
+		}
+	}
+	if len(uniqueWrapped) == 0 {
+		return statusVerdictJSON{
+			State:    "inactive",
+			Headline: "Not active — no shell wrappers installed. Run: armis-cli supply-chain init",
+		}
+	}
+	// Count the collapsed set (pip + its variants count as one manager) so the
+	// headline number matches the "bun, npm, …, pip (+N variants)" detail; the
+	// raw function count would say "16 commands" next to 8 visible names.
+	managers := len(collapsePipVariants(uniqueWrapped))
+	return statusVerdictJSON{
+		State:        "protected",
+		Headline:     fmt.Sprintf("Protected — %s wrapped (%s)", countNoun(managers, "command"), summarizePMs(uniqueWrapped)),
+		WrappedCount: managers,
+	}
+}
+
+// collapsePipVariants folds pip and its interpreter-specific variants (pip3,
+// pip3.12, …) into a single "pip (+N variants)" token, leaving every other
+// command untouched and in order. A machine with many Python interpreters wraps
+// a dozen pip3.x names that otherwise bury the distinct managers (npm, pnpm, …);
+// collapsing them keeps the wrapped set readable without losing the count.
+func collapsePipVariants(pms []string) []string {
+	var pipVariants int
+	var out []string
+	for _, pm := range pms {
+		if supplychain.IsPipVariant(pm) {
+			pipVariants++
+			continue
+		}
+		out = append(out, pm)
+	}
+	if pipVariants > 0 {
+		if extra := pipVariants - 1; extra > 0 {
+			out = append(out, fmt.Sprintf("pip (+%s)", countNoun(extra, "variant")))
+		} else {
+			out = append(out, "pip")
+		}
+	}
+	return out
+}
+
+// summarizePMs renders a wrapped-command list compactly for the one-line
+// headline: pip variants are collapsed (collapsePipVariants), then at most the
+// first few names are shown with a "+N more" tail so the verdict stays to one
+// line even on a machine that wraps everything.
+func summarizePMs(pms []string) string {
+	const maxShown = 4
+
+	display := collapsePipVariants(pms)
+	if len(display) <= maxShown {
+		return strings.Join(display, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(display[:maxShown], ", "), len(display)-maxShown)
+}
+
+// uniqueWrappedPMs returns the deduplicated command set wrapped across all
+// detected shells, preserving first-seen order. Most machines wrap the same set
+// in every shell, so this is what the headline counts (8 commands, not 16).
+func uniqueWrappedPMs(shells []supplychain.Shell) []string {
+	seen := make(map[string]bool)
+	var all []string
+	for _, sh := range shells {
+		if !supplychain.HasInjection(sh.RCFile) {
+			continue
+		}
+		for _, pm := range supplychain.WrappedPMs(sh.RCFile) {
+			if !seen[pm] {
+				seen[pm] = true
+				all = append(all, pm)
+			}
+		}
+	}
+	return all
+}
+
 func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	dir := "."
 
@@ -51,6 +145,19 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintf(os.Stderr, "%s\n", s.HeaderBanner.Render("Supply Chain Status"))
 	fmt.Fprintf(os.Stderr, "%s\n\n", s.FooterSeparator.Render("═══════════════════"))
+
+	// Lead with the verdict: the whole point of `status` is to answer "is
+	// protection on right now?" without making the reader cross-reference the
+	// sections below. Detect shells once and reuse the result for both the
+	// headline and the Shell Integration section.
+	shells := supplychain.DetectShells()
+	verdict := computeVerdict(uniqueWrappedPMs(shells))
+	switch verdict.State {
+	case "protected":
+		fmt.Fprintf(os.Stderr, "%s %s\n\n", s.SuccessText.Render(output.IconSuccess), s.Bold.Render(verdict.Headline))
+	default:
+		fmt.Fprintf(os.Stderr, "%s %s\n\n", s.WarningText.Render("⚠"), s.Bold.Render(verdict.Headline))
+	}
 
 	cfg, configDir, err := loadConfigUpward(dir)
 	if err != nil {
@@ -100,7 +207,6 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "\n")
 
 	fmt.Fprintf(os.Stderr, "%s\n", s.SectionTitle.Render("Shell Integration"))
-	shells := supplychain.DetectShells()
 	if len(shells) == 0 {
 		fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("(no shells detected)"))
 	} else {
@@ -114,9 +220,10 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 			// already reads this RC file to test for the marker; showing the wrapped
 			// set turns a bare "active" into "active, and these 9 commands are
 			// guarded" — the single fact that tells a user enforcement is live even
-			// when no lockfile sits in the current directory.
+			// when no lockfile sits in the current directory. pip variants are
+			// collapsed so a dozen pip3.x names don't drown out the distinct managers.
 			if pms := supplychain.WrappedPMs(sh.RCFile); len(pms) > 0 {
-				fmt.Fprintf(os.Stderr, "         %s %s\n", s.MutedText.Render("wraps:"), s.MutedText.Render(strings.Join(pms, ", ")))
+				fmt.Fprintf(os.Stderr, "         %s %s\n", s.MutedText.Render("wraps:"), s.MutedText.Render(strings.Join(collapsePipVariants(pms), ", ")))
 			}
 		}
 	}
@@ -165,10 +272,21 @@ func displayLockfilePath(abs string) string {
 }
 
 type statusJSON struct {
+	Verdict     statusVerdictJSON     `json:"verdict"`
 	Policy      statusPolicyJSON      `json:"policy"`
 	Ecosystems  []statusEcosystemJSON `json:"ecosystems"`
 	Shells      []statusShellJSON     `json:"shells"`
 	Environment statusEnvJSON         `json:"environment"`
+}
+
+// statusVerdictJSON is the machine-readable headline: a stable `state` enum
+// (protected | disabled | inactive) so CI can gate on protection with
+// `jq -e '.verdict.state == "protected"'` instead of inferring it from the
+// shells array, plus the human one-liner and the wrapped-command count.
+type statusVerdictJSON struct {
+	State        string `json:"state"`
+	Headline     string `json:"headline"`
+	WrappedCount int    `json:"wrapped_count"`
 }
 
 type statusPolicyJSON struct {
@@ -253,6 +371,9 @@ func runSupplyChainStatusJSON(dir string) error {
 	shells := supplychain.DetectShells()
 	for _, sh := range shells {
 		active := supplychain.HasInjection(sh.RCFile)
+		// JSON keeps the full, uncollapsed command list (pip3.11, pip3.12, …) so
+		// machine consumers get exact data; the human view collapses pip variants
+		// for readability, but a script may want every name.
 		wraps := []string{}
 		if active {
 			if pms := supplychain.WrappedPMs(sh.RCFile); len(pms) > 0 {
@@ -269,6 +390,10 @@ func runSupplyChainStatusJSON(dir string) error {
 	if result.Shells == nil {
 		result.Shells = []statusShellJSON{}
 	}
+
+	// Headline verdict, computed from the same signals as the human output so the
+	// two never disagree.
+	result.Verdict = computeVerdict(uniqueWrappedPMs(shells))
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
