@@ -144,7 +144,7 @@ jobs:
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
 | `fail-on` | string | `CRITICAL` | Comma-separated severity levels to fail on (e.g., `HIGH,CRITICAL`). Set to empty string to never fail. |
-| `pr-comment` | boolean | `true` | Post scan results as PR comment |
+| `pr-comment` | boolean | `true` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo; otherwise the comment is silently skipped. |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
 | `image-tarball` | string | | Path to image tarball (for image scans) |
@@ -174,13 +174,16 @@ permissions:
 
 #### What You Get
 
-**PR Comments**: Detailed breakdown of findings by severity with expandable details for each issue:
+**Branded PR Comments**: A detailed breakdown of findings by severity with expandable details for each issue, posted as `armis-appsec[bot]`:
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 2 |
 | HIGH | 5 |
 | MEDIUM | 12 |
+
+<a id="branded-pr-comments"></a>
+> **How it works:** The action sends the raw SARIF results to the Armis backend, which formats and posts the comment server-side (the same formatter used by the `armis-appsec` bot when assigned to a PR). This keeps formatting consistent across integrations and lets it improve without an action release. It requires the **armis-appsec GitHub App** to be installed on the repository — without it the backend cannot post as the bot and the comment is skipped (the scan itself still runs and uploads results). Authentication reuses your existing `client-id`/`client-secret` (JWT) or `api-token` (legacy) credentials; commenting failures never fail the build.
 
 **GitHub Code Scanning**: Findings appear in the Security tab, inline in PR diffs, and as check annotations.
 
@@ -252,6 +255,8 @@ jobs:
 | `scan-timeout` | No | `60` | Timeout in minutes |
 | `include-files` | No | | Comma-separated file paths to scan |
 | `build-from-source` | No | `false` | Build from source (testing) |
+| `pr-comment` | No | `false` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Only runs on `pull_request` events and requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo. |
+| `api-url` | No | | Override the Armis API base URL (advanced; defaults to region-derived or production). Equivalent to `ARMIS_API_URL`. |
 
 \* One authentication method is required: either `client-id` + `client-secret` (recommended) or `api-token` + `tenant-id` (legacy).
 
