@@ -363,9 +363,10 @@ func HasInjection(path string) bool {
 // wrappedPMLine matches a single package-manager wrapper declaration inside an
 // injected block, capturing the command name. It accepts both shapes the
 // generators emit: POSIX/zsh `name() {` and fish `function name`. The name class
-// mirrors validPMName (lowercase, digits, hyphen, dotted numeric suffix), so it
-// captures versioned pip variants (pip3.12) without matching arbitrary lines.
-var wrappedPMLine = regexp.MustCompile(`(?m)^(?:function\s+([a-z][a-z0-9.-]*)|([a-z][a-z0-9.-]*)\(\)\s*\{)`)
+// mirrors validPMName exactly (lowercase start, then lowercase/digit/hyphen, with
+// at most one dotted-numeric suffix), so it captures versioned pip variants
+// (pip3.12) while rejecting names the generators never emit (e.g. foo.bar).
+var wrappedPMLine = regexp.MustCompile(`(?m)^(?:function\s+([a-z][a-z0-9-]*(?:\.[0-9]+)?)|([a-z][a-z0-9-]*(?:\.[0-9]+)?)\(\)\s*\{)`)
 
 // WrappedPMs returns the package-manager command names wrapped by the injected
 // block in path, in the order they appear (deduplicated). It is the read-side
@@ -388,10 +389,17 @@ func WrappedPMs(path string) []string {
 	if start == -1 {
 		return nil
 	}
-	block := text[start:]
-	if end := strings.Index(block, markerEnd); end != -1 {
-		block = block[:end]
+	// Require the closing marker: parse strictly between markerStart and markerEnd.
+	// A block with no end marker is malformed (a truncated/hand-edited RC file), and
+	// parsing to EOF would sweep in any user-defined npm/pip functions written after
+	// it — exactly the misattribution this scoping exists to prevent. Treat it as no
+	// injected block rather than risk reporting non-armis functions as wrapped.
+	rest := text[start:]
+	end := strings.Index(rest, markerEnd)
+	if end == -1 {
+		return nil
 	}
+	block := rest[:end]
 
 	var pms []string
 	seen := make(map[string]bool)

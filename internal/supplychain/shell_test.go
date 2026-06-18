@@ -661,6 +661,20 @@ func TestWrappedPMs(t *testing.T) {
 		}
 	})
 
+	t.Run("returns nil for a block missing its end marker", func(t *testing.T) {
+		// A start marker with no closing marker is a malformed/truncated block.
+		// Parsing it to EOF would sweep in user functions written after the
+		// (never-closed) block, so it must be treated as no injected block. Build
+		// such a file by stripping the end marker from a real wrapper, then append
+		// a user-defined function that must NOT be reported.
+		full := GenerateWrapper(shellBash, []string{"npm"})
+		truncated := strings.Replace(full, markerEnd, "", 1)
+		body := truncated + "\nyarn() { echo mine; }\n"
+		if got := WrappedPMs(writeRC(t, body)); got != nil {
+			t.Errorf("WrappedPMs = %v, want nil for a block with no end marker", got)
+		}
+	})
+
 	t.Run("returns nil for an unreadable file", func(t *testing.T) {
 		if got := WrappedPMs(filepath.Join(t.TempDir(), "does-not-exist")); got != nil {
 			t.Errorf("WrappedPMs = %v, want nil for a missing file", got)

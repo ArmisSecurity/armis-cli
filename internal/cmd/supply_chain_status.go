@@ -52,6 +52,7 @@ func init() {
 // result feeds both the human headline and the --json `verdict` object, so the
 // two can never disagree.
 func computeVerdict(uniqueWrapped []string) statusVerdictJSON {
+	// armis:ignore cwe:285 cwe:284 cwe:862 cwe:863 reason:this only *reports* protection state for `status` output and enforces nothing; the actual gate is supply_chain_wrap.go (envSCOff), and ARMIS_SUPPLY_CHAIN=off is a documented user-controlled master switch for the user's own machine, not a crossable authorization boundary
 	if strings.EqualFold(os.Getenv("ARMIS_SUPPLY_CHAIN"), "off") {
 		return statusVerdictJSON{
 			State:    "disabled",
@@ -76,10 +77,14 @@ func computeVerdict(uniqueWrapped []string) statusVerdictJSON {
 }
 
 // collapsePipVariants folds pip and its interpreter-specific variants (pip3,
-// pip3.12, …) into a single "pip (+N variants)" token, leaving every other
-// command untouched and in order. A machine with many Python interpreters wraps
-// a dozen pip3.x names that otherwise bury the distinct managers (npm, pnpm, …);
-// collapsing them keeps the wrapped set readable without losing the count.
+// pip3.12, …) into a single "pip (+N variants)" token. Every non-pip command
+// keeps its relative order; the collapsed pip token is appended once at the end
+// regardless of where pip appeared in the input (so e.g. ["pip","npm"] renders
+// as ["npm","pip"]). That trailing placement is intentional — pip is the noisy
+// family and reads best grouped last — and the wrappers never emit pip first in
+// practice. A machine with many Python interpreters wraps a dozen pip3.x names
+// that otherwise bury the distinct managers (npm, pnpm, …); collapsing them
+// keeps the wrapped set readable without losing the count.
 func collapsePipVariants(pms []string) []string {
 	var pipVariants int
 	var out []string
@@ -121,9 +126,9 @@ func uniqueWrappedPMs(shells []supplychain.Shell) []string {
 	seen := make(map[string]bool)
 	var all []string
 	for _, sh := range shells {
-		if !supplychain.HasInjection(sh.RCFile) {
-			continue
-		}
+		// WrappedPMs already returns nil for an unreadable file or one with no
+		// injected block, so it is its own presence check — no separate
+		// HasInjection read is needed (that would open each RC file twice).
 		for _, pm := range supplychain.WrappedPMs(sh.RCFile) {
 			if !seen[pm] {
 				seen[pm] = true
