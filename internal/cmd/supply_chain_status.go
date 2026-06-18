@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
@@ -16,8 +17,17 @@ var scStatusJSON bool
 var scStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current supply-chain policy and configuration",
-	Long: `Display the current supply-chain policy configuration, detected ecosystems,
-and shell injection status.
+	Long: `Display the current supply-chain policy and where enforcement is wired in.
+
+Sections:
+  Policy            Active rules (min age, exclusions), from the nearest
+                    .armis-supply-chain.yaml searched upward, or defaults.
+  Ecosystems        Lockfiles found from the current directory upward — what an
+                    install run here would audit. Empty does NOT mean unprotected:
+                    wrapped commands still enforce in any project with a lockfile.
+  Shell Integration Which shells have the wrappers installed, and the exact
+                    commands each one guards (npm, pip, …). This is machine-wide.
+  Environment       The ARMIS_SUPPLY_CHAIN* control variables.
 
 Reads from .armis-supply-chain.yaml if present, otherwise shows defaults.`,
 	Example: `  armis-cli supply-chain status`,
@@ -75,12 +85,13 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "\n")
 
 	fmt.Fprintf(os.Stderr, "%s\n", s.SectionTitle.Render("Ecosystems"))
+	fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("Lockfiles found from here upward (what an install in this directory would audit)"))
 	// Walk upward (not just the current directory) so the report matches what the
 	// wrapper would actually enforce: lockfiles at a monorepo/project root are found
 	// even when status runs from a nested subdirectory.
 	ecosystems := supplychain.DetectEcosystemsUpward(dir)
 	if len(ecosystems) == 0 {
-		fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("(none detected)"))
+		fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("(none here) — enforcement still applies when you run a wrapped command in a project that has a lockfile"))
 	} else {
 		for _, e := range ecosystems {
 			fmt.Fprintf(os.Stderr, "  %-6s %s\n", s.Bold.Render(string(e.Ecosystem)), displayLockfilePath(e.LockfilePath))
@@ -94,11 +105,19 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("(no shells detected)"))
 	} else {
 		for _, sh := range shells {
-			status := s.MutedText.Render("not installed")
-			if supplychain.HasInjection(sh.RCFile) {
-				status = s.SuccessText.Render("active")
+			if !supplychain.HasInjection(sh.RCFile) {
+				fmt.Fprintf(os.Stderr, "  %-6s %s (%s)\n", s.Bold.Render(sh.Name), sh.RCFile, s.MutedText.Render("not installed"))
+				continue
 			}
-			fmt.Fprintf(os.Stderr, "  %-6s %s (%s)\n", s.Bold.Render(sh.Name), sh.RCFile, status)
+			fmt.Fprintf(os.Stderr, "  %-6s %s (%s)\n", s.Bold.Render(sh.Name), sh.RCFile, s.SuccessText.Render("active"))
+			// Surface which commands the injected block actually wraps. status
+			// already reads this RC file to test for the marker; showing the wrapped
+			// set turns a bare "active" into "active, and these 9 commands are
+			// guarded" — the single fact that tells a user enforcement is live even
+			// when no lockfile sits in the current directory.
+			if pms := supplychain.WrappedPMs(sh.RCFile); len(pms) > 0 {
+				fmt.Fprintf(os.Stderr, "         %s %s\n", s.MutedText.Render("wraps:"), s.MutedText.Render(strings.Join(pms, ", ")))
+			}
 		}
 	}
 
@@ -165,9 +184,10 @@ type statusEcosystemJSON struct {
 }
 
 type statusShellJSON struct {
-	Name   string `json:"name"`
-	RCFile string `json:"rc_file"`
-	Active bool   `json:"active"`
+	Name   string   `json:"name"`
+	RCFile string   `json:"rc_file"`
+	Active bool     `json:"active"`
+	Wraps  []string `json:"wraps"`
 }
 
 type statusEnvJSON struct {
@@ -232,10 +252,18 @@ func runSupplyChainStatusJSON(dir string) error {
 	// armis:ignore cwe:770 reason:DetectShells returns at most one entry per known shell (bash/zsh/fish); the result set is bounded by a fixed allowlist, not by attacker input
 	shells := supplychain.DetectShells()
 	for _, sh := range shells {
+		active := supplychain.HasInjection(sh.RCFile)
+		wraps := []string{}
+		if active {
+			if pms := supplychain.WrappedPMs(sh.RCFile); len(pms) > 0 {
+				wraps = pms
+			}
+		}
 		result.Shells = append(result.Shells, statusShellJSON{
 			Name:   sh.Name,
 			RCFile: sh.RCFile,
-			Active: supplychain.HasInjection(sh.RCFile),
+			Active: active,
+			Wraps:  wraps,
 		})
 	}
 	if result.Shells == nil {
