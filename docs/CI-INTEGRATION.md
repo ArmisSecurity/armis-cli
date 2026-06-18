@@ -255,7 +255,7 @@ jobs:
 | `scan-timeout` | No | `60` | Timeout in minutes |
 | `include-files` | No | | Comma-separated file paths to scan |
 | `build-from-source` | No | `false` | Build from source (testing) |
-| `pr-comment` | No | `false` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Only runs on `pull_request` events and requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo. |
+| `pr-comment` | No | `false` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Only runs on `pull_request` events and requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo. Needs a persisted SARIF file — keep the default `format: sarif` and set `output-file` (e.g. `armis-results.sarif`), or the comment is skipped. |
 | `api-url` | No | | Override the Armis API base URL (advanced; defaults to region-derived or production). Equivalent to `ARMIS_API_URL`. |
 
 \* One authentication method is required: either `client-id` + `client-secret` (recommended) or `api-token` + `tenant-id` (legacy).

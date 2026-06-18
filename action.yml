@@ -65,7 +65,7 @@ inputs:
     required: false
     default: 'false'
   pr-comment:
-    description: 'Post a branded PR comment via the Armis backend (requires the armis-appsec GitHub App installed on the repo). Only runs on pull_request events.'
+    description: 'Post a branded PR comment via the Armis backend (requires the armis-appsec GitHub App installed on the repo). Only runs on pull_request events. Requires a persisted SARIF file: keep the default format (sarif) and set output-file (e.g. armis-results.sarif), otherwise the comment is skipped.'
     required: false
     default: 'false'
   api-url:
@@ -294,6 +294,14 @@ runs:
 
         warn() { echo "::warning::Armis branded PR comment skipped: $1"; exit 0; }
 
+        # Keep the request payload (full SARIF) and response private and transient:
+        # mktemp + an EXIT trap guarantees cleanup even on an early warn (exit 0), so
+        # these never linger in the workspace for later steps to pick up.
+        PAYLOAD_FILE=$(mktemp)
+        RESPONSE_FILE=$(mktemp)
+        chmod 600 "$PAYLOAD_FILE" "$RESPONSE_FILE"
+        trap 'rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"' EXIT
+
         # 1. Resolve API base URL: ARMIS_API_URL/api-url override -> region -> production.
         # The base URL comes from operator-controlled action config (not PR content);
         # we still require HTTPS for ALL base URLs so the credential sent below can
@@ -323,7 +331,7 @@ runs:
         # 2. Locate the SARIF file produced by the scan step.
         SARIF_FILE="${INPUT_OUTPUT_FILE:-armis-results.sarif}"
         if [ ! -s "$SARIF_FILE" ]; then
-          warn "SARIF file '$SARIF_FILE' is missing or empty"
+          warn "SARIF file '$SARIF_FILE' is missing or empty — pr-comment needs a persisted SARIF file (keep format: sarif and set output-file)"
         fi
         if ! jq -e '.runs' "$SARIF_FILE" > /dev/null 2>&1; then
           warn "SARIF file '$SARIF_FILE' has no 'runs' key"
@@ -374,25 +382,25 @@ runs:
 
         # 5. Build the request payload safely (no string interpolation of SARIF).
         if ! jq -n --arg repo "$REPO" --argjson pr "$PR_NUMBER" --slurpfile sarif "$SARIF_FILE" \
-          '{repo:$repo, pr_number:$pr, sarif:$sarif[0]}' > pr-comment-payload.json 2>/dev/null; then
+          '{repo:$repo, pr_number:$pr, sarif:$sarif[0]}' > "$PAYLOAD_FILE" 2>/dev/null; then
           warn "failed to build request payload"
         fi
 
         # 6. POST to the branded-comment webhook.
-        HTTP_CODE=$(curl -sS --max-time 60 -o pr-comment-response.json -w '%{http_code}' \
+        HTTP_CODE=$(curl -sS --max-time 60 -o "$RESPONSE_FILE" -w '%{http_code}' \
           -X POST "${BASE_URL}/api/v1/webhook/pr-comment" \
           -H "Authorization: ${AUTH}" \
           -H 'Content-Type: application/json' \
-          --data-binary @pr-comment-payload.json)
+          --data-binary @"$PAYLOAD_FILE")
         CURL_EXIT=$?
 
         if [ "$CURL_EXIT" -ne 0 ]; then
           warn "request to backend failed (curl exit $CURL_EXIT)"
         fi
         if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-          DETAIL=$(jq -r '.detail // empty' pr-comment-response.json 2>/dev/null)
+          DETAIL=$(jq -r '.detail // empty' "$RESPONSE_FILE" 2>/dev/null)
           warn "backend returned HTTP $HTTP_CODE${DETAIL:+ ($DETAIL)}"
         fi
 
-        COMMENT_URL=$(jq -r '.comment_url // empty' pr-comment-response.json 2>/dev/null)
+        COMMENT_URL=$(jq -r '.comment_url // empty' "$RESPONSE_FILE" 2>/dev/null)
         echo "Branded PR comment posted: ${COMMENT_URL:-ok}"
