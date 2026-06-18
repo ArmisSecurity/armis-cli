@@ -41,8 +41,16 @@ func TestAssertPathInsideTempDir(t *testing.T) {
 			errSubstr: "path traversal",
 		},
 		{
-			name:      "absolute path outside tmp rejected",
-			path:      "/etc/passwd",
+			name: "absolute path outside tmp rejected",
+			// One level above the cleaned os.TempDir() is, by
+			// construction, outside the temp tree on every OS. We
+			// Clean first because some OSes (notably macOS) report
+			// os.TempDir() with a trailing slash, which would make
+			// filepath.Dir a no-op. A literal "/etc/passwd" would
+			// normalise to "<curdrive>:\etc\passwd" on Windows and
+			// trigger filepath.Rel's cross-drive error branch — which
+			// the production code maps to the same rejection message.
+			path:      filepath.Dir(filepath.Clean(os.TempDir())),
 			errSubstr: "outside the OS temp directory",
 		},
 		{

@@ -85,7 +85,12 @@ func assertPathInsideTempDir(path string) error {
 	}
 	rel, err := filepath.Rel(tmpRoot, abs)
 	if err != nil {
-		return err
+		// On Windows, filepath.Rel returns an error when the two paths
+		// live on different volumes (e.g. tmp on C: but the supplied
+		// path on D:). That is by definition "outside the OS temp dir",
+		// so map it to the explicit rejection rather than leaking the
+		// raw "Rel:" error string.
+		return errors.New("path resolves outside the OS temp directory")
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return errors.New("path resolves outside the OS temp directory")
