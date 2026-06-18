@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,5 +251,62 @@ func TestRunSupplyChainCheck_EcosystemScopeSkips(t *testing.T) {
 
 	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
 		t.Fatalf("expected clean skip, got error: %v", err)
+	}
+}
+
+// TestRunSupplyChainCheck_OutputFlagWritesFile verifies the --output flag is
+// honored end-to-end: results are written to the named file (not stdout) and
+// the format is auto-detected from the extension. An empty lockfile yields zero
+// packages to check, so RunCheck short-circuits before any registry query while
+// the full output pipeline (ResolveOutput → formatter → file) still runs. This
+// is the path that was silently dead before --output was registered on the
+// supply-chain check command.
+func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
+	dir := chdirTemp(t)
+	// An npm lockfile with no packages: nothing to check, no network access.
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(dir, "report.sarif")
+
+	// Save/restore every package-level var the check command reads so this test
+	// can't leak state into others sharing the cmd package.
+	origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn :=
+		scLockfile, scAll, scMinAge, format, outputFile, failOn
+	t.Cleanup(func() {
+		scLockfile, scAll, scMinAge, format, outputFile, failOn =
+			origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn
+	})
+	scLockfile = "package-lock.json"
+	scAll = true // skip base-lockfile git detection
+	scMinAge = "72h"
+	format = "human"     // left at default; extension should override to SARIF
+	outputFile = outPath // simulate -o report.sarif
+	failOn = []string{"CRITICAL"}
+
+	cmd := newWrapTestCmd() // command with a live context
+	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
+	cmd.Flags().StringSliceVar(&scExclude, "exclude", nil, "")
+	cmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "")
+	// --format must exist (unchanged) so ResolveOutput can consult its .Changed
+	// state to decide whether to auto-detect the format from the extension.
+	cmd.Flags().StringVarP(&format, "format", "f", "human", "")
+
+	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
+		t.Fatalf("runSupplyChainCheck: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("expected output written to %s: %v", outPath, err)
+	}
+	content := string(data)
+	// Format auto-detected from the .sarif extension: a SARIF document carries a
+	// $schema and runs array. If --output were ignored, the file would not exist;
+	// if extension detection failed, this would be human-styled text instead.
+	if !strings.Contains(content, "$schema") || !strings.Contains(content, "runs") {
+		t.Errorf("output file does not look like SARIF (extension auto-detection failed):\n%s", content)
 	}
 }

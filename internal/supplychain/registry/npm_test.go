@@ -79,6 +79,35 @@ func TestGetPublishDate(t *testing.T) {
 		}
 	})
 
+	t.Run("time map with unpublished object", func(t *testing.T) {
+		// npm includes non-date keys in "time" whose values are objects, not
+		// strings — most commonly "unpublished": {"time":"...","versions":[...]}
+		// on any package that ever unpublished a version. The whole "time" map
+		// must still parse (json.RawMessage), and the requested version's date
+		// must decode correctly rather than the object aborting the parse and
+		// losing every version's publish date.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{` +
+				`"created":"2025-12-04T21:32:57.747Z",` +
+				`"modified":"2025-12-09T03:31:24.890Z",` +
+				`"99.99.1":"2025-12-04T21:33:00.000Z",` +
+				`"99.99.2":"2025-12-05T10:00:00.000Z",` +
+				`"unpublished":{"time":"2025-12-09T03:31:24.890Z","versions":[]}}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL)
+		publishTime, err := client.GetPublishDate(context.Background(), "path-to-regexp-updated", "99.99.1")
+		if err != nil {
+			t.Fatalf("unpublished object must not break parsing: %v", err)
+		}
+		expected := time.Date(2025, 12, 4, 21, 33, 0, 0, time.UTC)
+		if !publishTime.Equal(expected) {
+			t.Errorf("expected %v, got %v", expected, publishTime)
+		}
+	})
+
 	t.Run("invalid package name", func(t *testing.T) {
 		client := NewClient()
 		_, err := client.GetPublishDate(context.Background(), "../../../etc/passwd", "1.0.0")

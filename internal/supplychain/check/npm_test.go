@@ -73,6 +73,48 @@ func TestParseNPMLockfile(t *testing.T) {
 		}
 	})
 
+	t.Run("npm alias uses real registry name", func(t *testing.T) {
+		// An npm alias ("alias": "npm:real-pkg@1.2.3") records the local alias as
+		// the node_modules/ key but the real registry package in the "name" field.
+		// The entry must be audited under "path-to-regexp" (which exists at 6.3.0),
+		// not "path-to-regexp-updated" (the alias, which does not), or the package
+		// silently escapes the age check with a "version not found" warning.
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "alias.json")
+		content := `{"lockfileVersion":3,"packages":{` +
+			`"node_modules/path-to-regexp-updated":{"name":"path-to-regexp","version":"6.3.0","resolved":"https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-6.3.0.tgz"},` +
+			`"node_modules/express":{"version":"4.18.2","resolved":"https://registry.npmjs.org/express/-/express-4.18.2.tgz"}}}`
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := ParseNPMLockfile(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var aliasVer string
+		var sawAlias, sawUpdated bool
+		for _, e := range entries {
+			switch e.Name {
+			case "path-to-regexp":
+				sawAlias = true
+				aliasVer = e.Version
+			case "path-to-regexp-updated":
+				sawUpdated = true
+			}
+		}
+		if !sawAlias {
+			t.Error(`alias must be audited under the real name "path-to-regexp"`)
+		}
+		if sawUpdated {
+			t.Error(`alias must not be audited under the local alias "path-to-regexp-updated"`)
+		}
+		if aliasVer != "6.3.0" {
+			t.Errorf("alias version = %q, want 6.3.0", aliasVer)
+		}
+	})
+
 	t.Run("file not found", func(t *testing.T) {
 		_, err := ParseNPMLockfile("nonexistent.json")
 		if err == nil {

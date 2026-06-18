@@ -71,6 +71,13 @@ func init() {
 	scCheckCmd.Flags().StringVar(&scLockfile, "lockfile", "", "Explicit lockfile path (overrides auto-detection)")
 	scCheckCmd.Flags().BoolVar(&scAll, "all", false, "Check all packages (disable auto-diff against base branch)")
 	scCheckCmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "Exit 0 on registry errors (fail-open for CI availability)")
+	// --output is a persistent flag on scanCmd, but supply-chain is a sibling of
+	// scan in the command tree and does not inherit it. Register it locally so
+	// `supply-chain check` matches the scan commands: ResolveOutput already
+	// consumes outputFile (file writing, extension-based format auto-detection,
+	// color disabling). -o has no shorthand conflict in the supply-chain subtree.
+	// armis:ignore cwe:73 cwe:22 reason:outputFile is the user-controlled --output CLI flag naming a file on their own machine (same pattern as scan's --output, suppressed at the ResolveOutput/NewFileOutput sink); no trust boundary is crossed
+	scCheckCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
 
 	supplyChainCmd.AddCommand(scCheckCmd)
 }

@@ -35,8 +35,18 @@ type Client struct {
 	cacheLen    atomic.Int64
 }
 
+// registryResponse models the subset of npm package metadata we need. The npm
+// "time" object maps version strings to ISO-8601 publish dates, but it also
+// carries non-date keys whose values are NOT strings — notably "unpublished",
+// an object of the form {"time":"...","versions":[...]} present on any package
+// that ever had a version unpublished. Typing the whole map as
+// map[string]string makes one such object abort json.Unmarshal for the entire
+// document, losing the publish dates of every version (so the package silently
+// escapes the age policy — exactly the typosquat-shaped packages we most want
+// to gate). json.RawMessage defers decoding so each value is parsed lazily, by
+// version, in GetPublishDate.
 type registryResponse struct {
-	Time map[string]string `json:"time"`
+	Time map[string]json.RawMessage `json:"time"`
 }
 
 // PackageRequest identifies a single package version to look up. It is shared
@@ -89,9 +99,17 @@ func (c *Client) GetPublishDate(ctx context.Context, name, version string) (time
 		return time.Time{}, err
 	}
 
-	timeStr, ok := resp.Time[version]
+	raw, ok := resp.Time[version]
 	if !ok {
 		return time.Time{}, fmt.Errorf("version %q not found in registry metadata for %s", version, name)
+	}
+
+	// A version key's value is always an ISO-8601 string. Decode just this entry
+	// (the map is json.RawMessage so non-date keys like "unpublished" never reach
+	// here) and fail clearly if the registry ever hands back a non-string value.
+	var timeStr string
+	if err := json.Unmarshal(raw, &timeStr); err != nil {
+		return time.Time{}, fmt.Errorf("publish time for %s@%s is not a string: %w", name, version, err)
 	}
 
 	t, err := time.Parse(time.RFC3339, timeStr)

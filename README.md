@@ -477,6 +477,9 @@ armis-cli supply-chain check --min-age 7d --exclude "@myorg/*" --fail-on medium
 
 # Machine-readable output for CI
 armis-cli supply-chain check --format sarif --fail-on high
+
+# Write results to a file (format auto-detected from the extension)
+armis-cli supply-chain check -o supply-chain.sarif --fail-on high
 ```
 
 By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
