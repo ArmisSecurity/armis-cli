@@ -17,6 +17,13 @@ type packageLockFile struct {
 }
 
 type packageLockInfo struct {
+	// Name is the real registry package name, present only when it cannot be
+	// derived from the node_modules/ key — i.e. npm aliases
+	// ("alias": "npm:real-pkg@1.2.3"), where the key holds the local alias and
+	// this field holds the package actually fetched from the registry. When set
+	// it must win over the key, or we'd query the registry for the alias (which
+	// usually does not exist at that version) and silently skip the real package.
+	Name     string `json:"name"`
 	Version  string `json:"version"`
 	Resolved string `json:"resolved"`
 	Link     bool   `json:"link"`
@@ -55,7 +62,13 @@ func ParseNPMLockfile(path string) ([]PackageEntry, error) {
 			continue
 		}
 
-		name := extractPackageName(key)
+		// Prefer the explicit "name" field (set for npm aliases) over the name
+		// derived from the node_modules/ key, so an alias is audited under the
+		// real registry package it resolves to rather than the local alias.
+		name := info.Name
+		if name == "" {
+			name = extractPackageName(key)
+		}
 		if name == "" {
 			continue
 		}
