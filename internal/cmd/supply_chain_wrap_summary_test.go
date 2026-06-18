@@ -177,6 +177,34 @@ func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_UnparseableFilenameNotPrerelease(t *testing.T) {
+	// Regression for the IsPrerelease fix: when pypiVersionFromFilename cannot
+	// parse a filename, DisplayVersion is empty and blockedDisplayVersion falls
+	// back to the raw Version (the filename itself). The old SemVer branch flagged
+	// any '-' after the first byte, so "filelock-3.29.2.tar.gz" (head "filelock")
+	// was read as a prerelease — driving the wrong "withheld a prerelease; a
+	// default install was unaffected" framing for a real stable release the proxy
+	// downgraded. With the digit-before-'-' guard it must be framed as a genuine
+	// filter. This is the one path that exercises the empty-DisplayVersion
+	// fallback through the full summary, not the IsPrerelease helper in isolation.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "filelock", Version: "filelock-3.29.2.tar.gz", DisplayVersion: "", Age: 11 * time.Minute},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "filelock", Version: "3.29.1", Age: 9 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 1, testPolicy(), pmUV, true)
+	})
+
+	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
+		t.Errorf("an unparseable PyPI filename must not be misread as a prerelease; got:\n%s", out)
+	}
+	if !strings.Contains(out, "filtered 1 too-new release → installed safe version (3-day policy)") {
+		t.Errorf("expected a genuine-filter success header; got:\n%s", out)
+	}
+}
+
 func TestPrintBlockSummary_UndatableSkippedOmitsAge(t *testing.T) {
 	// A PyPI file the proxy could not date is blocked with Age == 0 (fail-closed).
 	// The skipped clause must NOT claim a precise "(0 minutes old)" — it should
