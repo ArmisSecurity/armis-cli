@@ -282,8 +282,7 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 	scLockfile = "package-lock.json"
 	scAll = true // skip base-lockfile git detection
 	scMinAge = "72h"
-	format = "human"     // left at default; extension should override to SARIF
-	outputFile = outPath // simulate -o report.sarif
+	format = "human" // left at default; extension should override to SARIF
 	failOn = []string{"CRITICAL"}
 
 	cmd := newWrapTestCmd() // command with a live context
@@ -293,6 +292,16 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 	// --format must exist (unchanged) so ResolveOutput can consult its .Changed
 	// state to decide whether to auto-detect the format from the extension.
 	cmd.Flags().StringVarP(&format, "format", "f", "human", "")
+	// Register -o/--output bound to outputFile exactly as init() does, then drive
+	// the value through the flag (not a direct outputFile = outPath assignment).
+	// This exercises the flag→var binding the PR adds: if the flag were not bound
+	// to outputFile, .Set would not reach the var ResolveOutput reads and the file
+	// would never be written. (Registration on the real scCheckCmd is guarded
+	// separately by TestSupplyChainCheckOutputFlagRegistered.)
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "")
+	if err := cmd.Flags().Set("output", outPath); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
 
 	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
 		t.Fatalf("runSupplyChainCheck: %v", err)
@@ -308,5 +317,34 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 	// if extension detection failed, this would be human-styled text instead.
 	if !strings.Contains(content, "$schema") || !strings.Contains(content, "runs") {
 		t.Errorf("output file does not look like SARIF (extension auto-detection failed):\n%s", content)
+	}
+}
+
+// TestSupplyChainCheckOutputFlagRegistered guards the exact regression this PR
+// fixes: the real scCheckCmd (built by init()) must expose -o/--output bound to
+// the outputFile var that runSupplyChainCheck reads. Unlike the functional test
+// above — which constructs its own command — this asserts against the package's
+// actual command, so it fails if init() ever stops registering the flag, binds
+// it to the wrong variable, or drops the -o shorthand.
+func TestSupplyChainCheckOutputFlagRegistered(t *testing.T) {
+	f := scCheckCmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("supply-chain check must register the --output flag")
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("--output shorthand = %q, want %q", f.Shorthand, "o")
+	}
+
+	// Setting the flag must reach the outputFile var runSupplyChainCheck reads.
+	orig := outputFile
+	t.Cleanup(func() {
+		outputFile = orig
+		_ = f.Value.Set(orig)
+	})
+	if err := scCheckCmd.Flags().Set("output", "out.sarif"); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
+	if outputFile != "out.sarif" {
+		t.Errorf("--output not bound to outputFile: outputFile = %q, want %q", outputFile, "out.sarif")
 	}
 }
