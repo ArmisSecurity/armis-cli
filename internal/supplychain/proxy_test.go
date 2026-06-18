@@ -1246,12 +1246,18 @@ func TestIsPrerelease(t *testing.T) {
 		// Raw PyPI filenames reach IsPrerelease when pypiVersionFromFilename
 		// fails to parse them and callers fall back to the raw Version. A hyphen
 		// in the project name must NOT be read as a SemVer prerelease tag — the
-		// SemVer branch requires a digit before the "-".
+		// SemVer branch fires only when the head before "-" is a bare numeric
+		// release core, so an alphabetic name (or one merely containing/leading
+		// with a digit) never qualifies.
 		{"filelock-3.29.2.tar.gz", false},
 		{"my-package-1.0.tar.gz", false},
-		// SemVer prereleases carry a '-' suffix.
+		{"pkg2-1.0.tar.gz", false}, // digit inside the project name
+		{"4ti2-1.0.tar.gz", false}, // real package whose name STARTS with a digit
+		// SemVer prereleases carry a '-' suffix on a numeric (optionally
+		// v-prefixed) release core.
 		{"2.0.0-alpha.1", true},
 		{"2.0.0-rc.1", true},
+		{"v1.2.3-beta", true},
 		// PEP 440 prereleases are dash-less: a/b/c/rc/alpha/beta/pre/preview/dev.
 		{"1.0.0a1", true},
 		{"1.0.0b2", true},
