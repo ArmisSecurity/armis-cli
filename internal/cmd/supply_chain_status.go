@@ -75,12 +75,15 @@ func runSupplyChainStatus(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "\n")
 
 	fmt.Fprintf(os.Stderr, "%s\n", s.SectionTitle.Render("Ecosystems"))
-	ecosystems, err := supplychain.DetectEcosystems(dir)
-	if err != nil {
+	// Walk upward (not just the current directory) so the report matches what the
+	// wrapper would actually enforce: lockfiles at a monorepo/project root are found
+	// even when status runs from a nested subdirectory.
+	ecosystems := supplychain.DetectEcosystemsUpward(dir)
+	if len(ecosystems) == 0 {
 		fmt.Fprintf(os.Stderr, "  %s\n", s.MutedText.Render("(none detected)"))
 	} else {
 		for _, e := range ecosystems {
-			fmt.Fprintf(os.Stderr, "  %-6s %s\n", s.Bold.Render(string(e.Ecosystem)), e.LockfilePath)
+			fmt.Fprintf(os.Stderr, "  %-6s %s\n", s.Bold.Render(string(e.Ecosystem)), displayLockfilePath(e.LockfilePath))
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n")
@@ -121,6 +124,25 @@ func printEnvStatus(s *output.Styles, key, desc string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "  %s %s %s\n", s.Bold.Render(key), s.MutedText.Render("(unset)"), s.MutedText.Render("— "+desc))
 	}
+}
+
+// displayLockfilePath renders an absolute lockfile path for status output. When
+// the file lives under (or above) the current working directory it is shown
+// relative to the cwd, so an in-directory lockfile reads as "package-lock.json"
+// (as before the upward walk) while a parent-directory one reads as
+// "../package-lock.json" — making it obvious the enforced lockfile is not in the
+// directory the user is standing in. Falls back to the absolute path when a
+// relative form cannot be computed (e.g. a different volume on Windows).
+func displayLockfilePath(abs string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return abs
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil {
+		return abs
+	}
+	return rel
 }
 
 type statusJSON struct {
@@ -192,16 +214,15 @@ func runSupplyChainStatusJSON(dir string) error {
 		result.Policy.Exclusions = []string{}
 	}
 
-	// `status` reports a best-effort snapshot: a missing lockfile is a valid
-	// empty state, and an unreadable one (permission/I/O) likewise just yields no
-	// ecosystems here rather than failing the whole status read. Either way the
-	// error is intentionally not surfaced — mirroring the human-output path.
-	// armis:ignore cwe:770 cwe:253 reason:result bounded to one entry per known lockfile type (4); a no-lockfile or unreadable-lockfile error is a valid empty state for status output, deliberately ignored
-	ecosystems, _ := supplychain.DetectEcosystems(dir) //nolint:errcheck // no-lockfile is a valid empty state for status
+	// Walk upward so the JSON snapshot matches enforcement (and the human output):
+	// a lockfile at a parent/monorepo root is reported even from a subdirectory.
+	// An empty result is a valid "nothing enforceable from here" state.
+	// armis:ignore cwe:770 reason:result bounded to one entry per known lockfile type; an empty result is a valid no-lockfile state for status output
+	ecosystems := supplychain.DetectEcosystemsUpward(dir)
 	for _, e := range ecosystems {
 		result.Ecosystems = append(result.Ecosystems, statusEcosystemJSON{
 			Name:         string(e.Ecosystem),
-			LockfilePath: e.LockfilePath,
+			LockfilePath: displayLockfilePath(e.LockfilePath),
 		})
 	}
 	if result.Ecosystems == nil {
