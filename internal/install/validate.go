@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 )
-
-var validRegion = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 const (
 	validateTimeout    = 15 * time.Second
@@ -27,18 +24,12 @@ func ValidateCredentials(clientID, clientSecret string) error {
 	return validateCredentialsWithURL(clientID, clientSecret, resolveBaseURL())
 }
 
-// armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; HTTPS enforced by auth.NewAuthClient below
 func resolveBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
-		return override // armis:ignore cwe:918 reason:operator-configured env var; HTTPS enforced by NewAuthClient caller
+		return override // armis:ignore cwe:918 reason:operator-configured env var; HTTPS enforced by auth.NewAuthClient
 	}
-	if region := os.Getenv("ARMIS_REGION"); region != "" {
-		if !validRegion.MatchString(region) {
-			return auth.ProductionBaseURL
-		}
-		return "https://moose." + region + ".armis.com"
-	}
-	return auth.ProductionBaseURL
+	// The region path is allowlisted in auth.RegionalBaseURL (no host interpolation), so it needs no suppression.
+	return auth.RegionalBaseURL(os.Getenv("ARMIS_REGION"))
 }
 
 func validateCredentialsWithURL(clientID, clientSecret, baseURL string) error {

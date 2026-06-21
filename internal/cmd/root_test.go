@@ -124,6 +124,13 @@ func TestGetEnvOrDefaultInt(t *testing.T) {
 }
 
 func TestGetAPIBaseURL(t *testing.T) {
+	const testRegion = "eu1"
+
+	// Keep the test hermetic: a developer/CI ARMIS_API_URL export must not leak
+	// into the dev/production/regional subtests, which expect the resolved URL.
+	// The override-specific subtests below set ARMIS_API_URL explicitly.
+	t.Setenv("ARMIS_API_URL", "")
+
 	t.Run("returns dev URL when useDev is true", func(t *testing.T) {
 		useDev = true
 		defer func() { useDev = false }()
@@ -162,6 +169,48 @@ func TestGetAPIBaseURL(t *testing.T) {
 		defer func() {
 			_ = os.Unsetenv("ARMIS_API_URL")
 			useDev = false
+		}()
+
+		result := getAPIBaseURL()
+		if result != testURL {
+			t.Errorf("Expected env override URL %s, got %s", testURL, result)
+		}
+	})
+
+	t.Run("returns regional URL when region is set", func(t *testing.T) {
+		useDev = false
+		region = testRegion
+		defer func() { region = "" }()
+
+		result := getAPIBaseURL()
+		want := "https://eu.moose.armis.com"
+		if result != want {
+			t.Errorf("Expected regional URL %s, got %s", want, result)
+		}
+	})
+
+	t.Run("useDev takes precedence over region", func(t *testing.T) {
+		useDev = true
+		region = testRegion
+		defer func() {
+			useDev = false
+			region = ""
+		}()
+
+		result := getAPIBaseURL()
+		if result != devBaseURL {
+			t.Errorf("Expected dev URL %s, got %s", devBaseURL, result)
+		}
+	})
+
+	t.Run("ARMIS_API_URL takes precedence over region", func(t *testing.T) {
+		useDev = false
+		region = testRegion
+		testURL := "http://test-server:9090"
+		_ = os.Setenv("ARMIS_API_URL", testURL)
+		defer func() {
+			_ = os.Unsetenv("ARMIS_API_URL")
+			region = ""
 		}()
 
 		result := getAPIBaseURL()
