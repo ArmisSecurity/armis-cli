@@ -17,7 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `supply-chain`: the filter summary for PyPI installs no longer mislabels withheld stable releases as prereleases. Package filenames (e.g. `filelock-3.29.2.tar.gz`) were being read as prereleases, which printed the misleading `withheld N prereleases; a default install was unaffected` line for versions a default `uv`/`uvx`/`pip` install would have selected. The summary now reflects the real outcome — `filtered N too-new releases → installed safe versions` — and each line leads with the installed safe version and its age, with the skipped version shown as a trailing clause (PPSC-958)
+### Security
+
+---
+
+## [1.14.0] - 2026-06-21
+
+### Added
+
+- `supply-chain status` now leads with a one-line protection verdict answering the only question the command exists to answer — "is protection on right now?". The headline is computed from the same gate the wrapper uses: `ARMIS_SUPPLY_CHAIN=off` reads as **Disabled**, no installed wrappers reads as **Not active** (with the `init` command to fix it), and otherwise **Protected** with a count and the wrapped commands named (green ✓ when protected, ⚠ otherwise). Ecosystem detection now walks upward to find lockfiles the way enforcement does, so running `status` from a project subdirectory no longer reports `(none detected)` when a parent-directory lockfile would in fact be enforced; the empty-lockfile state now explains its scope rather than reading as "nothing is protected". Each active shell also reports which package managers it actually wraps (`wraps: npm, pip, …`), with the dozen `pip3.x` variants collapsed to `pip (+N variants)` in the human view. `--json` gains a `verdict` object (`{state, headline, wrapped_count}`) and per-shell `wraps` arrays so CI can gate with `jq -e '.verdict.state == "protected"'`. (#231)
+- `supply-chain check` now accepts `-o`/`--output` to write results to a file, reusing the same pipeline as `scan repo`/`scan image` with extension-based format auto-detection (`.json`, `.sarif`, `.xml`). As a sibling of `scan` in the command tree, `supply-chain check` did not inherit `scan`'s persistent `--output` flag, so the flag is now registered locally on the subcommand. (#229)
+
+### Fixed
+
+- `auth`: region-pinned uploads now reach the correct data plane. The data plane (`/api/v1/ingest/*`) is physically region-pinned, but only the token exchange was region-aware — a region-scoped JWT was being presented to the primary host on upload and rejected with a 401 (the `eu1` upload bug). A new explicit region→host allowlist feeds the upload endpoint so it matches the JWT's region; this also replaces the old string-interpolated host in `install/validate.go`, which produced the wrong `eu1` URL format and built a host from unvalidated input (CWE-918). (#228)
+- PR scan comments: the alert count in the PR comment now matches the inline Code Scanning annotations. Findings are filtered against the PR diff so a finding outside the changed lines is no longer counted in the comment summary while being absent from the inline annotations. Diff parsing also skips `\ No newline at end of file` sentinel lines to prevent line-number misalignment, uses a null-prototype map to avoid prototype pollution from adversarial filenames, and passes findings through unfiltered for files whose patch is missing (large or binary diffs) to avoid silent under-reporting. (#221)
+- `supply-chain`: the filter summary for PyPI installs no longer mislabels withheld stable releases as prereleases. A PyPI package filename (e.g. `filelock-3.29.2.tar.gz`) was being split on the first `-` and read as a prerelease, which printed the misleading `withheld N prereleases; a default install was unaffected` line for stable versions the proxy actually downgraded. Classification now runs on a normalized version (semver/PEP 440 parsed from the filename) and recognizes dash-less PEP 440 markers (`1.0.0rc1`, `1.0.0b2`, `1.0.0.dev1`); the SemVer `-` branch now requires a numeric dotted core so hyphenated project names like `4ti2-1.0.tar.gz` are not misread. The per-line summary now leads with the installed safe version and its age, with the skipped version as a trailing clause, and omits a false age for undatable files. (#222)
 
 ### Security
 
@@ -487,7 +502,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...v1.11.1
