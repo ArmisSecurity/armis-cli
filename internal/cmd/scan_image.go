@@ -69,7 +69,7 @@ var scanImageCmd = &cobra.Command{
 			return err
 		}
 
-		baseURL := getAPIBaseURL()
+		baseURL := resolveDataPlaneURL(cmd.Context(), authProvider)
 		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
