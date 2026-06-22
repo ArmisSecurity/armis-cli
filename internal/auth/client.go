@@ -163,7 +163,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, &AuthError{StatusCode: resp.StatusCode, Message: "invalid credentials"}
+		return nil, &AuthError{
+			StatusCode: resp.StatusCode,
+			Message:    "invalid credentials\n  Get credentials from the VIPR external API screen in the Armis Platform",
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
