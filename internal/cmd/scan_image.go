@@ -49,6 +49,14 @@ var scanImageCmd = &cobra.Command{
 			}
 		}
 
+		// Surface a missing container runtime before auth. Scanning by image name
+		// exports via Docker/Podman, so a dev with no runtime would otherwise hit
+		// the auth error first and never learn the real blocker. --tarball bypasses
+		// the daemon, so skip this check on that path.
+		if tarballPath == "" && !image.IsDockerAvailable() {
+			return image.ErrRuntimeNotFound
+		}
+
 		authProvider, err := getAuthProvider()
 		if err != nil {
 			return err

@@ -3,6 +3,7 @@ package image
 import (
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,8 +264,24 @@ func TestNewScanner(t *testing.T) {
 	}
 }
 
+func TestErrRuntimeNotFound_Message(t *testing.T) {
+	msg := ErrRuntimeNotFound.Error()
+	// Three-tier message: names the problem, points at install docs, and offers
+	// the --tarball escape hatch that bypasses the daemon.
+	for _, want := range []string{
+		"container runtime not found",
+		"docs.docker.com",
+		"podman.io",
+		"--tarball",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ErrRuntimeNotFound message missing %q, got: %s", want, msg)
+		}
+	}
+}
+
 func TestIsDockerAvailable(t *testing.T) {
-	result := isDockerAvailable()
+	result := IsDockerAvailable()
 
 	if result {
 		t.Log("Docker is available on this system")
@@ -320,7 +337,7 @@ func TestValidateDockerCommand(t *testing.T) {
 }
 
 func TestImageExistsLocally(t *testing.T) {
-	if !isDockerAvailable() {
+	if !IsDockerAvailable() {
 		t.Skip("Docker/Podman not available, skipping imageExistsLocally tests")
 	}
 
