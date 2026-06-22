@@ -265,6 +265,17 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		resolvedRegion = p.cachedRegion
 	}
 
+	// Warm the on-disk cache from the resolved region too. The block above only
+	// caches result.Region (the response body); since the JWT claim is the
+	// primary signal, a server that reports the region only in the token would
+	// otherwise leave the cache cold and force region re-discovery on every
+	// refresh. Persisting resolvedRegion keeps the next token exchange's region
+	// hint warm whichever signal the server uses. (skip if unchanged)
+	if resolvedRegion != "" && resolvedRegion != p.cachedRegion {
+		saveCachedRegion(p.config.ClientID, resolvedRegion)
+		p.cachedRegion = resolvedRegion
+	}
+
 	p.credentials = &JWTCredentials{
 		Token:     result.Token,
 		TenantID:  claims.CustomerID,
