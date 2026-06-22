@@ -296,8 +296,9 @@ func getAPIBaseURL() string {
 	if useDev {
 		return devBaseURL
 	}
+	// armis:ignore cwe:918 reason:RegionalBaseURL is a strict allowlist switch returning only hardcoded hosts; an unrecognized region falls through to the primary host, so region cannot redirect requests to an arbitrary host
 	if region != "" {
-		return auth.RegionalBaseURL(region)
+		return auth.RegionalBaseURL(region) // armis:ignore cwe:918 reason:RegionalBaseURL allowlists hosts (hardcoded switch); unknown region falls back to primary host, so region cannot point requests at an attacker-chosen host
 	}
 	return productionBaseURL
 }

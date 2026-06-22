@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `auth`: the Armis cloud region is now auto-detected from your credentials, so non-US customers no longer need to pass `--region` on every scan. The token exchange already discovers the region server-side and returns it in the JWT (with a response-body fallback for older tokens); the CLI now reads that region and routes the region-pinned data plane (upload, status polling, results) to the matching host automatically. Explicit configuration still wins — `ARMIS_API_URL`, `--dev`, and `--region`/`ARMIS_REGION` are honored ahead of the discovered region, and legacy Basic auth or tokens without a region claim fall back to the primary host. (PPSC-1018)
+
 ### Deprecated
 
 ### Removed
