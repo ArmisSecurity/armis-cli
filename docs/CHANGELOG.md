@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan`: the `--include-non-exploitable` filter now correctly hides low/medium exploitability findings. The backend's exploitability label schema changed from a boolean (`Exploitable: true/false`) to a graded one (`Exploitability Level: low/medium/high`), which left the old filter matching nothing — the flag was effectively a no-op. Findings graded low or medium are now hidden by default, while high-exploitability and ungraded findings (SCA, container CVEs, false positives) are always shown. Pass `--include-non-exploitable` to restore the previous behavior of showing every finding (PPSC-1015)
+
 ### Security
 
 ---
