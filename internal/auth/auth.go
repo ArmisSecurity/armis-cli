@@ -254,11 +254,22 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		return fmt.Errorf("failed to parse JWT: %w", err)
 	}
 
+	// Resolve the deployment region for data-plane routing. The JWT region claim
+	// is the primary signal, but it is optional (older tokens omit it). When it is
+	// absent, fall back to the region the auth service discovered — by this point
+	// p.cachedRegion holds either the value just returned in the response body or
+	// the previously cached value for this client_id. This keeps GetRegion (and
+	// thus automatic data-plane routing) working whichever signal the server sends.
+	resolvedRegion := claims.Region
+	if resolvedRegion == "" {
+		resolvedRegion = p.cachedRegion
+	}
+
 	p.credentials = &JWTCredentials{
 		Token:     result.Token,
 		TenantID:  claims.CustomerID,
 		ExpiresAt: claims.ExpiresAt,
-		Region:    claims.Region,
+		Region:    resolvedRegion,
 	}
 
 	return nil

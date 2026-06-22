@@ -188,7 +188,7 @@ func init() {
 	// JWT authentication
 	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", "", "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
 	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", "", "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
+	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override Armis cloud region (auto-detected from credentials by default) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
@@ -284,6 +284,11 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 // Precedence: ARMIS_API_URL override > --dev > --region > production. The region
 // must feed the upload endpoint as well as the token exchange; otherwise a
 // region-scoped JWT is presented to the global host and rejected with a 401.
+//
+// This resolves the URL from explicit configuration only (it runs before
+// authentication, so it cannot know the token's region). Use
+// resolveDataPlaneURL once an AuthProvider exists to also honor the
+// auto-discovered region.
 func getAPIBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
 		return override // armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
@@ -295,6 +300,34 @@ func getAPIBaseURL() string {
 		return auth.RegionalBaseURL(region)
 	}
 	return productionBaseURL
+}
+
+// resolveDataPlaneURL returns the base URL for region-pinned data-plane calls
+// (upload, status polling, results fetch).
+//
+// The data plane is physically region-pinned, but the auth endpoint
+// auto-discovers the region server-side: a token exchange against the primary
+// host succeeds even for a non-US customer and returns a region-scoped JWT. So
+// when the user has not pinned a region explicitly, we read the region the auth
+// service issued in that JWT and route the data plane to the matching host
+// automatically — sparing EU (and future-region) customers from passing
+// --region on every scan.
+//
+// Explicit configuration always wins: ARMIS_API_URL, --dev, and
+// --region/ARMIS_REGION are honored ahead of the discovered region. When none
+// of those are set and the region cannot be discovered (legacy Basic auth, or
+// an older token without a region claim), it falls back to getAPIBaseURL.
+func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) string {
+	if region == "" && !useDev && os.Getenv("ARMIS_API_URL") == "" {
+		if discovered, err := authProvider.GetRegion(ctx); err == nil && discovered != "" {
+			dataPlaneURL := auth.RegionalBaseURL(discovered)
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Auto-detected region %q from token; routing data plane to %s\n", discovered, dataPlaneURL)
+			}
+			return dataPlaneURL
+		}
+	}
+	return getAPIBaseURL()
 }
 
 // getAuthProvider creates an AuthProvider based on the provided credentials.
