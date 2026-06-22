@@ -229,14 +229,15 @@ If you see "command not found" after installation:
 
 ### Try it without credentials
 
-No Armis account needed — audit your project's dependencies for supply-chain risk in one command:
+No Armis account needed — audit your project's dependencies for supply-chain risk in one command. Run it from a project directory that contains a supported lockfile (e.g. `package-lock.json`, `poetry.lock`, `pom.xml`):
 
 ```bash
 brew install armissecurity/tap/armis-cli
+cd path/to/your/project
 armis-cli supply-chain check
 ```
 
-This checks your lockfile against public registries (npm, PyPI, Maven Central) for recently published packages — a common signal of typosquatting or compromised maintainers. See [Supply Chain Protection](#supply-chain-protection) for details. To scan code for vulnerabilities and secrets, set up authentication below.
+This checks your lockfile against public registries (npm, PyPI, Maven Central) for recently published packages — a common signal of typosquatting or compromised maintainers. If no lockfile is found, the command reports `no lockfile detected` — point it at a project with `armis-cli supply-chain check <path>` or `--lockfile <file>`. See [Supply Chain Protection](#supply-chain-protection) for details. To scan code for vulnerabilities and secrets, set up authentication below.
 
 ### Set up authentication
 
