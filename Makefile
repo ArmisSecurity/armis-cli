@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint scan help tools coverage
+.PHONY: build install clean test lint lint-clean scan help tools coverage
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
@@ -16,6 +16,7 @@ help:
 	@echo "  test       - Run tests with coverage"
 	@echo "  coverage   - Show coverage report"
 	@echo "  lint       - Run linters"
+	@echo "  lint-clean - Clear the golangci-lint cache, then run linters"
 	@echo "  scan       - Run security scan on this repository"
 	@echo "  release    - Build for multiple platforms"
 	@echo "  tools      - Install dev tools (gotestsum)"
@@ -66,6 +67,15 @@ tools:
 lint:
 	@echo "Running linters..."
 	@which golangci-lint > /dev/null || (echo "golangci-lint not installed" && exit 1)
+	golangci-lint run
+
+# Sibling git worktrees that share this module path can pollute golangci-lint's
+# goconst cache, surfacing phantom violations from ../<other-worktree>/ paths.
+# Clearing the cache first removes them (see CLAUDE.md "Linting").
+lint-clean:
+	@echo "Clearing golangci-lint cache and running linters..."
+	@which golangci-lint > /dev/null || (echo "golangci-lint not installed" && exit 1)
+	golangci-lint cache clean
 	golangci-lint run
 
 scan:

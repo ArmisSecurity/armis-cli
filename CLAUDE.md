@@ -110,6 +110,8 @@ Tests use table-driven patterns. Mock HTTP responses with `internal/testutil/htt
 
 Uses golangci-lint v2 config (`.golangci.yml`) with: errcheck, govet, ineffassign, staticcheck, unused, gosec, goconst, misspell.
 
+If `make lint` reports issues from `../*/` paths (sibling git worktrees), the goconst cache has bled across worktrees sharing this module path. Run `golangci-lint cache clean` then re-run, or use the `make lint-clean` target which does both.
+
 ## Conventions
 
 - Error wrapping: always use `fmt.Errorf("context: %w", err)`

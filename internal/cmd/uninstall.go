@@ -302,9 +302,15 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	return nil
 }
 
+// confirmOut is where confirm() writes its prompt. It defaults to stderr (all
+// interactive output goes to stderr), but is a package var so tests can redirect
+// it to io.Discard — the unterminated prompt otherwise corrupts gotestsum's
+// go-test-json parser and produces false failures under `make test`.
+var confirmOut io.Writer = os.Stderr
+
 // armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 func confirm(prompt string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
+	_, _ = fmt.Fprintf(confirmOut, "%s [y/N] ", prompt)
 	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))
 	if !scanner.Scan() {
 		return false

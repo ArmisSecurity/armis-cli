@@ -74,6 +74,14 @@ func TestScanCmd(t *testing.T) {
 }
 
 func TestScanRepoCmd(t *testing.T) {
+	// The "fails without base URL" subtest falls through to a real scan attempt,
+	// which starts the upload spinner. Its ANSI/carriage-return frames corrupt
+	// gotestsum's go-test-json PASS-line parser, producing false "failures" under
+	// `make test` even though `go test` passes. Suppress progress for all subtests.
+	originalNoProgress := noProgress
+	noProgress = true
+	t.Cleanup(func() { noProgress = originalNoProgress })
+
 	t.Run("repo command exists", func(t *testing.T) {
 		if scanRepoCmd == nil {
 			t.Fatal("scanRepoCmd should not be nil")
