@@ -93,19 +93,21 @@ Both documents are generated in [CycloneDX](https://cyclonedx.org/) format, an O
 ### Basic Usage
 
 ```bash
+# ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET set via env (JWT auto-extracts the tenant ID)
+
 # Generate SBOM for a repository scan
-armis-cli scan repo . --tenant-id my-tenant --sbom
+armis-cli scan repo . --sbom
 
 # Generate both SBOM and VEX
-armis-cli scan repo . --tenant-id my-tenant --sbom --vex
+armis-cli scan repo . --sbom --vex
 
 # Specify custom output paths
-armis-cli scan repo . --tenant-id my-tenant \
+armis-cli scan repo . \
   --sbom --sbom-output ./reports/sbom.json \
   --vex --vex-output ./reports/vex.json
 
 # Generate SBOM for container image scan
-armis-cli scan image nginx:latest --tenant-id my-tenant --sbom --vex
+armis-cli scan image nginx:latest --sbom --vex
 ```
 
 ### Flags

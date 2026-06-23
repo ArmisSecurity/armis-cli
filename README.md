@@ -439,6 +439,32 @@ armis-cli scan repo ./my-app --format json --fail-on HIGH,CRITICAL
 armis-cli scan repo ./my-app --sbom --vex
 ```
 
+#### Scan Only Changed Files
+
+Speed up PR and pre-commit feedback by scanning only the files that changed,
+instead of the whole repository. The `--changed` flag has three modes:
+
+```bash
+# All uncommitted changes (staged + unstaged + untracked) vs HEAD
+armis-cli scan repo . --changed
+
+# Staged changes only (what `git commit` would include)
+armis-cli scan repo . --changed=staged
+
+# Changes relative to a branch, tag, or commit (great for PRs)
+armis-cli scan repo . --changed=main
+armis-cli scan repo . --changed=origin/main
+armis-cli scan repo . --changed=HEAD~3
+```
+
+Notes:
+
+- Requires a git repository. If no files changed, the scan exits early with nothing to do.
+- `staged` and `uncommitted` are reserved keywords and cannot be used as ref names.
+- `--changed` is mutually exclusive with `--include-files` (use one or the other).
+
+See [PR Scanning with Changed Files](docs/CI-INTEGRATION.md#pr-scanning-with-changed-files) for CI usage.
+
 ### Scan Container Image
 
 Scans a container image (local or remote) or a tarball.
@@ -474,6 +500,23 @@ armis-cli scan image nginx:latest --pull=always
 # Never pull, require local image (for air-gapped environments)
 armis-cli scan image nginx:latest --pull=never
 ```
+
+### Other Commands
+
+```bash
+# Detect AI coding agents (Claude Code, Cursor, Copilot, ...) and whether
+# the Armis AppSec MCP is enabled. Run with sudo to scan all user profiles.
+armis-cli agent-detection
+
+# Install a git pre-commit hook that blocks commits unless scanning passed.
+# Use --fail-open to warn instead of block, or --remove to uninstall.
+armis-cli hook init
+
+# Generate a shell completion script (bash, zsh, fish, powershell).
+armis-cli completion zsh > "${fpath[1]}/_armis-cli"
+```
+
+Run `armis-cli <command> --help` for the full flag reference of any command.
 
 ---
 

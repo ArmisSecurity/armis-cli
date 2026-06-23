@@ -77,7 +77,7 @@ Or manually:
 ```bash
 export ARMIS_CLIENT_ID="your-client-id"
 export ARMIS_CLIENT_SECRET="your-client-secret"
-./bin/armis scan repo . --fail-on CRITICAL,HIGH
+armis-cli scan repo . --fail-on CRITICAL,HIGH
 ```
 
 ## Viewing Results
@@ -109,7 +109,7 @@ Edit `.github/workflows/cli-self-scan.yml`:
 ```yaml
 - name: Run security scan (SARIF)
   run: |
-    ./bin/armis scan repo . \
+    armis-cli scan repo . \
       --format sarif \
       --fail-on CRITICAL,HIGH,MEDIUM \  # Add MEDIUM here
       --output armis-results.sarif
@@ -117,17 +117,18 @@ Edit `.github/workflows/cli-self-scan.yml`:
 
 ### Adding Exclusions
 
-If you need to exclude certain paths:
+To exclude certain paths from scans, create a `.armisignore` file in your
+repository root (gitignore-compatible syntax). Matching files are excluded
+before the upload archive is created:
 
-```yaml
-- name: Run security scan (SARIF)
-  run: |
-    ./bin/armis scan repo . \
-      --format sarif \
-      --fail-on CRITICAL,HIGH \
-      --exclude "test/*,vendor/*" \
-      --output armis-results.sarif
+```text
+test/*
+vendor/*
 ```
+
+See the [.armisignore section in FEATURES.md](FEATURES.md#-armisignore-support)
+for the full pattern syntax. No scan-command flag is needed — the file is
+picked up automatically.
 
 ### Running on Specific Branches Only
 

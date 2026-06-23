@@ -361,6 +361,12 @@ jobs:
 - Only runs if files actually changed
 - Excludes test files that may contain intentional security test patterns
 
+> **Tip — native `--changed` flag:** Outside GitHub Actions (local pre-commit
+> hooks, GitLab, Jenkins, etc.), the CLI can detect changed files itself with no
+> extra tooling. Use `armis-cli scan repo . --changed=origin/main` to scan only
+> what differs from the base branch, or `--changed` for uncommitted work. See
+> [Scan Only Changed Files](../README.md#scan-only-changed-files) for all three modes.
+
 ---
 
 ### Scheduled Repository Scans
