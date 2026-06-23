@@ -181,6 +181,15 @@ func init() {
 	// The help function is inherited by all subcommands added later
 	SetupHelp(rootCmd)
 
+	// Append a help hint to flag-parse errors. SilenceUsage suppresses the full
+	// usage dump, so without this an "unknown flag" error leaves the user with no
+	// next step. Cobra walks up to the parent's FlagErrorFunc when a subcommand
+	// has none, so registering it on rootCmd covers every subcommand. CommandPath()
+	// yields the full path (e.g. "armis-cli scan repo"), unlike Name() (leaf only).
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return fmt.Errorf("%w\n\nRun '%s --help' for usage", err, cmd.CommandPath())
+	})
+
 	// Legacy Basic authentication
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "API token for Basic authentication (env: ARMIS_API_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", "", "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")

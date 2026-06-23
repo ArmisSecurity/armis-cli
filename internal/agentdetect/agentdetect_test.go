@@ -185,6 +185,36 @@ func TestFormatPlain(t *testing.T) {
 	if !strings.Contains(output, "Copilot(MCP:false)") {
 		t.Error("expected 'Copilot(MCP:false)' in output")
 	}
+	// At least one agent has MCP:false, so the remediation hint must appear.
+	if !strings.Contains(output, "armis-cli install") {
+		t.Errorf("expected install hint when an agent lacks MCP, got:\n%s", output)
+	}
+}
+
+func TestFormatPlain_AllMCPInstalled_NoHint(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+
+	result := &ScanResult{
+		Users: []UserResult{
+			{
+				User: "John",
+				Agents: []DetectedAgent{
+					{Name: "ClaudeCode", MCPInstalled: true, User: "John"},
+					{Name: "Cursor", MCPInstalled: true, User: "John"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := FormatPlain(result, &buf); err != nil {
+		t.Fatalf("FormatPlain() error: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "armis-cli install") {
+		t.Errorf("did not expect install hint when all agents have MCP, got:\n%s", buf.String())
+	}
 }
 
 func TestFormatPlain_NoAgentsForUser(t *testing.T) {

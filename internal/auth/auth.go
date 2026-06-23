@@ -92,7 +92,7 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET for JWT auth, or ARMIS_API_TOKEN for legacy auth")
+		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET (or use --client-id / --client-secret) for JWT auth, or ARMIS_API_TOKEN (--token) for legacy auth")
 	}
 
 	return p, nil

@@ -826,6 +826,29 @@ func TestPrintUpdateNotification(t *testing.T) {
 	})
 }
 
+// TestFlagErrorFunc_AppendsHelpHint verifies the FlagErrorFunc registered on
+// rootCmd appends a "--help" hint using the full command path (not just the leaf
+// name) so users get an actionable next step despite SilenceUsage.
+func TestFlagErrorFunc_AppendsHelpHint(t *testing.T) {
+	fn := rootCmd.FlagErrorFunc()
+	if fn == nil {
+		t.Fatal("expected a FlagErrorFunc to be registered on rootCmd")
+	}
+
+	// scanRepoCmd is a nested subcommand; its full path is "armis-cli scan repo".
+	err := fn(scanRepoCmd, fmt.Errorf("unknown flag: --bogus-flag"))
+	if err == nil {
+		t.Fatal("expected FlagErrorFunc to return an error")
+	}
+	msg := err.Error()
+	if !testutil.ContainsSubstring(msg, "unknown flag: --bogus-flag") {
+		t.Errorf("expected original flag error preserved, got: %s", msg)
+	}
+	if !testutil.ContainsSubstring(msg, "armis-cli scan repo --help") {
+		t.Errorf("expected full-path help hint 'armis-cli scan repo --help', got: %s", msg)
+	}
+}
+
 // TestGetAuthProvider_NoCredentials tests auth provider creation with no credentials.
 func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	// Save original values
