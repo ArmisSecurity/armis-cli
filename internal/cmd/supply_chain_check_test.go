@@ -320,6 +320,32 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 	}
 }
 
+// TestRunSupplyChainCheck_FailOnValidatedFirst verifies --fail-on is validated at
+// the very top of runSupplyChainCheck, before lockfile detection and the scan
+// (PPSC-1006 #11). With a bogus --fail-on AND no lockfile present, the error must
+// be the fail-on validation error, not "no lockfile detected" — proving the
+// validation runs first and no scan output is produced.
+func TestRunSupplyChainCheck_FailOnValidatedFirst(t *testing.T) {
+	chdirTemp(t) // empty dir: no lockfile, no network
+
+	origAll, origFailOn := scAll, failOn
+	t.Cleanup(func() { scAll, failOn = origAll, origFailOn })
+	scAll = true
+	failOn = []string{"bogus"}
+
+	cmd := newWrapTestCmd()
+	err := runSupplyChainCheck(cmd, []string{"."})
+	if err == nil {
+		t.Fatal("expected error for invalid --fail-on")
+	}
+	if !strings.Contains(err.Error(), "invalid severity level") {
+		t.Errorf("expected fail-on validation error to fire before lockfile detection, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "no lockfile detected") {
+		t.Errorf("--fail-on must be validated before lockfile detection, got: %v", err)
+	}
+}
+
 // TestSupplyChainCheckOutputFlagRegistered guards the exact regression this PR
 // fixes: the real scCheckCmd (built by init()) must expose -o/--output bound to
 // the outputFile var that runSupplyChainCheck reads. Unlike the functional test

@@ -83,10 +83,12 @@ func TestScanRepoCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("repo command requires exactly one arg", func(t *testing.T) {
+	t.Run("repo command accepts zero or one arg", func(t *testing.T) {
+		// PPSC-1006 #18: the path is optional and defaults to "." in RunE, so
+		// MaximumNArgs(1) accepts zero args; only two or more are rejected.
 		err := scanRepoCmd.Args(scanRepoCmd, []string{})
-		if err == nil {
-			t.Error("Expected error when no args provided")
+		if err != nil {
+			t.Errorf("Expected no error when no args provided (path defaults to '.'), got %v", err)
 		}
 
 		err = scanRepoCmd.Args(scanRepoCmd, []string{"path1", "path2"})
@@ -426,6 +428,76 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		}
 		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --color value") {
 			t.Errorf("expected error from root PreRunE, got: %v", err)
+		}
+	})
+
+	// --fail-on is validated in PersistentPreRunE (PPSC-1006 #17) so a typo surfaces
+	// as a flag error before auth, not as a silent default after auth succeeds.
+	t.Run("fail-on", func(t *testing.T) {
+		originalFailOn := failOn
+		t.Cleanup(func() { failOn = originalFailOn })
+
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = testColorAuto
+
+		t.Run("valid uppercase passes", func(t *testing.T) {
+			failOn = []string{"HIGH", "CRITICAL"}
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected no error for valid --fail-on, got: %v", err)
+			}
+		})
+
+		t.Run("lowercase accepted and normalized in place", func(t *testing.T) {
+			failOn = []string{"medium"}
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected lowercase --fail-on to be accepted, got: %v", err)
+			}
+			if failOn[0] != "MEDIUM" {
+				t.Errorf("expected --fail-on normalized to MEDIUM, got: %q", failOn[0])
+			}
+		})
+
+		t.Run("typo returns error", func(t *testing.T) {
+			failOn = []string{"HIGHT"}
+			err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+			if err == nil {
+				t.Error("expected error for invalid --fail-on 'HIGHT'")
+			}
+			if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid severity level") {
+				t.Errorf("error should mention 'invalid severity level', got: %v", err)
+			}
+		})
+	})
+
+	// --sbom-output/--vex-output without their generation flags is a non-fatal
+	// warning, now emitted before auth (PPSC-1006 #25). The pre-run must still
+	// succeed (no error) on this path.
+	t.Run("sbom/vex output without generation flag warns but does not error", func(t *testing.T) {
+		originalFailOn := failOn
+		originalSBOMOutput := sbomOutput
+		originalVEXOutput := vexOutput
+		originalGenerateSBOM := generateSBOM
+		originalGenerateVEX := generateVEX
+		t.Cleanup(func() {
+			failOn = originalFailOn
+			sbomOutput = originalSBOMOutput
+			vexOutput = originalVEXOutput
+			generateSBOM = originalGenerateSBOM
+			generateVEX = originalGenerateVEX
+		})
+
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = testColorAuto
+		failOn = []string{"CRITICAL"}
+		sbomOutput = "sbom.json"
+		vexOutput = "vex.json"
+		generateSBOM = false
+		generateVEX = false
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error on misuse-warning path, got: %v", err)
 		}
 	})
 }
