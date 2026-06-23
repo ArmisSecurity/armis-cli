@@ -115,11 +115,20 @@ func TestFormatNotification(t *testing.T) {
 	if !strings.Contains(result, testIcon) {
 		t.Errorf("notification should contain icon, got: %s", result)
 	}
+	// Check that it links the release notes for the latest version
+	if !strings.Contains(result, "releases/tag/v1.1.0") {
+		t.Errorf("notification should link release notes for latest version, got: %s", result)
+	}
 
 	// Check with v prefix
 	result = FormatNotification("v1.0.0", "v1.1.0", testIcon)
 	if !strings.Contains(result, "v1.1.0") {
 		t.Errorf("notification should normalize version, got: %s", result)
+	}
+	// The release-notes URL must carry exactly one "v" prefix even when the
+	// caller passes a v-prefixed version (guards against "tag/vv1.1.0").
+	if !strings.Contains(result, "releases/tag/v1.1.0") || strings.Contains(result, "tag/vv") {
+		t.Errorf("notification should normalize release-notes URL, got: %s", result)
 	}
 }
 

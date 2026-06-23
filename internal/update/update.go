@@ -315,6 +315,10 @@ func FormatNotification(current, latest, icon string) string {
 	if updateCmd != "" {
 		msg += fmt.Sprintf("   %s\n", styles.MutedText.Render(updateCmd))
 	}
+	// Link the release notes so the user can review breaking changes before
+	// upgrading. latest is already v-trimmed above, so prefix a literal "v".
+	releaseURL := "https://github.com/ArmisSecurity/armis-cli/releases/tag/v" + latest
+	msg += fmt.Sprintf("   %s\n", styles.MutedText.Render(releaseURL))
 	return msg
 }
 
