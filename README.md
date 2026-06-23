@@ -512,7 +512,7 @@ armis-cli agent-detection
 # Use --fail-open to warn instead of block, or --remove to uninstall.
 armis-cli hook init
 
-# Generate a shell completion script (bash, zsh, fish, powershell).
+# Generate a shell completion script (bash, zsh, fish, PowerShell).
 armis-cli completion zsh > "${fpath[1]}/_armis-cli"
 ```
 
