@@ -33,11 +33,17 @@ var scanImageCmd = &cobra.Command{
 		// flag error rather than hiding behind an auth failure. This mirrors the
 		// allowlist in determinePullBehavior, which only runs after auth + the docker
 		// check; "" is excluded here because the flag default is "missing".
-		switch pullPolicy {
-		case "always", "missing", "never":
-			// valid
-		default:
-			return fmt.Errorf("invalid --pull value %q: must be one of [always missing never]", pullPolicy)
+		//
+		// Only validate on the image-name path: --pull is documented as "Ignored
+		// when --tarball is used" (tarball scans never pull), so rejecting a bad
+		// --pull alongside --tarball would contradict the flag's contract.
+		if tarballPath == "" {
+			switch pullPolicy {
+			case "always", "missing", "never":
+				// valid
+			default:
+				return fmt.Errorf("invalid --pull value %q: must be one of [always missing never]", pullPolicy)
+			}
 		}
 
 		if tarballPath == "" && len(args) == 0 {

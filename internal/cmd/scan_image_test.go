@@ -171,4 +171,25 @@ func TestScanImageRunE_PullPolicyValidation(t *testing.T) {
 			}
 		})
 	}
+
+	// --pull is documented as "Ignored when --tarball is used", so a bad --pull
+	// must NOT be rejected on the tarball path. With --tarball set to a missing
+	// file, RunE skips the pull check and reaches the tarball-existence guard;
+	// seeing that error (not the pull error) proves --pull was ignored.
+	t.Run("invalid pull ignored when tarball is set", func(t *testing.T) {
+		pullPolicy = "badvalue"
+		tarballPath = "/nonexistent/does-not-exist.tar"
+		t.Cleanup(func() { tarballPath = "" })
+
+		err := scanImageCmd.RunE(scanImageCmd, []string{})
+		if err == nil {
+			t.Fatal("expected tarball-does-not-exist error")
+		}
+		if testutil.ContainsSubstring(err.Error(), "invalid --pull value") {
+			t.Errorf("--pull must be ignored with --tarball, but it was rejected: %v", err)
+		}
+		if !testutil.ContainsSubstring(err.Error(), "tarball does not exist") {
+			t.Errorf("expected tarball-does-not-exist error, got: %v", err)
+		}
+	})
 }
