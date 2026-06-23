@@ -192,6 +192,13 @@ func init() {
 
 	// Legacy Basic authentication
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	// Signal that Basic auth is the legacy path: MarkDeprecated prints a stderr
+	// warning whenever --token is used and hides it from --help; the shorthand
+	// (-t) needs its own call. Both error only on an unknown flag name, so the
+	// returns are intentionally discarded. The flag still functions — auth is
+	// unchanged; this is signposting toward JWT (--client-id / --client-secret).
+	_ = rootCmd.PersistentFlags().MarkDeprecated("token", "use --client-id / --client-secret (JWT) instead; see ARMIS_CLIENT_ID + ARMIS_CLIENT_SECRET")
+	_ = rootCmd.PersistentFlags().MarkShorthandDeprecated("token", "use --client-id / --client-secret (JWT) instead")
 	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", "", "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 
 	// JWT authentication
