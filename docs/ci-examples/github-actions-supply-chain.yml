@@ -46,4 +46,26 @@ jobs:
         run: |
           armis-cli supply-chain check \
             --min-age 72h \
-            --fail-on medium
+            --fail-on medium \
+            --report supply-chain-report.json
+
+      # The --report file is the audit trail security teams gate on: it records
+      # the policy, every checked/blocked package, and the install status.
+      - name: Upload supply-chain compliance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-report
+          path: supply-chain-report.json
+
+# ── Handling a known transitive conflict ──────────────────────────────────────
+# If a freshly published TRANSITIVE dependency keeps failing a wrapped install
+# (an older surviving version no longer satisfies a parent's range), and you have
+# reviewed it and accept the risk, exempt that one package:
+#
+#     ARMIS_SUPPLY_CHAIN_SKIP=scheduler npm ci
+#
+# Note this persists in the environment you set it in and exempts ALL future
+# versions of that package. For a permanent, reviewed exception prefer adding it
+# to `exclusions:` in .armis-supply-chain.yaml instead. See docs/FEATURES.md →
+# "Supply Chain Enforcement" for the full escape-hatch hierarchy.

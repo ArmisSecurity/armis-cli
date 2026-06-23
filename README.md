@@ -631,13 +631,24 @@ version: 1
 min-age: 72h
 exclusions:
   - "@myorg/*"
-# ecosystems:        # optional: restrict to specific ecosystems (default: all detected)
+# ecosystems:          # optional: restrict to specific ecosystems (default: all detected)
 #   - npm
 #   - pip
+# transitive-policy: warn   # optional: let young TRANSITIVE deps through with a warning
+#                           # (direct deps still blocked); default: block
 fail-open: false
 ```
 
-Bypass for a single command with `ARMIS_SUPPLY_CHAIN_SKIP=<pkg>`; disable enforcement entirely with `ARMIS_SUPPLY_CHAIN=off`.
+### Unblocking a build (most surgical → most blunt)
+
+When a brand-new release is blocking you, prefer the most reviewable option:
+
+1. **Allow one package** (persists in this env, exempts its future versions): `ARMIS_SUPPLY_CHAIN_SKIP=<pkg> npm install`
+2. **Permanent team exception**: add `<pkg>` to `exclusions:` in `.armis-supply-chain.yaml`
+3. **Relax the window for all packages**: edit `min-age:` in `.armis-supply-chain.yaml`
+4. **Emergency kill switch**: `ARMIS_SUPPLY_CHAIN=off npm install`
+
+Because the age proxy is graph-blind, a withheld young version can make a transitive dependency unsatisfiable and fail an install. On the npm family Armis names the culprit (and who required it); you can also opt into `transitive-policy: warn` to let young *transitive* deps through while still blocking young *direct* ones. Generate an audit trail with `ARMIS_SUPPLY_CHAIN_REPORT=<path>` (wrapped installs) or `--report <path>` (`check`). See **[docs/FEATURES.md → Supply Chain Enforcement](docs/FEATURES.md#-supply-chain-enforcement)** for the full model, limitations, and residual-risk notes.
 
 ---
 

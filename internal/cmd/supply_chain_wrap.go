@@ -23,6 +23,7 @@ const (
 	envSCActive        = "ARMIS_SUPPLY_CHAIN_ACTIVE"
 	envSCOff           = "ARMIS_SUPPLY_CHAIN"
 	envSCSkip          = "ARMIS_SUPPLY_CHAIN_SKIP"
+	envSCTransitive    = "ARMIS_SUPPLY_CHAIN_TRANSITIVE"
 	scPrefix           = "[armis]"
 	scSepLen           = 45
 	maxSkipPackages    = 10000
@@ -131,6 +132,15 @@ func canonicalPM(pm string) string {
 func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	policy := resolveWrapPolicy()
 
+	// Apply the env-var override for the transitive policy. ARMIS_SUPPLY_CHAIN_TRANSITIVE
+	// mirrors the config's transitive-policy key for the wrap path (which can't take
+	// flags). Only an explicit "warn" opts in; any other value (including unset)
+	// leaves the resolved policy untouched, so the secure default and a config
+	// "warn" both stand unless deliberately overridden.
+	if raw := os.Getenv(envSCTransitive); raw != "" {
+		policy.TransitivePolicy = supplychain.ParseTransitivePolicy(raw)
+	}
+
 	// pip, uv, and uvx resolve from the PyPI Simple API, a different protocol from
 	// the npm registry, so the proxy must run in PyPI mode (PEP 691/700 JSON file
 	// filtering). All other proxied PMs (npm/npx/pnpm/bun/yarn) speak the npm registry.
@@ -142,10 +152,32 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		mode = supplychain.ModePyPI
 	}
 
+	// Direct-set detection drives the warn-on-transitive policy (WS5). It is only
+	// consulted under TransitivePolicyWarn; in the default block mode the proxy
+	// never asks "is this transitive?", so skip the manifest read entirely. When
+	// warn IS active, an undeterminable direct set (directOK == false) makes the
+	// proxy fail safe — every package is treated as direct and blocked.
+	var directDeps []string
+	if policy.TransitivePolicy == supplychain.TransitivePolicyWarn {
+		var directOK bool
+		directDeps, directOK = supplychain.DirectDependencies(".", pmToEcosystem(canonicalPM(pmName)))
+		if !directOK {
+			// Surface the fail-safe: the user opted into warn but we cannot tell
+			// direct from transitive here, so enforcement stays at block. directDeps
+			// is nil, which the proxy reads as "treat every package as direct".
+			fmt.Fprintf(os.Stderr, "%s supply-chain: warn-on-transitive requested but the direct-dependency set could not be determined (%s); blocking young packages (fail-safe)\n",
+				scPrefix, pmName)
+		}
+	}
+
 	cfg := supplychain.ProxyConfig{
 		Policy:       policy,
 		Mode:         mode,
 		SkipPackages: parseSkipPackages(os.Getenv(envSCSkip)),
+		// Pass nil when undeterminable so the proxy treats every package as direct
+		// (fail-safe block). When warn is off, directDeps is nil too — harmless,
+		// since the proxy never consults it under the block policy.
+		DirectDeps: directDeps,
 	}
 
 	proxy, err := supplychain.NewProxy(cfg)
@@ -188,7 +220,43 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// even when the PM rejected it (e.g. a pin like ^1.17.0 that only the filtered
 	// version satisfies). Report the observed outcome, not the proxy's intent.
 	installOK := err == nil && exitCode == 0
-	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), policy, pmName, installOK)
+
+	// WS2 one-hop conflict check: a deterministic post-install pass over the two
+	// accumulators, run AFTER the PM exits so every metadata document has flowed.
+	// npm-family only (npm metadata embeds per-version dependency ranges; PyPI's
+	// Simple API does not), and recover()-guarded inside EvaluateConstraints so a
+	// semver bug can never affect the already-finished install. Skip it entirely
+	// when the install succeeded — there is no failure to explain.
+	var conflicts []supplychain.ConstraintConflict
+	if !installOK && mode == supplychain.ModeNPM {
+		conflicts = proxy.EvaluateConstraints()
+	}
+
+	warned := proxy.Warned()
+	printWarnThroughSummary(warned, policy)
+	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), policy, pmName, installOK, pmArgs, conflicts)
+
+	// WS3 compliance report: written post-install when ARMIS_SUPPLY_CHAIN_REPORT
+	// is set. Best-effort — a report write never changes the install's exit code.
+	if reportPath := os.Getenv(envSCReport); reportPath != "" {
+		status := statusOK
+		if !installOK {
+			status = statusFailed
+		}
+		rep := buildComplianceReport(reportInput{
+			Policy:        policy,
+			Mode:          "proxy",
+			Ecosystem:     string(pmToEcosystem(canonicalPM(pmName))),
+			Checked:       proxy.Checked(),
+			Blocked:       proxy.Blocked(),
+			Resolved:      proxy.Allowed(),
+			Warned:        warned,
+			Conflicts:     conflicts,
+			InstallStatus: status,
+		})
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:reportPath is the operator's own ARMIS_SUPPLY_CHAIN_REPORT env var naming an output file in their own environment (same trust model as scan's --output and the --report flag); a local CLI writing where its operator configured it crosses no trust boundary, and the value is not attacker-controlled network input
+		writeComplianceReport(reportPath, rep)
+	}
 
 	if err != nil {
 		return err
@@ -199,6 +267,47 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		os.Exit(exitCode)
 	}
 	return nil
+}
+
+// printWarnThroughSummary reports the young transitive dependencies the proxy
+// let through under TransitivePolicyWarn (WS5). It is intentionally a distinct,
+// always-visible warning (not gated on installOK or interactivity): a security
+// team and the developer both need to know a freshly-published package entered
+// the build by policy. Silent under the default block policy (warned is empty).
+func printWarnThroughSummary(warned []supplychain.WarnedPackage, policy supplychain.Policy) {
+	if len(warned) == 0 {
+		return
+	}
+	s := output.GetStyles()
+	sort.Slice(warned, func(i, j int) bool {
+		if warned[i].Age != warned[j].Age {
+			return warned[i].Age < warned[j].Age
+		}
+		return warned[i].Name < warned[j].Name
+	})
+
+	fmt.Fprintf(os.Stderr, "\n%s %s\n",
+		s.MutedText.Render(scPrefix),
+		s.WarningText.Render(fmt.Sprintf("supply-chain: %s allowed through by transitive-policy: warn (younger than %s)",
+			countNoun(len(warned), "young transitive dependency"), formatDurationShort(policy.MinReleaseAge))))
+
+	displayCount := len(warned)
+	if displayCount > maxBlockedDisplay {
+		displayCount = maxBlockedDisplay
+	}
+	for _, w := range warned[:displayCount] {
+		line := fmt.Sprintf("%s@%s", w.Name, w.Version)
+		fmt.Fprintf(os.Stderr, "  %s %s %s\n",
+			s.WarningText.Render("⚠"),
+			s.Bold.Render(line),
+			s.MutedText.Render(optionalAgeToken(w.Age)))
+	}
+	if remaining := len(warned) - displayCount; remaining > 0 {
+		fmt.Fprintf(os.Stderr, "    %s\n", s.MutedText.Render(fmt.Sprintf("… and %d more", remaining)))
+	}
+	fmt.Fprintf(os.Stderr, "  %s %s\n",
+		s.MutedText.Render("Note:"),
+		s.MutedText.Render("direct dependencies are still blocked; only indirect (transitive) packages pass with this warning."))
 }
 
 func execPM(pm string, args []string, extraEnv []string) (int, error) {
@@ -296,7 +405,7 @@ type pkgFilterResult struct {
 	NewAge     time.Duration  // age of the resolved version, 0 when unknown
 }
 
-func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked int, policy supplychain.Policy, pmName string, installOK bool) {
+func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked int, policy supplychain.Policy, pmName string, installOK bool, pmArgs []string, conflicts []supplychain.ConstraintConflict) {
 	s := output.GetStyles()
 
 	if len(blocked) == 0 {
@@ -410,14 +519,12 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 			s.MutedText.Render(fmt.Sprintf("… and %d more", remaining)))
 	}
 
-	// When the package manager did not complete, explain the likely link to the
-	// filter without asserting it: the failure could be unrelated (a typo, a
-	// network error), but a pin that only the filtered version satisfies is the
-	// common cause, so point at the actionable fix.
+	// When the package manager did not complete, name the likely culprit instead
+	// of a generic note. The failure could still be unrelated (a typo, a network
+	// error), so the language stays hedged — but pointing at a specific package is
+	// far more actionable than "if a dependency pins a version…".
 	if !installOK {
-		fmt.Fprintf(os.Stderr, "\n  %s %s\n",
-			s.MutedText.Render("Note:"),
-			s.MutedText.Render("the install did not complete. If a dependency pins a version newer than the policy window, relax the constraint or exclude the package."))
+		printFailureCulprits(s, results, conflicts, policy, pmName, pmArgs)
 	}
 
 	// One-time rationale: the first time a user sees a filter on an interactive
@@ -430,18 +537,189 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 		markRationaleShown()
 	}
 
-	// Footer. A long list earns the full divider and copy-paste disable command;
-	// the common short case gets a single terse hint instead of heavy chrome.
-	if verbose {
-		fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render(strings.Repeat("─", scSepLen)))
-		fmt.Fprintf(os.Stderr, "  %s %s\n\n",
-			s.MutedText.Render("Disable:"),
-			s.Bold.Render(fmt.Sprintf("%s=off %s install", envSCOff, pmName)))
-	} else {
-		fmt.Fprintf(os.Stderr, "  %s %s\n",
-			s.MutedText.Render("Disable:"),
-			s.Bold.Render(fmt.Sprintf("%s=off", envSCOff)))
+	// Footer. The global "off" kill switch is the most-nuclear, least-secure
+	// escape hatch, so it is shown only on the SUCCESS path (where the user is
+	// merely curious how to opt out), never on a failure. On a failed install
+	// printFailureCulprits already laid out the surgical→nuclear remediation
+	// ladder; appending "Disable: ...=off" here would invert that ordering and
+	// nudge a frustrated developer straight to the blunt instrument.
+	if installOK {
+		// A long list earns the full divider and copy-paste disable command; the
+		// common short case gets a single terse hint instead of heavy chrome.
+		if verbose {
+			fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render(strings.Repeat("─", scSepLen)))
+			fmt.Fprintf(os.Stderr, "  %s %s\n\n",
+				s.MutedText.Render("Disable:"),
+				s.Bold.Render(fmt.Sprintf("%s=off %s install", envSCOff, pmName)))
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s %s\n",
+				s.MutedText.Render("Disable:"),
+				s.Bold.Render(fmt.Sprintf("%s=off", envSCOff)))
+		}
 	}
+}
+
+// printFailureCulprits is WS1's core: on a failed install, name the specific
+// package(s) the age filter most likely broke and lay out the remediation
+// hatches surgical-first, nuclear-last. It composes three signals, strongest to
+// weakest:
+//
+//  1. WS2 conflicts (npm-family): a removed version satisfied a dependent's
+//     range and no surviving version does — the canonical transitive break, so
+//     it names both the dependency and who required it.
+//  2. No-fallback packages (NewVersion == ""): stripped to nothing, so if the
+//     install failed they are the overwhelmingly likely cause.
+//  3. Otherwise: every filtered package had a fallback, so the cause is less
+//     certain — list them as candidates and stay hedged.
+//
+// Language stays hedged throughout ("likely", "may") because the install could
+// have failed for an unrelated reason. The remediation ladder is ordered SKIP →
+// exclusions → min-age (surgical/reviewable → broad), and deliberately omits the
+// global ARMIS_SUPPLY_CHAIN=off kill switch so a 3am developer does not reach for
+// the nuclear option first.
+func printFailureCulprits(s *output.Styles, results []pkgFilterResult, conflicts []supplychain.ConstraintConflict, policy supplychain.Policy, pmName string, pmArgs []string) {
+	policyShort := formatPolicyShort(policy.MinReleaseAge)
+
+	// Lead with protection, not apology: state the security win first so the
+	// developer feels protected, not obstructed. The self-ID prefix makes the
+	// source obvious to someone who didn't add armis to their pipeline.
+	fmt.Fprintf(os.Stderr, "\n  %s %s\n",
+		s.Bold.Render("[armis supply-chain]"),
+		s.MutedText.Render("the install did not complete. This tool withheld brand-new releases on purpose — a common supply-chain attack vector. The block may be why the install failed (or it could be unrelated, e.g. a typo or network error)."))
+
+	// nuclearShown tracks whether we named at least one specific culprit; it
+	// gates the closing "managed by your platform team" pointer.
+	named := false
+
+	// (1) WS2 conflicts — the strongest, most specific signal. Each styled span is
+	// a separate Fprintf arg (never a Render nested inside another Render, which
+	// would terminate the outer color early); the package/range names are bolded.
+	for _, c := range conflicts {
+		named = true
+		fmt.Fprintf(os.Stderr, "  %s %s %s %s %s %s %s\n",
+			s.WarningText.Render("→"),
+			s.Bold.Render(c.Dep),
+			s.MutedText.Render(fmt.Sprintf("has no version older than the %s policy that satisfies", policyShort)),
+			s.Bold.Render(c.Range),
+			s.MutedText.Render("(required by"),
+			s.Bold.Render(c.ByPkg+")"),
+			s.MutedText.Render("— this is the likely cause."))
+	}
+
+	// (2) No-fallback packages.
+	var noFallback, withFallback []pkgFilterResult
+	for _, r := range results {
+		if r.NewVersion == "" {
+			noFallback = append(noFallback, r)
+		} else {
+			withFallback = append(withFallback, r)
+		}
+	}
+	for _, r := range noFallback {
+		named = true
+		// The muted clause optionally leads with the blocked version's age token,
+		// then the explanation. Kept in one rendered span (separate from the bolded
+		// name@version) so colors don't nest.
+		explanation := fmt.Sprintf("has no version older than the %s policy — if a dependency requires it, this is why the install failed.", policyShort)
+		if tok := optionalAgeToken(r.OldAge); tok != "" {
+			explanation = tok + " " + explanation
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s %s\n",
+			s.WarningText.Render("→"),
+			s.Bold.Render(fmt.Sprintf("%s@%s", r.Name, r.OldVersion)),
+			s.MutedText.Render(explanation))
+	}
+
+	// (3) Fallback-exists case with no confirmed conflict: the canonical
+	// transitive break (older version exists but violates a parent's range) is
+	// what WS2 catches for npm. When WS2 found nothing (or this is pip/uv, where
+	// the one-hop check isn't available), the filtered packages are still the
+	// candidates — list them and stay honest about the uncertainty.
+	if len(conflicts) == 0 && len(noFallback) == 0 && len(withFallback) > 0 {
+		named = true
+		names := make([]string, 0, len(withFallback))
+		for _, r := range withFallback {
+			names = append(names, r.Name)
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s %s\n",
+			s.WarningText.Render("→"),
+			s.MutedText.Render("each filtered package resolved to an older version, but one may not satisfy a dependent's range. Candidates:"),
+			s.Bold.Render(strings.Join(names, ", ")+"."))
+	}
+
+	// pip/uv attribution gap: the one-hop constraint check is npm-family only, so
+	// a pip/uv user gets named no-fallback culprits but no "required by X" line.
+	// Say so explicitly to prevent the "why did my colleague's npm failure name a
+	// culprit but mine didn't?" confusion, and point at the right local tool.
+	if canonicalPM(pmName) == pmPip || canonicalPM(pmName) == pmUV || canonicalPM(pmName) == pmUVX {
+		fmt.Fprintf(os.Stderr, "  %s %s\n",
+			s.MutedText.Render("Note:"),
+			s.MutedText.Render("constraint attribution isn't available for pip/uv — run `uv tree` or `pipdeptree` to find which package requires the blocked dependency."))
+	}
+
+	// Remediation ladder: surgical/reviewable first, broad last. The global
+	// ARMIS_SUPPLY_CHAIN=off kill switch is intentionally absent.
+	firstCulprit := firstCulpritName(conflicts, noFallback, withFallback)
+	fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render("To proceed (most surgical first):"))
+	// 1. Allow this one package — full copy-paste command incl. PM + the user's args.
+	fmt.Fprintf(os.Stderr, "    %s %s\n",
+		s.MutedText.Render("1. Allow one package (persists in this env; exempts its future versions):"),
+		s.Bold.Render(skipCommand(firstCulprit, pmName, pmArgs)))
+	// 2. Permanent, reviewed team exception.
+	fmt.Fprintf(os.Stderr, "    %s %s\n",
+		s.MutedText.Render(fmt.Sprintf("2. Permanent team exception: add %s to", quoteOrPlaceholder(firstCulprit))),
+		s.Bold.Render("exclusions: in .armis-supply-chain.yaml"))
+	// 3. Relax the window for ALL packages (NOT --min-age: wrap reads YAML only).
+	fmt.Fprintf(os.Stderr, "    %s %s %s\n",
+		s.MutedText.Render("3. Relax the window for all packages: edit"),
+		s.Bold.Render("min-age: in .armis-supply-chain.yaml"),
+		s.MutedText.Render("(weakens the check for every package)"))
+
+	if named {
+		fmt.Fprintf(os.Stderr, "  %s\n",
+			s.MutedText.Render("(supply-chain enforcement is managed by your platform team.)"))
+	}
+}
+
+// skipCommand renders the full copy-paste ARMIS_SUPPLY_CHAIN_SKIP command,
+// including the package manager and the user's own arguments, so the developer
+// can paste it verbatim. When no specific culprit was identified it uses a
+// "<package>" placeholder rather than emitting a broken command.
+func skipCommand(pkg, pmName string, pmArgs []string) string {
+	name := pkg
+	if name == "" {
+		name = "<package>"
+	}
+	cmd := fmt.Sprintf("%s=%s %s", envSCSkip, name, pmName)
+	if len(pmArgs) > 0 {
+		cmd += " " + strings.Join(pmArgs, " ")
+	}
+	return cmd
+}
+
+// firstCulpritName picks the single best package name to seed the remediation
+// commands, preferring (in order) a WS2 conflict's dependency, a no-fallback
+// package, then any filtered package. Returns "" when nothing was identified.
+func firstCulpritName(conflicts []supplychain.ConstraintConflict, noFallback, withFallback []pkgFilterResult) string {
+	if len(conflicts) > 0 {
+		return conflicts[0].Dep
+	}
+	if len(noFallback) > 0 {
+		return noFallback[0].Name
+	}
+	if len(withFallback) > 0 {
+		return withFallback[0].Name
+	}
+	return ""
+}
+
+// quoteOrPlaceholder renders a package name in double quotes for the exclusions
+// guidance, or a generic placeholder when no culprit was identified.
+func quoteOrPlaceholder(pkg string) string {
+	if pkg == "" {
+		return "the package"
+	}
+	return fmt.Sprintf("%q", pkg)
 }
 
 // colWidths holds the maximum plain-text width of each aligned column. Padding
@@ -933,12 +1211,48 @@ func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) erro
 				s.SuccessText.Render(fmt.Sprintf("supply-chain: %s", checkedAllPass(result.Checked))),
 				s.MutedText.Render(fmt.Sprintf("(%s policy)", formatPolicyShort(policy.MinReleaseAge))))
 		}
+		// Clean audit: the build is about to run, so report the install as ok. The
+		// PM's own exit code is not captured on this path (exec replaces nothing),
+		// but a clean audit is the audit-trail fact security teams want recorded.
+		writePreInstallReport(policy, pmName, result.Checked, nil, statusOK)
 		return exitWithCode(execPMFunc(pmName, pmArgs, nil))
 	}
 
+	writePreInstallReport(policy, pmName, result.Checked, violations, statusFailed)
 	printPreInstallBlockSummary(violations, policy, pmName)
 	os.Exit(1)
 	return nil
+}
+
+// writePreInstallReport emits the WS3 compliance report for the pre-install
+// (lockfile-audit) path when ARMIS_SUPPLY_CHAIN_REPORT is set. Violations map to
+// the report's "blocked" set; the audit path has no proxy-resolved fallbacks or
+// one-hop conflicts, so those slices stay empty. Best-effort — never alters the
+// build outcome.
+func writePreInstallReport(policy supplychain.Policy, pmName string, checked int, violations []supplychain.Violation, status string) {
+	reportPath := os.Getenv(envSCReport)
+	if reportPath == "" {
+		return
+	}
+	blocked := make([]supplychain.BlockedPackage, 0, len(violations))
+	for _, v := range violations {
+		blocked = append(blocked, supplychain.BlockedPackage{
+			Name:           v.Name,
+			Version:        v.Version,
+			DisplayVersion: v.Version,
+			Age:            v.Age,
+		})
+	}
+	rep := buildComplianceReport(reportInput{
+		Policy:        policy,
+		Mode:          "pre-install",
+		Ecosystem:     string(pmToEcosystem(canonicalPM(pmName))),
+		Checked:       checked,
+		Blocked:       blocked,
+		InstallStatus: status,
+	})
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:reportPath is the operator's own ARMIS_SUPPLY_CHAIN_REPORT env var naming an output file in their own environment (same trust model as scan's --output, suppressed at the same sink); a local CLI writing where its operator configured it crosses no trust boundary
+	writeComplianceReport(reportPath, rep)
 }
 
 func printPreInstallBlockSummary(violations []supplychain.Violation, policy supplychain.Policy, pmName string) {
