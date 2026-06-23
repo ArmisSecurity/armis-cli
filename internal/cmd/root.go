@@ -10,6 +10,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/update"
@@ -217,6 +218,52 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false, "Disable automatic update checking (env: ARMIS_NO_UPDATE_CHECK)")
 	rootCmd.PersistentFlags().StringVar(&colorFlag, "color", "auto", "Control colored output: auto, always, never")
 	rootCmd.PersistentFlags().StringVar(&themeFlag, "theme", getEnvOrDefault("ARMIS_THEME", themeAuto), "Terminal background theme: auto, dark, light (env: ARMIS_THEME)")
+
+	// Tab-completion for enumerated flags. Without these, Cobra falls back to
+	// (useless) file-path completion. The value lists reuse the same slices the
+	// validators read, so the completion candidates can't drift from what's
+	// actually accepted. --region is intentionally omitted (advisory-only).
+	_ = rootCmd.RegisterFlagCompletionFunc("format", fixedCompletions(validFormats, map[string]string{
+		"human": "Human-readable terminal output (default)",
+		"json":  "Machine-readable JSON",
+		"sarif": "SARIF for code-scanning tools",
+		"junit": "JUnit XML for CI test reports",
+	}))
+	_ = rootCmd.RegisterFlagCompletionFunc("fail-on", fixedCompletions(cmdutil.ValidSeverities, map[string]string{
+		"INFO":     "Informational findings",
+		"LOW":      "Low-severity findings",
+		"MEDIUM":   "Medium-severity findings",
+		"HIGH":     "High-severity findings",
+		"CRITICAL": "Critical-severity findings",
+	}))
+	_ = rootCmd.RegisterFlagCompletionFunc("color", fixedCompletions([]string{"auto", "always", "never"}, map[string]string{
+		"auto":   "Enable colors when writing to a terminal (default)",
+		"always": "Always emit ANSI colors",
+		"never":  "Never emit ANSI colors",
+	}))
+	_ = rootCmd.RegisterFlagCompletionFunc("theme", fixedCompletions([]string{themeAuto, themeDark, themeLight}, map[string]string{
+		themeAuto:  "Auto-detect terminal background (default)",
+		themeDark:  "Optimize colors for a dark background",
+		themeLight: "Optimize colors for a light background",
+	}))
+}
+
+// fixedCompletions builds a Cobra completion function that offers a fixed set
+// of values in the given order, attaching a "\tDescription" hint (rendered by
+// zsh/fish) when one is present. It always returns ShellCompDirectiveNoFileComp
+// so the shell does not fall back to file-path completion. Passing the
+// validator's own slice as values keeps the completion set and the accepted set
+// in lockstep.
+func fixedCompletions(values []string, descriptions map[string]string) cobra.CompletionFunc {
+	choices := make([]cobra.Completion, 0, len(values))
+	for _, v := range values {
+		if desc, ok := descriptions[v]; ok {
+			choices = append(choices, cobra.CompletionWithDesc(v, desc))
+		} else {
+			choices = append(choices, v)
+		}
+	}
+	return cobra.FixedCompletions(choices, cobra.ShellCompDirectiveNoFileComp)
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.
