@@ -88,6 +88,17 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		dir = args[0]
 	}
 
+	// Validate --fail-on up front, before lockfile detection and the registry
+	// scan. supply-chain is a sibling of `scan` in the command tree, so it does
+	// not inherit scan.PersistentPreRunE's validation; without this, a typo'd
+	// --fail-on would run the full check and print results before erroring.
+	// cmdutil.GetFailOn also case-normalizes to uppercase so ShouldFail (which
+	// matches exactly) trips on a lowercase "medium".
+	failOnSeverities, err := cmdutil.GetFailOn(failOn)
+	if err != nil {
+		return err
+	}
+
 	policy, err := resolvePolicy(cmd, dir)
 	if err != nil {
 		return err
@@ -207,14 +218,9 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("formatting output: %w", err)
 	}
 
-	// Use cmdutil.GetFailOn (not the raw failOn global) so --fail-on is validated
-	// and case-normalized to uppercase. ShouldFail matches severities exactly, so a
-	// lowercase "medium" would otherwise never match a "MEDIUM" finding and the
-	// CI gate would silently pass. The scan commands already route through here.
-	failOnSeverities, err := cmdutil.GetFailOn(failOn)
-	if err != nil {
-		return err
-	}
+	// failOnSeverities was validated and uppercase-normalized at the top of this
+	// function (before the scan ran), so a lowercase "medium" correctly trips
+	// ShouldFail's exact match here.
 	return output.CheckExit(scanResult, failOnSeverities, exitCode)
 }
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -83,6 +85,25 @@ var scanCmd = &cobra.Command{
 		const maxUploadTimeout = 120 // 2 hours
 		if uploadTimeout > maxUploadTimeout {
 			return fmt.Errorf("invalid --upload-timeout value %d: must not exceed %d minutes", uploadTimeout, maxUploadTimeout)
+		}
+
+		// Validate --fail-on early so a typo (e.g. HIGHT) surfaces as a flag error
+		// instead of silently defaulting once auth succeeds. ValidateFailOn also
+		// normalizes the slice to uppercase in place, so the GetFailOn calls in the
+		// subcommands' RunE become idempotent re-validation.
+		if err := cmdutil.ValidateFailOn(failOn); err != nil {
+			return err
+		}
+
+		// Warn early if SBOM/VEX output paths are given without their generation
+		// flags. These are persistent flags shared by `scan repo` and `scan image`,
+		// so surfacing the misuse here (before auth) keeps both commands consistent
+		// and stops the warning from hiding behind an auth error in CI.
+		if sbomOutput != "" && !generateSBOM {
+			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
+		}
+		if vexOutput != "" && !generateVEX {
+			cli.PrintWarning("--vex-output is ignored without --vex flag")
 		}
 
 		return nil

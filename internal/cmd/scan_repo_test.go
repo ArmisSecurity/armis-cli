@@ -76,6 +76,62 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	}
 }
 
+// TestScanRepoRunE_DefaultsToCurrentDir verifies that `scan repo` with no path
+// argument defaults to "." instead of erroring with "accepts 1 arg(s)"
+// (PPSC-1006 #18). The command chdirs into a temp repo so "." resolves there.
+func TestScanRepoRunE_DefaultsToCurrentDir(t *testing.T) {
+	findings := []model.NormalizedFinding{
+		testhelpers.CreateNormalizedFinding("repo-finding-1", "HIGH", "sql_injection", []string{"CVE-2024-1111"}, []string{"CWE-89"}),
+	}
+	serverURL := testutil.GetMockServerURL(t, findings)
+
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	originalToken := token
+	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalFormat := format
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalNoProgress := noProgress
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		format = originalFormat
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		noProgress = originalNoProgress
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", serverURL)
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
+	token = testToken
+	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
+	format = agentFormatJSON
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+	noProgress = true
+
+	// No path argument: RunE must default repoPath to "." (the temp dir).
+	if err := scanRepoCmd.RunE(scanRepoCmd, []string{}); err != nil {
+		t.Fatalf("expected scan of '.' to succeed with no path arg, got error: %v", err)
+	}
+}
+
 func TestScanRepoRunE_IncludeFilesValidation(t *testing.T) {
 	// Save and restore global state
 	originalToken := token
