@@ -35,6 +35,14 @@ const (
 	// per-file "upload-time" field the age filter needs, so the proxy must send
 	// this Accept header upstream to obtain timestamps at all.
 	pypiSimpleJSONAccept = "application/vnd.pypi.simple.v1+json"
+
+	// maxConstraintEntries bounds each WS2 accumulator (distinct dependency
+	// names in requiredRanges, distinct packages in keptVersions/removedVersions).
+	// A real dependency graph is well under this; the cap is a backstop so a
+	// hostile or pathological upstream metadata stream cannot grow the maps
+	// without limit. Once reached, new keys are dropped (the one-hop diagnostic
+	// degrades to best-effort; it never blocks the install).
+	maxConstraintEntries = 50000
 )
 
 // ProxyMode selects the upstream registry protocol the proxy speaks. The npm
@@ -76,6 +84,26 @@ type InstalledPackage struct {
 	Age time.Duration
 }
 
+// WarnedPackage records a young transitive dependency the proxy let through
+// unfiltered because the policy is TransitivePolicyWarn (WS5). It is surfaced as
+// a per-package warning and marked in the compliance report so a security team
+// can audit exactly which freshly-published packages entered the build.
+type WarnedPackage struct {
+	Name string
+	// Version is the youngest version that was allowed through despite being
+	// younger than the policy window — the one the warning names.
+	Version string
+	Age     time.Duration
+}
+
+// requiredRange is one declared dependency constraint harvested from a surviving
+// package version's "dependencies" map: ByPkg requires Dep to satisfy Range.
+// It is the raw material for the post-install one-hop conflict check (WS2).
+type requiredRange struct {
+	Range string
+	ByPkg string
+}
+
 // allowedVersion is the proxy's internal record of the safe version it resolved
 // "latest" to for one package, paired with that version's age so the summary can
 // report how old the installed version was, not just its number.
@@ -99,13 +127,46 @@ type Proxy struct {
 	checked      int
 	checkedMu    sync.Mutex
 	skipPackages map[string]bool
+
+	// directSet is the root manifest's direct-dependency names (WS5). It is read
+	// once at wrap start and never mutated afterward, so no lock guards it. A nil
+	// directSet means "direct set undeterminable" — the proxy then fails safe and
+	// treats every package as direct (blocks young versions regardless of the
+	// transitive policy). An empty (non-nil) set means "determined, no direct
+	// deps", so every checked package is transitive.
+	directSet map[string]bool
+
+	// requiredRanges and keptVersions are the two WS2 accumulators, populated
+	// during filterMetadata. Only map writes happen under their locks — no JSON
+	// parsing or semver evaluation in the critical section — so they stay off the
+	// latency-sensitive filter path. The post-install pass (EvaluateConstraints)
+	// reads them after the package manager exits, when all metadata has flowed,
+	// making the conflict set deterministic regardless of arrival order.
+	requiredRanges    map[string][]requiredRange // dependency name → ranges declared on it
+	requiredRangesMu  sync.Mutex
+	keptVersions      map[string][]string // package name → versions NOT removed
+	keptVersionsMu    sync.Mutex
+	removedVersions   map[string][]string // package name → versions removed by the age filter
+	removedVersionsMu sync.Mutex
+
+	// warned records young transitive dependencies allowed through under
+	// TransitivePolicyWarn (WS5). Guarded by its own mutex like blocked/allowed.
+	warned   []WarnedPackage
+	warnedMu sync.Mutex
 }
 
 type ProxyConfig struct {
-	Policy       Policy
-	Mode         ProxyMode
-	UpstreamURL  string
+	Policy      Policy
+	Mode        ProxyMode
+	UpstreamURL string
+	// SkipPackages are package names passed through without an age check (the
+	// ARMIS_SUPPLY_CHAIN_SKIP set).
 	SkipPackages []string
+	// DirectDeps is the root manifest's direct-dependency name set (WS5). Pass
+	// nil when it could not be determined; the proxy then treats every package as
+	// direct and blocks young versions regardless of the transitive policy
+	// (fail-safe). Only consulted when Policy.TransitivePolicy is warn.
+	DirectDeps []string
 }
 
 func NewProxy(cfg ProxyConfig) (*Proxy, error) {
@@ -131,6 +192,19 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		skipSet[pkg] = true
 	}
 
+	// Preserve the nil-vs-empty distinction: a nil DirectDeps means the direct
+	// set could not be determined (fail-safe → treat all as direct), while a
+	// non-nil-but-empty slice means "determined, project has no direct deps". A
+	// blanket make() would erase that difference, so only build the map when
+	// DirectDeps is non-nil.
+	var directSet map[string]bool
+	if cfg.DirectDeps != nil {
+		directSet = make(map[string]bool, len(cfg.DirectDeps))
+		for _, name := range cfg.DirectDeps {
+			directSet[name] = true
+		}
+	}
+
 	// NewSingleHostReverseProxy rewrites the request URL's scheme/host but
 	// deliberately does NOT rewrite the Host header (see its doc comment). Left
 	// as-is, tarball passthrough requests reach the upstream registry carrying
@@ -138,10 +212,15 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	// fronted by a CDN that routes on Host, so an unknown value returns 403 —
 	// the metadata check passes but the actual .tgz download fails. Wrap the
 	// Director to point Host at the upstream registry so passthrough works.
+	// upstreamURL is parsed from cfg.UpstreamURL, a startup-configured trusted
+	// host defaulting to registry.npmjs.org/pypi.org — not a per-request
+	// attacker-controlled value (matches the CWE-918 suppressions in reverseProxy).
+	// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host defaulting to registry.npmjs.org/pypi.org, not a per-request attacker-controlled value
 	revProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
 	baseDirector := revProxy.Director
 	revProxy.Director = func(req *http.Request) {
 		baseDirector(req)
+		// armis:ignore cwe:918 reason:upstreamURL.Host is the startup-configured trusted upstream (default registry.npmjs.org/pypi.org); setting the outbound Host to it is required for CDN routing and is not attacker-controlled
 		req.Host = upstreamURL.Host
 	}
 
@@ -152,9 +231,13 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		revProxy:     revProxy,
-		skipPackages: skipSet,
-		allowed:      make(map[string]allowedVersion),
+		revProxy:        revProxy,
+		skipPackages:    skipSet,
+		allowed:         make(map[string]allowedVersion),
+		directSet:       directSet,
+		requiredRanges:  make(map[string][]requiredRange),
+		keptVersions:    make(map[string][]string),
+		removedVersions: make(map[string][]string),
 	}, nil
 }
 
@@ -233,6 +316,39 @@ func (p *Proxy) Allowed() []InstalledPackage {
 		result = append(result, InstalledPackage{Name: name, Version: av.version, Age: av.age})
 	}
 	return result
+}
+
+// Warned returns the young transitive dependencies the proxy let through
+// unfiltered under TransitivePolicyWarn (WS5). Empty under the default block
+// policy. The caller renders these as warnings and marks them in the report.
+func (p *Proxy) Warned() []WarnedPackage {
+	p.warnedMu.Lock()
+	defer p.warnedMu.Unlock()
+	result := make([]WarnedPackage, len(p.warned))
+	copy(result, p.warned)
+	return result
+}
+
+// isTransitive reports whether pkgName is a transitive dependency under the
+// configured direct set. It is the policy-driving predicate for warn mode (WS5)
+// and fails safe in two ways: a nil directSet (undeterminable) returns false so
+// every package is treated as direct and blocked, and a name present in the
+// direct set is never transitive. Only meaningful when the transitive policy is
+// warn; the block path never calls it.
+func (p *Proxy) isTransitive(pkgName string) bool {
+	if p.directSet == nil {
+		return false // direct set undeterminable → fail safe, treat as direct
+	}
+	return !p.directSet[pkgName]
+}
+
+// warnThroughTransitive reports whether a young version of pkgName should be
+// allowed through with a warning instead of stripped. True only when the policy
+// is warn AND the package is transitive AND a determinable direct set exists.
+// Every other case (block policy, direct dep, undeterminable direct set) returns
+// false so the version is filtered — the secure default.
+func (p *Proxy) warnThroughTransitive(pkgName string) bool {
+	return p.policy.TransitivePolicy == TransitivePolicyWarn && p.isTransitive(pkgName)
 }
 
 func (p *Proxy) Close() error {
@@ -422,7 +538,12 @@ func sanitizeHeaderValue(v string) string {
 }
 
 func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPackage) {
+	// body is already bounded to maxProxyResponseSize (20MB) by the io.LimitReader
+	// at the sole production call site; oversize upstream responses are rejected
+	// with a 502 before they ever reach this function, so these unmarshals operate
+	// on throttled input — there is no unbounded allocation here.
 	var metadata map[string]json.RawMessage
+	// armis:ignore cwe:770 reason:input body is capped at maxProxyResponseSize (20MB) by io.LimitReader at the caller before filterMetadata runs; larger responses are rejected with 502, so this unmarshal is not an unbounded allocation
 	if err := json.Unmarshal(body, &metadata); err != nil {
 		return body, nil
 	}
@@ -433,6 +554,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	}
 
 	var timeMap map[string]string
+	// armis:ignore cwe:770 reason:timeRaw is a sub-slice of the already size-bounded body (capped at 20MB by io.LimitReader at the caller); unmarshaling it cannot allocate beyond that cap
 	if err := json.Unmarshal(timeRaw, &timeMap); err != nil {
 		return body, nil
 	}
@@ -441,16 +563,37 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	var blocked []BlockedPackage
 	versionsToRemove := make(map[string]bool)
 
+	// allVersions captures every real version key (skipping the created/modified
+	// metadata keys) so the WS2 accumulators can record what survived — derived as
+	// allVersions minus versionsToRemove — even for a package that had nothing
+	// filtered (the dependent whose ranges we harvest).
+	allVersions := make([]string, 0, len(timeMap))
+
+	// Under TransitivePolicyWarn, a young *transitive* dependency is let through
+	// unfiltered (so its parent's range stays satisfiable and the install
+	// succeeds) and recorded as a warning instead of a block. warnThrough is
+	// false for direct deps, for the default block policy, and when the direct
+	// set is undeterminable — every one of those keeps the secure strip behavior.
+	warnThrough := p.warnThroughTransitive(pkgName)
+	var youngWarned []WarnedPackage
+
 	for version, timeStr := range timeMap {
 		if version == npmTimeKeyCreated || version == npmTimeKeyModified {
 			continue
 		}
+		allVersions = append(allVersions, version)
 		publishTime, err := time.Parse(time.RFC3339, timeStr)
 		if err != nil {
 			continue
 		}
 		age := now.Sub(publishTime)
 		if age < p.policy.MinReleaseAge {
+			if warnThrough {
+				// Allow the young transitive version through; record it so the wrap
+				// can warn and the report can mark it. NOT added to versionsToRemove.
+				youngWarned = append(youngWarned, WarnedPackage{Name: pkgName, Version: version, Age: age})
+				continue
+			}
 			versionsToRemove[version] = true
 			blocked = append(blocked, BlockedPackage{
 				Name: pkgName,
@@ -461,6 +604,17 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 				Age:            age,
 			})
 		}
+	}
+
+	// Record WS2 constraint data before any early return: the dependent package
+	// (express) usually has nothing filtered itself, yet its declared ranges on
+	// the dependency (debug) are exactly what the post-install conflict check
+	// needs. recordConstraintData does its JSON parsing off-lock and takes the
+	// accumulator mutexes only for the map writes.
+	p.recordConstraintData(metadata, allVersions, versionsToRemove, pkgName)
+
+	if warnThrough && len(youngWarned) > 0 {
+		p.recordWarned(youngWarned)
 	}
 
 	if len(versionsToRemove) == 0 {
@@ -570,6 +724,120 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		return body, blocked
 	}
 	return result, blocked
+}
+
+// recordConstraintData harvests the two WS2 accumulators from one package's npm
+// metadata as it flows through the filter, for the deterministic post-install
+// conflict pass (EvaluateConstraints). It does ALL JSON parsing off-lock and
+// takes each accumulator mutex only for the final map write, so it adds no
+// semver work to the latency-sensitive filter path.
+//
+//   - keptVersions[pkgName] = every version NOT removed (allVersions minus
+//     versionsToRemove). This is the set the conflict check tests dependents'
+//     ranges against.
+//   - requiredRanges[dep] gains one entry per (range, byPkg) declared in each
+//     surviving version's "dependencies" map. Only surviving versions contribute
+//     constraints: a range declared solely by a version we removed isn't a real
+//     post-install requirement.
+func (p *Proxy) recordConstraintData(metadata map[string]json.RawMessage, allVersions []string, versionsToRemove map[string]bool, pkgName string) {
+	// kept = allVersions \ versionsToRemove, removed = the rest. Both computed
+	// off-lock. removed is recorded into its own accumulator (rather than read
+	// back from p.blocked) so EvaluateConstraints is self-contained on the
+	// accumulators and does not depend on the HTTP handler having appended to
+	// p.blocked — which a direct filterMetadata call (unit tests) never does.
+	kept := make([]string, 0, len(allVersions))
+	var removed []string
+	for _, v := range allVersions {
+		if versionsToRemove[v] {
+			removed = append(removed, v)
+		} else {
+			kept = append(kept, v)
+		}
+	}
+
+	// Harvest declared dependency ranges from each surviving version's
+	// "dependencies" map. npm embeds the full per-version dependencies object in
+	// the "versions" map, so no extra fetch is needed.
+	var harvested map[string][]requiredRange
+	if versionsRaw, ok := metadata["versions"]; ok {
+		var versionsMap map[string]json.RawMessage
+		if err := json.Unmarshal(versionsRaw, &versionsMap); err == nil {
+			for ver, raw := range versionsMap {
+				if versionsToRemove[ver] {
+					continue // a removed version's constraints are not post-install requirements
+				}
+				var verObj struct {
+					Dependencies map[string]string `json:"dependencies"`
+				}
+				if err := json.Unmarshal(raw, &verObj); err != nil {
+					continue
+				}
+				for dep, rng := range verObj.Dependencies {
+					if harvested == nil {
+						harvested = make(map[string][]requiredRange)
+					}
+					harvested[dep] = append(harvested[dep], requiredRange{Range: rng, ByPkg: pkgName})
+				}
+			}
+		}
+	}
+
+	// Only map writes happen under the locks; no parsing or semver eval here. The
+	// maps are lazy-initialized under their own lock so a Proxy built as a bare
+	// struct literal (as several unit tests do) is safe too, not just one from
+	// NewProxy. Each map is capped at maxConstraintEntries distinct keys so a
+	// hostile/pathological metadata stream cannot grow them without bound; a new
+	// key past the cap is dropped (existing keys still accumulate), degrading the
+	// one-hop diagnostic to best-effort rather than exhausting memory.
+	if len(kept) > 0 {
+		p.keptVersionsMu.Lock()
+		if p.keptVersions == nil {
+			p.keptVersions = make(map[string][]string)
+		}
+		if _, exists := p.keptVersions[pkgName]; exists || len(p.keptVersions) < maxConstraintEntries {
+			p.keptVersions[pkgName] = append(p.keptVersions[pkgName], kept...)
+		}
+		p.keptVersionsMu.Unlock()
+	}
+	if len(removed) > 0 {
+		p.removedVersionsMu.Lock()
+		if p.removedVersions == nil {
+			p.removedVersions = make(map[string][]string)
+		}
+		if _, exists := p.removedVersions[pkgName]; exists || len(p.removedVersions) < maxConstraintEntries {
+			p.removedVersions[pkgName] = append(p.removedVersions[pkgName], removed...)
+		}
+		p.removedVersionsMu.Unlock()
+	}
+	if len(harvested) > 0 {
+		p.requiredRangesMu.Lock()
+		if p.requiredRanges == nil {
+			p.requiredRanges = make(map[string][]requiredRange)
+		}
+		for dep, ranges := range harvested {
+			if _, exists := p.requiredRanges[dep]; !exists && len(p.requiredRanges) >= maxConstraintEntries {
+				continue // cap reached; drop new dependency keys (existing ones still grow)
+			}
+			p.requiredRanges[dep] = append(p.requiredRanges[dep], ranges...)
+		}
+		p.requiredRangesMu.Unlock()
+	}
+}
+
+// recordWarned collapses the young versions allowed through for one package
+// (under TransitivePolicyWarn) to the single youngest — the one a default
+// install would have selected as latest, and the most security-relevant to
+// surface — and appends it to the warned set under its lock.
+func (p *Proxy) recordWarned(youngWarned []WarnedPackage) {
+	youngest := youngWarned[0]
+	for _, w := range youngWarned[1:] {
+		if w.Age < youngest.Age {
+			youngest = w
+		}
+	}
+	p.warnedMu.Lock()
+	p.warned = append(p.warned, youngest)
+	p.warnedMu.Unlock()
 }
 
 // filterPyPISimple filters a PEP 691 Simple API JSON document, removing every
