@@ -360,6 +360,63 @@ func HasInjection(path string) bool {
 	return strings.Contains(string(content), markerStart)
 }
 
+// wrappedPMLine matches a single package-manager wrapper declaration inside an
+// injected block, capturing the command name. It accepts both shapes the
+// generators emit: POSIX/zsh `name() {` and fish `function name`. The name class
+// mirrors validPMName exactly (lowercase start, then lowercase/digit/hyphen, with
+// at most one dotted-numeric suffix), so it captures versioned pip variants
+// (pip3.12) while rejecting names the generators never emit (e.g. foo.bar).
+var wrappedPMLine = regexp.MustCompile(`(?m)^(?:function\s+([a-z][a-z0-9-]*(?:\.[0-9]+)?)|([a-z][a-z0-9-]*(?:\.[0-9]+)?)\(\)\s*\{)`)
+
+// WrappedPMs returns the package-manager command names wrapped by the injected
+// block in path, in the order they appear (deduplicated). It is the read-side
+// companion to InjectFunctions: `supply-chain status` already reads the RC file
+// to test for the marker (HasInjection), and this surfaces *which* commands the
+// block guards so status can show "npm, pnpm, pip, …" instead of a bare "active".
+// Returns nil when the file is unreadable or contains no injected block, so an
+// absent or never-initialized shell is a normal empty result, not an error.
+func WrappedPMs(path string) []string {
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:path is a shell RC file under the current user's own $HOME (see DetectShells); reading the user's RC file to report which commands are wrapped is the purpose of `supply-chain status`
+	content, err := os.ReadFile(path) //nolint:gosec // user's own RC file
+	if err != nil {
+		return nil
+	}
+
+	// Scope parsing to the injected block: a user may define their own functions
+	// named npm/pip elsewhere in the RC file, and those are not armis wrappers.
+	text := string(content)
+	start := strings.Index(text, markerStart)
+	if start == -1 {
+		return nil
+	}
+	// Require the closing marker: parse strictly between markerStart and markerEnd.
+	// A block with no end marker is malformed (a truncated/hand-edited RC file), and
+	// parsing to EOF would sweep in any user-defined npm/pip functions written after
+	// it — exactly the misattribution this scoping exists to prevent. Treat it as no
+	// injected block rather than risk reporting non-armis functions as wrapped.
+	rest := text[start:]
+	end := strings.Index(rest, markerEnd)
+	if end == -1 {
+		return nil
+	}
+	block := rest[:end]
+
+	var pms []string
+	seen := make(map[string]bool)
+	for _, m := range wrappedPMLine.FindAllStringSubmatch(block, -1) {
+		name := m[1] // fish: `function name`
+		if name == "" {
+			name = m[2] // posix: `name() {`
+		}
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		pms = append(pms, name)
+	}
+	return pms
+}
+
 // HasCurrentInjection reports whether path already contains the exact wrapper
 // block that would be written for the given shell and PMs. Unlike HasInjection,
 // which only checks for the marker, this verifies the content matches so callers

@@ -700,7 +700,7 @@ func TestProxyFilterMetadata_DistTagsUpdated(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "express")
@@ -764,7 +764,7 @@ func TestProxyFilterMetadata_UnblockedChannelTagPreserved(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "express")
@@ -810,7 +810,7 @@ func TestProxyFilterMetadata_AllBlocked(t *testing.T) {
 
 	proxy := &Proxy{
 		policy:  Policy{MinReleaseAge: 72 * time.Hour},
-		allowed: make(map[string]string),
+		allowed: make(map[string]allowedVersion),
 	}
 
 	filtered, blocked := proxy.filterMetadata(body, "evil-pkg")
@@ -1201,6 +1201,83 @@ func TestProxyFilterPyPISimple_AllowedPopulated(t *testing.T) {
 	}
 }
 
+func TestProxyFilterPyPISimple_SkipsPEP440PrereleaseFallback(t *testing.T) {
+	// A PEP 440 prerelease (1.0.0rc1 — no SemVer '-') that is old enough to pass
+	// the age policy must NOT be chosen as the resolved "safe" version: a default
+	// pip/uv install resolves to the newest *stable* release, so offering an rc as
+	// the fallback would install something the user never asked for. The newest
+	// stable release should win instead.
+	now := time.Now()
+	oldStable := now.Add(-60 * 24 * time.Hour).UTC().Format(time.RFC3339) // 1.0.0  — stable, safe
+	oldRC := now.Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)     // 1.1.0rc1 — prerelease, safe by age but must be skipped
+	young := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)           // 1.2.0  — blocked (too new)
+
+	p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, Mode: ModePyPI})
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	body := pypiSimpleBody("widget", []struct{ filename, uploadTime string }{
+		{"widget-1.0.0-py3-none-any.whl", oldStable},
+		{"widget-1.1.0rc1-py3-none-any.whl", oldRC},
+		{"widget-1.2.0-py3-none-any.whl", young},
+	})
+	if _, blocked := p.filterPyPISimple([]byte(body), "widget"); len(blocked) != 1 {
+		t.Fatalf("expected 1 blocked file, got %d: %+v", len(blocked), blocked)
+	}
+
+	allowed := p.Allowed()
+	if len(allowed) != 1 || allowed[0].Version != "1.0.0" {
+		t.Errorf("Allowed() = %+v, want the newest STABLE [{widget 1.0.0}], not the rc", allowed)
+	}
+}
+
+func TestIsPrerelease(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		// Stable — SemVer and PEP 440 release/post forms.
+		{"3.29.2", false},
+		{"0.2.5", false},
+		{"6.0", false},
+		{"1.2.3+local", false},
+		{"1.0.0.post1", false}, // post-release is a stable release
+		// Raw PyPI filenames reach IsPrerelease when pypiVersionFromFilename
+		// fails to parse them and callers fall back to the raw Version. A hyphen
+		// in the project name must NOT be read as a SemVer prerelease tag — the
+		// SemVer branch fires only when the head before "-" is a bare numeric
+		// release core, so an alphabetic name (or one merely containing/leading
+		// with a digit) never qualifies.
+		{"filelock-3.29.2.tar.gz", false},
+		{"my-package-1.0.tar.gz", false},
+		{"pkg2-1.0.tar.gz", false}, // digit inside the project name
+		{"4ti2-1.0.tar.gz", false}, // real package whose name STARTS with a digit
+		// SemVer prereleases carry a '-' suffix on a numeric (optionally
+		// v-prefixed) release core.
+		{"2.0.0-alpha.1", true},
+		{"2.0.0-rc.1", true},
+		{"v1.2.3-beta", true},
+		// PEP 440 prereleases are dash-less: a/b/c/rc/alpha/beta/pre/preview/dev.
+		{"1.0.0a1", true},
+		{"1.0.0b2", true},
+		{"1.0.0c1", true},
+		{"1.0.0rc1", true},
+		{"1.0.0.dev1", true},
+		{"1.0.0alpha", true},
+		{"1.0.0beta3", true},
+		{"1.0.0preview1", true},
+		{"1.0.0.post1.dev2", true}, // a dev release on top of a post is still pre-final
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if got := IsPrerelease(tt.version); got != tt.want {
+				t.Errorf("IsPrerelease(%q) = %v, want %v", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPypiVersionFromFilename(t *testing.T) {
 	tests := []struct {
 		filename string
@@ -1368,5 +1445,34 @@ func TestNewProxyDefaultsPyPIUpstream(t *testing.T) {
 	}
 	if p.upstreamURL.String() != defaultPyPIIndex {
 		t.Errorf("PyPI-mode upstream = %q, want %q", p.upstreamURL.String(), defaultPyPIIndex)
+	}
+}
+
+func TestProxyUpstreamPreservesBasePath(t *testing.T) {
+	// Upstream() feeds residue normalization, which rewrites the ephemeral proxy
+	// origin back to this string. The reverse proxy joins the upstream's base
+	// path onto every request, so a base-path registry (Artifactory/Nexus) must
+	// keep that path here — dropping it would rewrite lockfile URLs to a
+	// host-rooted address that 404s.
+	tests := []struct {
+		name     string
+		upstream string
+		want     string
+	}{
+		{"default npm registry has no base path", defaultUpstreamRegistry, "https://registry.npmjs.org"},
+		{"artifactory repo path is preserved", "https://registry.example.com/npm", "https://registry.example.com/npm"},
+		{"trailing slash is trimmed", "https://registry.example.com/artifactory/api/npm/npm/", "https://registry.example.com/artifactory/api/npm/npm"},
+		{"nested base path is preserved", "https://nexus.example.com/repository/npm-proxy", "https://nexus.example.com/repository/npm-proxy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewProxy(ProxyConfig{Policy: Policy{MinReleaseAge: 72 * time.Hour}, UpstreamURL: tt.upstream})
+			if err != nil {
+				t.Fatalf("NewProxy: %v", err)
+			}
+			if got := p.Upstream(); got != tt.want {
+				t.Errorf("Upstream() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

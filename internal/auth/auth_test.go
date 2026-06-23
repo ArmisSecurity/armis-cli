@@ -615,6 +615,12 @@ func TestGetRegion(t *testing.T) {
 	})
 
 	t.Run("returns empty region for JWT without region claim", func(t *testing.T) {
+		// Isolate the cache: GetRegion falls back to the cached/discovered region
+		// when the claim is absent, so a stray cache entry would make this flaky.
+		origCache := defaultCache
+		defaultCache = &RegionCache{cacheDir: t.TempDir()}
+		t.Cleanup(func() { defaultCache = origCache })
+
 		mockJWT := createMockJWT("tenant-123", time.Now().Add(1*time.Hour).Unix())
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -638,6 +644,81 @@ func TestGetRegion(t *testing.T) {
 		}
 		if region != "" {
 			t.Errorf("Expected empty region for token without region, got %q", region)
+		}
+	})
+
+	t.Run("falls back to response-body region when JWT claim is absent", func(t *testing.T) {
+		// Token carries no region claim, but the auth service reports the region
+		// in the response body (the discovery signal). GetRegion should surface it
+		// so data-plane routing still works.
+		origCache := defaultCache
+		defaultCache = &RegionCache{cacheDir: t.TempDir()}
+		t.Cleanup(func() { defaultCache = origCache })
+
+		mockJWT := createMockJWT("tenant-123", time.Now().Add(1*time.Hour).Unix())
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT, "region": "eu1"})
+		}))
+		defer server.Close()
+
+		p, err := NewAuthProvider(AuthConfig{
+			ClientID:     "test-client",
+			ClientSecret: "test-secret",
+			BaseURL:      server.URL,
+		})
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		region, err := p.GetRegion(context.Background())
+		if err != nil {
+			t.Fatalf("GetRegion failed: %v", err)
+		}
+		if region != "eu1" {
+			t.Errorf("Expected region 'eu1' from response body, got %q", region)
+		}
+	})
+
+	t.Run("warms the on-disk cache from the JWT claim when the response body omits region", func(t *testing.T) {
+		// Server reports the region only in the JWT claim, not the response body.
+		// exchangeCredentials must still persist it to the on-disk cache so a later
+		// token exchange reuses it as a hint instead of re-running region discovery.
+		testCache := &RegionCache{cacheDir: t.TempDir()}
+		origCache := defaultCache
+		defaultCache = testCache
+		t.Cleanup(func() { defaultCache = origCache })
+
+		mockJWT := createMockJWTWithRegion("tenant-123", time.Now().Add(1*time.Hour).Unix(), "eu1")
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Region intentionally absent from the response body — claim is the only signal.
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
+		}))
+		defer server.Close()
+
+		p, err := NewAuthProvider(AuthConfig{
+			ClientID:     "test-client",
+			ClientSecret: "test-secret", // armis:ignore cwe:798 reason:test fixture literal, not a real credential; matches existing tests in this file
+			BaseURL:      server.URL,
+		})
+		if err != nil {
+			t.Fatalf("NewAuthProvider failed: %v", err)
+		}
+
+		region, err := p.GetRegion(context.Background())
+		if err != nil {
+			t.Fatalf("GetRegion failed: %v", err)
+		}
+		if region != "eu1" {
+			t.Errorf("Expected region 'eu1' from JWT claim, got %q", region)
+		}
+
+		cached, ok := testCache.Load("test-client")
+		if !ok || cached != "eu1" {
+			t.Errorf("Expected on-disk cache warmed to 'eu1', got %q (ok=%v)", cached, ok)
 		}
 	})
 }

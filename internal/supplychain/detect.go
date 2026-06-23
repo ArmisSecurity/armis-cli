@@ -93,6 +93,54 @@ func DetectEcosystems(dir string) ([]DetectedEcosystem, error) {
 	return detected, nil
 }
 
+// DetectEcosystemsUpward reports which package-manager ecosystems are enforceable
+// from startDir, mirroring how the wrapper actually discovers lockfiles at install
+// time. Each canonical ecosystem's lockfile is located by walking up from startDir
+// to the filesystem root (as FindEcosystemLockfile does), so a lockfile sitting at
+// a monorepo or project root is reported even when the command runs from a nested
+// subdirectory — the same directories enforcement searches. Non-canonical
+// ecosystems (pip's requirements.txt has no fixed name or location, and enforcement
+// never walks up for it) are probed only in startDir itself.
+//
+// Unlike DetectEcosystems, this is for status/reporting: an empty result is a
+// normal "nothing enforceable from here" state, returned as an empty slice rather
+// than an error. Returned paths are absolute so callers can render them however
+// they like (e.g. relative to the cwd).
+func DetectEcosystemsUpward(startDir string) []DetectedEcosystem {
+	base, err := filepath.Abs(startDir)
+	if err != nil {
+		base = startDir
+	}
+
+	var detected []DetectedEcosystem
+	for _, c := range lockfileChecks {
+		if c.canonical {
+			// FindUpward stats a constant-literal leaf name against the user's own
+			// project tree (existence check only) — same bounded, in-tree probe as
+			// DetectEcosystems, just across parent directories too.
+			if p := FindUpward(base, c.file); p != "" {
+				detected = append(detected, DetectedEcosystem{
+					Ecosystem:    c.ecosystem,
+					LockfilePath: p,
+				})
+			}
+			continue
+		}
+		// requirements.txt (pip): no canonical name, so there is nothing to walk up
+		// for — probe only the start directory, matching enforcement.
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:c.file is a constant literal lockfile name and only os.Stat (existence check) runs against the user's own project dir, so the path is not externally controllable across a trust boundary
+		path := filepath.Join(base, c.file)
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:c.file is a constant literal lockfile leaf and only os.Stat (existence check) runs, so the path is not externally controllable across a trust boundary
+		if _, err := os.Stat(path); err == nil {
+			detected = append(detected, DetectedEcosystem{
+				Ecosystem:    c.ecosystem,
+				LockfilePath: path,
+			})
+		}
+	}
+	return detected
+}
+
 // FindEcosystemLockfile locates the lockfile for a specific ecosystem by walking
 // up from startDir to the filesystem root, returning the path of the first match.
 // Package managers like poetry/pdm/pipenv are routinely invoked from a project
@@ -105,14 +153,32 @@ func FindEcosystemLockfile(startDir string, ecosystem Ecosystem) string {
 	if lockfileName == "" {
 		return ""
 	}
+	return FindUpward(startDir, lockfileName)
+}
+
+// FindUpward walks up from startDir to the filesystem root probing each
+// directory for filename, returning the first match or "" when none exists.
+// filename must be a bare leaf name (a well-known lockfile or sibling artifact),
+// and only os.Stat (an existence check) is performed on the joined paths.
+//
+// The bare-leaf contract is enforced fail-closed: a filename carrying a path
+// separator, or "."/".."/"", returns "" without probing. Joining such a value
+// onto each walked directory would let it climb out of the intended tree (e.g.
+// "../../etc/passwd" or an absolute path that filepath.Join would not actually
+// anchor under dir), so a caller that accidentally passes a path gets "no
+// match" rather than a probe of somewhere unexpected.
+func FindUpward(startDir, filename string) string {
+	if filename == "" || filename == "." || filename == ".." || filepath.Base(filename) != filename {
+		return ""
+	}
 
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		dir = startDir
 	}
 	for {
-		// armis:ignore cwe:22 cwe:23 cwe:73 reason:lockfileName is a constant literal selected by ecosystemLockfileName and only os.Stat (existence check) runs; the walked dirs are the user's own project tree, not externally controllable across a trust boundary
-		path := filepath.Join(dir, lockfileName)
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:filename is a constant literal lockfile leaf supplied by callers and only os.Stat (existence check) runs; the walked dirs are the user's own project tree, not externally controllable across a trust boundary
+		path := filepath.Join(dir, filename)
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}

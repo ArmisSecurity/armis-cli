@@ -22,8 +22,8 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 - [Features](#features)
 - [Installation](#installation)
-- [Verification](#verification)
 - [Quick Start](#quick-start)
+- [Verification](#verification)
 - [Usage](#usage)
 - [Supply Chain Protection](#supply-chain-protection)
 - [Output Formats](#output-formats)
@@ -225,9 +225,74 @@ If you see "command not found" after installation:
 
 ---
 
+## Quick Start
+
+### Try it without credentials
+
+No Armis account needed — audit your project's dependencies for supply-chain risk in one command. Run it from a project directory that contains a supported lockfile (e.g. `package-lock.json`, `poetry.lock`, `pom.xml`):
+
+```bash
+brew install armissecurity/tap/armis-cli
+cd path/to/your/project
+armis-cli supply-chain check
+```
+
+This checks your lockfile against public registries (npm, PyPI, Maven Central) for recently published packages — a common signal of typosquatting or compromised maintainers. If no lockfile is found, the command reports `no lockfile detected` — point it at a project with `armis-cli supply-chain check <path>` or `--lockfile <file>`. See [Supply Chain Protection](#supply-chain-protection) for details. To scan code for vulnerabilities and secrets, set up authentication below.
+
+### Set up authentication
+
+#### JWT Authentication (Recommended)
+
+Obtain client credentials from the VIPR external API screen in the Armis platform.
+
+```bash
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_CLIENT_ID = "your-client-id"
+$env:ARMIS_CLIENT_SECRET = "your-client-secret"
+```
+
+The tenant ID is automatically extracted from the JWT token — no need to set it separately.
+
+#### Basic Authentication (Legacy)
+
+```bash
+export ARMIS_API_TOKEN="your-api-token"
+export ARMIS_TENANT_ID="your-tenant-id"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_API_TOKEN = "your-api-token"
+$env:ARMIS_TENANT_ID = "your-tenant-id"
+```
+
+### Scan a repository
+
+```bash
+armis-cli scan repo ./my-project
+```
+
+### Scan a container image
+
+```bash
+armis-cli scan image nginx:latest
+```
+
+---
+
 ## Verification
 
-All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security.
+All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security. Verifying them is optional — expand the section below when you need it.
+
+<details>
+<summary>Verify release signatures, SLSA provenance &amp; SBOM</summary>
 
 ### Verify Checksums (Cosign)
 
@@ -321,55 +386,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 - [Sigstore Cosign](https://docs.sigstore.dev/cosign/overview/)
 - [CycloneDX SBOM](https://cyclonedx.org/)
 
----
-
-## Quick Start
-
-### Set up authentication
-
-#### JWT Authentication (Recommended)
-
-Obtain client credentials from the VIPR external API screen in the Armis platform.
-
-```bash
-export ARMIS_CLIENT_ID="your-client-id"
-export ARMIS_CLIENT_SECRET="your-client-secret"
-```
-
-**PowerShell:**
-
-```powershell
-$env:ARMIS_CLIENT_ID = "your-client-id"
-$env:ARMIS_CLIENT_SECRET = "your-client-secret"
-```
-
-The tenant ID is automatically extracted from the JWT token — no need to set it separately.
-
-#### Basic Authentication (Legacy)
-
-```bash
-export ARMIS_API_TOKEN="your-api-token"
-export ARMIS_TENANT_ID="your-tenant-id"
-```
-
-**PowerShell:**
-
-```powershell
-$env:ARMIS_API_TOKEN = "your-api-token"
-$env:ARMIS_TENANT_ID = "your-tenant-id"
-```
-
-### Scan a repository
-
-```bash
-armis-cli scan repo ./my-project
-```
-
-### Scan a container image
-
-```bash
-armis-cli scan image nginx:latest
-```
+</details>
 
 ---
 
@@ -394,13 +411,15 @@ armis-cli scan image nginx:latest
 --no-progress           Disable progress indicators
 --fail-on strings       Fail build on severity levels (default: [CRITICAL])
 --exit-code int         Exit code to use when failing (default: 1)
---sbom                  Generate Software Bill of Materials (CycloneDX format)
---vex                   Generate Vulnerability Exploitability eXchange document
---sbom-output string    Custom output path for SBOM (default: .armis/<artifact>-sbom.json)
---vex-output string     Custom output path for VEX (default: .armis/<artifact>-vex.json)
 --page-limit int        Results page size for pagination (default: 500, range: 1-1000)
+--color string          Control colored output: auto, always, never (default: auto)
+--theme string          Terminal background theme: auto, dark, light (default: auto)
+--no-update-check       Disable automatic update checking
+--dev                   Use development environment instead of production
 --debug                 Enable debug mode for detailed API responses
 ```
+
+> The `--sbom`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository).
 
 ### Scan Repository
 
@@ -477,6 +496,9 @@ armis-cli supply-chain check --min-age 7d --exclude "@myorg/*" --fail-on medium
 
 # Machine-readable output for CI
 armis-cli supply-chain check --format sarif --fail-on high
+
+# Write results to a file (format auto-detected from the extension)
+armis-cli supply-chain check -o supply-chain.sarif --fail-on high
 ```
 
 By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
@@ -807,6 +829,8 @@ When using JWT authentication, the tenant ID is automatically extracted from the
 |----------|-------------|
 | `ARMIS_FORMAT` | Default output format |
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
+| `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
+| `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
 
 ---
 

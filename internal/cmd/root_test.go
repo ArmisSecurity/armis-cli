@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/ArmisSecurity/armis-cli/internal/update"
@@ -124,6 +130,13 @@ func TestGetEnvOrDefaultInt(t *testing.T) {
 }
 
 func TestGetAPIBaseURL(t *testing.T) {
+	const testRegion = "eu1"
+
+	// Keep the test hermetic: a developer/CI ARMIS_API_URL export must not leak
+	// into the dev/production/regional subtests, which expect the resolved URL.
+	// The override-specific subtests below set ARMIS_API_URL explicitly.
+	t.Setenv("ARMIS_API_URL", "")
+
 	t.Run("returns dev URL when useDev is true", func(t *testing.T) {
 		useDev = true
 		defer func() { useDev = false }()
@@ -167,6 +180,159 @@ func TestGetAPIBaseURL(t *testing.T) {
 		result := getAPIBaseURL()
 		if result != testURL {
 			t.Errorf("Expected env override URL %s, got %s", testURL, result)
+		}
+	})
+
+	t.Run("returns regional URL when region is set", func(t *testing.T) {
+		useDev = false
+		region = testRegion
+		defer func() { region = "" }()
+
+		result := getAPIBaseURL()
+		want := "https://eu.moose.armis.com"
+		if result != want {
+			t.Errorf("Expected regional URL %s, got %s", want, result)
+		}
+	})
+
+	t.Run("useDev takes precedence over region", func(t *testing.T) {
+		useDev = true
+		region = testRegion
+		defer func() {
+			useDev = false
+			region = ""
+		}()
+
+		result := getAPIBaseURL()
+		if result != devBaseURL {
+			t.Errorf("Expected dev URL %s, got %s", devBaseURL, result)
+		}
+	})
+
+	t.Run("ARMIS_API_URL takes precedence over region", func(t *testing.T) {
+		useDev = false
+		region = testRegion
+		testURL := "http://test-server:9090"
+		_ = os.Setenv("ARMIS_API_URL", testURL)
+		defer func() {
+			_ = os.Unsetenv("ARMIS_API_URL")
+			region = ""
+		}()
+
+		result := getAPIBaseURL()
+		if result != testURL {
+			t.Errorf("Expected env override URL %s, got %s", testURL, result)
+		}
+	})
+}
+
+// newRegionAuthProvider builds a JWT AuthProvider whose token carries the given
+// region claim, backed by a throwaway auth server. The cache dir is isolated via
+// t.Setenv so region caching never touches the developer's real cache.
+func newRegionAuthProvider(t *testing.T, tokenRegion string) *auth.AuthProvider {
+	t.Helper()
+
+	// Isolate the on-disk region cache to a temp dir for this test.
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("LocalAppData", t.TempDir())
+	case "darwin":
+		t.Setenv("HOME", t.TempDir())
+	default:
+		t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	}
+
+	mockJWT := createMockJWTWithRegion("customer-123", time.Now().Add(time.Hour).Unix(), tokenRegion)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
+	}))
+	t.Cleanup(server.Close)
+
+	p, err := auth.NewAuthProvider(auth.AuthConfig{
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		BaseURL:      server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewAuthProvider failed: %v", err)
+	}
+	return p
+}
+
+func TestResolveDataPlaneURL(t *testing.T) {
+	// Keep hermetic: a developer/CI ARMIS_API_URL export must not leak in.
+	t.Setenv("ARMIS_API_URL", "")
+
+	t.Run("auto-detects region from token when nothing is pinned", func(t *testing.T) {
+		useDev = false
+		region = ""
+		p := newRegionAuthProvider(t, "eu1")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		want := "https://eu.moose.armis.com"
+		if got != want {
+			t.Errorf("Expected auto-detected URL %s, got %s", want, got)
+		}
+	})
+
+	t.Run("falls back to production for us1 token (no dedicated data plane)", func(t *testing.T) {
+		useDev = false
+		region = ""
+		p := newRegionAuthProvider(t, "us1")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		if got != productionBaseURL {
+			t.Errorf("Expected production URL %s, got %s", productionBaseURL, got)
+		}
+	})
+
+	t.Run("falls back to production when token has no region claim", func(t *testing.T) {
+		useDev = false
+		region = ""
+		p := newRegionAuthProvider(t, "")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		if got != productionBaseURL {
+			t.Errorf("Expected production URL %s, got %s", productionBaseURL, got)
+		}
+	})
+
+	t.Run("explicit --region overrides token region", func(t *testing.T) {
+		useDev = false
+		region = "us1"
+		defer func() { region = "" }()
+		// Token says eu1, but the user pinned us1 explicitly: us1 wins.
+		p := newRegionAuthProvider(t, "eu1")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		if got != productionBaseURL {
+			t.Errorf("Expected explicit-region URL %s, got %s", productionBaseURL, got)
+		}
+	})
+
+	t.Run("useDev overrides token region", func(t *testing.T) {
+		useDev = true
+		region = ""
+		defer func() { useDev = false }()
+		p := newRegionAuthProvider(t, "eu1")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		if got != devBaseURL {
+			t.Errorf("Expected dev URL %s, got %s", devBaseURL, got)
+		}
+	})
+
+	t.Run("ARMIS_API_URL overrides token region", func(t *testing.T) {
+		useDev = false
+		region = ""
+		testURL := "http://localhost:8080"
+		t.Setenv("ARMIS_API_URL", testURL)
+		p := newRegionAuthProvider(t, "eu1")
+
+		got := resolveDataPlaneURL(context.Background(), p)
+		if got != testURL {
+			t.Errorf("Expected env override URL %s, got %s", testURL, got)
 		}
 	})
 }

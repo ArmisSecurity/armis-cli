@@ -30,6 +30,27 @@ func createMockJWT(customerID string, exp int64) string {
 	return header + "." + payload + "." + signature
 }
 
+// createMockJWTWithRegion creates a mock JWT that includes a region claim.
+// An empty region omits the claim, mimicking older tokens issued before
+// region-aware auth.
+func createMockJWTWithRegion(customerID string, exp int64, region string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	claims := map[string]interface{}{
+		"customer_id": customerID,
+		"exp":         exp,
+	}
+	if region != "" {
+		claims["region"] = region
+	}
+	claimsJSON, _ := json.Marshal(claims)
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	signature := base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
+
+	return header + "." + payload + "." + signature
+}
+
 func TestRunAuth(t *testing.T) {
 	tests := []struct {
 		name           string

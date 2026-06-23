@@ -17,9 +17,37 @@ const (
 	// maxResponseSize limits auth response body to prevent memory exhaustion attacks
 	maxResponseSize = 1 << 20 // 1MB
 
-	// ProductionBaseURL is the default Armis API endpoint.
+	// ProductionBaseURL is the default Armis API endpoint (US region / primary).
 	ProductionBaseURL = "https://moose.armis.com"
 )
+
+// RegionalBaseURL returns the Armis API base URL for the given region code.
+//
+// The data plane (/api/v1/ingest/*) is physically region-pinned: a JWT issued
+// for one region is rejected by another region's endpoint with a 401. The auth
+// endpoint (/api/v1/auth/token) auto-discovers the region server-side, so the
+// 401 only surfaces on upload — which is why the base URL must encode the region.
+//
+// Region codes are the values issued in the JWT "region" claim (us1, eu1, au1).
+// There are currently two production data planes:
+//   - us1 (primary) -> https://moose.armis.com
+//   - eu1           -> https://eu.moose.armis.com
+//
+// au1 is a valid auth region but has no dedicated data plane yet, so it
+// falls through to the primary host rather than a fabricated one. Unknown or
+// empty regions also fall back to the primary host, so callers may pass an
+// unvalidated flag/env value directly. The explicit allowlist (rather than
+// interpolating the region into the host) prevents an attacker-controlled
+// region from redirecting credentials to an arbitrary host (CWE-918).
+func RegionalBaseURL(region string) string {
+	switch region {
+	case "eu1":
+		return "https://eu.moose.armis.com"
+	default:
+		// "", "us1", "au1", and anything unrecognized resolve to the primary host.
+		return ProductionBaseURL
+	}
+}
 
 // AuthError represents an authentication failure with HTTP status context.
 // This allows callers to distinguish between different failure modes
@@ -135,7 +163,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, &AuthError{StatusCode: resp.StatusCode, Message: "invalid credentials"}
+		return nil, &AuthError{
+			StatusCode: resp.StatusCode,
+			Message:    "invalid credentials — get credentials from the VIPR external API screen in the Armis Platform",
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {

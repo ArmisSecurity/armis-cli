@@ -818,7 +818,7 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 
 	// Filtered count if any
 	if result.Summary.FilteredNonExploitable > 0 {
-		filtered := s.MutedText.Render(fmt.Sprintf("(%d filtered as non-exploitable)", result.Summary.FilteredNonExploitable))
+		filtered := s.MutedText.Render(fmt.Sprintf("(%d filtered as low/medium exploitability)", result.Summary.FilteredNonExploitable))
 		content.WriteString(filtered + "\n")
 	}
 

@@ -164,6 +164,209 @@ func TestRunProxyWrap_PipEnvPointsAtProxy(t *testing.T) {
 	}
 }
 
+// TestRunSupplyChainWrap_UVSyncAuditsLockfileNotProxy pins the fix for uv.lock
+// corruption: uv records the configured index URL as each package's
+// source.registry in uv.lock, and an index that differs from the recorded one
+// triggers a full re-lock. Routing a lockfile-writing uv command through the
+// proxy therefore persisted the ephemeral http://127.0.0.1:<port> address into
+// the lock, breaking every sync run outside the wrapper (Docker builds, CI).
+// Such commands must take the pre-install audit path with no UV_INDEX_URL
+// injected.
+func TestRunSupplyChainWrap_UVSyncAuditsLockfileNotProxy(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	// An empty uv.lock parses to zero registry-backed packages, so the audit
+	// has nothing to query (no network) and the build is allowed to run.
+	if err := os.WriteFile(filepath.Join(dir, "uv.lock"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cap := stubExecPM(t, 0)
+
+	if err := runSupplyChainWrap(newWrapTestCmd(), []string{"uv", "sync"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cap.called {
+		t.Fatal("expected execPMFunc to be called")
+	}
+	if cap.pm != pmUV {
+		t.Errorf("pm = %q, want %q", cap.pm, pmUV)
+	}
+	if v, ok := envValue(cap.extraEnv, "UV_INDEX_URL"); ok {
+		t.Errorf("uv sync must not be proxied (UV_INDEX_URL=%q leaks into uv.lock)", v)
+	}
+}
+
+// TestRunSupplyChainWrap_UVPipKeepsProxy asserts the lockfile-free `uv pip`
+// interface still gets live proxy filtering: it never writes uv.lock, so the
+// index override cannot leak anywhere persistent.
+func TestRunSupplyChainWrap_UVPipKeepsProxy(t *testing.T) {
+	chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	cap := stubExecPM(t, 0)
+
+	if err := runSupplyChainWrap(newWrapTestCmd(), []string{"uv", "pip", "install", "requests"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	idx, ok := envValue(cap.extraEnv, "UV_INDEX_URL")
+	if !ok {
+		t.Fatalf("UV_INDEX_URL not set for uv pip; extraEnv=%v", cap.extraEnv)
+	}
+	if !strings.HasPrefix(idx, "http://127.0.0.1:") || !strings.HasSuffix(idx, "/simple/") {
+		t.Errorf("UV_INDEX_URL = %q, want http://127.0.0.1:<port>/simple/", idx)
+	}
+}
+
+// TestRunProxyWrap_NormalizesBunLock pins the post-exec residue sweep: `bun
+// update` records full tarball URLs in bun.lock, so a proxied run persists the
+// ephemeral http://127.0.0.1:<port> origin into a committed artifact (verified
+// empirically on bun 1.3). After the PM exits, the wrap must rewrite that
+// origin back to the upstream registry.
+func TestRunProxyWrap_NormalizesBunLock(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+
+	// The stub plays the role of bun: it writes a bun.lock whose tarball URLs
+	// use the registry origin it was invoked with, exactly like `bun update`.
+	t.Cleanup(func() { execPMFunc = execPM })
+	execPMFunc = func(pm string, args, extraEnv []string) (int, error) {
+		reg, ok := envValue(extraEnv, "BUN_CONFIG_REGISTRY")
+		if !ok {
+			t.Fatal("BUN_CONFIG_REGISTRY not set; the proxy was not injected")
+		}
+		origin := strings.TrimSuffix(reg, "/")
+		lock := `"axios": ["axios@0.30.3", "` + origin + `/axios/-/axios-0.30.3.tgz", {}, "sha512-x"]`
+		return 0, os.WriteFile(filepath.Join(dir, "bun.lock"), []byte(lock), 0o600)
+	}
+
+	if err := runProxyWrap(newWrapTestCmd(), pmBun, []string{"update"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "bun.lock")) //nolint:gosec // test reads its own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "127.0.0.1") {
+		t.Errorf("bun.lock still contains the proxy origin:\n%s", got)
+	}
+	if !strings.Contains(string(got), "https://registry.npmjs.org/axios/-/axios-0.30.3.tgz") {
+		t.Errorf("bun.lock tarball URL not restored to the upstream registry:\n%s", got)
+	}
+}
+
+// TestRunProxyWrap_NormalizesUVToolReceipt pins the receipt sweep: `uv tool
+// install` records the index-url it was invoked with in uv-receipt.toml, which
+// would point every later `uv tool upgrade` at the dead proxy address. After
+// the PM exits, the wrap must rewrite the receipt to the real index.
+func TestRunProxyWrap_NormalizesUVToolReceipt(t *testing.T) {
+	chdirTemp(t)
+	toolsDir := t.TempDir()
+	t.Setenv("UV_TOOL_DIR", toolsDir)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+
+	receipt := filepath.Join(toolsDir, "cowsay", "uv-receipt.toml")
+	if err := os.MkdirAll(filepath.Dir(receipt), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stub plays the role of uv: it writes a receipt recording the index
+	// URL it was invoked with, exactly like `uv tool install`.
+	t.Cleanup(func() { execPMFunc = execPM })
+	execPMFunc = func(pm string, args, extraEnv []string) (int, error) {
+		idx, ok := envValue(extraEnv, "UV_INDEX_URL")
+		if !ok {
+			t.Fatal("UV_INDEX_URL not set; the proxy was not injected")
+		}
+		return 0, os.WriteFile(receipt, []byte(`index-url = "`+idx+`"`), 0o600)
+	}
+
+	if err := runProxyWrap(newWrapTestCmd(), pmUV, []string{"tool", "install", "cowsay"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(receipt) //nolint:gosec // test reads its own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "127.0.0.1") {
+		t.Errorf("receipt still contains the proxy origin:\n%s", got)
+	}
+	if want := `index-url = "https://pypi.org/simple/"`; string(got) != want {
+		t.Errorf("receipt = %q, want %q", got, want)
+	}
+}
+
+// TestRunProxyWrap_NormalizesUVCompileOutput pins the output-file sweep:
+// `uv pip compile --emit-index-url -o FILE` writes the configured index — the
+// proxy URL — into the generated requirements file (verified on uv 0.8).
+func TestRunProxyWrap_NormalizesUVCompileOutput(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+	out := filepath.Join(dir, "requirements.txt")
+
+	// The stub plays the role of uv pip compile: it emits the index URL it was
+	// invoked with into the -o output file.
+	t.Cleanup(func() { execPMFunc = execPM })
+	execPMFunc = func(pm string, args, extraEnv []string) (int, error) {
+		idx, ok := envValue(extraEnv, "UV_INDEX_URL")
+		if !ok {
+			t.Fatal("UV_INDEX_URL not set; the proxy was not injected")
+		}
+		return 0, os.WriteFile(out, []byte("--index-url "+idx+"\nsix==1.17.0\n"), 0o600)
+	}
+
+	args := []string{"pip", "compile", "pyproject.toml", "-o", out, "--emit-index-url"}
+	if err := runProxyWrap(newWrapTestCmd(), pmUV, args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(out) //nolint:gosec // test reads its own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "127.0.0.1") {
+		t.Errorf("compiled requirements still contain the proxy origin:\n%s", got)
+	}
+	if !strings.Contains(string(got), "--index-url https://pypi.org/simple/") {
+		t.Errorf("index URL not restored to PyPI:\n%s", got)
+	}
+	if !strings.Contains(string(got), "six==1.17.0") {
+		t.Errorf("pinned requirement was not preserved:\n%s", got)
+	}
+}
+
+func TestUVCompileOutputFile(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"short flag", []string{"pip", "compile", "in.toml", "-o", "req.txt"}, "req.txt"},
+		{"long flag", []string{"pip", "compile", "in.toml", "--output-file", "req.txt"}, "req.txt"},
+		{"long flag attached", []string{"pip", "compile", "--output-file=req.txt", "in.toml"}, "req.txt"},
+		{"no output flag", []string{"pip", "compile", "in.toml"}, ""},
+		{"dangling flag", []string{"pip", "compile", "-o"}, ""},
+		{"no args", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := uvCompileOutputFile(tt.args); got != tt.want {
+				t.Errorf("uvCompileOutputFile(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunPreInstallBlock_AllPassRunsPM(t *testing.T) {
 	// A poetry.lock whose only entry is a git-sourced package: the parser drops
 	// it, so RunCheck has nothing to query (Checked == 0), no network is touched,

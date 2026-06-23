@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,5 +251,100 @@ func TestRunSupplyChainCheck_EcosystemScopeSkips(t *testing.T) {
 
 	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
 		t.Fatalf("expected clean skip, got error: %v", err)
+	}
+}
+
+// TestRunSupplyChainCheck_OutputFlagWritesFile verifies the --output flag is
+// honored end-to-end: results are written to the named file (not stdout) and
+// the format is auto-detected from the extension. An empty lockfile yields zero
+// packages to check, so RunCheck short-circuits before any registry query while
+// the full output pipeline (ResolveOutput → formatter → file) still runs. This
+// is the path that was silently dead before --output was registered on the
+// supply-chain check command.
+func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
+	dir := chdirTemp(t)
+	// An npm lockfile with no packages: nothing to check, no network access.
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(dir, "report.sarif")
+
+	// Save/restore every package-level var the check command reads so this test
+	// can't leak state into others sharing the cmd package.
+	origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn :=
+		scLockfile, scAll, scMinAge, format, outputFile, failOn
+	t.Cleanup(func() {
+		scLockfile, scAll, scMinAge, format, outputFile, failOn =
+			origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn
+	})
+	scLockfile = "package-lock.json"
+	scAll = true // skip base-lockfile git detection
+	scMinAge = "72h"
+	format = "human" // left at default; extension should override to SARIF
+	failOn = []string{"CRITICAL"}
+
+	cmd := newWrapTestCmd() // command with a live context
+	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
+	cmd.Flags().StringSliceVar(&scExclude, "exclude", nil, "")
+	cmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "")
+	// --format must exist (unchanged) so ResolveOutput can consult its .Changed
+	// state to decide whether to auto-detect the format from the extension.
+	cmd.Flags().StringVarP(&format, "format", "f", "human", "")
+	// Register -o/--output bound to outputFile exactly as init() does, then drive
+	// the value through the flag (not a direct outputFile = outPath assignment).
+	// This exercises the flag→var binding the PR adds: if the flag were not bound
+	// to outputFile, .Set would not reach the var ResolveOutput reads and the file
+	// would never be written. (Registration on the real scCheckCmd is guarded
+	// separately by TestSupplyChainCheckOutputFlagRegistered.)
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "")
+	if err := cmd.Flags().Set("output", outPath); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
+
+	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
+		t.Fatalf("runSupplyChainCheck: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("expected output written to %s: %v", outPath, err)
+	}
+	content := string(data)
+	// Format auto-detected from the .sarif extension: a SARIF document carries a
+	// $schema and runs array. If --output were ignored, the file would not exist;
+	// if extension detection failed, this would be human-styled text instead.
+	if !strings.Contains(content, "$schema") || !strings.Contains(content, "runs") {
+		t.Errorf("output file does not look like SARIF (extension auto-detection failed):\n%s", content)
+	}
+}
+
+// TestSupplyChainCheckOutputFlagRegistered guards the exact regression this PR
+// fixes: the real scCheckCmd (built by init()) must expose -o/--output bound to
+// the outputFile var that runSupplyChainCheck reads. Unlike the functional test
+// above — which constructs its own command — this asserts against the package's
+// actual command, so it fails if init() ever stops registering the flag, binds
+// it to the wrong variable, or drops the -o shorthand.
+func TestSupplyChainCheckOutputFlagRegistered(t *testing.T) {
+	f := scCheckCmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("supply-chain check must register the --output flag")
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("--output shorthand = %q, want %q", f.Shorthand, "o")
+	}
+
+	// Setting the flag must reach the outputFile var runSupplyChainCheck reads.
+	orig := outputFile
+	t.Cleanup(func() {
+		outputFile = orig
+		_ = f.Value.Set(orig)
+	})
+	if err := scCheckCmd.Flags().Set("output", "out.sarif"); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
+	if outputFile != "out.sarif" {
+		t.Errorf("--output not bound to outputFile: outputFile = %q, want %q", outputFile, "out.sarif")
 	}
 }

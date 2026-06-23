@@ -188,69 +188,6 @@ func TestCleanDescription(t *testing.T) {
 	}
 }
 
-func TestShouldFilterByExploitability(t *testing.T) {
-	tests := []struct {
-		name     string
-		labels   []model.Label
-		expected bool
-	}{
-		{
-			name: "scanner code match and not exploitable",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "false"},
-			},
-			expected: true,
-		},
-		{
-			name: "scanner code match and exploitable 0",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "0"},
-			},
-			expected: true,
-		},
-		{
-			name: "scanner code match but exploitable",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "true"},
-			},
-			expected: false,
-		},
-		{
-			name: "no scanner code match",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "12345"},
-				{Description: "exploitable", Value: "false"},
-			},
-			expected: false,
-		},
-		{
-			name: "case insensitive",
-			labels: []model.Label{
-				{Description: "Scanner Code", Value: "38295677"},
-				{Description: "Exploitable", Value: "FALSE"},
-			},
-			expected: true,
-		},
-		{
-			name:     "empty labels",
-			labels:   []model.Label{},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := shouldFilterByExploitability(tt.labels)
-			if result != tt.expected {
-				t.Errorf("shouldFilterByExploitability() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestIsEmptyFinding(t *testing.T) {
 	longDesc := "Long description"
 

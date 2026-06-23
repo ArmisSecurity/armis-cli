@@ -77,12 +77,12 @@ func TestBuildScanResult(t *testing.T) {
 		}
 	})
 
-	t.Run("tracks filtered non-exploitable count", func(t *testing.T) {
+	t.Run("tracks filtered low/medium exploitability count", func(t *testing.T) {
 		findings := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
-			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "false"},
+			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "vulnerability", nil, []model.Label{
+				{Description: "Scanner Code", Value: "armis_appsec:scanner_code:38295677"},
+				{Description: "Exploitability Level", Value: "armis_appsec:exploitability:low"},
 			}),
 		}
 
@@ -125,12 +125,12 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("filters non-exploitable findings when flag is false", func(t *testing.T) {
+	t.Run("filters low exploitability findings when flag is false", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
-			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "false"},
+			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "vulnerability", nil, []model.Label{
+				{Description: "Scanner Code", Value: "armis_appsec:scanner_code:38295677"},
+				{Description: "Exploitability Level", Value: "armis_appsec:exploitability:low"},
 			}),
 		}
 
@@ -144,12 +144,12 @@ func TestConvertNormalizedFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("keeps non-exploitable findings when flag is true", func(t *testing.T) {
+	t.Run("keeps low exploitability findings when flag is true", func(t *testing.T) {
 		input := []model.NormalizedFinding{
 			testhelpers.CreateNormalizedFinding(testFindingID, "HIGH", "vulnerability", []string{"CVE-2023-1234"}, nil),
-			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "sca", nil, []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "false"},
+			testhelpers.CreateNormalizedFindingWithLabels("finding-2", "MEDIUM", "vulnerability", nil, []model.Label{
+				{Description: "Scanner Code", Value: "armis_appsec:scanner_code:38295677"},
+				{Description: "Exploitability Level", Value: "armis_appsec:exploitability:low"},
 			}),
 		}
 

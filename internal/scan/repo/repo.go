@@ -678,7 +678,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			continue
 		}
 
-		if !includeNonExploitable && shouldFilterByExploitability(nf.NormalizedTask.Labels) {
+		if !includeNonExploitable && scan.ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
 			filteredCount++
 			continue
 		}
@@ -790,25 +790,6 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 	}
 
 	return findings, filteredCount
-}
-
-func shouldFilterByExploitability(labels []model.Label) bool {
-	var scannerCodeMatch bool
-	var exploitableFalse bool
-
-	for _, label := range labels {
-		desc := strings.ToLower(strings.TrimSpace(label.Description))
-		value := strings.ToLower(strings.TrimSpace(label.Value))
-
-		if desc == "scanner code" && value == "38295677" {
-			scannerCodeMatch = true
-		}
-		if desc == "exploitable" && (value == "false" || value == "0") {
-			exploitableFalse = true
-		}
-	}
-
-	return scannerCodeMatch && exploitableFalse
 }
 
 func cleanDescription(desc string) string {

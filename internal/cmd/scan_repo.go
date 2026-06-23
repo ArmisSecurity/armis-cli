@@ -77,7 +77,7 @@ var scanRepoCmd = &cobra.Command{
 			return err
 		}
 
-		baseURL := getAPIBaseURL()
+		baseURL := resolveDataPlaneURL(cmd.Context(), authProvider)
 		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute,
 			clientOptionsForBaseURL(baseURL)...)
 		if err != nil {

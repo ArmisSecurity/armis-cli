@@ -71,6 +71,13 @@ func init() {
 	scCheckCmd.Flags().StringVar(&scLockfile, "lockfile", "", "Explicit lockfile path (overrides auto-detection)")
 	scCheckCmd.Flags().BoolVar(&scAll, "all", false, "Check all packages (disable auto-diff against base branch)")
 	scCheckCmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "Exit 0 on registry errors (fail-open for CI availability)")
+	// --output is a persistent flag on scanCmd, but supply-chain is a sibling of
+	// scan in the command tree and does not inherit it. Register it locally so
+	// `supply-chain check` matches the scan commands: ResolveOutput already
+	// consumes outputFile (file writing, extension-based format auto-detection,
+	// color disabling). -o has no shorthand conflict in the supply-chain subtree.
+	// armis:ignore cwe:73 cwe:22 reason:outputFile is the user-controlled --output CLI flag naming a file on their own machine (same pattern as scan's --output, suppressed at the ResolveOutput/NewFileOutput sink); no trust boundary is crossed
+	scCheckCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
 
 	supplyChainCmd.AddCommand(scCheckCmd)
 }
@@ -101,6 +108,15 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls (e.g. "--lockfile ../sibling/package-lock.json"), not untrusted input crossing a trust boundary
 	if _, err := os.Stat(lockfilePath); err != nil {
 		return fmt.Errorf("lockfile not found: %s", lockfilePath)
+	}
+
+	// The wrap's residue sweep can only remove the proxy origin of the run that
+	// just finished; a wrapper killed mid-install leaves a stale loopback origin
+	// behind, and versions before the sweep existed left residue routinely. Flag
+	// any loopback registry reference so CI catches a corrupted lockfile before
+	// it breaks builds that resolve outside the wrapper.
+	if host, found := supplychain.DetectLoopbackRegistry(lockfilePath); found {
+		cli.PrintWarningf("%s references a loopback registry (%s). If this is residue from an interrupted or pre-fix wrapped install, re-resolve against the real registry (e.g. ARMIS_SUPPLY_CHAIN=off <pm> install) or restore the lockfile from version control. If you intentionally use a local registry, ignore this warning.", lockfilePath, host)
 	}
 
 	// Respect the config's "ecosystems" scope: if it restricts enforcement and

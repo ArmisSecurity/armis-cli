@@ -615,3 +615,69 @@ func TestResolveCliPath_FallsBackToAbsWhenNotOnPath(t *testing.T) {
 		t.Errorf("resolveCliPath() = %q, want an absolute path or the %q fallback", got, cliBinaryName)
 	}
 }
+
+func TestWrappedPMs(t *testing.T) {
+	writeRC := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "rc")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write rc: %v", err)
+		}
+		return path
+	}
+
+	t.Run("parses the PMs from a posix block in order", func(t *testing.T) {
+		rc := writeRC(t, GenerateWrapper(shellBash, []string{"npm", "pnpm", "pip3.12"}))
+		got := WrappedPMs(rc)
+		want := []string{"npm", "pnpm", "pip3.12"}
+		if !slices.Equal(got, want) {
+			t.Errorf("WrappedPMs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses the PMs from a fish block", func(t *testing.T) {
+		rc := writeRC(t, GenerateWrapper(shellFish, []string{"npm", "uv", "uvx"}))
+		got := WrappedPMs(rc)
+		want := []string{"npm", "uv", "uvx"}
+		if !slices.Equal(got, want) {
+			t.Errorf("WrappedPMs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("ignores user functions outside the injected block", func(t *testing.T) {
+		// A user's own npm function defined before the marker must not be reported
+		// as armis-wrapped — only declarations inside the marked block count.
+		body := "npm() { echo mine; }\n" + GenerateWrapper(shellBash, []string{"pnpm"})
+		got := WrappedPMs(writeRC(t, body))
+		want := []string{"pnpm"}
+		if !slices.Equal(got, want) {
+			t.Errorf("WrappedPMs = %v, want %v (must skip the pre-marker npm)", got, want)
+		}
+	})
+
+	t.Run("returns nil when no block is present", func(t *testing.T) {
+		if got := WrappedPMs(writeRC(t, "export PATH=/usr/bin\n")); got != nil {
+			t.Errorf("WrappedPMs = %v, want nil for a file with no injected block", got)
+		}
+	})
+
+	t.Run("returns nil for a block missing its end marker", func(t *testing.T) {
+		// A start marker with no closing marker is a malformed/truncated block.
+		// Parsing it to EOF would sweep in user functions written after the
+		// (never-closed) block, so it must be treated as no injected block. Build
+		// such a file by stripping the end marker from a real wrapper, then append
+		// a user-defined function that must NOT be reported.
+		full := GenerateWrapper(shellBash, []string{"npm"})
+		truncated := strings.Replace(full, markerEnd, "", 1)
+		body := truncated + "\nyarn() { echo mine; }\n"
+		if got := WrappedPMs(writeRC(t, body)); got != nil {
+			t.Errorf("WrappedPMs = %v, want nil for a block with no end marker", got)
+		}
+	})
+
+	t.Run("returns nil for an unreadable file", func(t *testing.T) {
+		if got := WrappedPMs(filepath.Join(t.TempDir(), "does-not-exist")); got != nil {
+			t.Errorf("WrappedPMs = %v, want nil for a missing file", got)
+		}
+	})
+}
