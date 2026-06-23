@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint lint-clean scan help tools coverage
+.PHONY: build install clean test lint lint-clean scan help tools coverage release
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
