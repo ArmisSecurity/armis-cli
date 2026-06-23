@@ -31,8 +31,8 @@ const (
 
 // ErrRuntimeNotFound is returned when neither Docker nor Podman is available to
 // export an image. The message names the problem, the cause, and the fixes:
-// install a runtime, or bypass the daemon entirely with --tarball.
-var ErrRuntimeNotFound = errors.New("container runtime not found: install Docker (https://docs.docker.com/get-docker/) or Podman (https://podman.io); or use --tarball ./image.tar to scan a pre-exported image")
+// install a runtime or start its daemon, or bypass the daemon entirely with --tarball.
+var ErrRuntimeNotFound = errors.New("container runtime not found or not running: install Docker (https://docs.docker.com/get-docker/) or Podman (https://podman.io) and ensure the daemon is running; or use --tarball ./image.tar to scan a pre-exported image")
 
 // Scanner scans container images for security vulnerabilities.
 type Scanner struct {
@@ -290,15 +290,14 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 // IsDockerAvailable reports whether a container runtime (Docker or Podman) is
 // reachable on the host. Callers use it to fail fast before auth/network work
 // when an image must be exported via the daemon.
-// armis:ignore cwe:426 reason:exec.Command uses hardcoded binary names ("docker", "podman"); no untrusted path
+// armis:ignore cwe:426 cwe:427 reason:exec.Command uses hardcoded binary constants (dockerBinary/podmanBinary); no untrusted path
 func IsDockerAvailable() bool {
-	cmd := exec.Command("docker", "version")
+	cmd := exec.Command(dockerBinary, "version")
 	if err := cmd.Run(); err == nil {
 		return true
 	}
 
-	// armis:ignore cwe:426 cwe:427 reason:exec.Command uses hardcoded binary name ("podman"); no untrusted path
-	cmd = exec.Command("podman", "version")
+	cmd = exec.Command(podmanBinary, "version")
 	if err := cmd.Run(); err == nil {
 		return true
 	}

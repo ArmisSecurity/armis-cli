@@ -60,9 +60,11 @@ func FormatPlain(result *ScanResult, w io.Writer) error {
 
 // anyMCPMissing reports whether at least one detected agent lacks the Armis MCP.
 func anyMCPMissing(result *ScanResult) bool {
-	for _, agent := range result.FlatResults() {
-		if !agent.MCPInstalled {
-			return true
+	for _, u := range result.Users {
+		for _, agent := range u.Agents {
+			if !agent.MCPInstalled {
+				return true
+			}
 		}
 	}
 	return false
