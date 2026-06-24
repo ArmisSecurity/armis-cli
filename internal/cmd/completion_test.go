@@ -58,8 +58,13 @@ func TestFlagCompletionsMatchValidators(t *testing.T) {
 		flag     string
 		expected []string
 	}{
-		{"format", rootCmd, "format", validFormats},
-		{"fail-on", rootCmd, "fail-on", cmdutil.ValidSeverities},
+		// --format/--fail-on were relocated from rootCmd to scanCmd (PPSC-1009),
+		// and supply-chain check re-registers its own instances (distinct flag
+		// pointers), so both registration sites are asserted here.
+		{"format", scanCmd, "format", validFormats},
+		{"fail-on", scanCmd, "fail-on", cmdutil.ValidSeverities},
+		{"sc-check format", scCheckCmd, "format", validFormats},
+		{"sc-check fail-on", scCheckCmd, "fail-on", cmdutil.ValidSeverities},
 		{"color", rootCmd, "color", []string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)}},
 		{"theme", rootCmd, "theme", []string{themeAuto, themeDark, themeLight}},
 		{"group-by", scanCmd, "group-by", validGroupBy},
@@ -87,8 +92,10 @@ func TestFlagCompletionsHaveDescriptions(t *testing.T) {
 		cmd  *cobra.Command
 		flag string
 	}{
-		{"format", rootCmd, "format"},
-		{"fail-on", rootCmd, "fail-on"},
+		{"format", scanCmd, "format"},
+		{"fail-on", scanCmd, "fail-on"},
+		{"sc-check format", scCheckCmd, "format"},
+		{"sc-check fail-on", scCheckCmd, "fail-on"},
 		{"color", rootCmd, "color"},
 		{"theme", rootCmd, "theme"},
 		{"group-by", scanCmd, "group-by"},

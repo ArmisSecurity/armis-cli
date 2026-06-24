@@ -70,6 +70,14 @@ func TestScanCmd(t *testing.T) {
 		if flags.Lookup("group-by") == nil {
 			t.Error("Expected --group-by flag")
 		}
+		// Scan-output flags were relocated from rootCmd to scanCmd (PPSC-1009) to
+		// keep them out of non-scan command help. They must remain available to
+		// the scan subtree.
+		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+			if flags.Lookup(name) == nil {
+				t.Errorf("Expected --%s flag on scanCmd", name)
+			}
+		}
 	})
 }
 
@@ -529,26 +537,19 @@ func TestRootCmd(t *testing.T) {
 		if flags.Lookup("dev") == nil {
 			t.Error("Expected --dev flag")
 		}
-		if flags.Lookup("format") == nil {
-			t.Error("Expected --format flag")
-		}
-		if flags.Lookup("no-progress") == nil {
-			t.Error("Expected --no-progress flag")
-		}
-		if flags.Lookup("fail-on") == nil {
-			t.Error("Expected --fail-on flag")
-		}
-		if flags.Lookup("exit-code") == nil {
-			t.Error("Expected --exit-code flag")
-		}
 		if flags.Lookup("tenant-id") == nil {
 			t.Error("Expected --tenant-id flag")
 		}
-		if flags.Lookup("page-limit") == nil {
-			t.Error("Expected --page-limit flag")
-		}
 		if flags.Lookup("debug") == nil {
 			t.Error("Expected --debug flag")
+		}
+		// Scan-output flags (--format, --no-progress, --fail-on, --exit-code,
+		// --page-limit) were relocated to scanCmd (PPSC-1009) and must NOT remain
+		// root persistent flags, so they stay out of non-scan command help.
+		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+			if flags.Lookup(name) != nil {
+				t.Errorf("--%s should be scoped to scanCmd, not rootCmd", name)
+			}
 		}
 	})
 

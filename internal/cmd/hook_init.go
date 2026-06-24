@@ -58,13 +58,16 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Resolve the MCP plugin dir, but do not require it. buildPreCommitSection
+	// (internal/install/precommit.go) stats the plugin's git-hooks/pre-commit
+	// script itself and falls back to a direct `armis-cli scan` hook when it is
+	// absent. Gating on the plugin here would convert that graceful fallback into
+	// a hard block, denying a developer a working hook for no reason. Surface the
+	// degradation on stderr and continue.
 	ei := install.NewEditorInstaller()
 	pluginDir := ei.PluginDir()
-	if _, err := os.Stat(pluginDir); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("Armis MCP server not installed — run 'armis-cli install' first") //nolint:staticcheck // proper noun
-		}
-		return fmt.Errorf("checking plugin directory %q: %w", pluginDir, err)
+	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
+		fmt.Fprintln(os.Stderr, "Armis MCP plugin not found; installing direct-scan hook (run 'armis-cli install' to upgrade).")
 	}
 
 	opts := install.PreCommitOpts{FailOpen: failOpen}
