@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,12 @@ import (
 )
 
 func TestConfirm(t *testing.T) {
+	// Discard the prompt so its unterminated "Continue? [y/N] " line does not
+	// bleed into gotestsum's go-test-json parser and cause false failures.
+	originalConfirmOut := confirmOut
+	confirmOut = io.Discard
+	t.Cleanup(func() { confirmOut = originalConfirmOut })
+
 	tests := []struct {
 		name  string
 		input string
