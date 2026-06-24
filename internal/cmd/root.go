@@ -236,11 +236,13 @@ func init() {
 		"HIGH":     "High-severity findings",
 		"CRITICAL": "Critical-severity findings",
 	}))
-	_ = rootCmd.RegisterFlagCompletionFunc("color", fixedCompletions([]string{"auto", "always", "never"}, map[string]string{
-		"auto":   "Enable colors when writing to a terminal (default)",
-		"always": "Always emit ANSI colors",
-		"never":  "Never emit ANSI colors",
-	}))
+	_ = rootCmd.RegisterFlagCompletionFunc("color", fixedCompletions(
+		[]string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)},
+		map[string]string{
+			string(cli.ColorModeAuto):   "Enable colors when writing to a terminal (default)",
+			string(cli.ColorModeAlways): "Always emit ANSI colors",
+			string(cli.ColorModeNever):  "Never emit ANSI colors",
+		}))
 	_ = rootCmd.RegisterFlagCompletionFunc("theme", fixedCompletions([]string{themeAuto, themeDark, themeLight}, map[string]string{
 		themeAuto:  "Auto-detect terminal background (default)",
 		themeDark:  "Optimize colors for a dark background",

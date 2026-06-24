@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -59,7 +60,7 @@ func TestFlagCompletionsMatchValidators(t *testing.T) {
 	}{
 		{"format", rootCmd, "format", validFormats},
 		{"fail-on", rootCmd, "fail-on", cmdutil.ValidSeverities},
-		{"color", rootCmd, "color", []string{"auto", "always", "never"}},
+		{"color", rootCmd, "color", []string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)}},
 		{"theme", rootCmd, "theme", []string{themeAuto, themeDark, themeLight}},
 		{"group-by", scanCmd, "group-by", validGroupBy},
 	}
