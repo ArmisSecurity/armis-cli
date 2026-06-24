@@ -94,6 +94,39 @@ func TestBuildComplianceReport_DefaultTransitivePolicyNormalized(t *testing.T) {
 	}
 }
 
+func TestBuildComplianceReport_SortsSameNameByVersion(t *testing.T) {
+	// Determinism for CI jq gating: npm can resolve several versions of one
+	// package in a single tree, so a Name-only sort would leave same-name entries
+	// in insertion order (varies run to run). The (Name, Version) tiebreaker must
+	// order them stably regardless of the order they were fed in. Versions below
+	// are intentionally NOT in input order so the assertion proves a sort, not an
+	// incidental passthrough.
+	in := reportInput{
+		Policy: supplychain.Policy{MinReleaseAge: 72 * time.Hour},
+		Mode:   "proxy",
+		Blocked: []supplychain.BlockedPackage{
+			{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: time.Hour},
+			{Name: "axios", Version: "1.16.1", DisplayVersion: "1.16.1", Age: time.Hour},
+			{Name: "axios", Version: "1.16.10", DisplayVersion: "1.16.10", Age: time.Hour},
+		},
+		InstallStatus: "failed",
+	}
+
+	rep := buildComplianceReport(in)
+
+	if len(rep.Blocked) != 3 {
+		t.Fatalf("expected 3 distinct-version rows; got %d: %#v", len(rep.Blocked), rep.Blocked)
+	}
+	// Lexicographic version order (the comparator's actual contract): "1.16.1" <
+	// "1.16.10" < "1.17.0" as strings.
+	wantOrder := []string{"1.16.1", "1.16.10", "1.17.0"}
+	for i, want := range wantOrder {
+		if rep.Blocked[i].Version != want {
+			t.Errorf("blocked[%d].Version = %q, want %q (full order: %+v)", i, rep.Blocked[i].Version, want, rep.Blocked)
+		}
+	}
+}
+
 func TestWriteComplianceReport_WritesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.json")

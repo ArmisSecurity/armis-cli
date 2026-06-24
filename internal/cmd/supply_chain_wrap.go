@@ -134,9 +134,9 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 
 	// Apply the env-var override for the transitive policy. ARMIS_SUPPLY_CHAIN_TRANSITIVE
 	// mirrors the config's transitive-policy key for the wrap path (which can't take
-	// flags). Only an explicit "warn" opts in; any other value (including unset)
-	// leaves the resolved policy untouched, so the secure default and a config
-	// "warn" both stand unless deliberately overridden.
+	// flags). An unset/empty value leaves the config-resolved policy untouched; any
+	// non-empty value overrides it, and ParseTransitivePolicy is fail-safe — only an
+	// explicit "warn" opts in, every other value (including typos) forces block.
 	if raw := os.Getenv(envSCTransitive); raw != "" {
 		policy.TransitivePolicy = supplychain.ParseTransitivePolicy(raw)
 	}

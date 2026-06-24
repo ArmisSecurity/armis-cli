@@ -43,7 +43,8 @@ func (p *Proxy) EvaluateConstraints() (conflicts []ConstraintConflict) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Swallow: the install already finished; a broken diagnostic must not
-			// turn into a crash. Return whatever was accumulated before the panic.
+			// turn into a crash. Discard any partial result so a half-built,
+			// possibly-misleading conflict list never reaches the summary.
 			conflicts = nil
 		}
 	}()

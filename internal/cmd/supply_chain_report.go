@@ -143,19 +143,41 @@ func buildComplianceReport(in reportInput) complianceReport {
 		rep.Blocked = append(rep.Blocked, reportBlocked{Name: b.Name, Version: ver, AgeHours: hours(b.Age)})
 	}
 
+	// armis:ignore cwe:770 cwe:401 reason:in.Resolved/Warned/Conflicts come from the proxy accumulators (proxy.Allowed/Warned/EvaluateConstraints), each populated one entry per package actually processed during the real install from npm metadata capped at 20MB by io.LimitReader and bounded to maxConstraintEntries keys; not attacker-controlled-unbounded — same trust model as the cwe:770 suppressions in proxy.go
 	for _, r := range in.Resolved {
 		rep.Resolved = append(rep.Resolved, reportResolved{Name: r.Name, Version: r.Version, AgeHours: hours(r.Age)})
 	}
+	// armis:ignore cwe:770 cwe:401 reason:in.Warned is proxy.Warned() — bounded by the proxy's 20MB-capped metadata reads and maxConstraintEntries; see the Resolved loop above
 	for _, w := range in.Warned {
 		rep.WarnedThrough = append(rep.WarnedThrough, reportWarned{Name: w.Name, Version: w.Version, AgeHours: hours(w.Age)})
 	}
+	// armis:ignore cwe:770 cwe:401 reason:in.Conflicts is EvaluateConstraints() output — bounded by the proxy's 20MB-capped metadata reads and maxConstraintEntries; see the Resolved loop above
 	for _, c := range in.Conflicts {
 		rep.Conflicts = append(rep.Conflicts, reportConflict{Dep: c.Dep, Range: c.Range, ByPkg: c.ByPkg})
 	}
 
-	sort.Slice(rep.Blocked, func(i, j int) bool { return rep.Blocked[i].Name < rep.Blocked[j].Name })
-	sort.Slice(rep.Resolved, func(i, j int) bool { return rep.Resolved[i].Name < rep.Resolved[j].Name })
-	sort.Slice(rep.WarnedThrough, func(i, j int) bool { return rep.WarnedThrough[i].Name < rep.WarnedThrough[j].Name })
+	// Sort by (Name, Version) so the output is byte-stable for CI diffing/jq
+	// gating. Name alone is not enough: npm can resolve several versions of the
+	// same package in one tree, and a Name-only sort would leave same-name entries
+	// in insertion order, which varies across runs.
+	sort.Slice(rep.Blocked, func(i, j int) bool {
+		if rep.Blocked[i].Name != rep.Blocked[j].Name {
+			return rep.Blocked[i].Name < rep.Blocked[j].Name
+		}
+		return rep.Blocked[i].Version < rep.Blocked[j].Version
+	})
+	sort.Slice(rep.Resolved, func(i, j int) bool {
+		if rep.Resolved[i].Name != rep.Resolved[j].Name {
+			return rep.Resolved[i].Name < rep.Resolved[j].Name
+		}
+		return rep.Resolved[i].Version < rep.Resolved[j].Version
+	})
+	sort.Slice(rep.WarnedThrough, func(i, j int) bool {
+		if rep.WarnedThrough[i].Name != rep.WarnedThrough[j].Name {
+			return rep.WarnedThrough[i].Name < rep.WarnedThrough[j].Name
+		}
+		return rep.WarnedThrough[i].Version < rep.WarnedThrough[j].Version
+	})
 	// Conflicts arrive already sorted from EvaluateConstraints.
 
 	return rep
@@ -181,10 +203,11 @@ func hours(d time.Duration) float64 {
 }
 
 // writeComplianceReport marshals the report and writes it to the path named by
-// ARMIS_SUPPLY_CHAIN_REPORT. The value "-" writes to stderr (prefixed so it is
-// distinguishable from the human summary). A write error is reported but never
-// fails the build — the install already finished; a missing audit file is a
-// degraded state the user can act on, not a reason to break the run.
+// ARMIS_SUPPLY_CHAIN_REPORT. The value "-" writes the raw JSON to stderr with no
+// prefix, so it stays machine-readable when redirected (the human summary the
+// scPrefix marks is kept on a separate stream). A write error is reported but
+// never fails the build — the install already finished; a missing audit file is
+// a degraded state the user can act on, not a reason to break the run.
 func writeComplianceReport(path string, rep complianceReport) {
 	data, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
