@@ -33,6 +33,7 @@ var (
 	scAll          bool
 	scFailOpen     bool
 	scReport       string
+	scFailOn       []string
 )
 
 var scCheckCmd = &cobra.Command{
@@ -72,14 +73,30 @@ func init() {
 	scCheckCmd.Flags().StringVar(&scLockfile, "lockfile", "", "Explicit lockfile path (overrides auto-detection)")
 	scCheckCmd.Flags().BoolVar(&scAll, "all", false, "Check all packages (disable auto-diff against base branch)")
 	scCheckCmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "Exit 0 on registry errors (fail-open for CI availability)")
-	// --format, --fail-on, and --exit-code are persistent flags on scanCmd, but
-	// supply-chain is a sibling of scan in the command tree and does not inherit
-	// them. runSupplyChainCheck consumes all three (the format/failOn/exitCode
-	// globals), so register them locally to match the scan commands. Defaults
-	// mirror the former root registrations exactly.
+	// --format and --exit-code are persistent flags on scanCmd, but supply-chain
+	// is a sibling of scan in the command tree and does not inherit them.
+	// runSupplyChainCheck consumes both (the format/exitCode globals), so register
+	// them locally to match the scan commands. Defaults mirror the former root
+	// registrations exactly. --fail-on is also registered locally below, but bound
+	// to its own scFailOn var with a "medium" default (see that registration).
 	scCheckCmd.Flags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
-	scCheckCmd.Flags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	scCheckCmd.Flags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
+	// Locally shadow the root's persistent --fail-on with a default that can
+	// actually gate. supply-chain violations are graded MEDIUM or HIGH by
+	// ClassifySeverity (they never reach CRITICAL), so the root default of
+	// [CRITICAL] (root.go) would let a copy-pasted `supply-chain check` pass CI
+	// no matter how many violations it found — a silently broken gate. Default to
+	// "medium" here so any real violation fails by default, while leaving the flag
+	// fully overridable (e.g. --fail-on high to gate only on packages published
+	// in the last 24h). Same sibling-of-scan rationale as --output below:
+	// supply-chain does not inherit scan's flag defaults, and a locally-registered
+	// flag cleanly shadows the root's persistent one (cobra's mergePersistentFlags
+	// skips the parent flag when a same-named local flag exists). Bound to its own
+	// scFailOn var — not the failOn global — so the two registrations don't both
+	// write the global at init() time, where the resting default would silently
+	// depend on init() ordering. runSupplyChainCheck reads scFailOn explicitly.
+	// Registered before the completion func below, which keys off the flag pointer.
+	scCheckCmd.Flags().StringSliceVar(&scFailOn, "fail-on", []string{"medium"}, "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	// These are distinct flag instances from scanCmd's, so the completion funcs
 	// must be registered here too (Cobra keys completions by flag pointer).
 	_ = scCheckCmd.RegisterFlagCompletionFunc("format", formatCompletions())
@@ -112,8 +129,11 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// not inherit scan.PersistentPreRunE's validation; without this, a typo'd
 	// --fail-on would run the full check and print results before erroring.
 	// cmdutil.GetFailOn also case-normalizes to uppercase so ShouldFail (which
-	// matches exactly) trips on a lowercase "medium".
-	failOnSeverities, err := cmdutil.GetFailOn(failOn)
+	// matches exactly) trips on a lowercase "medium". Read scFailOn (the
+	// check-local flag, default "medium"), not the failOn global — scFailOn
+	// shadows root's persistent --fail-on, whose [CRITICAL] default would never
+	// gate a MEDIUM/HIGH supply-chain violation; see its registration.
+	failOnSeverities, err := cmdutil.GetFailOn(scFailOn)
 	if err != nil {
 		return err
 	}
@@ -179,10 +199,26 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if autoDetectedBase {
+		// armis:ignore cwe:73 cwe:22 reason:this branch only runs when autoDetectedBase is set, which detectBaseLockfile sets solely for the os.CreateTemp temp file it just created; a user-supplied --base-lockfile leaves autoDetectedBase false and is never removed, so the deleted path is always CLI-owned with no external control
 		defer os.Remove(baseLockfile) //nolint:errcheck,gosec
 	}
 
+	// Without --all and without a usable base lockfile, only-new diffing is
+	// impossible, so check silently audits every package — a different, stricter
+	// mode than the default. detectBaseLockfile already announces the auto-detected
+	// case (and an explicit --base-lockfile is the user's own choice), so surface
+	// only the remaining silent path: no git base was found and the user did not
+	// ask for --all. Say so plainly so the broader scope isn't mistaken for the
+	// only-new default.
+	if !scAll && baseLockfile == "" {
+		s := output.GetStyles()
+		fmt.Fprintf(os.Stderr, "%s %s\n",
+			s.MutedText.Render("[armis]"),
+			s.MutedText.Render("supply-chain: no git base detected, checking all packages (use --all to suppress this notice)"))
+	}
+
 	ctx := cmd.Context()
+	// armis:ignore cwe:73 cwe:22 reason:lockfilePath and baseLockfile derive from the user-controlled --lockfile/--base-lockfile CLI flags (or auto-detected paths) naming files on the user's own machine; reading them is the purpose of `supply-chain check`, same no-trust-boundary pattern as --output suppressed at the flag registration above
 	result, err := check.RunCheck(ctx, policy, lockfilePath, baseLockfile)
 	if err != nil {
 		if policy.FailOpen {
@@ -267,8 +303,8 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	// failOnSeverities was validated and uppercase-normalized at the top of this
-	// function (before the scan ran), so a lowercase "medium" correctly trips
-	// ShouldFail's exact match here.
+	// function (before the scan ran) from the check-local scFailOn flag, so a
+	// lowercase "medium" correctly trips ShouldFail's exact match here.
 	return output.CheckExit(scanResult, failOnSeverities, exitCode)
 }
 

@@ -340,8 +340,11 @@ func runSupplyChainStatusJSON(dir string) error {
 
 	result := statusJSON{
 		Policy: statusPolicyJSON{
-			Source:     configSource,
-			MinAge:     policy.MinReleaseAge.String(),
+			Source: configSource,
+			// Use the same human-readable formatter as the text output (Min age
+			// line, :188) so JSON consumers see "3 days", not Go's internal
+			// Duration.String() form "72h0m0s".
+			MinAge:     formatDurationShort(policy.MinReleaseAge),
 			Exclusions: policy.Exclusions,
 			FailOpen:   cfg != nil && cfg.FailOpen,
 		},

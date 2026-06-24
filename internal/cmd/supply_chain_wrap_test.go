@@ -529,3 +529,33 @@ func TestCheckGradleStaleness(t *testing.T) {
 		checkGradleStaleness(filepath.Join(dir, "gradle.lockfile"))
 	})
 }
+
+// TestFormatDurationShort locks in the human-readable rendering used by both the
+// status text output and the JSON min_age field. It pins the singular forms (1
+// minute / 1 hour / 1 day) so the grammatical guards can't silently regress, and
+// covers each branch boundary (<1h, 1-23h, >=24h).
+func TestFormatDurationShort(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"zero", 0, "0 minutes"},
+		{"one minute", time.Minute, "1 minute"},
+		{"several minutes", 30 * time.Minute, "30 minutes"},
+		{"just under an hour", 59 * time.Minute, "59 minutes"},
+		{"one hour", time.Hour, "1 hour"},
+		{"several hours", 2 * time.Hour, "2 hours"},
+		{"just under a day", 23 * time.Hour, "23 hours"},
+		{"one day", 24 * time.Hour, "1 day"},
+		{"several days", 72 * time.Hour, "3 days"},
+		{"two weeks", 14 * 24 * time.Hour, "14 days"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatDurationShort(tt.d); got != tt.want {
+				t.Errorf("formatDurationShort(%s) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
