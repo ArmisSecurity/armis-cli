@@ -22,6 +22,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 - [Features](#features)
 - [Installation](#installation)
+- [Shell Completion](#shell-completion)
 - [Quick Start](#quick-start)
 - [Verification](#verification)
 - [Usage](#usage)
@@ -222,6 +223,60 @@ If you see "command not found" after installation:
    ```powershell
    & "$env:LOCALAPPDATA\armis-cli\armis-cli.exe" --help
    ```
+
+### Shell Completion
+
+`armis-cli` ships tab-completion for commands, subcommands, and flag values (e.g.
+`--format <TAB>` offers `human/json/sarif/junit`). Generate the script for your
+shell with `armis-cli completion <shell>`; run `armis-cli completion <shell> --help`
+for the full instructions.
+
+**Bash** (requires the `bash-completion` package):
+
+```bash
+# Current shell session
+source <(armis-cli completion bash)
+
+# Every new session (Linux)
+armis-cli completion bash > /etc/bash_completion.d/armis-cli
+
+# Every new session (macOS)
+armis-cli completion bash > $(brew --prefix)/etc/bash_completion.d/armis-cli
+```
+
+**Zsh** (enable completion once with `echo "autoload -U compinit; compinit" >> ~/.zshrc`):
+
+```zsh
+# Current shell session
+source <(armis-cli completion zsh)
+
+# Every new session (Linux)
+armis-cli completion zsh > "${fpath[1]}/_armis-cli"
+
+# Every new session (macOS)
+armis-cli completion zsh > $(brew --prefix)/share/zsh/site-functions/_armis-cli
+```
+
+**Fish:**
+
+```fish
+# Current shell session
+armis-cli completion fish | source
+
+# Every new session
+armis-cli completion fish > ~/.config/fish/completions/armis-cli.fish
+```
+
+**PowerShell:**
+
+```powershell
+# Current shell session
+armis-cli completion powershell | Out-String | Invoke-Expression
+
+# Every new session: add the output of the above command to your PowerShell profile
+```
+
+Start a new shell for the persistent setup to take effect.
 
 ---
 

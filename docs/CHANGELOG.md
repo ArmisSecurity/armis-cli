@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shell completion now suggests values for enumerated flags: `--format`, `--fail-on`, `--color`, `--theme`, and `--group-by` offer their accepted values (with descriptions in zsh/fish) instead of falling back to file-path completion. The candidate lists reuse the same slices the flag validators read, so completions cannot drift from what is actually accepted. The README documents the per-shell setup for `armis-cli completion <shell>` (bash/zsh/fish/PowerShell). (PPSC-1012)
+
 ### Changed
 
 - Update notification now links to the release notes for the available version, so breaking changes can be reviewed before upgrading
