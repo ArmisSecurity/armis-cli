@@ -224,7 +224,7 @@ func init() {
 	// validators read, so the completion candidates can't drift from what's
 	// actually accepted. --region is intentionally omitted (advisory-only).
 	_ = rootCmd.RegisterFlagCompletionFunc("format", fixedCompletions(validFormats, map[string]string{
-		"human": "Human-readable terminal output (default)",
+		"human": "Human-readable terminal output",
 		"json":  "Machine-readable JSON",
 		"sarif": "SARIF for code-scanning tools",
 		"junit": "JUnit XML for CI test reports",
@@ -244,7 +244,7 @@ func init() {
 			string(cli.ColorModeNever):  "Never emit ANSI colors",
 		}))
 	_ = rootCmd.RegisterFlagCompletionFunc("theme", fixedCompletions([]string{themeAuto, themeDark, themeLight}, map[string]string{
-		themeAuto:  "Auto-detect terminal background (default)",
+		themeAuto:  "Auto-detect terminal background",
 		themeDark:  "Optimize colors for a dark background",
 		themeLight: "Optimize colors for a light background",
 	}))
