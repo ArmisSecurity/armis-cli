@@ -142,6 +142,7 @@ func isWildcardRange(rng string) bool {
 // satisfaction). semver.NewVersion is lenient (tolerates a leading "v", missing
 // patch, etc.), matching what npm accepts in a versions map.
 func parseVersions(raw []string) []*semver.Version {
+	// armis:ignore cwe:770 cwe:401 reason:raw originates from npm metadata bodies capped at maxProxyResponseSize (20MB) by io.LimitReader at proxy.go (oversize rejected with 502), and the accumulators feeding it are capped at maxConstraintEntries (50000) distinct keys; len(raw) is bounded, not attacker-controlled-unbounded — same trust model as the sibling suppressions in proxy.go
 	out := make([]*semver.Version, 0, len(raw))
 	for _, s := range raw {
 		v, err := semver.NewVersion(s)
