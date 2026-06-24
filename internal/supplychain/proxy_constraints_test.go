@@ -229,3 +229,91 @@ func TestEvaluateConstraints_NoDataNoConflict(t *testing.T) {
 		t.Errorf("expected no conflicts from an empty proxy; got %#v", c)
 	}
 }
+
+func TestRecordConstraintData_CapsNewKeysAtLimit(t *testing.T) {
+	// The accumulators are bounded at maxConstraintEntries distinct keys so a
+	// hostile/pathological upstream metadata stream cannot grow them without
+	// bound. At the cap a NEW package key is dropped, but an EXISTING key still
+	// accumulates — the diagnostic degrades to best-effort, never OOM. Pre-fill
+	// the maps to the boundary (fast) rather than driving 50k real requests.
+	p := newConstraintProxy()
+	p.removedVersions = make(map[string][]string)
+	for i := 0; i < maxConstraintEntries; i++ {
+		key := fmt.Sprintf("pkg%d", i)
+		p.keptVersions[key] = []string{"1.0.0"}
+		p.removedVersions[key] = []string{"2.0.0"}
+		p.requiredRanges[key] = []requiredRange{{Range: "^1.0.0", ByPkg: "root"}}
+	}
+
+	// One metadata doc for a brand-new package "overflow": kept 1.0.0, removed
+	// 2.0.0 (fresh), and it declares a range on a brand-new dependency "newdep".
+	meta := map[string]json.RawMessage{
+		"versions": json.RawMessage(`{"1.0.0":{"dependencies":{"newdep":"^1.0.0"}}}`),
+	}
+	p.recordConstraintData(meta, []string{"1.0.0", "2.0.0"}, map[string]bool{"2.0.0": true}, "overflow")
+
+	// New keys past the cap are dropped: the maps stay at the limit, never grow.
+	if got := len(p.keptVersions); got != maxConstraintEntries {
+		t.Errorf("keptVersions grew past the cap: len=%d, want %d", got, maxConstraintEntries)
+	}
+	if _, ok := p.keptVersions["overflow"]; ok {
+		t.Error("a new key past the cap must be dropped from keptVersions")
+	}
+	if _, ok := p.requiredRanges["newdep"]; ok {
+		t.Error("a new dependency key past the cap must be dropped from requiredRanges")
+	}
+
+	// An EXISTING key still accumulates past the cap (the doc comment's guarantee).
+	before := len(p.keptVersions["pkg0"])
+	p.recordConstraintData(
+		map[string]json.RawMessage{"versions": json.RawMessage(`{}`)},
+		[]string{"3.0.0"}, map[string]bool{}, "pkg0",
+	)
+	if got := len(p.keptVersions["pkg0"]); got != before+1 {
+		t.Errorf("existing key should keep accumulating past the cap: len=%d, want %d", got, before+1)
+	}
+}
+
+func TestEvaluateConstraints_ToleratesPathologicalInput(t *testing.T) {
+	// Robustness: EvaluateConstraints must never panic and never emit a false
+	// conflict on malformed accumulator contents — garbage version strings,
+	// exotic/blank ranges, and a dependent whose package was never even filtered.
+	//
+	// NOTE: this is a white-box guarantee about the function's OWN handling of bad
+	// data, not a test of the recover() guard firing. The semver library
+	// (Masterminds/semver v3) returns errors rather than panicking on every
+	// pathological input we can construct (verified empirically: blank, "^^",
+	// ">=1 <", NUL bytes, 24-digit majors all error cleanly), so the recover() in
+	// EvaluateConstraints is defense-in-depth against a hypothetical future
+	// library regression — it cannot be triggered through crafted input today.
+	// This test instead proves the parse-failure / fail-open paths swallow every
+	// bad shape gracefully.
+	p := newConstraintProxy()
+	p.removedVersions = make(map[string][]string)
+
+	// A dependent declaring a grab-bag of ranges (most unparseable) on "dep".
+	p.requiredRanges["dep"] = []requiredRange{
+		{Range: "", ByPkg: "a"},                             // blank → wildcard, skipped
+		{Range: "   ", ByPkg: "a"},                          // whitespace → wildcard, skipped
+		{Range: "*", ByPkg: "a"},                            // explicit wildcard, skipped
+		{Range: "^^1.0.0", ByPkg: "b"},                      // malformed → fail-open
+		{Range: ">=1 <", ByPkg: "b"},                        // truncated → fail-open
+		{Range: "git+https://x/y.git", ByPkg: "c"},          // non-range spec → fail-open
+		{Range: "\x00\x01", ByPkg: "c"},                     // control bytes → fail-open
+		{Range: "999999999999999999999999.0.0", ByPkg: "d"}, // absurd major → fail-open or no-match
+		{Range: "^9.9.9", ByPkg: "e"},                       // parseable, never satisfied → "not our doing"
+	}
+	// dep's recorded versions are themselves garbage so parseVersions drops them.
+	p.keptVersions["dep"] = []string{"", "not-a-version", "1.x.y.z", "??"}
+	p.removedVersions["dep"] = []string{"garbage", "v-", ""}
+
+	var conflicts []ConstraintConflict
+	done := func() { conflicts = p.EvaluateConstraints() }
+	// A panic here would fail the test loudly even without the recover() guard;
+	// asserting no panic is the point.
+	done()
+
+	if len(conflicts) != 0 {
+		t.Errorf("pathological input must yield no false conflicts; got %#v", conflicts)
+	}
+}

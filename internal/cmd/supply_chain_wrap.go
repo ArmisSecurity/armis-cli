@@ -289,7 +289,7 @@ func printWarnThroughSummary(warned []supplychain.WarnedPackage, policy supplych
 	fmt.Fprintf(os.Stderr, "\n%s %s\n",
 		s.MutedText.Render(scPrefix),
 		s.WarningText.Render(fmt.Sprintf("supply-chain: %s allowed through by transitive-policy: warn (younger than %s)",
-			countNoun(len(warned), "young transitive dependency"), formatDurationShort(policy.MinReleaseAge))))
+			countNounPlural(len(warned), "young transitive dependency", "young transitive dependencies"), formatDurationShort(policy.MinReleaseAge))))
 
 	displayCount := len(warned)
 	if displayCount > maxBlockedDisplay {
@@ -977,18 +977,16 @@ func severityDot(s *output.Styles, sev model.Severity) string {
 }
 
 func formatDurationShort(d time.Duration) string {
+	// "minute"/"hour"/"day" all pluralize regularly, so countNoun gives the
+	// correct singular/plural agreement ("1 hour", "2 hours") in one place.
 	if d < time.Hour {
-		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+		return countNoun(int(d.Minutes()), "minute")
 	}
 	hours := int(d.Hours())
 	if hours < 24 {
-		return fmt.Sprintf("%d hours", hours)
+		return countNoun(hours, "hour")
 	}
-	days := hours / 24
-	if days == 1 {
-		return "1 day"
-	}
-	return fmt.Sprintf("%d days", days)
+	return countNoun(hours/24, "day")
 }
 
 func registryEnvForPM(pm, registryURL string) []string {

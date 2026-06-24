@@ -274,11 +274,23 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 
 // countNoun formats a count with its noun, pluralizing with a trailing "s" when
 // the count is not exactly 1 (e.g. "1 package", "2 packages", "0 violations").
+// Use countNounPlural for nouns whose plural is not formed by a trailing "s".
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// countNounPlural is countNoun for a noun whose plural is irregular — the
+// trailing-"s" rule would mangle it (e.g. "dependency" → "dependencys"). It
+// takes the explicit plural form rather than guessing, so "1 young transitive
+// dependency" / "2 young transitive dependencies" both read correctly.
+func countNounPlural(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 func buildSummary(findings []model.Finding) model.Summary {
