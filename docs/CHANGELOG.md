@@ -9,21 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Shell completion now suggests values for enumerated flags: `--format`, `--fail-on`, `--color`, `--theme`, and `--group-by` offer their accepted values (with descriptions in zsh/fish) instead of falling back to file-path completion. The candidate lists reuse the same slices the flag validators read, so completions cannot drift from what is actually accepted. The README documents the per-shell setup for `armis-cli completion <shell>` (bash/zsh/fish/PowerShell). (PPSC-1012)
-
 ### Changed
 
-- Update notification now links to the release notes for the available version, so breaking changes can be reviewed before upgrading
-
 ### Deprecated
-
-- Legacy Basic auth `--token` / `-t` (env: `ARMIS_API_TOKEN`) now emits a runtime deprecation warning; use JWT auth (`--client-id` / `--client-secret`, env: `ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`) instead. The flag still functions
 
 ### Removed
 
 ### Fixed
 
-- `auth`/`scan`: the CLI now honors the operating system's proxy configuration instead of only the `HTTP_PROXY`/`HTTPS_PROXY` environment variables. On Windows this resolves the WinINET settings — including a PAC script referenced by `AutoConfigURL` (e.g. Zscaler) — that browsers and PowerShell already use. Previously the binary attempted a direct connection that a corporate proxy silently dropped, so authentication failed on the first request with an opaque `Post "https://…/api/v1/auth/token": EOF` even though the same machine could reach the endpoint in a browser. macOS and Linux behavior is unchanged (the release binaries are built with `CGO_ENABLED=0` and continue to read proxy settings from the environment). The `EOF` failure also now carries actionable guidance pointing at the proxy/`HTTPS_PROXY`, and `--debug` logs transport-level errors (DNS/connect/TLS/EOF), not just non-2xx HTTP responses.
+### Security
+
+---
+
+## [1.16.0] - 2026-06-25
+
+### Added
+
+- Shell completion now suggests values for enumerated flags: `--format`, `--fail-on`, `--color`, `--theme`, and `--group-by` offer their accepted values (with descriptions in zsh/fish) instead of falling back to file-path completion. The candidate lists reuse the same slices the flag validators read, so completions cannot drift from what is actually accepted. The README documents the per-shell setup for `armis-cli completion <shell>` (bash/zsh/fish/PowerShell). (#245)
+
+### Changed
+
+- Update notification now links to the release notes for the available version, so breaking changes can be reviewed before upgrading. (#243)
+- Documentation now covers previously-undocumented surface area: the `--changed` flag (all three modes, with a CI-INTEGRATION cross-link), the `.armisignore` file, and the `agent-detection`, `hook init`, and `completion` commands. CI setup examples use the correct binary name (`armis-cli`) and explain `.armisignore` instead of a stale `--exclude` snippet, and the SBOM/VEX examples drop `--tenant-id` (JWT auto-extracts it). (#242)
+- Contributor first-run experience is cleaner: `make test` no longer reports 8 phantom failures (the upload spinner's ANSI frames and the `[y/N]` confirm prompt were corrupting gotestsum's JSON parser), a new `make lint-clean` target clears the golangci-lint cache that bleeds across sibling worktrees, and the README Go-version badge matches `go.mod` (1.25+). (#244)
+
+### Deprecated
+
+- Legacy Basic auth `--token` / `-t` (env: `ARMIS_API_TOKEN`) now emits a runtime deprecation warning and is hidden from `--help`; use JWT auth (`--client-id` / `--client-secret`, env: `ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`) instead. The flag still functions — auth behavior is unchanged. (#243)
+
+### Fixed
+
+- `auth`/`scan`: the CLI now honors the operating system's proxy configuration instead of only the `HTTP_PROXY`/`HTTPS_PROXY` environment variables. On Windows this resolves the WinINET settings — including a PAC script referenced by `AutoConfigURL` (e.g. Zscaler) — that browsers and PowerShell already use. Previously the binary attempted a direct connection that a corporate proxy silently dropped, so authentication failed on the first request with an opaque `Post "https://…/api/v1/auth/token": EOF` even though the same machine could reach the endpoint in a browser. macOS and Linux behavior is unchanged (the release binaries are built with `CGO_ENABLED=0` and continue to read proxy settings from the environment). The `EOF` failure also now carries actionable guidance pointing at the proxy/`HTTPS_PROXY`, and `--debug` logs transport-level errors (DNS/connect/TLS/EOF), not just non-2xx HTTP responses. (#247)
+- `scan`: invalid flags now fail fast as flag errors instead of hiding behind an auth failure. `--fail-on`, `--pull`, and SBOM/VEX flag misuse are validated and normalized *before* authentication and any network call, so a typo no longer surfaces as an opaque auth error (or silently defaults once auth succeeds). `scan repo` also accepts zero arguments again (path defaults to `.`), and `--pull` validation is skipped when `--tarball` is set, matching the flag's documented "ignored with `--tarball`" contract. (#240)
+- `scan`/`auth`: error messages now follow a problem → cause → fix structure. Auth failures list the `--client-id`/`--client-secret` flags alongside the env vars; unknown-flag errors append a `Run <cmd> --help` hint; `scan image` checks for a missing container runtime *before* authenticating and points to the `--tarball` escape hatch (with Docker/Podman install URLs); and the agent-detection output suggests `armis-cli install` when an agent is missing MCP configuration. (#238)
 
 ### Security
 
@@ -557,7 +575,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...v1.13.0
