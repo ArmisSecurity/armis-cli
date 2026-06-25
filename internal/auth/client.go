@@ -218,14 +218,17 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 // annotateTransportError adds actionable guidance to a connection that was
 // closed before any HTTP response arrived (surfaced by Go as io.EOF). The most
 // common cause on managed networks is a corporate proxy distributed via a PAC
-// file (e.g. Zscaler): the CLI now auto-detects the system proxy, so a
-// persistent failure points to an env var that needs setting or a network the
-// machine cannot reach directly. Other transport errors (DNS, TLS, refused) are
-// returned unchanged — their own messages are already descriptive.
+// file (e.g. Zscaler). On Windows the CLI reads the WinINET/PAC system proxy
+// automatically; on macOS and Linux it honors the HTTP(S)_PROXY environment
+// variables, so a persistent failure there points to a proxy that still needs
+// to be configured or a network the machine cannot reach directly. Other
+// transport errors (DNS, TLS, refused) are returned unchanged — their own
+// messages are already descriptive.
 func annotateTransportError(err error) error {
 	if !errors.Is(err, io.EOF) {
 		return err
 	}
 	return fmt.Errorf("%w (connection closed before any response — this often means a corporate proxy or firewall is blocking direct access; "+
-		"the CLI auto-detects your system proxy, but if this persists set HTTPS_PROXY to your proxy address or contact your network team)", err)
+		"the CLI uses your Windows system proxy automatically and honors the HTTPS_PROXY/HTTP_PROXY environment variables elsewhere, "+
+		"so if this persists set HTTPS_PROXY to your proxy address or contact your network team)", err)
 }

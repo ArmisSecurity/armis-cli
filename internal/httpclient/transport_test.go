@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 )
 
@@ -29,13 +30,20 @@ func TestProxyAwareTransport(t *testing.T) {
 		}
 	})
 
-	t.Run("proxy resolver is stable across calls", func(t *testing.T) {
-		// systemProxyFunc memoizes the resolver; two transports should share the
-		// same underlying func value rather than re-reading OS settings each time.
+	t.Run("proxy resolver is memoized across calls", func(t *testing.T) {
+		// systemProxyFunc memoizes the resolver via sync.Once; two transports must
+		// share the *same* underlying func value rather than re-reading OS settings
+		// each time. Func values aren't comparable with ==, so compare the code
+		// pointers: a recomputed resolver would yield a distinct closure here.
 		a := ProxyAwareTransport()
 		b := ProxyAwareTransport()
 		if a.Proxy == nil || b.Proxy == nil {
 			t.Fatal("expected both transports to carry a proxy resolver")
+		}
+		pa := reflect.ValueOf(a.Proxy).Pointer()
+		pb := reflect.ValueOf(b.Proxy).Pointer()
+		if pa != pb {
+			t.Errorf("expected the memoized resolver to be reused across calls; got distinct func values (%x vs %x)", pa, pb)
 		}
 	})
 }
