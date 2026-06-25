@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const (
@@ -46,7 +48,7 @@ type pypiRelease struct {
 
 func NewPyPIClient() *PyPIClient {
 	return &PyPIClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: httpclient.ProxyAwareTransport()},
 		baseURL:    defaultPyPIURL,
 	}
 }

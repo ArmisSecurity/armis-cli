@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const githubAPIHost = "api.github.com"
@@ -52,7 +54,7 @@ type PluginInstaller struct {
 
 func newPluginInstaller() *PluginInstaller {
 	return &PluginInstaller{
-		httpClient:  &http.Client{Timeout: downloadTimeout},
+		httpClient:  &http.Client{Timeout: downloadTimeout, Transport: httpclient.ProxyAwareTransport()},
 		releasesURL: releasesURL,
 	}
 }

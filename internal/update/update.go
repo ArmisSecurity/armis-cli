@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
@@ -66,7 +67,8 @@ func NewChecker(currentVersion string) *Checker {
 		githubAPIURL:   githubReleasesURL,
 		cacheTTL:       cacheTTL,
 		httpClient: &http.Client{
-			Timeout: checkTimeout,
+			Timeout:   checkTimeout,
+			Transport: httpclient.ProxyAwareTransport(),
 		},
 	}
 }

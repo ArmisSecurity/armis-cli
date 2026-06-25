@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const (
@@ -46,7 +48,7 @@ type mavenSearchResponse struct {
 
 func NewMavenClient() *MavenClient {
 	return &MavenClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: httpclient.ProxyAwareTransport()},
 		baseURL:    defaultMavenURL,
 	}
 }

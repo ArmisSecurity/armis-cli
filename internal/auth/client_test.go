@@ -3,11 +3,45 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestAnnotateTransportError(t *testing.T) {
+	t.Run("EOF gets proxy guidance and stays unwrappable to io.EOF", func(t *testing.T) {
+		got := annotateTransportError(io.EOF)
+		if !errors.Is(got, io.EOF) {
+			t.Fatalf("annotated error must still unwrap to io.EOF, got %v", got)
+		}
+		msg := got.Error()
+		for _, want := range []string{"proxy", "HTTPS_PROXY"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("expected EOF guidance to mention %q, got: %s", want, msg)
+			}
+		}
+	})
+
+	t.Run("wrapped EOF is also annotated", func(t *testing.T) {
+		wrapped := fmt.Errorf("Post \"https://moose.armis.com\": %w", io.EOF)
+		got := annotateTransportError(wrapped)
+		if !strings.Contains(got.Error(), "proxy") {
+			t.Errorf("expected wrapped EOF to be annotated, got: %s", got.Error())
+		}
+	})
+
+	t.Run("non-EOF errors pass through unchanged", func(t *testing.T) {
+		orig := errors.New("dial tcp: connection refused")
+		got := annotateTransportError(orig)
+		if got.Error() != orig.Error() {
+			t.Errorf("non-EOF error should pass through unchanged, got: %s", got.Error())
+		}
+	})
+}
 
 func TestAuthClient_DoesNotFollowRedirects(t *testing.T) {
 	var redirectTargetHit atomic.Bool
