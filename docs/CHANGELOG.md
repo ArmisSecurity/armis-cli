@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `auth`/`scan`: the CLI now honors the operating system's proxy configuration instead of only the `HTTP_PROXY`/`HTTPS_PROXY` environment variables. On Windows this resolves the WinINET settings — including a PAC script referenced by `AutoConfigURL` (e.g. Zscaler) — that browsers and PowerShell already use. Previously the binary attempted a direct connection that a corporate proxy silently dropped, so authentication failed on the first request with an opaque `Post "https://…/api/v1/auth/token": EOF` even though the same machine could reach the endpoint in a browser. macOS and Linux behavior is unchanged (the release binaries are built with `CGO_ENABLED=0` and continue to read proxy settings from the environment). The `EOF` failure also now carries actionable guidance pointing at the proxy/`HTTPS_PROXY`, and `--debug` logs transport-level errors (DNS/connect/TLS/EOF), not just non-2xx HTTP responses.
+
 ### Security
 
 ---

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const (
@@ -68,7 +70,8 @@ type QueryResult struct {
 func NewClient() *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: httpclient.ProxyAwareTransport(),
 		},
 		registryURL: defaultRegistryURL,
 	}

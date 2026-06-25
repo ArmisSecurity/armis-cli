@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const (
@@ -80,6 +83,7 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 	}
 
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
+	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist, never attacker-reachable input; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
 	if parsedURL.Scheme != "https" {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
@@ -91,6 +95,11 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			// Resolve proxies from the OS configuration (WinINET/PAC on Windows),
+			// not just environment variables. Without this, a corporate proxy
+			// distributed via PAC (e.g. Zscaler) is bypassed and the token
+			// exchange fails with a bare "EOF". See httpclient.ProxyAwareTransport.
+			Transport: httpclient.ProxyAwareTransport(),
 			// Disable redirects to prevent leaking client credentials (CWE-601).
 			// On 307/308 redirects, Go re-sends the POST body to the redirect target.
 			// The auth endpoint should never redirect; if it does, return the response as-is.
@@ -152,7 +161,14 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	// armis:ignore cwe:522 reason:credentials are sent over HTTPS (enforced above); this is the auth token exchange endpoint
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
-		return nil, fmt.Errorf("authentication request failed: %w", err)
+		// A transport-level failure (DNS, connect, TLS, or a connection closed
+		// before any response) never reaches the status-code debug branch below,
+		// so log it here when debugging. The URL is non-sensitive; the request
+		// body (which carries credentials) is intentionally never logged.
+		if c.debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth transport error to %s: %v\n", authEndpoint, err)
+		}
+		return nil, fmt.Errorf("authentication request failed: %w", annotateTransportError(err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
@@ -197,4 +213,19 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		Token:  authResp.Token,
 		Region: authResp.Region,
 	}, nil
+}
+
+// annotateTransportError adds actionable guidance to a connection that was
+// closed before any HTTP response arrived (surfaced by Go as io.EOF). The most
+// common cause on managed networks is a corporate proxy distributed via a PAC
+// file (e.g. Zscaler): the CLI now auto-detects the system proxy, so a
+// persistent failure points to an env var that needs setting or a network the
+// machine cannot reach directly. Other transport errors (DNS, TLS, refused) are
+// returned unchanged — their own messages are already descriptive.
+func annotateTransportError(err error) error {
+	if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return fmt.Errorf("%w (connection closed before any response — this often means a corporate proxy or firewall is blocking direct access; "+
+		"the CLI auto-detects your system proxy, but if this persists set HTTPS_PROXY to your proxy address or contact your network team)", err)
 }
