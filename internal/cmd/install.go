@@ -16,6 +16,8 @@ var installCmd = &cobra.Command{
 	Short: "Install the Armis security scanner MCP server",
 	Long: `Download and install the Armis AppSec MCP server for your coding tools.
 
+Requires Python 3.11+ on your PATH (the MCP server runs on it).
+
 With no arguments, installs the plugin and registers it in all detected editors.
 Specify one or more editor names to target specific tools.
 
@@ -128,6 +130,10 @@ func showInstalledVersions() error {
 }
 
 func installAll(force bool) error {
+	if err := install.CheckPython(); err != nil {
+		return err
+	}
+
 	ei := install.NewEditorInstaller()
 
 	fmt.Fprintln(os.Stderr, "Downloading Armis AppSec MCP server...")
@@ -235,9 +241,10 @@ func installTargets(targets []string, force bool) error {
 		case "copilot":
 			editorIDs = append(editorIDs, install.EditorCopilotCLI)
 		case "jetbrains":
-			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project.")
-			fmt.Fprintln(os.Stderr, "After installing, copy .jb-mcp.json to your project root.")
-			fmt.Fprintln(os.Stderr, "Run: armis-cli install --jetbrains-project /path/to/project")
+			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project (no automatic setup).")
+			fmt.Fprintln(os.Stderr, "  1. Install the MCP server first: armis-cli install <editor>")
+			fmt.Fprintln(os.Stderr, "  2. Create a .jb-mcp.json in your project root pointing at the installed")
+			fmt.Fprintln(os.Stderr, "     server, then enable it in your IDE's AI Assistant MCP settings.")
 			fmt.Fprintln(os.Stderr, "")
 		case "devin":
 			fmt.Fprintln(os.Stderr, "Devin: MCP servers are configured via the Devin web UI.")
@@ -260,6 +267,16 @@ func installTargets(targets []string, force bool) error {
 	}
 
 	needsSharedPlugin := len(editorIDs) > 0 || hasCodex
+
+	// Both the shared-plugin and Claude paths build a Python venv, so verify the
+	// interpreter is present before downloading anything (advisory-only targets
+	// like "jetbrains" skip the download and so skip this check).
+	if needsSharedPlugin || hasClaude {
+		if err := install.CheckPython(); err != nil {
+			return err
+		}
+	}
+
 	var ei *install.EditorInstaller
 
 	if needsSharedPlugin {

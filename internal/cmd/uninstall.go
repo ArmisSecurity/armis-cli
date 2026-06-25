@@ -23,7 +23,9 @@ With no arguments, removes the plugin from all editors and deletes plugin files.
 Specify editor names to remove from specific tools only (plugin files are kept).
 
 Use --keep-credentials to preserve the .env file for easy reinstall.
-Use --force to skip the confirmation prompt.`,
+Use --force to skip the confirmation prompt.
+
+For a list of valid editor names, run: armis-cli install --help`,
 	Example: `  # Remove from all editors and delete plugin
   armis-cli uninstall
 
@@ -160,6 +162,24 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	// Remove the git pre-commit hook from the current repo BEFORE deleting plugin
+	// files. The hook execs <pluginDir>/git-hooks/pre-commit; once RemovePluginFiles
+	// deletes that path, an orphaned hook would break every future commit with
+	// "no such file". RemovePreCommit is a no-op outside a git repo or when no
+	// Armis section is present, so it is safe to call unconditionally.
+	preCommitRemoved := false
+	if repoRoot := install.DetectGitRoot(); repoRoot != "" {
+		if err := install.RemovePreCommit(repoRoot); err != nil {
+			if styled {
+				fmt.Fprintf(os.Stderr, "  %s Pre-commit hook: %v\n", warnMark.Render("⚠"), err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ⚠ Pre-commit hook: %v\n", err)
+			}
+		} else {
+			preCommitRemoved = true
+		}
+	}
+
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
@@ -185,6 +205,14 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		fmt.Fprintf(os.Stderr, "  %s Armis AppSec MCP server uninstalled.\n", successMark.Render("✓"))
 	} else {
 		fmt.Fprintln(os.Stderr, "Armis AppSec MCP server uninstalled.")
+	}
+	if preCommitRemoved {
+		msg := "Pre-commit hook removed from this repository. Run `armis-cli hook init --remove` in other repos."
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s\n", dimStyle.Render(msg))
+		} else {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil

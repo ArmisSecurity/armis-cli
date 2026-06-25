@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,42 @@ func TestFetchLatestRelease_NoRelease(t *testing.T) {
 	_, err := pi.fetchLatestRelease()
 	if err == nil {
 		t.Fatal("expected error for 404 response")
+	}
+}
+
+func TestCheckPython_NotFound(t *testing.T) {
+	// Stripping PATH makes exec.LookPath fail for every candidate, so findPython
+	// returns "" deterministically regardless of what is installed on the host.
+	t.Setenv("PATH", "")
+
+	err := CheckPython()
+	if err == nil {
+		t.Fatal("expected error when no Python interpreter is on PATH")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Python 3.11+") {
+		t.Errorf("error should mention the required version, got: %q", msg)
+	}
+	// The message must list the interpreter names tried so users know what to install.
+	for _, name := range pythonCandidates {
+		if !strings.Contains(msg, name) {
+			t.Errorf("error should list candidate %q, got: %q", name, msg)
+		}
+	}
+	// And it must include an actionable, OS-specific install hint (second line).
+	if !strings.Contains(msg, "\n") {
+		t.Errorf("error should include an install hint on a second line, got: %q", msg)
+	}
+}
+
+func TestCheckPython_Found(t *testing.T) {
+	// Only assert success when a suitable interpreter actually exists; on a host
+	// without Python 3.11+ this is not an error condition for the test.
+	if findPython() == "" {
+		t.Skip("no Python 3.11+ interpreter available on this host")
+	}
+	if err := CheckPython(); err != nil {
+		t.Errorf("CheckPython() = %v, want nil when a 3.11+ interpreter is present", err)
 	}
 }
 
