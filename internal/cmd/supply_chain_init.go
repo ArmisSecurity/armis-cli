@@ -37,7 +37,8 @@ registry responses. poetry, pipenv, pdm, mvn, and gradle use a pre-install check
 that blocks the build if violations are found.
 
 Four modes are available:
-  rc     — Inject shell functions into ~/.bashrc / ~/.zshrc (default, interactive)
+  rc     — Inject shell functions into ~/.bashrc / ~/.zshrc / fish config /
+           PowerShell profile (default, interactive)
   env    — Print an eval command for CI or manual sourcing
   npmrc  — Add a marker comment to .npmrc (the registry override itself is set
            dynamically by 'supply-chain wrap'; use with the rc or env modes)
@@ -297,6 +298,35 @@ func summarizeDetectedPMs(s *output.Styles, pms []string) string {
 	return strings.Join(parts, ", ")
 }
 
+// powerShellSkippedDottedPMs returns the package-manager names in pms that a
+// PowerShell wrapper cannot define, because PowerShell function names may not
+// contain a dot (e.g. pip3.12). It returns nil unless at least one detected
+// shell is PowerShell — the limitation only matters when a PowerShell wrapper is
+// actually being written, and on a bash/zsh/fish-only machine the dotted variant
+// is wrapped normally. The init flow uses this to print a one-line note so a
+// PowerShell user understands pip3.12 was skipped while pip and pip3 still cover
+// the common case (the runtime canonicalizes every pip variant to PyPI anyway).
+func powerShellSkippedDottedPMs(pms []string, shells []supplychain.Shell) []string {
+	hasPowerShell := false
+	for _, sh := range shells {
+		if supplychain.IsPowerShell(sh.Name) {
+			hasPowerShell = true
+			break
+		}
+	}
+	if !hasPowerShell {
+		return nil
+	}
+
+	var dotted []string
+	for _, pm := range pms {
+		if strings.Contains(pm, ".") {
+			dotted = append(dotted, pm)
+		}
+	}
+	return dotted
+}
+
 // promptYesNo asks the user a yes/no question and reports their answer.
 //
 // On an interactive terminal it renders a themed huh.Confirm, matching the
@@ -443,7 +473,7 @@ func runInitRC(pms []string) error {
 
 	shells := supplychain.DetectShells()
 	if len(shells) == 0 {
-		return fmt.Errorf("no supported shells detected (bash, zsh, or fish)")
+		return fmt.Errorf("no supported shells detected (bash, zsh, fish, or PowerShell)")
 	}
 
 	// Short-circuit: if every detected shell already has the exact wrapper we
@@ -479,6 +509,17 @@ func runInitRC(pms []string) error {
 	// the summary under a dozen near-identical names.
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		s.MutedText.Render("Package manager(s) to wrap:"), summarizeDetectedPMs(s, pms))
+
+	// PowerShell cannot define functions whose name contains a dot, so a versioned
+	// pip variant (pip3.12) is skipped in the PowerShell profile. Surface that as a
+	// single muted line — only when a PowerShell shell is among those detected and a
+	// dotted variant is actually present — so the user knows the skip is intentional
+	// and that pip/pip3 still cover the common case.
+	if dotted := powerShellSkippedDottedPMs(pms, shells); len(dotted) > 0 {
+		fmt.Fprintf(os.Stderr, "%s\n\n", s.MutedText.Render(fmt.Sprintf(
+			"Note: %s can't be wrapped in PowerShell (dotted function names are unsupported); pip and pip3 are wrapped instead.",
+			strings.Join(dotted, ", "))))
+	}
 
 	// Preview each distinct wrapper. bash/zsh share the posix wrapper while fish
 	// uses different syntax, so group shells by the wrapper they produce to keep
@@ -524,7 +565,7 @@ func runInitRC(pms []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%s Restart your shell or run:\n", s.SuccessText.Render("Done!"))
 	for _, sh := range shells {
-		fmt.Fprintf(os.Stderr, "  %s\n", s.Bold.Render("source "+sh.RCFile))
+		fmt.Fprintf(os.Stderr, "  %s\n", s.Bold.Render(supplychain.ShellReloadCommand(sh.Name, sh.RCFile)))
 	}
 	policy := resolveWrapPolicy()
 	fmt.Fprintf(os.Stderr, "\n%s block packages published less than %s ago\n", s.MutedText.Render("Policy:"), policy.MinReleaseAge)

@@ -30,9 +30,11 @@ const goosWindows = "windows"
 
 // Shell name constants used by DetectShells and GenerateWrapper.
 const (
-	shellBash = "bash"
-	shellZsh  = "zsh"
-	shellFish = "fish"
+	shellBash              = "bash"
+	shellZsh               = "zsh"
+	shellFish              = "fish"
+	shellPwsh              = "pwsh"       // PowerShell 7+ (cross-platform)
+	shellWindowsPowerShell = "powershell" // Windows PowerShell 5.1
 )
 
 // pipExeBase is the bare pip executable name. DetectPipVariants falls back to
@@ -111,7 +113,80 @@ func DetectShells() []Shell {
 		}
 	}
 
+	// PowerShell detection runs as a separate pass. On a POSIX machine $SHELL is
+	// never "pwsh" and the profile rarely exists, so this yields nothing unless
+	// the user actually installed PowerShell; on Windows $SHELL is unset and the
+	// POSIX RC files above don't exist, so the loop above contributes nothing and
+	// this pass is the only source of shells. Inclusion rule: a PowerShell entry
+	// qualifies if its executable is on PATH (the analogue of the POSIX
+	// current-shell check) OR its profile already exists (the analogue of the
+	// fileExists check) — the profile commonly does not exist until first init.
+	for _, ps := range powershellProfiles(home) {
+		if IsOnPath(ps.Name) || fileExists(ps.RCFile) {
+			shells = append(shells, ps)
+		}
+	}
+
 	return shells
+}
+
+// powershellProfiles returns the candidate PowerShell profile targets for the
+// current OS. The profile path is the CurrentUserAllHosts profile — host-
+// agnostic so the wrapper fires in both the console host and the VS Code
+// integrated terminal. Go cannot read PowerShell's own $PROFILE (that requires
+// a PowerShell process), so the path is reconstructed from well-known layouts.
+func powershellProfiles(home string) []Shell {
+	if runtime.GOOS != goosWindows {
+		// On macOS/Linux only PowerShell 7+ (pwsh) exists; its CurrentUserAllHosts
+		// profile lives under ~/.config/powershell. Build path + Shell on one line
+		// so the suppression lands on the single taint sink (see Windows branch).
+		// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with hardcoded path segments; configuring the user's own shell profile is the purpose of `supply-chain init`
+		return []Shell{{Name: shellPwsh, RCFile: filepath.Join(home, ".config", "powershell", "profile.ps1")}}
+	}
+
+	// On Windows both editions can be present: PowerShell 7+ (pwsh) and Windows
+	// PowerShell 5.1 (powershell). They use distinct Documents subdirectories.
+	// List pwsh first so it is preferred when both are installed. The filepath.Join
+	// is kept inline in the Shell literal on a single line so the taint flow
+	// (docs → Join → Shell) has one sink line the suppression sits directly above.
+	docs := resolveWindowsDocumentsDir(home)
+	// armis:ignore cwe:22 cwe:73 reason:docs derives from the current user's own $HOME/Documents (or OneDrive redirect) joined with hardcoded segments; configuring the user's own PowerShell profile is the purpose of `supply-chain init`
+	pwsh := Shell{Name: shellPwsh, RCFile: filepath.Join(docs, "PowerShell", "profile.ps1")}
+	// armis:ignore cwe:22 cwe:73 reason:docs derives from the current user's own $HOME/Documents (or OneDrive redirect) joined with hardcoded segments; configuring the user's own PowerShell profile is the purpose of `supply-chain init`
+	win := Shell{Name: shellWindowsPowerShell, RCFile: filepath.Join(docs, "WindowsPowerShell", "profile.ps1")}
+	return []Shell{pwsh, win}
+}
+
+// resolveWindowsDocumentsDir locates the user's Documents directory, which is
+// where PowerShell anchors the CurrentUserAllHosts profile. A native Go process
+// cannot read PowerShell's $PROFILE, and OneDrive folder redirection commonly
+// moves Documents out of %USERPROFILE%, so the path is resolved heuristically:
+//
+//  1. <home>/Documents if it already exists (the un-redirected default).
+//  2. else <OneDrive root>/Documents for the first OneDrive env var that yields
+//     an existing directory (OneDriveConsumer, OneDrive, OneDriveCommercial).
+//  3. else <home>/Documents as a not-yet-existing fallback — injectIntoFile's
+//     os.MkdirAll creates the parent on write, so a missing target is fine.
+func resolveWindowsDocumentsDir(home string) string {
+	// armis:ignore cwe:22 cwe:73 reason:home is the current user's own $HOME joined with the hardcoded "Documents" segment; configuring the user's own profile location is the purpose of `supply-chain init`
+	defaultDocs := filepath.Join(home, "Documents")
+	if fileExists(defaultDocs) {
+		return defaultDocs
+	}
+
+	for _, env := range []string{"OneDriveConsumer", "OneDrive", "OneDriveCommercial"} {
+		root := os.Getenv(env)
+		if root == "" {
+			continue
+		}
+		// armis:ignore cwe:22 cwe:73 reason:root is the user's own OneDrive root from their environment joined with the hardcoded "Documents" segment; resolving the user's own profile location is the purpose of `supply-chain init`
+		docs := filepath.Join(root, "Documents")
+		if fileExists(docs) {
+			return docs
+		}
+	}
+
+	return defaultDocs
 }
 
 func GenerateWrapper(shell string, pms []string) string {
@@ -119,9 +194,32 @@ func GenerateWrapper(shell string, pms []string) string {
 	switch shell {
 	case shellFish:
 		return generateFishWrapper(pms, cli)
+	case shellPwsh, shellWindowsPowerShell:
+		return generatePowerShellWrapper(pms, cli)
 	default:
 		return generatePosixWrapper(pms, cli)
 	}
+}
+
+// ShellReloadCommand returns the command a user runs to load the freshly-written
+// wrapper block into their current session without restarting the shell. POSIX
+// shells and fish source the file (`source <rc>`); PowerShell dot-sources it
+// (`. <profile>`). init prints this per detected shell after injection.
+func ShellReloadCommand(shell, rcFile string) string {
+	switch shell {
+	case shellPwsh, shellWindowsPowerShell:
+		return ". " + rcFile
+	default:
+		return "source " + rcFile
+	}
+}
+
+// IsPowerShell reports whether name is one of the PowerShell editions (pwsh or
+// Windows PowerShell). It lets the cmd layer reason about PowerShell-specific
+// guidance (e.g. the dotted-pip-variant note) without hardcoding the shell-name
+// literals that this package owns.
+func IsPowerShell(name string) bool {
+	return name == shellPwsh || name == shellWindowsPowerShell
 }
 
 // generatePosixWrapper builds the bash/zsh wrapper block for the given PMs.
@@ -193,8 +291,66 @@ func generateFishWrapper(pms []string, cli string) string {
 	return b.String()
 }
 
+// generatePowerShellWrapper builds the PowerShell wrapper block for the given
+// PMs. Both PowerShell editions (pwsh, Windows PowerShell) share this output —
+// the syntax is identical; only profile-path selection differs in DetectShells.
+// armis:ignore cwe:770 reason:sanitizePMNames caps the name list at maxPMNames (16), so the string builder cannot grow without bound; pms also originates from local PATH detection (≤4 ecosystems) rather than untrusted input
+func generatePowerShellWrapper(pms []string, cli string) string {
+	safeCli := shellQuotePowerShell(cli)
+	var b strings.Builder
+	b.WriteString(markerStart + "\n")
+	for _, pm := range sanitizePMNames(pms) {
+		// PowerShell function names cannot contain a dot, so versioned pip
+		// variants (pip3.12) cannot be wrapped here. Skip them — `pip` and `pip3`
+		// cover the common case, and the init command surfaces a one-line note so
+		// the user knows the dotted variant was left unwrapped rather than silently
+		// dropped. The non-dotted names still flow through sanitizePMNames above.
+		if strings.Contains(pm, ".") {
+			continue
+		}
+		// Recursion guard + presence check in one construct: `Get-Command
+		// -CommandType Application` resolves only external executables, so it never
+		// re-enters the wrapper function itself (the PowerShell analogue of bash
+		// `command`). It accepts both a bare name and an absolute path, so unlike
+		// the POSIX wrapper it needs no separate Test-Path branch.
+		//
+		// Fail-closed: when armis-cli is not resolvable (e.g. a stale absolute path
+		// left by a package-manager upgrade), warn on real stderr via
+		// [Console]::Error.WriteLine — not Write-Error/Write-Host, which write to
+		// the PowerShell error/information streams rather than the process's stderr
+		// — and run the real package manager unwrapped rather than failing outright.
+		//
+		// @args splats the caller's positional arguments. This works because the
+		// wrapper is a simple function (no [CmdletBinding()]). $__armis_cli uses a
+		// double-underscore prefix to avoid colliding with a user variable.
+		// armis:ignore cwe:78 reason:pm is constrained to ^[a-z][a-z0-9-]*$ here (sanitizePMNames plus the dot filter above removes any dotted variant), so no shell metacharacter can reach the script; safeCli is shellQuotePowerShell-escaped; Get-Command is used only for presence detection
+		fmt.Fprintf(&b,
+			"function %s {\n"+
+				"  $__armis_cli = Get-Command %s -CommandType Application -ErrorAction SilentlyContinue\n"+
+				"  if ($__armis_cli) {\n"+
+				"    & $__armis_cli.Source supply-chain wrap %s @args\n"+
+				"  } else {\n"+
+				"    [Console]::Error.WriteLine('[armis] armis-cli not found - running %s WITHOUT supply-chain enforcement')\n"+
+				"    & (Get-Command %s -CommandType Application).Source @args\n"+
+				"  }\n"+
+				"}\n",
+			pm, safeCli, pm, pm, pm)
+	}
+	b.WriteString(markerEnd + "\n")
+	return b.String()
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// shellQuotePowerShell wraps s in a PowerShell single-quoted literal, doubling
+// any embedded single quote (two single quotes escape one inside a single-quoted
+// string). Single quotes suppress all PowerShell interpolation, so the embedded
+// path is treated verbatim — the analogue of POSIX shellQuote but with
+// PowerShell's distinct escaping rule.
+func shellQuotePowerShell(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // resolveCliPath returns the most upgrade-proof reference to the armis-cli

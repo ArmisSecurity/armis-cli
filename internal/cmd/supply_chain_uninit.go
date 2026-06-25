@@ -19,7 +19,7 @@ var scUninitCmd = &cobra.Command{
 	Short: "Remove shell wrapper functions injected by supply-chain init",
 	Long: `Remove the changes made by 'armis-cli supply-chain init'.
 
-This scans your shell RC files (bashrc, zshrc, fish config) for armis-cli supply-chain
+This scans your shell RC files (bashrc, zshrc, fish config, PowerShell profile) for armis-cli supply-chain
 blocks and removes them, and strips the marker comment from a project .npmrc in the
 current directory if present. Your package manager will return to its normal behavior.
 
