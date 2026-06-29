@@ -31,8 +31,8 @@ const (
 // executing another user's binary would be unsafe and would not report that
 // user's version anyway. Agents detected via dotfiles or app bundles (Claude
 // Code, Cursor, Gemini CLI, Zed, Continue, Aider, Devin, OpenHands, Junie,
-// Antigravity) carry no consistent version file, so their DetectVersion is an
-// intentional "" stub rather than an oversight.
+// Google Antigravity) carry no consistent version file, so their DetectVersion
+// is an intentional "" stub rather than an oversight.
 type AgentDetector interface {
 	Name() AgentName
 	Detect(resolvedHome, homeDir string, platform Platform) bool
