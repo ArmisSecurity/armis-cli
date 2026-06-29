@@ -209,11 +209,11 @@ func init() {
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
-	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
-	rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
-	rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
-	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
-	rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
+	// Scan-output flags (--format, --no-progress, --fail-on, --exit-code,
+	// --page-limit) are registered on scanCmd (see scan.go), not here: as root
+	// persistent flags they leaked into the --help of every non-scan command
+	// (hook, supply-chain, install, agent-detection). `supply-chain check` is a
+	// sibling of scan and re-registers the three it actually uses locally.
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
 	rootCmd.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false, "Disable automatic update checking (env: ARMIS_NO_UPDATE_CHECK)")
 	rootCmd.PersistentFlags().StringVar(&colorFlag, "color", "auto", "Control colored output: auto, always, never")
@@ -223,19 +223,9 @@ func init() {
 	// (useless) file-path completion. The value lists reuse the same slices the
 	// validators read, so the completion candidates can't drift from what's
 	// actually accepted. --region is intentionally omitted (advisory-only).
-	_ = rootCmd.RegisterFlagCompletionFunc("format", fixedCompletions(validFormats, map[string]string{
-		"human": "Human-readable terminal output",
-		"json":  "Machine-readable JSON",
-		"sarif": "SARIF for code-scanning tools",
-		"junit": "JUnit XML for CI test reports",
-	}))
-	_ = rootCmd.RegisterFlagCompletionFunc("fail-on", fixedCompletions(cmdutil.ValidSeverities, map[string]string{
-		"INFO":     "Informational findings",
-		"LOW":      "Low-severity findings",
-		"MEDIUM":   "Medium-severity findings",
-		"HIGH":     "High-severity findings",
-		"CRITICAL": "Critical-severity findings",
-	}))
+	// --format/--fail-on completions are registered where those flags now live:
+	// on scanCmd (see scan.go) and re-registered on scCheckCmd (see
+	// supply_chain_check.go), since the flags were relocated off rootCmd.
 	_ = rootCmd.RegisterFlagCompletionFunc("color", fixedCompletions(
 		[]string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)},
 		map[string]string{
@@ -266,6 +256,30 @@ func fixedCompletions(values []string, descriptions map[string]string) cobra.Com
 		}
 	}
 	return cobra.FixedCompletions(choices, cobra.ShellCompDirectiveNoFileComp)
+}
+
+// formatCompletions and failOnCompletions return the completion functions for
+// the --format and --fail-on flags. These flags live on scanCmd and are
+// re-registered on scCheckCmd (a sibling of scan with its own flag instances),
+// so the candidate sets are defined once here and reused at both registration
+// sites to keep them from drifting apart.
+func formatCompletions() cobra.CompletionFunc {
+	return fixedCompletions(validFormats, map[string]string{
+		"human": "Human-readable terminal output",
+		"json":  "Machine-readable JSON",
+		"sarif": "SARIF for code-scanning tools",
+		"junit": "JUnit XML for CI test reports",
+	})
+}
+
+func failOnCompletions() cobra.CompletionFunc {
+	return fixedCompletions(cmdutil.ValidSeverities, map[string]string{
+		"INFO":     "Informational findings",
+		"LOW":      "Low-severity findings",
+		"MEDIUM":   "Medium-severity findings",
+		"HIGH":     "High-severity findings",
+		"CRITICAL": "Critical-severity findings",
+	})
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.

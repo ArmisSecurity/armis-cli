@@ -71,6 +71,18 @@ func init() {
 	scCheckCmd.Flags().StringVar(&scLockfile, "lockfile", "", "Explicit lockfile path (overrides auto-detection)")
 	scCheckCmd.Flags().BoolVar(&scAll, "all", false, "Check all packages (disable auto-diff against base branch)")
 	scCheckCmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "Exit 0 on registry errors (fail-open for CI availability)")
+	// --format, --fail-on, and --exit-code are persistent flags on scanCmd, but
+	// supply-chain is a sibling of scan in the command tree and does not inherit
+	// them. runSupplyChainCheck consumes all three (the format/failOn/exitCode
+	// globals), so register them locally to match the scan commands. Defaults
+	// mirror the former root registrations exactly.
+	scCheckCmd.Flags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
+	scCheckCmd.Flags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
+	scCheckCmd.Flags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
+	// These are distinct flag instances from scanCmd's, so the completion funcs
+	// must be registered here too (Cobra keys completions by flag pointer).
+	_ = scCheckCmd.RegisterFlagCompletionFunc("format", formatCompletions())
+	_ = scCheckCmd.RegisterFlagCompletionFunc("fail-on", failOnCompletions())
 	// --output is a persistent flag on scanCmd, but supply-chain is a sibling of
 	// scan in the command tree and does not inherit it. Register it locally so
 	// `supply-chain check` matches the scan commands: ResolveOutput already

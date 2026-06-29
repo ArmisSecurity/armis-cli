@@ -11,11 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Command help is no longer cluttered with scan-only flags. The output flags `--format`, `--no-progress`, `--fail-on`, `--exit-code`, and `--page-limit` were registered as root persistent flags, so they appeared in the `--help` of every command — including non-scan commands like `hook`, `supply-chain`, `install`, and `agent-detection`, where they have no effect. They are now scoped to the `scan` command subtree where they belong. `supply-chain check`, a sibling of `scan` that does use `--format`/`--fail-on`/`--exit-code`, re-registers exactly those three locally (mirroring its existing `--output` handling), so its behavior is unchanged. (PPSC-1009)
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- `hook init` no longer refuses to install a pre-commit hook when the Armis MCP plugin is absent. It previously hard-errored with "Armis MCP server not installed — run 'armis-cli install' first", even though the hook installer already falls back to a direct `armis-cli scan repo . --changed=staged --no-progress --fail-on HIGH` hook when the plugin's own pre-commit script is missing. The redundant gate is removed, so `hook init` installs the direct-scan hook and prints a one-line advisory ("Armis MCP plugin not found; installing direct-scan hook…") instead of blocking. (PPSC-1009)
 
 ### Security
 
