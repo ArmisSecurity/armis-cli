@@ -23,6 +23,7 @@ When run as a standard user, scans only the current user's home directory.`,
 
   # Report agents across all users (requires root/admin)
   sudo armis-cli agent-detection collect`,
+	Args: cobra.NoArgs,
 	RunE: runAgentDetectionCollect,
 }
 
@@ -31,6 +32,13 @@ func init() {
 }
 
 func runAgentDetectionCollect(cmd *cobra.Command, _ []string) error {
+	// collect reports to the cloud inventory and has no formatted stdout output,
+	// so the inherited global --format flag is meaningless here. Reject it
+	// explicitly rather than silently ignoring it.
+	if cmd.Flags().Changed("format") {
+		return fmt.Errorf("collect does not support --format; it reports to Armis Cloud and prints status to stderr")
+	}
+
 	ctx, cancel := NewSignalContext()
 	defer cancel()
 

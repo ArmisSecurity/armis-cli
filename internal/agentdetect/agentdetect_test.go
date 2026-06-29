@@ -272,3 +272,36 @@ func TestFormatJSON_Empty(t *testing.T) {
 		t.Errorf("expected empty array, got %d agents", len(agents))
 	}
 }
+
+func TestRegisteredAgentDisplayNames(t *testing.T) {
+	t.Parallel()
+
+	names := RegisteredAgentDisplayNames()
+
+	// Must stay in sync with the detector registry so help text never drifts.
+	if got, want := len(names), len(Registry()); got != want {
+		t.Errorf("len(display names) = %d, want %d (one per registered detector)", got, want)
+	}
+
+	// Every name must be human-readable: non-empty and mapped (not a raw identifier).
+	for i, name := range names {
+		if name == "" {
+			t.Errorf("display name at index %d is empty", i)
+		}
+	}
+
+	// Spot-check that identifiers are mapped to friendly names, not passed through raw.
+	joined := strings.Join(names, ", ")
+	for _, want := range []string{"Claude Code", "GitHub Copilot", "Gemini CLI", "Roo Code", "Amazon Q"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("display names missing %q; got: %s", want, joined)
+		}
+	}
+
+	// Every registered detector must have a display-name mapping.
+	for _, d := range Registry() {
+		if _, ok := displayNames[d.Name()]; !ok {
+			t.Errorf("detector %q has no entry in displayNames map", d.Name())
+		}
+	}
+}
