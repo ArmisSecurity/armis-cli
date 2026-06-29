@@ -127,6 +127,7 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
 	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	scanCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
+	// armis:ignore cwe:770 cwe:401 reason:--page-limit is bounded to 1-1000 by validatePageLimit (root.go); every consumer (scan_repo.go, scan_image.go) reads it via getPageLimit() which validates before the value reaches any pagination sink. This is the flag declaration, not a sink.
 	scanCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	// Tab-completion for the relocated enumerated flags now lives with the flags.
 	_ = scanCmd.RegisterFlagCompletionFunc("format", formatCompletions())
