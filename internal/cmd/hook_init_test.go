@@ -3,10 +3,10 @@ package cmd
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/install"
 	"github.com/spf13/cobra"
 )
 
@@ -46,9 +46,15 @@ func TestRunHookInit_NoPluginInstallsFallback(t *testing.T) {
 		t.Fatalf("runHookInit() with no plugin should succeed, got: %v", err)
 	}
 
-	// The hook physically lands in <repo>/.git/hooks/pre-commit.
-	hookPath := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	data, err := os.ReadFile(hookPath) //nolint:gosec // G304: reading from t.TempDir()
+	// Resolve the hook path through the same logic the installer uses
+	// (git rev-parse --git-path hooks), rather than hard-coding
+	// <repo>/.git/hooks/pre-commit — that would break under a custom
+	// core.hooksPath, worktrees, or submodules.
+	hookPath, err := install.PreCommitHookPath(dir)
+	if err != nil {
+		t.Fatalf("resolving hook path: %v", err)
+	}
+	data, err := os.ReadFile(hookPath) //nolint:gosec // G304: path resolved via git under t.TempDir()
 	if err != nil {
 		t.Fatalf("reading installed hook: %v", err)
 	}
