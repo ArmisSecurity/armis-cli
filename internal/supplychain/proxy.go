@@ -2,7 +2,10 @@ package supplychain
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -113,9 +116,18 @@ type allowedVersion struct {
 }
 
 type Proxy struct {
-	policy       Policy
-	mode         ProxyMode
-	upstreamURL  *url.URL
+	policy      Policy
+	mode        ProxyMode
+	upstreamURL *url.URL
+
+	// customUpstream, authHeader, and the degrade fields are the PPSC-994
+	// custom-artifactory additions. customUpstream gates the WWW-Authenticate
+	// stripping; authHeader is the pre-built "Bearer <tok>"/"Basic <b64>" value
+	// injected on every upstream request (or "" for the public path).
+	customUpstream             bool
+	authHeader                 string // pre-built "Bearer <tok>" / "Basic <b64>" value, or ""
+	degradeOnMissingTimestamps bool
+
 	httpClient   *http.Client
 	revProxy     *httputil.ReverseProxy
 	listener     net.Listener
@@ -127,6 +139,11 @@ type Proxy struct {
 	checked      int
 	checkedMu    sync.Mutex
 	skipPackages map[string]bool
+
+	// degradeWarned guards the one-time missing-timestamp degraded-enforcement
+	// warning emitted when degradeOnMissingTimestamps is set (PPSC-994).
+	degradeWarned bool
+	degradeWarnMu sync.Mutex
 
 	// directSet is the root manifest's direct-dependency names (WS5). It is read
 	// once at wrap start and never mutated afterward, so no lock guards it. A nil
@@ -167,10 +184,32 @@ type ProxyConfig struct {
 	// direct and blocks young versions regardless of the transitive policy
 	// (fail-safe). Only consulted when Policy.TransitivePolicy is warn.
 	DirectDeps []string
+
+	// AuthHeader is the complete Authorization header value to attach to EVERY
+	// forwarded upstream request (metadata AND tarball) — e.g. "Bearer <tok>"
+	// for an npm _authToken or "Basic <base64>" for pip/uv index-url userinfo.
+	// Empty means no auth (the public-registry path). The cmd layer reads the
+	// developer's native config, interpolates/validates, and hands the finished
+	// value here so the proxy itself does no filesystem I/O (testability seam).
+	AuthHeader string
+
+	// DegradeOnMissingTimestamps relaxes the age filter's fail-closed posture
+	// when, and ONLY when, a custom artifactory upstream is configured: an
+	// undatable response passes through with one warning rather than being
+	// removed. It is unset on the default public-registry path, where missing
+	// timestamps stay fail-closed (a public registry always emits them, so a
+	// missing one is suspicious). Lives here, not on Policy, because Policy
+	// threads into check.RunCheck where missing-timestamp semantics differ (E7).
+	DegradeOnMissingTimestamps bool
+
+	// CABundlePath optionally points at a PEM CA bundle for the proxy→upstream
+	// TLS leg (S6), letting a minimal CI container reach a private-CA Nexus.
+	CABundlePath string
 }
 
 func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	upstream := cfg.UpstreamURL
+	customUpstream := upstream != ""
 	if upstream == "" {
 		// Default the upstream to match the mode so a PyPI proxy constructed with
 		// only a Mode (the common case) still points at pypi.org rather than the
@@ -182,6 +221,15 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		}
 	}
 
+	// A configured custom upstream is a trust boundary, but it is validated by
+	// ValidateRegistryURL at config-load (config.go) and again explicitly in
+	// runProxyWrap before this constructor is reached — the same
+	// validate-at-the-caller contract NewClientWithHTTP follows. NewProxy itself
+	// trusts UpstreamURL as a construction-time value so tests (and the
+	// already-validated production path) can pass an httptest/loopback URL; the
+	// cwe:918 suppressions on the forwarding sinks reflect this ("validated at
+	// config-load"). Re-validating here would reject every test's httptest
+	// upstream.
 	upstreamURL, err := url.Parse(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("parsing upstream URL: %w", err)
@@ -205,39 +253,133 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		}
 	}
 
+	httpClient, err := newUpstreamHTTPClient(upstreamURL, cfg.CABundlePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct p before the reverse proxy: the Director closure captures p so it
+	// can inject the auth header per request (p.buildAuthHeader). revProxy is
+	// assigned onto p once it is built, below.
+	p := &Proxy{
+		policy:                     cfg.Policy,
+		mode:                       cfg.Mode,
+		upstreamURL:                upstreamURL,
+		customUpstream:             customUpstream,
+		authHeader:                 cfg.AuthHeader,
+		degradeOnMissingTimestamps: cfg.DegradeOnMissingTimestamps,
+		httpClient:                 httpClient,
+		skipPackages:               skipSet,
+		allowed:                    make(map[string]allowedVersion),
+		directSet:                  directSet,
+		requiredRanges:             make(map[string][]requiredRange),
+		keptVersions:               make(map[string][]string),
+		removedVersions:            make(map[string][]string),
+	}
+
 	// NewSingleHostReverseProxy rewrites the request URL's scheme/host but
 	// deliberately does NOT rewrite the Host header (see its doc comment). Left
 	// as-is, tarball passthrough requests reach the upstream registry carrying
 	// the local proxy's Host (e.g. "127.0.0.1:61396"). registry.npmjs.org is
 	// fronted by a CDN that routes on Host, so an unknown value returns 403 —
 	// the metadata check passes but the actual .tgz download fails. Wrap the
-	// Director to point Host at the upstream registry so passthrough works.
-	// upstreamURL is parsed from cfg.UpstreamURL, a startup-configured trusted
-	// host defaulting to registry.npmjs.org/pypi.org — not a per-request
+	// Director to point Host at the upstream registry so passthrough works, and
+	// inject the auth header so private-repo tarballs (a separate request from
+	// metadata — confirmed by the PPSC-994 prototype) authenticate too.
+	// upstreamURL is the default registry.npmjs.org/pypi.org constant or a custom
+	// upstream validated by ValidateRegistryURL at config-load — not a per-request
 	// attacker-controlled value (matches the CWE-918 suppressions in reverseProxy).
-	// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host defaulting to registry.npmjs.org/pypi.org, not a per-request attacker-controlled value
+	// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host (default registry.npmjs.org/pypi.org or a config-load-validated custom upstream), not a per-request attacker-controlled value
 	revProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
 	baseDirector := revProxy.Director
 	revProxy.Director = func(req *http.Request) {
 		baseDirector(req)
 		// armis:ignore cwe:918 reason:upstreamURL.Host is the startup-configured trusted upstream (default registry.npmjs.org/pypi.org); setting the outbound Host to it is required for CDN routing and is not attacker-controlled
 		req.Host = upstreamURL.Host
+		if h := p.buildAuthHeader(); h != "" {
+			req.Header.Set("Authorization", h)
+		}
+	}
+	revProxy.Transport = httpClient.Transport
+	// When a custom upstream is configured, a 4xx from it must NOT carry the
+	// upstream's WWW-Authenticate realm back to the package manager: npm would
+	// honor the realm and re-authenticate DIRECTLY against the upstream host,
+	// bypassing the proxy (and its age filtering) entirely. Strip it and leave a
+	// clean status; the metadata path logs an actionable message (S5/E3).
+	revProxy.ModifyResponse = p.modifyUpstreamResponse
+	p.revProxy = revProxy
+
+	return p, nil
+}
+
+// buildAuthHeader returns the Authorization header value to attach to upstream
+// requests, or "" when no credential is configured. It is the SINGLE seam the
+// design mandates: both handleMetadataFiltering (the explicit forward) and the
+// reverse-proxy Director (tarballs, RPC) call it, so the metadata and tarball
+// legs authenticate identically. The PPSC-994 prototype proved both legs hit a
+// private repo and both need the credential.
+func (p *Proxy) buildAuthHeader() string {
+	return p.authHeader
+}
+
+// modifyUpstreamResponse is the reverse-proxy ModifyResponse hook. On a custom
+// upstream it strips WWW-Authenticate from any 4xx so the PM cannot re-auth
+// directly against the upstream host, bypassing the proxy (S5).
+func (p *Proxy) modifyUpstreamResponse(resp *http.Response) error {
+	if p.customUpstream && resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		resp.Header.Del("WWW-Authenticate")
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry auth failed (%d) for %s — check your credentials (.npmrc _authToken, not _auth) for %s\n",
+				resp.StatusCode, resp.Request.URL.Path, p.upstreamURL.Host)
+		}
+	}
+	return nil
+}
+
+// newUpstreamHTTPClient builds the HTTP client used for the proxy→upstream leg.
+// Two security properties beyond the default client:
+//
+//   - CheckRedirect refuses any cross-host redirect (S2). Go already strips the
+//     Authorization header across hosts, but refusing the redirect outright
+//     means the injected credential provably never even attempts a hop off the
+//     approved host — defense in depth against a 3xx pointed at an attacker.
+//   - an optional CA bundle is loaded into the TLS config (S6) so a minimal CI
+//     container can reach a Nexus fronted by a corporate/private CA. A bad
+//     bundle path is a hard error (a TLS failure must be visible, never a silent
+//     fail-open enforcement bypass).
+func newUpstreamHTTPClient(upstreamURL *url.URL, caBundlePath string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	if caBundlePath != "" {
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:caBundlePath is an operator-supplied path from the committed config / ARMIS_REGISTRY_CA_BUNDLE env (the deploying platform team's own file), read once at proxy startup to trust their corporate CA; not untrusted input crossing a trust boundary
+		pem, err := os.ReadFile(caBundlePath) //nolint:gosec // operator-configured CA bundle
+		if err != nil {
+			return nil, fmt.Errorf("reading registry CA bundle %q: %w", caBundlePath, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("registry CA bundle %q contains no valid PEM certificates", caBundlePath)
+		}
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // MinVersion set explicitly
+		}
+		transport.TLSClientConfig.RootCAs = pool
 	}
 
-	return &Proxy{
-		policy:      cfg.Policy,
-		mode:        cfg.Mode,
-		upstreamURL: upstreamURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+	// Compare the full origin (host:port), not just the hostname: a redirect to a
+	// different port on the same host is still a different origin the credential
+	// must not leak to. This is the strict reading of S2 ("off the approved
+	// host") and the safe default for a security control.
+	upstreamOrigin := upstreamURL.Host
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if req.URL.Host != upstreamOrigin {
+				return fmt.Errorf("refusing cross-host redirect to %q (credentials must not leave the approved registry origin %q)", req.URL.Host, upstreamOrigin)
+			}
+			return nil
 		},
-		revProxy:        revProxy,
-		skipPackages:    skipSet,
-		allowed:         make(map[string]allowedVersion),
-		directSet:       directSet,
-		requiredRanges:  make(map[string][]requiredRange),
-		keptVersions:    make(map[string][]string),
-		removedVersions: make(map[string][]string),
 	}, nil
 }
 
@@ -390,8 +532,8 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	// Use RequestURI() (escaped path + raw query) rather than just Path so the
 	// filtered branch is symmetric with the reverse-proxy passthrough: query
 	// params (e.g. ?write=true) and path-escaping nuances reach the upstream.
-	// armis:ignore cwe:918 reason:p.upstreamURL is a startup-configured trusted host (defaults to registry.npmjs.org); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.RequestURI(), nil) //nolint:gosec // upstream URL is configured at startup, path is from local proxy
+	// armis:ignore cwe:918 reason:p.upstreamURL is the default npmjs.org/pypi.org constant or a custom upstream validated by ValidateRegistryURL at config-load (https-only, no userinfo, rejects loopback/RFC1918/link-local); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.RequestURI(), nil) //nolint:gosec // upstream URL is a constant default or config-load-validated; path is from the local proxy
 	if err != nil {
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
 		return
@@ -403,10 +545,23 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	} else {
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
+	// Inject the developer's upstream credential on the metadata leg via the
+	// SAME seam the tarball Director uses, so both authenticate identically.
+	if h := p.buildAuthHeader(); h != "" {
+		upstreamReq.Header.Set("Authorization", h)
+	}
 
-	// armis:ignore cwe:918 reason:p.upstreamURL is a startup-configured trusted host (defaults to registry.npmjs.org); the request host is not attacker-controlled
-	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL constructed from trusted upstream config
+	// armis:ignore cwe:918 reason:p.upstreamURL is the default npmjs.org/pypi.org constant or a custom upstream validated by ValidateRegistryURL at config-load (https-only, no userinfo, rejects loopback/RFC1918/link-local), so the request host is not attacker-controlled
+	resp, err := p.httpClient.Do(upstreamReq) //nolint:gosec // URL is a constant default or config-load-validated upstream
 	if err != nil {
+		// A TLS trust failure to a private-CA artifactory is a common CI gotcha;
+		// name the fix (CA bundle) rather than letting it look like a generic
+		// outage. Critically, this must surface — never silently fail-open into a
+		// direct-to-upstream bypass (S6/E9).
+		if p.customUpstream && isX509Error(err) {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: TLS trust error reaching %s for %s: %v\n", p.upstreamURL.Host, pkgName, err)
+			fmt.Fprintf(os.Stderr, "  Set registry-ca-bundle in .armis-supply-chain.yaml (or ARMIS_REGISTRY_CA_BUNDLE) to your corporate CA PEM.\n")
+		}
 		if p.policy.FailOpen {
 			fmt.Fprintf(os.Stderr, "[armis] supply-chain: age check unavailable for %s, allowing (fail-open): %v\n", pkgName, err)
 			p.reverseProxy(w, r)
@@ -419,6 +574,14 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
+		// When a custom upstream returns an auth challenge, strip WWW-Authenticate
+		// so the PM cannot re-auth directly against the upstream host and bypass
+		// the proxy (S5/E3); surface an actionable message instead.
+		if p.customUpstream && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			resp.Header.Del("WWW-Authenticate")
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry auth failed (%d) for %s — check your credentials (.npmrc _authToken, not _auth) for %s\n",
+				resp.StatusCode, pkgName, p.upstreamURL.Host)
+		}
 		// Copy headers value-by-value with CR/LF stripped rather than aliasing the
 		// upstream slices wholesale (w.Header()[k] = v). The verbatim copy both
 		// shared upstream's backing arrays and bypassed the response-splitting
@@ -537,6 +700,33 @@ func sanitizeHeaderValue(v string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(v)
 }
 
+// isX509Error reports whether err is (or wraps) an X.509 certificate trust
+// failure, so the proxy can print the CA-bundle fix rather than a generic
+// "unreachable" message. It checks the typed certificate errors directly
+// (rather than string-matching) so the detection is robust across Go versions.
+func isX509Error(err error) bool {
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var certInvalid x509.CertificateInvalidError
+	return errors.As(err, &unknownAuthority) || errors.As(err, &hostnameErr) || errors.As(err, &certInvalid)
+}
+
+// warnDegradedEnforcement emits the one-time "age policy could not be enforced"
+// notice when a configured artifactory upstream returns a response with no
+// usable publish timestamps. It fires at most once per proxy (per wrapped
+// install) so a large dependency tree does not repeat it per package. It is
+// only ever called from the degrade path, which is itself gated on
+// degradeOnMissingTimestamps — so the default public path never reaches here.
+func (p *Proxy) warnDegradedEnforcement() {
+	p.degradeWarnMu.Lock()
+	defer p.degradeWarnMu.Unlock()
+	if p.degradeWarned {
+		return
+	}
+	p.degradeWarned = true
+	fmt.Fprintf(os.Stderr, "[armis] supply-chain: age policy could not be enforced against %s (no publish timestamps) — installs pass through; rely on `supply-chain check` in CI for age enforcement\n", p.upstreamURL.Host)
+}
+
 func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPackage) {
 	// body is already bounded to maxProxyResponseSize (20MB) by the io.LimitReader
 	// at the sole production call site; oversize upstream responses are rejected
@@ -550,12 +740,24 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 
 	timeRaw, ok := metadata["time"]
 	if !ok {
+		// The npm filter has always passed through when the `time` map is absent
+		// (it cannot remove what it cannot date). That pass-through is unchanged;
+		// the only new behavior is that a CONFIGURED artifactory upstream which
+		// strips timestamps now emits the one-time degraded-enforcement notice, so
+		// the gap is visible rather than silent. The default public path (flag
+		// unset) stays silent exactly as before — npmjs.org always sends `time`.
+		if p.degradeOnMissingTimestamps {
+			p.warnDegradedEnforcement()
+		}
 		return body, nil
 	}
 
 	var timeMap map[string]string
 	// armis:ignore cwe:770 reason:timeRaw is a sub-slice of the already size-bounded body (capped at 20MB by io.LimitReader at the caller); unmarshaling it cannot allocate beyond that cap
 	if err := json.Unmarshal(timeRaw, &timeMap); err != nil {
+		if p.degradeOnMissingTimestamps {
+			p.warnDegradedEnforcement()
+		}
 		return body, nil
 	}
 
@@ -901,16 +1103,34 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 
 	for _, f := range files {
 		filename := jsonString(f["filename"])
-		age, ok := pypiFileAge(f["upload-time"], now)
-		if !ok || age < p.policy.MinReleaseAge {
-			// Undatable or too-young file: remove it. Record an age of 0 for the
-			// undatable case so the summary still names the blocked file.
-			if !ok {
-				age = 0
+		age, dated := pypiFileAge(f["upload-time"], now)
+		if !dated {
+			// Undatable file. Default (public PyPI) posture is fail-CLOSED: remove
+			// it — public PyPI always emits PEP 700 timestamps, so a missing one is
+			// suspicious. But a configured artifactory may legitimately strip all
+			// timestamps; when degradeOnMissingTimestamps is set we KEEP the file and
+			// emit the one-time degraded-enforcement notice rather than blocking
+			// every install. The flag is set only for a configured upstream, so this
+			// never weakens the default public path (regression-guarded by test #9).
+			if p.degradeOnMissingTimestamps {
+				p.warnDegradedEnforcement()
+				kept = append(kept, f)
+				continue
 			}
 			// Version is the filename (what the user sees and what makes the block
 			// actionable); DisplayVersion is the semver parsed from it, used for
 			// prerelease classification and the clean number shown in the summary.
+			blocked = append(blocked, BlockedPackage{
+				Name:           pkgName,
+				Version:        filename,
+				DisplayVersion: pypiVersionFromFilename(filename),
+				Age:            0,
+			})
+			continue
+		}
+		if age < p.policy.MinReleaseAge {
+			// Datable but too young: always removed, regardless of the degrade flag —
+			// the timestamp exists and the file is genuinely within the age window.
 			blocked = append(blocked, BlockedPackage{
 				Name:           pkgName,
 				Version:        filename,

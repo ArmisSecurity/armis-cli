@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -25,7 +26,42 @@ type Config struct {
 	// explicit "warn" opts a young transitive into pass-with-warning. Direct
 	// deps are always blocked regardless. See Config.ToPolicy.
 	TransitivePolicy string `yaml:"transitive-policy,omitempty"`
+
+	// Registries maps an ecosystem name (npm, pypi) to the approved
+	// artifactory/registry URL for that ecosystem (PPSC-994). When set for an
+	// ecosystem, the proxy's upstream points at that URL and the CI check audits
+	// against it. v1 recognizes the "npm" and "pypi" keys (see RegistryURLFor);
+	// other keys are ignored. Each value is validated by ValidateRegistryURL at
+	// config-load — the committed file is a trust boundary, so a non-https or
+	// non-routable URL is a hard error, not a best-effort parse.
+	Registries map[string]string `yaml:"registries,omitempty"`
+
+	// RegistryEnforcement is the routing-enforcement posture, distinct from the
+	// age-policy fail-open. v1 supports only "warn" (and absent, which means
+	// warn-disabled). The value "block" is REJECTED at parse with a hard error
+	// (UC-1): a CISO who writes "block" and deploys it must not be silently
+	// downgraded to a one-line warning, manufacturing false compliance.
+	RegistryEnforcement string `yaml:"registry-enforcement,omitempty"`
+
+	// RegistryCABundle is an optional path to a PEM CA bundle used for the
+	// proxy→upstream TLS leg (S6). It lets a minimal CI container reach a Nexus
+	// fronted by a private/corporate CA without a system trust-store edit. The
+	// env var ARMIS_REGISTRY_CA_BUNDLE overrides it. A TLS failure must surface a
+	// visible, actionable error — never a silent fail-open enforcement bypass.
+	RegistryCABundle string `yaml:"registry-ca-bundle,omitempty"`
 }
+
+// Ecosystem keys recognized inside the "registries" map. v1 wires only the npm
+// family and PyPI; Maven/Gradle stay on the audit path and are intentionally
+// not routable here.
+const (
+	registryKeyNPM  = "npm"
+	registryKeyPyPI = "pypi"
+)
+
+// registryEnforcementWarn is the only routing-enforcement posture v1 accepts
+// (alongside an absent value). See Config.RegistryEnforcement.
+const registryEnforcementWarn = "warn"
 
 // ecosystemAliasPipenv is the user-facing name for the Pipfile/pipenv ecosystem.
 // --help and the generated config call it "pipenv" (the tool name users know),
@@ -99,7 +135,85 @@ func LoadConfig(dir string) (*Config, error) {
 		return nil, fmt.Errorf("parsing %s: %w\n\n  Valid format:\n    version: 1\n    min-age: 72h\n    exclusions:\n      - \"@myorg/*\"\n    fail-open: false", ConfigFileName, err)
 	}
 
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validate enforces the structural and security invariants on the parsed
+// config that must fail loudly at load time rather than degrade silently
+// later. Three things are checked, all PPSC-994 launch requirements:
+//
+//   - registry-enforcement: only "warn" (or absent) is valid in v1. "block" is
+//     REJECTED with a hard error (UC-1) — never accepted-and-downgraded to warn,
+//     which would manufacture false compliance for a CISO.
+//   - each registries.<ecosystem> URL passes ValidateRegistryURL (S1): https
+//     only, no embedded credentials, no loopback/RFC1918/link-local host. The
+//     committed config is a trust boundary; a bad URL is an SSRF, not a typo.
+//   - a PyPI registry URL must expose the PEP 503 "/simple/" index path (DX4),
+//     caught here rather than as a confusing 404 at install time.
+func (c *Config) validate() error {
+	switch c.RegistryEnforcement {
+	case "", registryEnforcementWarn:
+		// ok: absent or the one supported posture.
+	case "block":
+		return fmt.Errorf("registry-enforcement: 'block' is not supported in this version; use 'warn'")
+	default:
+		return fmt.Errorf("registry-enforcement: %q is not valid; use 'warn' (or omit it)", c.RegistryEnforcement)
+	}
+
+	for eco, raw := range c.Registries {
+		if strings.TrimSpace(raw) == "" {
+			continue // an empty value is treated as "not configured", not an error
+		}
+		u, err := ValidateRegistryURL(raw)
+		if err != nil {
+			return fmt.Errorf("registries.%s: %w", eco, err)
+		}
+		if eco == registryKeyPyPI && !strings.Contains(u.Path, "/simple") {
+			return fmt.Errorf("registries.pypi: %q should point at the PEP 503 Simple API (a URL containing \"/simple/\", e.g. https://nexus.corp/repository/pypi-group/simple/)", raw)
+		}
+	}
+
+	return nil
+}
+
+// RegistryURLFor returns the configured approved registry URL for an ecosystem,
+// or "" when none is set. npm-family ecosystems (npm/pnpm/bun/yarn) all share
+// the single "npm" key since they resolve from the same npm-registry protocol;
+// the PyPI-family proxied ecosystems (pip/uv) share the "pypi" key. Audit-path
+// ecosystems (poetry/pdm/maven/gradle) are not routable in v1 and always return
+// "". A nil config returns "".
+func (c *Config) RegistryURLFor(eco Ecosystem) string {
+	if c == nil || c.Registries == nil {
+		return ""
+	}
+	switch eco {
+	case EcosystemNPM, EcosystemPNPM, EcosystemBun, EcosystemYarn:
+		return strings.TrimSpace(c.Registries[registryKeyNPM])
+	case EcosystemPip, EcosystemUV:
+		return strings.TrimSpace(c.Registries[registryKeyPyPI])
+	default:
+		return ""
+	}
+}
+
+// HasAnyRegistry reports whether the config sets at least one registries entry.
+// It gates the "explicit coverage" honesty rules (E4/DX3): once ANY registry is
+// configured, unconfigured ecosystems must be reported as "not configured
+// (public)" rather than silently implying coverage.
+func (c *Config) HasAnyRegistry() bool {
+	if c == nil {
+		return false
+	}
+	for _, raw := range c.Registries {
+		if strings.TrimSpace(raw) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) ToPolicy() (Policy, error) {
