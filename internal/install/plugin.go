@@ -255,7 +255,7 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 func (pi *PluginInstaller) createVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
-		return fmt.Errorf("Python 3.11+ is required but not found in PATH (tried %s)", strings.Join(pythonCandidates, ", ")) //nolint:staticcheck // proper noun
+		return pythonNotFoundError()
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
@@ -322,8 +322,44 @@ func writeJSON(path string, data interface{}) error {
 	return os.WriteFile(filepath.Clean(path), append(b, '\n'), 0o600)
 }
 
+// CheckPython verifies that a Python 3.11+ interpreter is available on PATH.
+// It is a fast, side-effect-free preflight used by the install commands to fail
+// early — before any multi-MB plugin download — when the MCP server's runtime
+// dependency is missing. Returns nil if a suitable interpreter is found, or an
+// actionable error with per-OS install hints otherwise.
+func CheckPython() error {
+	if findPython() == "" {
+		return pythonNotFoundError()
+	}
+	return nil
+}
+
+// pythonNotFoundError builds the shared "Python not found" error with the list
+// of interpreter names tried and an OS-specific install hint. Centralized so the
+// preflight (CheckPython) and the venv setup (createVenv) emit identical guidance.
+func pythonNotFoundError() error {
+	var hint string
+	switch runtime.GOOS {
+	case osDarwin:
+		hint = "install it with: brew install python@3.11"
+	case osLinux:
+		hint = "install it with your package manager, e.g.: sudo apt install python3.11"
+	case osWindows:
+		hint = "install it from https://www.python.org/downloads/ (enable \"Add to PATH\")"
+	default:
+		hint = "install it from https://www.python.org/downloads/"
+	}
+	// "no suitable ... found" covers both cases findPython rejects: no interpreter
+	// on PATH at all, and one that exists but is older than 3.11 (the version probe
+	// fails). "not found in PATH" alone would mislead users who do have Python.
+	// armis:ignore reason:"Python" is a proper noun; leading capital is intentional
+	return fmt.Errorf("no suitable Python 3.11+ interpreter found on PATH (tried %s)\n%s", //nolint:staticcheck // proper noun
+		strings.Join(pythonCandidates, ", "), hint)
+}
+
 func findPython() string {
 	for _, name := range pythonCandidates {
+		// armis:ignore cwe:426 cwe:427 reason:name is from the hardcoded pythonCandidates allowlist (not user input); resolved path is validated via EvalSymlinks + IsAbs below
 		resolved, err := exec.LookPath(name)
 		if err != nil {
 			continue

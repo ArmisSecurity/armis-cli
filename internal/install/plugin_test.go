@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,65 @@ func TestFetchLatestRelease_NoRelease(t *testing.T) {
 	_, err := pi.fetchLatestRelease()
 	if err == nil {
 		t.Fatal("expected error for 404 response")
+	}
+}
+
+func TestCheckPython_NotFound(t *testing.T) {
+	// Stripping PATH makes exec.LookPath fail for every candidate, so findPython
+	// returns "" deterministically regardless of what is installed on the host.
+	t.Setenv("PATH", "")
+
+	err := CheckPython()
+	if err == nil {
+		t.Fatal("expected error when no Python interpreter is on PATH")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Python 3.11+") {
+		t.Errorf("error should mention the required version, got: %q", msg)
+	}
+	// The message must list the interpreter names tried so users know what to install.
+	for _, name := range pythonCandidates {
+		if !strings.Contains(msg, name) {
+			t.Errorf("error should list candidate %q, got: %q", name, msg)
+		}
+	}
+	// And it must include an actionable, OS-specific install hint (second line).
+	if !strings.Contains(msg, "\n") {
+		t.Errorf("error should include an install hint on a second line, got: %q", msg)
+	}
+}
+
+func TestCheckPython_Found(t *testing.T) {
+	// Make the success path deterministic by planting a stub interpreter on PATH
+	// that reports a >= 3.11 version, instead of depending on the host's Python.
+	// The stub is a shell script, which exec.LookPath only runs as a bare command
+	// on Unix; on Windows it would need a .exe/.bat shim, so fall back there to
+	// asserting against a real host interpreter (skipping if none is present).
+	if runtime.GOOS == osWindows {
+		if findPython() == "" {
+			t.Skip("no Python 3.11+ interpreter available on this Windows host")
+		}
+		if err := CheckPython(); err != nil {
+			t.Errorf("CheckPython() = %v, want nil when a 3.11+ interpreter is present", err)
+		}
+		return
+	}
+
+	dir := t.TempDir()
+	// findPython runs `<interp> -c "import sys; print(sys.version_info >= (3, 11))"`
+	// and accepts the interpreter only when it prints exactly "True". The stub
+	// prints True regardless of args, which is all the version probe needs.
+	stub := filepath.Join(dir, "python3.11")
+	script := "#!/bin/sh\necho True\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatal(err)
+	}
+	// Restrict PATH to the stub dir so findPython resolves our stub, not a real
+	// host Python that might be a different version.
+	t.Setenv("PATH", dir)
+
+	if err := CheckPython(); err != nil {
+		t.Errorf("CheckPython() = %v, want nil when a 3.11+ interpreter is on PATH", err)
 	}
 }
 
