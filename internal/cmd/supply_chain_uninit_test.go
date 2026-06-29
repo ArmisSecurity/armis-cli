@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,8 +15,13 @@ import (
 // test exercises the genuine inject→uninit round-trip), and returns the RC path.
 // $SHELL is cleared so DetectShells keys purely on which RC files exist, keeping
 // the test independent of the shell CI runs under.
+// Windows is skipped: DetectShells resolves RC paths from os.UserHomeDir(), which
+// honors $HOME on Unix but not on Windows (same constraint as shell_test.go:456).
 func seedShellInjection(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("DetectShells home-dir resolution is exercised via $HOME, which is Unix-only")
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SHELL", "")

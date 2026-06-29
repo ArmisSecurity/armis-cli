@@ -3,6 +3,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -116,6 +117,9 @@ func TestRemoveNpmrcMarker(t *testing.T) {
 	// write; a regression that hardcoded the 0o644 fallback would flip this 0o600
 	// file and be caught here. Mirrors TestRemoveFunctions_PreservesPermissions.
 	t.Run("preserves file permissions", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix file permissions not supported on Windows")
+		}
 		path := filepath.Join(t.TempDir(), ".npmrc")
 		writeFileAt(t, path, "foo=bar\n"+NpmrcMarkerComment+"\n") // writeFileAt uses 0o600
 
