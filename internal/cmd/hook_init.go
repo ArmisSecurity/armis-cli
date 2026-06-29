@@ -66,8 +66,15 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 	// degradation on stderr and continue.
 	ei := install.NewEditorInstaller()
 	pluginDir := ei.PluginDir()
-	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
-		fmt.Fprintln(os.Stderr, "Armis MCP plugin not found; installing direct-scan hook (run 'armis-cli install' to upgrade).")
+	if _, err := os.Stat(pluginDir); err != nil {
+		// A missing plugin is the expected case; anything else (permission/IO)
+		// is surfaced distinctly so it is not silently masked. Neither blocks:
+		// buildPreCommitSection falls back to a direct-scan hook regardless.
+		if os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "Armis MCP plugin not found; installing direct-scan hook (run 'armis-cli install' to upgrade).")
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: could not access Armis MCP plugin dir %q: %v; installing direct-scan hook.\n", pluginDir, err)
+		}
 	}
 
 	opts := install.PreCommitOpts{FailOpen: failOpen}
