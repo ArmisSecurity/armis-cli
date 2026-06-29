@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -49,10 +50,22 @@ const MaxAPIResponseSize = 50 * 1024 * 1024
 
 // URL scheme and host constants for security validation.
 const (
-	schemeHTTPS    = "https"
-	hostLocalhost  = "localhost"
-	hostLoopbackIP = "127.0.0.1"
+	schemeHTTPS   = "https"
+	hostLocalhost = "localhost"
 )
+
+// isLoopbackHost reports whether host names the local machine. Accepts
+// "localhost" as a special case and otherwise defers to net.ParseIP so any
+// loopback representation is caught — 127.0.0.1, ::1, IPv4-mapped forms
+// like 0:0:0:0:0:0:0:1, anything in 127.0.0.0/8, etc. A plain string compare
+// against "127.0.0.1"/"::1" would miss the expanded IPv6 forms.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, hostLocalhost) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 // copyChunkSize is the buffer size for context-aware copying.
 // 256KB reduces syscall overhead for multi-GB uploads while still providing
@@ -180,9 +193,9 @@ func NewClient(baseURL string, authProvider AuthHeaderProvider, debug bool, uplo
 	}
 
 	// armis:ignore cwe:918 reason:this code IS the SSRF prevention; URL from validated ARMIS_API_URL env var
+	// armis:ignore cwe:918 reason:loopback-HTTP carve-out is intentional for local dev/testing only; same gate as before
 	if parsedURL.Scheme != schemeHTTPS {
-		host := parsedURL.Hostname()
-		if host != hostLocalhost && host != hostLoopbackIP {
+		if !isLoopbackHost(parsedURL.Hostname()) {
 			return nil, fmt.Errorf("HTTPS required for non-localhost URL %q to protect credentials", baseURL)
 		}
 	}
@@ -238,10 +251,10 @@ func (c *Client) setAuthHeader(ctx context.Context, req *http.Request) error {
 	host := req.URL.Hostname()
 	scheme := strings.ToLower(req.URL.Scheme)
 
-	// Require HTTPS for non-localhost hosts to protect credentials
+	// Require HTTPS for non-loopback hosts to protect credentials
 	// armis:ignore cwe:918 reason:request URL is constructed from operator-configured base URL, not external input
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement)
-	if host != hostLocalhost && host != hostLoopbackIP && scheme != schemeHTTPS {
+	if !isLoopbackHost(host) && scheme != schemeHTTPS {
 		return fmt.Errorf("refusing to send credentials over insecure scheme %q", scheme)
 	}
 
@@ -342,7 +355,7 @@ func (c *Client) createPresignedUpload(ctx context.Context, opts IngestOptions) 
 	}
 
 	// armis:ignore cwe:918 reason:baseURL validated in NewClient (HTTPS enforced, no user-controlled URL components)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(bodyBytes)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -489,7 +502,7 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	}
 
 	// armis:ignore cwe:918 reason:baseURL validated in NewClient (HTTPS enforced)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(bodyBytes)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -840,8 +853,12 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	host := strings.ToLower(parsed.Hostname())
 	scheme := strings.ToLower(parsed.Scheme)
 
-	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
-	if host == hostLocalhost || host == hostLoopbackIP {
+	// Only allow loopback hosts (localhost, 127.0.0.0/8, ::1 and all its
+	// IPv6 alias forms) if explicitly enabled (for testing only). Using
+	// net.ParseIP().IsLoopback inside isLoopbackHost avoids the bypass where
+	// an attacker submits "0:0:0:0:0:0:0:1" or similar to dodge a string
+	// compare against "::1".
+	if isLoopbackHost(host) {
 		if c.allowLocalURLs {
 			return nil
 		}
@@ -849,11 +866,15 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	}
 
 	// Tests run a single httptest.Server that serves both the API and a fake
-	// S3 endpoint. When allowLocalURLs is set, also permit URLs whose host
-	// matches the API base URL — this is never reachable in production builds
-	// because allowLocalURLs is a test-only option.
+	// S3 endpoint. When allowLocalURLs is set AND the configured API base
+	// URL is itself loopback, also permit URLs whose host matches the API
+	// base URL. The extra base-host loopback gate keeps this shortcut from
+	// silently relaxing the SSRF allowlist if anyone ever flipped
+	// allowLocalURLs against a non-local base — production builds never set
+	// allowLocalURLs, so behavior is unchanged today.
 	if c.allowLocalURLs {
-		if base, perr := url.Parse(c.baseURL); perr == nil && strings.EqualFold(base.Host, parsed.Host) {
+		if base, perr := url.Parse(c.baseURL); perr == nil && isLoopbackHost(base.Hostname()) &&
+			strings.EqualFold(base.Host, parsed.Host) {
 			return nil
 		}
 	}

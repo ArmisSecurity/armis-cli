@@ -1,11 +1,11 @@
 package testutil
 
 import (
+	"bytes"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -76,7 +76,7 @@ func AssertValidS3Upload(t *testing.T, r *http.Request) bool {
 	// Walk the parts and confirm at least one form field precedes the `file`,
 	// and the `file` part is last. NextPart returns io.EOF after the closing
 	// boundary; that's the loop terminator.
-	mr := multipart.NewReader(strings.NewReader(string(body)), boundary)
+	mr := multipart.NewReader(bytes.NewReader(body), boundary)
 	var (
 		fileSeen      bool
 		partAfterFile bool

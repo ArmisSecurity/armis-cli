@@ -170,8 +170,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to create temp tarball: %w", err)
 	}
 	tmpPath := tmpFile.Name()
+	tmpFileClosed := false
 	defer func() {
-		_ = tmpFile.Close()
+		// Best-effort close on early-exit paths (errors before the explicit
+		// Close below). Any close error here is irrelevant because we're
+		// already returning a different error. The post-upload Close is
+		// handled explicitly so its error is surfaced.
+		if !tmpFileClosed {
+			_ = tmpFile.Close()
+		}
 		_ = os.Remove(tmpPath)
 	}()
 
@@ -212,6 +219,17 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
+	}
+
+	// Close the tarball explicitly now that StartIngest has finished reading it.
+	// A failure here means buffered writes never reached disk; the upload
+	// already succeeded so the bytes on S3 are fine, but flagging this lets
+	// the user know that something is off with their local environment
+	// (e.g. disk full, network filesystem disconnect) rather than swallowing
+	// it silently in the deferred cleanup.
+	tmpFileClosed = true
+	if err := tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp tarball: %w", err)
 	}
 
 	spinner.Stop()

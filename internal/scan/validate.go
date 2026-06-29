@@ -29,7 +29,11 @@ func HasAllowedTarExtension(filename string) bool {
 }
 
 // ValidateTarballFormat checks that the file at `path` exists, is non-empty,
-// has an allowed tar extension, and starts with the appropriate magic bytes.
+// has an allowed tar extension, and starts with the appropriate magic bytes
+// for that extension. A `.tar.gz`/`.tgz` must carry gzip magic; a `.tar` must
+// carry the ustar magic. Mismatched pairs (e.g. a gzip file renamed `.tar`)
+// are rejected — the extension is part of the contract with the server-side
+// allowlist, so accepting a misnamed file would mask a packaging bug.
 //
 // gzip magic:    0x1f 0x8b at offset 0
 // POSIX/GNU tar: "ustar" at offset 257 (5 bytes), with possibly NUL or "00"
@@ -41,10 +45,11 @@ func ValidateTarballFormat(path string) error {
 	if path == "" {
 		return errors.New("tarball path is empty")
 	}
-	if !HasAllowedTarExtension(filepath.Base(path)) {
+	base := filepath.Base(path)
+	if !HasAllowedTarExtension(base) {
 		return fmt.Errorf(
 			"file %q has an unsupported extension; expected one of %s",
-			filepath.Base(path),
+			base,
 			strings.Join(AllowedTarExtensions, ", "),
 		)
 	}
@@ -57,7 +62,7 @@ func ValidateTarballFormat(path string) error {
 		return fmt.Errorf("%q is a directory, not a tarball", path)
 	}
 	if info.Size() == 0 {
-		return fmt.Errorf("tarball %q is empty", filepath.Base(path))
+		return fmt.Errorf("tarball %q is empty", base)
 	}
 
 	// armis:ignore cwe:22 reason:caller is expected to sanitize the path; we only read
@@ -76,13 +81,33 @@ func ValidateTarballFormat(path string) error {
 	}
 	header = header[:n]
 
-	if isGzip(header) || isUstar(header) {
-		return nil
+	lower := strings.ToLower(base)
+	switch {
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+		if !isGzip(header) {
+			return fmt.Errorf(
+				"file %q has a gzip-tar extension but is not gzip-compressed (magic mismatch)",
+				base,
+			)
+		}
+	case strings.HasSuffix(lower, ".tar"):
+		if !isUstar(header) {
+			return fmt.Errorf(
+				"file %q has a .tar extension but is not a POSIX tar archive (ustar magic missing)",
+				base,
+			)
+		}
+	default:
+		// HasAllowedTarExtension above already gates this, so this branch is
+		// defensive — kept so a future extension addition doesn't silently
+		// fall through.
+		return fmt.Errorf(
+			"file %q has an unsupported extension; expected one of %s",
+			base,
+			strings.Join(AllowedTarExtensions, ", "),
+		)
 	}
-	return fmt.Errorf(
-		"file %q is not a valid tar or tar.gz archive (header magic mismatch)",
-		filepath.Base(path),
-	)
+	return nil
 }
 
 // isGzip reports whether b starts with the gzip magic bytes.
@@ -120,18 +145,20 @@ func ValidateUploadSize(actual, serverMax int64) error {
 	return nil
 }
 
-// FormatBytes renders a byte count in IEC units (KiB/MiB/GiB) with one decimal
-// place above 1 KiB. Used for human-readable size errors.
+// FormatBytes renders a byte count in IEC units (KiB/MiB/GiB/TiB) with one
+// decimal place above 1 KiB. Used for human-readable size errors. Inputs at
+// or above 1 PiB are rendered in TiB rather than panicking — the suffix
+// table is the upper bound by design.
 func FormatBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
 	}
+	suffix := []string{"KiB", "MiB", "GiB", "TiB"}
 	div, exp := int64(unit), 0
-	for x := n / unit; x >= unit; x /= unit {
+	for x := n / unit; x >= unit && exp < len(suffix)-1; x /= unit {
 		div *= unit
 		exp++
 	}
-	suffix := []string{"KiB", "MiB", "GiB", "TiB"}[exp]
-	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), suffix)
+	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), suffix[exp])
 }

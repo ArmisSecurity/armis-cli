@@ -108,6 +108,15 @@ func TestValidateTarballFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Crossed extensions: gzip body in a .tar file, ustar body in a .tgz.
+	// Both must be rejected — extension is part of the contract with the
+	// server-side allowlist.
+	gzipInTar := filepath.Join(tmp, "mislabeled.tar")
+	makeGzipTar(t, gzipInTar)
+
+	ustarInTgz := filepath.Join(tmp, "mislabeled.tgz")
+	makePlainTar(t, ustarInTgz)
+
 	tests := []struct {
 		name      string
 		path      string
@@ -123,6 +132,8 @@ func TestValidateTarballFormat(t *testing.T) {
 		{"empty file", emptyFile, true, "empty"},
 		{"unsupported extension", wrongExt, true, "unsupported"},
 		{"directory", dir, true, "directory"},
+		{"gzip body in .tar", gzipInTar, true, "ustar magic missing"},
+		{"ustar body in .tgz", ustarInTgz, true, "not gzip-compressed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -178,6 +189,9 @@ func TestFormatBytes(t *testing.T) {
 		{1024 * 1024, "1.0 MiB"},
 		{int64(2.5 * 1024 * 1024), "2.5 MiB"},
 		{1024 * 1024 * 1024, "1.0 GiB"},
+		{1024 * 1024 * 1024 * 1024, "1.0 TiB"},
+		// >= 1 PiB clamps to TiB rather than panicking on suffix overflow.
+		{1024 * 1024 * 1024 * 1024 * 1024, "1024.0 TiB"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {

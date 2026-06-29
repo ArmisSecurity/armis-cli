@@ -1038,6 +1038,12 @@ func TestValidatePresignedURL(t *testing.T) {
 			{"localhost HTTP", "http://localhost:8080/file"},
 			{"localhost HTTPS", "https://localhost/file"},
 			{"127.0.0.1", "http://127.0.0.1:9000/file"},
+			// IPv6 loopback in its short and fully-expanded forms. Both must
+			// follow the same opt-in/opt-out rules — a string compare against
+			// "::1" alone would let "0:0:0:0:0:0:0:1" through and bypass the
+			// gate on the no-opt-in path.
+			{"::1", "http://[::1]:9000/file"},
+			{"IPv6 loopback expanded", "http://[0:0:0:0:0:0:0:1]:9000/file"},
 		}
 		for _, tt := range localhostURLs {
 			t.Run(tt.name+" allowed", func(t *testing.T) {
@@ -1090,6 +1096,30 @@ func TestValidatePresignedURL(t *testing.T) {
 					t.Errorf("Expected error for URL %q, got none", tt.url)
 				}
 			})
+		}
+	})
+
+	// Regression: the base-host shortcut inside the allowLocalURLs branch
+	// must only fire when the API base URL is itself loopback. Even with
+	// allowLocalURLs=true, a non-loopback base URL must NOT cause presigned
+	// URLs whose host equals the API host to bypass the S3 allowlist.
+	t.Run("allowLocalURLs does not short-circuit non-loopback base URL", func(t *testing.T) {
+		// clientWithLocalhost above has baseURL https://api.example.com.
+		// A presigned URL pointing at the same host must still be rejected
+		// because api.example.com is not in the S3 allowlist.
+		hijackedURL := "https://api.example.com/secret/admin"
+		if err := clientWithLocalhost.ValidatePresignedURL(hijackedURL); err == nil {
+			t.Errorf("Expected URL %q to be rejected even with allowLocalURLs=true on a non-loopback base URL", hijackedURL)
+		}
+
+		// Sanity: when the base URL is loopback, the same shortcut should
+		// still allow presigned URLs that target the loopback API host.
+		loopbackClient, err := NewClient("http://127.0.0.1:8080", testutil.NewTestAuthProvider("token123"), false, 0, WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("Failed to create loopback client: %v", err)
+		}
+		if err := loopbackClient.ValidatePresignedURL("http://127.0.0.1:8080/fake-s3/upload"); err != nil {
+			t.Errorf("Expected loopback presigned URL to be allowed against loopback base URL: %v", err)
 		}
 	})
 }
