@@ -204,9 +204,12 @@ func hours(d time.Duration) float64 {
 }
 
 // writeComplianceReport marshals the report and writes it to the path named by
-// ARMIS_SUPPLY_CHAIN_REPORT. The value "-" writes the raw JSON to stderr with no
-// prefix, so it stays machine-readable when redirected (the human summary the
-// scPrefix marks is kept on a separate stream). A write error is reported but
+// ARMIS_SUPPLY_CHAIN_REPORT. The value "-" writes the raw JSON to stderr; this is
+// a best-effort convenience for quick inspection, NOT a clean machine-readable
+// channel — the human-facing wrap/check summaries also write to stderr, so a
+// consumer that redirects stderr will see the JSON interleaved with that text.
+// For reliable machine consumption (CI gating with jq, audit archives), point
+// ARMIS_SUPPLY_CHAIN_REPORT at a file path instead. A write error is reported but
 // never fails the build — the install already finished; a missing audit file is
 // a degraded state the user can act on, not a reason to break the run.
 func writeComplianceReport(path string, rep complianceReport) {

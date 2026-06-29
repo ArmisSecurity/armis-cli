@@ -137,7 +137,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls (e.g. "--lockfile ../sibling/package-lock.json"), not untrusted input crossing a trust boundary
 	if _, err := os.Stat(lockfilePath); err != nil {
-		return fmt.Errorf("lockfile not found: %s", lockfilePath)
+		return fmt.Errorf("lockfile not found: %s", lockfilePath) // armis:ignore cwe:22 cwe:23 cwe:73 reason:scanner attributes the lockfilePath finding to this line; lockfilePath is user-controlled CLI input for the user's own project, not untrusted input crossing a trust boundary
 	}
 
 	// The wrap's residue sweep can only remove the proxy origin of the run that
@@ -235,7 +235,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		})
 		// armis:ignore cwe:22 cwe:23 cwe:73 reason:scReport is the user's own --report CLI flag naming an output file on their machine (identical trust model to scan's --output, suppressed at the same sink); a local CLI writing where its operator asked crosses no trust boundary, and the value is not attacker-controlled network input
 		writeComplianceReport(scReport, rep)
-	}
+	} // armis:ignore cwe:22 cwe:23 cwe:73 reason:scanner attributes the scReport write-path finding to this closing brace; scReport is the user's own --report CLI flag naming a file on their machine (same trust model as scan's --output), not attacker-controlled input crossing a trust boundary
 
 	findings := make([]model.Finding, 0, len(result.Violations))
 	for _, v := range result.Violations {

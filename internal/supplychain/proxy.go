@@ -792,7 +792,11 @@ func (p *Proxy) recordConstraintData(metadata map[string]json.RawMessage, allVer
 	// snapshot of the package's version set, so a repeat fetch of the same
 	// pkgName overwrites rather than appends — that keeps a single key's slice
 	// bounded by the version count even if a client spams the proxy for one
-	// package.
+	// package. requiredRanges is keyed by the depended-on package (dep), to which
+	// several packages may contribute, so it can't wholesale-overwrite; instead a
+	// repeat fetch first drops the fetched pkgName's own prior entries for that dep
+	// before re-appending, which keeps the per-dep slice bounded under spamming
+	// while preserving other packages' ranges.
 	if len(kept) > 0 {
 		p.keptVersionsMu.Lock()
 		if p.keptVersions == nil {
@@ -819,10 +823,25 @@ func (p *Proxy) recordConstraintData(metadata map[string]json.RawMessage, allVer
 			p.requiredRanges = make(map[string][]requiredRange)
 		}
 		for dep, ranges := range harvested {
-			if _, exists := p.requiredRanges[dep]; !exists && len(p.requiredRanges) >= maxConstraintEntries {
+			existing, exists := p.requiredRanges[dep]
+			if !exists && len(p.requiredRanges) >= maxConstraintEntries {
 				continue // cap reached; drop new dependency keys (existing ones still grow)
 			}
-			p.requiredRanges[dep] = append(p.requiredRanges[dep], ranges...)
+			// Drop this pkgName's prior contributions before re-adding the fresh
+			// snapshot: a repeated fetch of pkgName re-harvests the same ranges, so
+			// without this an existing dep key would grow without bound for a client
+			// that spams the proxy for one package. Other packages' ranges for the
+			// same dep are preserved (requiredRanges is keyed by dep, not pkgName).
+			if exists {
+				kept := existing[:0]
+				for _, rr := range existing {
+					if rr.ByPkg != pkgName {
+						kept = append(kept, rr)
+					}
+				}
+				existing = kept
+			}
+			p.requiredRanges[dep] = append(existing, ranges...)
 		}
 		p.requiredRangesMu.Unlock()
 	}

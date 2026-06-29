@@ -278,6 +278,50 @@ func TestRecordConstraintData_CapsNewKeysAtLimit(t *testing.T) {
 	}
 }
 
+func TestRecordConstraintData_RequiredRangesIdempotentPerPkg(t *testing.T) {
+	// requiredRanges is keyed by the depended-on package (dep), to which several
+	// packages may contribute ranges. A repeated fetch of the same pkgName
+	// re-harvests the same ranges, so recordConstraintData must drop that pkgName's
+	// prior entries for a dep before re-appending — otherwise a client spamming the
+	// proxy for one package grows an existing dep key without bound, defeating the
+	// maxConstraintEntries backstop. Other packages' ranges for the same dep must
+	// survive the re-fetch.
+	p := newConstraintProxy()
+
+	// "left" depends on "shared@^1.0.0"; fetch its metadata twice. The declaring
+	// version must survive filtering (a removed version's constraints are skipped),
+	// so 1.0.0 is kept here, not in versionsToRemove.
+	leftMeta := map[string]json.RawMessage{
+		"versions": json.RawMessage(`{"1.0.0":{"dependencies":{"shared":"^1.0.0"}}}`),
+	}
+	p.recordConstraintData(leftMeta, []string{"1.0.0"}, map[string]bool{}, "left")
+	p.recordConstraintData(leftMeta, []string{"1.0.0"}, map[string]bool{}, "left")
+
+	if got := len(p.requiredRanges["shared"]); got != 1 {
+		t.Errorf("a repeat fetch of the same pkgName must not grow requiredRanges[dep]: len=%d, want 1", got)
+	}
+
+	// A different package ("right") contributing to the same dep is preserved, and
+	// re-fetching "left" again still must not duplicate left's own entry.
+	rightMeta := map[string]json.RawMessage{
+		"versions": json.RawMessage(`{"2.0.0":{"dependencies":{"shared":"^2.0.0"}}}`),
+	}
+	p.recordConstraintData(rightMeta, []string{"2.0.0"}, map[string]bool{}, "right")
+	p.recordConstraintData(leftMeta, []string{"1.0.0"}, map[string]bool{}, "left")
+
+	ranges := p.requiredRanges["shared"]
+	if len(ranges) != 2 {
+		t.Fatalf("expected one range per contributing package (left, right): len=%d, want 2; got %#v", len(ranges), ranges)
+	}
+	byPkg := map[string]bool{}
+	for _, r := range ranges {
+		byPkg[r.ByPkg] = true
+	}
+	if !byPkg["left"] || !byPkg["right"] {
+		t.Errorf("both contributing packages must be represented exactly once: got %#v", ranges)
+	}
+}
+
 func TestEvaluateConstraints_ToleratesPathologicalInput(t *testing.T) {
 	// Robustness: EvaluateConstraints must never panic and never emit a false
 	// conflict on malformed accumulator contents — garbage version strings,
