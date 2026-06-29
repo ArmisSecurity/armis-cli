@@ -683,16 +683,22 @@ func printFailureCulprits(s *output.Styles, results []pkgFilterResult, conflicts
 
 // skipCommand renders the full copy-paste ARMIS_SUPPLY_CHAIN_SKIP command,
 // including the package manager and the user's own arguments, so the developer
-// can paste it verbatim. When no specific culprit was identified it uses a
-// "<package>" placeholder rather than emitting a broken command.
+// can paste it verbatim. Arguments carrying spaces or shell metacharacters are
+// double-quoted so a path like "--prefix /my dir" survives the paste intact.
+// When no specific culprit was identified it uses a "<package>" placeholder
+// rather than emitting a broken command.
 func skipCommand(pkg, pmName string, pmArgs []string) string {
 	name := pkg
 	if name == "" {
 		name = "<package>"
 	}
 	cmd := fmt.Sprintf("%s=%s %s", envSCSkip, name, pmName)
-	if len(pmArgs) > 0 {
-		cmd += " " + strings.Join(pmArgs, " ")
+	for _, a := range pmArgs {
+		if a == "" || strings.ContainsAny(a, " \t\n\"'\\$`*?#&;|<>(){}[]~") {
+			cmd += " " + fmt.Sprintf("%q", a)
+		} else {
+			cmd += " " + a
+		}
 	}
 	return cmd
 }

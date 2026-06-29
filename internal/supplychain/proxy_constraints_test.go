@@ -233,9 +233,11 @@ func TestEvaluateConstraints_NoDataNoConflict(t *testing.T) {
 func TestRecordConstraintData_CapsNewKeysAtLimit(t *testing.T) {
 	// The accumulators are bounded at maxConstraintEntries distinct keys so a
 	// hostile/pathological upstream metadata stream cannot grow them without
-	// bound. At the cap a NEW package key is dropped, but an EXISTING key still
-	// accumulates — the diagnostic degrades to best-effort, never OOM. Pre-fill
-	// the maps to the boundary (fast) rather than driving 50k real requests.
+	// bound. At the cap a NEW package key is dropped; an EXISTING key is
+	// overwritten with the latest full snapshot (never appended), so a single
+	// key's slice stays bounded by the version count even under repeat fetches —
+	// the diagnostic degrades to best-effort, never OOM. Pre-fill the maps to the
+	// boundary (fast) rather than driving 50k real requests.
 	p := newConstraintProxy()
 	p.removedVersions = make(map[string][]string)
 	for i := 0; i < maxConstraintEntries; i++ {
@@ -263,14 +265,16 @@ func TestRecordConstraintData_CapsNewKeysAtLimit(t *testing.T) {
 		t.Error("a new dependency key past the cap must be dropped from requiredRanges")
 	}
 
-	// An EXISTING key still accumulates past the cap (the doc comment's guarantee).
-	before := len(p.keptVersions["pkg0"])
+	// An EXISTING key is still updated past the cap, but the new snapshot
+	// OVERWRITES rather than appends (the doc comment's bounded guarantee): a
+	// repeat fetch of pkg0 replaces its slice with the latest version set instead
+	// of growing it.
 	p.recordConstraintData(
 		map[string]json.RawMessage{"versions": json.RawMessage(`{}`)},
-		[]string{"3.0.0"}, map[string]bool{}, "pkg0",
+		[]string{"3.0.0", "4.0.0"}, map[string]bool{}, "pkg0",
 	)
-	if got := len(p.keptVersions["pkg0"]); got != before+1 {
-		t.Errorf("existing key should keep accumulating past the cap: len=%d, want %d", got, before+1)
+	if got := p.keptVersions["pkg0"]; len(got) != 2 || got[0] != "3.0.0" || got[1] != "4.0.0" {
+		t.Errorf("existing key should be overwritten with the latest snapshot, not appended: got %v, want [3.0.0 4.0.0]", got)
 	}
 }
 

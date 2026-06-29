@@ -30,8 +30,9 @@ const (
 type complianceReport struct {
 	// Policy is the effective policy the run enforced.
 	Policy reportPolicy `json:"policy"`
-	// Mode is the enforcement mechanism: "proxy" (npm/pip live filtering) or
-	// "pre-install" (lockfile audit before the build runs).
+	// Mode is the enforcement mechanism: "proxy" (npm/pip live filtering),
+	// "pre-install" (lockfile audit before the build runs), or "check" (the
+	// standalone `supply-chain check` command).
 	Mode string `json:"mode"`
 	// Ecosystem is the package manager's ecosystem (npm, pip, …).
 	Ecosystem string `json:"ecosystem"`

@@ -787,15 +787,19 @@ func (p *Proxy) recordConstraintData(metadata map[string]json.RawMessage, allVer
 	// struct literal (as several unit tests do) is safe too, not just one from
 	// NewProxy. Each map is capped at maxConstraintEntries distinct keys so a
 	// hostile/pathological metadata stream cannot grow them without bound; a new
-	// key past the cap is dropped (existing keys still accumulate), degrading the
-	// one-hop diagnostic to best-effort rather than exhausting memory.
+	// key past the cap is dropped, degrading the one-hop diagnostic to
+	// best-effort rather than exhausting memory. kept/removed are each a full
+	// snapshot of the package's version set, so a repeat fetch of the same
+	// pkgName overwrites rather than appends — that keeps a single key's slice
+	// bounded by the version count even if a client spams the proxy for one
+	// package.
 	if len(kept) > 0 {
 		p.keptVersionsMu.Lock()
 		if p.keptVersions == nil {
 			p.keptVersions = make(map[string][]string)
 		}
 		if _, exists := p.keptVersions[pkgName]; exists || len(p.keptVersions) < maxConstraintEntries {
-			p.keptVersions[pkgName] = append(p.keptVersions[pkgName], kept...)
+			p.keptVersions[pkgName] = kept
 		}
 		p.keptVersionsMu.Unlock()
 	}
@@ -805,7 +809,7 @@ func (p *Proxy) recordConstraintData(metadata map[string]json.RawMessage, allVer
 			p.removedVersions = make(map[string][]string)
 		}
 		if _, exists := p.removedVersions[pkgName]; exists || len(p.removedVersions) < maxConstraintEntries {
-			p.removedVersions[pkgName] = append(p.removedVersions[pkgName], removed...)
+			p.removedVersions[pkgName] = removed
 		}
 		p.removedVersionsMu.Unlock()
 	}
