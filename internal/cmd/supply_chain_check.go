@@ -32,6 +32,7 @@ var (
 	scLockfile     string
 	scAll          bool
 	scFailOpen     bool
+	scReport       string
 )
 
 var scCheckCmd = &cobra.Command{
@@ -83,6 +84,12 @@ func init() {
 	// must be registered here too (Cobra keys completions by flag pointer).
 	_ = scCheckCmd.RegisterFlagCompletionFunc("format", formatCompletions())
 	_ = scCheckCmd.RegisterFlagCompletionFunc("fail-on", failOnCompletions())
+	// --report writes the machine-readable supply-chain compliance report (the
+	// audit trail security teams gate CI on). check parses flags normally, so a
+	// flag is fine here — unlike `wrap`, which forwards every flag to the PM and
+	// must use the ARMIS_SUPPLY_CHAIN_REPORT env var instead. "-" writes to stderr.
+	// armis:ignore cwe:73 cwe:22 reason:scReport is a user-controlled CLI flag naming a file on their own machine where the audit document is written (same trust model as --output); no trust boundary is crossed
+	scCheckCmd.Flags().StringVar(&scReport, "report", "", "Write supply-chain compliance report to file (JSON; '-' for stderr)")
 	// --output is a persistent flag on scanCmd, but supply-chain is a sibling of
 	// scan in the command tree and does not inherit it. Register it locally so
 	// `supply-chain check` matches the scan commands: ResolveOutput already
@@ -130,7 +137,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls (e.g. "--lockfile ../sibling/package-lock.json"), not untrusted input crossing a trust boundary
 	if _, err := os.Stat(lockfilePath); err != nil {
-		return fmt.Errorf("lockfile not found: %s", lockfilePath)
+		return fmt.Errorf("lockfile not found: %s", lockfilePath) // armis:ignore cwe:22 cwe:23 cwe:73 reason:scanner attributes the lockfilePath finding to this line; lockfilePath is user-controlled CLI input for the user's own project, not untrusted input crossing a trust boundary
 	}
 
 	// The wrap's residue sweep can only remove the proxy origin of the run that
@@ -201,6 +208,35 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 			countNoun(result.Checked, "package"), result.Skipped,
 			countNoun(len(result.Violations), "violation"), policy.MinReleaseAge)))
 
+	// WS3: write the compliance report when --report is set. The audit path has no
+	// proxy-resolved fallbacks or one-hop conflicts, so those slices stay empty;
+	// install_status reflects whether the audit found violations. Best-effort.
+	if scReport != "" {
+		blocked := make([]supplychain.BlockedPackage, 0, len(result.Violations))
+		for _, v := range result.Violations {
+			blocked = append(blocked, supplychain.BlockedPackage{
+				Name:           v.Name,
+				Version:        v.Version,
+				DisplayVersion: v.Version,
+				Age:            v.Age,
+			})
+		}
+		status := statusOK
+		if len(result.Violations) > 0 {
+			status = statusFailed
+		}
+		rep := buildComplianceReport(reportInput{
+			Policy:        policy,
+			Mode:          "check",
+			Ecosystem:     string(eco),
+			Checked:       result.Checked,
+			Blocked:       blocked,
+			InstallStatus: status,
+		})
+		// armis:ignore cwe:22 cwe:23 cwe:73 reason:scReport is the user's own --report CLI flag naming an output file on their machine (identical trust model to scan's --output, suppressed at the same sink); a local CLI writing where its operator asked crosses no trust boundary, and the value is not attacker-controlled network input
+		writeComplianceReport(scReport, rep)
+	} // armis:ignore cwe:22 cwe:23 cwe:73 reason:scanner attributes the scReport write-path finding to this closing brace; scReport is the user's own --report CLI flag naming a file on their machine (same trust model as scan's --output), not attacker-controlled input crossing a trust boundary
+
 	findings := make([]model.Finding, 0, len(result.Violations))
 	for _, v := range result.Violations {
 		findings = append(findings, supplychain.ViolationToFinding(v, lockfilePath))
@@ -238,11 +274,23 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 
 // countNoun formats a count with its noun, pluralizing with a trailing "s" when
 // the count is not exactly 1 (e.g. "1 package", "2 packages", "0 violations").
+// Use countNounPlural for nouns whose plural is not formed by a trailing "s".
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// countNounPlural is countNoun for a noun whose plural is irregular — the
+// trailing-"s" rule would mangle it (e.g. "dependency" → "dependencys"). It
+// takes the explicit plural form rather than guessing, so "1 young transitive
+// dependency" / "2 young transitive dependencies" both read correctly.
+func countNounPlural(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 func buildSummary(findings []model.Finding) model.Summary {

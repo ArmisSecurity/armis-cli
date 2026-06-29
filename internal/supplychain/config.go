@@ -20,6 +20,11 @@ type Config struct {
 	Exclusions []string `yaml:"exclusions,omitempty"`
 	Ecosystems []string `yaml:"ecosystems,omitempty"`
 	FailOpen   bool     `yaml:"fail-open,omitempty"`
+	// TransitivePolicy is the block/warn knob for young transitive dependencies
+	// (WS5). Omitted or unrecognized → block (the secure default); only an
+	// explicit "warn" opts a young transitive into pass-with-warning. Direct
+	// deps are always blocked regardless. See Config.ToPolicy.
+	TransitivePolicy string `yaml:"transitive-policy,omitempty"`
 }
 
 // ecosystemAliasPipenv is the user-facing name for the Pipfile/pipenv ecosystem.
@@ -113,6 +118,11 @@ func (c *Config) ToPolicy() (Policy, error) {
 	}
 
 	policy.FailOpen = c.FailOpen
+
+	// ParseTransitivePolicy fails safe: any value other than an explicit "warn"
+	// (including "" and typos) resolves to block, so a misspelled key can never
+	// silently open the warn-through path.
+	policy.TransitivePolicy = ParseTransitivePolicy(c.TransitivePolicy)
 
 	return policy, nil
 }
