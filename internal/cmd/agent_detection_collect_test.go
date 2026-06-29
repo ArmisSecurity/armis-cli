@@ -1,11 +1,36 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/agentdetect"
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/spf13/cobra"
 )
+
+func TestAgentDetectionCmd_RejectsArgs(t *testing.T) {
+	// Both the parent command and the collect subcommand must reject unknown
+	// positional args rather than silently running detection (and exiting 0).
+	for _, cmd := range []*cobra.Command{agentDetectionCmd, agentDetectionCollectCmd} {
+		if cmd.Args == nil {
+			t.Errorf("%q has no Args validator; unknown positional args would be silently ignored", cmd.Name())
+			continue
+		}
+		if err := cmd.Args(cmd, []string{"bogus"}); err == nil {
+			t.Errorf("%q accepted an unexpected positional arg; want error", cmd.Name())
+		}
+	}
+}
+
+func TestAgentDetectionLong_ListsAllAgents(t *testing.T) {
+	long := agentDetectionLong()
+	for _, name := range agentdetect.RegisteredAgentDisplayNames() {
+		if !strings.Contains(long, name) {
+			t.Errorf("agent-detection long help missing %q; help text drifted from registry", name)
+		}
+	}
+}
 
 func TestBuildInventoryPayload(t *testing.T) {
 	t.Parallel()
