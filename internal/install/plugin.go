@@ -273,9 +273,19 @@ func (pi *PluginInstaller) createVenv(pluginDir string) error {
 		pip = filepath.Join(venvDir, "Scripts", "pip.exe")
 	}
 	reqsFile := filepath.Join(pluginDir, "requirements.txt")
+	// --prefer-binary makes pip favor the newest dependency version that ships a
+	// usable wheel over a newer source-only release, instead of pip's default of
+	// "newest version wins, build from source if needed". This matters for the
+	// transitive cryptography dep (mcp[cli] -> pyjwt[crypto] -> cryptography):
+	// when its latest release lacks a matching wheel, a source build pulls in a
+	// Rust toolchain via a rustup-init download — which fails behind corporate
+	// TLS-inspecting proxies (e.g. Zscaler) with CERTIFICATE_VERIFY_FAILED. A
+	// prior wheeled version exists, so this avoids the build entirely without
+	// pinning anything. pip falls back to a source build only if no version has
+	// a compatible wheel, so machines that already worked are unaffected.
 	// armis:ignore cwe:78 reason:pip binary from our own venv directory; args are hardcoded literals
 	// armis:ignore cwe:94 reason:pip binary from our own venv; reqsFile is hardcoded "requirements.txt"
-	pipCmd := exec.Command(pip, "install", "-q", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
+	pipCmd := exec.Command(pip, "install", "-q", "--prefer-binary", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
 	pipCmd.Stdout = os.Stderr
 	pipCmd.Stderr = os.Stderr
 	if err := pipCmd.Run(); err != nil {
