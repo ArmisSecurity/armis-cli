@@ -80,6 +80,13 @@ func captureStdout(t *testing.T, fn func()) string {
 		done <- buf.String()
 	}()
 
+	// t.Cleanup runs even when fn calls t.Fatalf (which calls runtime.Goexit),
+	// guaranteeing the pipe is closed and os.Stdout is restored.
+	t.Cleanup(func() {
+		_ = w.Close()
+		os.Stdout = orig
+	})
+
 	fn()
 	_ = w.Close()
 	os.Stdout = orig
