@@ -78,13 +78,23 @@ func NewClient() *Client {
 }
 
 // NewClientWithHTTP builds a Client with an injected HTTP client and registry
-// URL. It exists for tests that point the client at an httptest server; the
-// registryURL is therefore a trusted construction-time value, not request- or
-// network-derived input. Production code uses NewClient, which hardcodes the
-// npmjs.org HTTPS endpoint.
+// URL. Two callers use it: tests pointing at an httptest server, and the CI
+// `check` path pointing at a configured corporate artifactory (PPSC-994). In
+// both cases registryURL is a construction-time value the caller controls — for
+// the artifactory case it MUST have passed supplychain.ValidateRegistryURL
+// (https-only, no userinfo, no loopback/RFC1918/link-local host) at config-load
+// before reaching here, which is what keeps the cwe:918 suppressions in
+// fetchMetadata sound now that the URL is configurable. Production age checks
+// against the public registry use NewClient, which hardcodes npmjs.org.
 func NewClientWithHTTP(httpClient *http.Client, registryURL string) *Client {
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
+	}
+	// Guard against a nil client (the production CI-check path passes nil to mean
+	// "use a default client"); without this, c.httpClient.Do panics. Mirrors the
+	// nil-guard in NewPyPIClientWithHTTP.
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{
 		httpClient:  httpClient,
@@ -159,18 +169,18 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 	}
 
 	encodedName := url.PathEscape(name)
-	// armis:ignore cwe:918 reason:registryURL is a trusted construction-time config value (production NewClient hardcodes the npmjs.org HTTPS constant; the URL-accepting NewClientWithHTTP is test-only); name is regex-validated above and PathEscaped, so it cannot alter the host
-	// armis:ignore cwe:918 reason:reqURL is built from the trusted registryURL constant (production NewClient hardcodes the npmjs.org HTTPS constant) + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
+	// armis:ignore cwe:918 reason:registryURL is either the hardcoded npmjs.org HTTPS constant (NewClient) or a custom upstream validated at config-load by supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local) before NewClientWithHTTP is called; name is regex-validated above and PathEscaped, so neither can alter the host
+	// armis:ignore cwe:918 reason:reqURL is built from registryURL (npmjs.org constant or a config-load-validated custom upstream) + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
 	reqURL := fmt.Sprintf("%s/%s", c.registryURL, encodedName)
-	// armis:ignore cwe:918 reason:reqURL is built from the trusted registryURL constant + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
+	// armis:ignore cwe:918 reason:reqURL is built from registryURL (npmjs.org constant or a config-load-validated custom upstream) + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", name, err)
 	}
 	req.Header.Set("Accept", "application/json")
 
-	// armis:ignore cwe:918 reason:c.registryURL is a trusted construction-time config value (production NewClient hardcodes the npmjs.org HTTPS constant; the URL-accepting NewClientWithHTTP is test-only), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + regex-validated, PathEscaped package name
+	// armis:ignore cwe:918 reason:c.registryURL is either the hardcoded npmjs.org HTTPS constant (NewClient) or a custom upstream validated at config-load by supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/config-load-validated registry host + regex-validated, PathEscaped package name
 	if err != nil {
 		return nil, fmt.Errorf("fetching metadata for %s: %w", name, err)
 	}

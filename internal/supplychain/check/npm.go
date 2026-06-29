@@ -9,6 +9,15 @@ import (
 type PackageEntry struct {
 	Name    string
 	Version string
+	// Resolved is the registry URL the lockfile recorded this package was
+	// resolved from, when the format records one (npm `resolved`, pnpm
+	// `resolution.tarball`, yarn classic `resolved`, bun's registry tuple). It
+	// is "" for formats that record no per-package source URL (poetry/pdm/uv/
+	// pip-requirements, yarn-berry's `name@npm:` resolution) — those packages
+	// cannot be checked for registry divergence, which v1 states explicitly
+	// rather than implying coverage. Used only by the non-approved-registry
+	// flag; the age check ignores it.
+	Resolved string
 }
 
 type packageLockFile struct {
@@ -78,8 +87,9 @@ func ParseNPMLockfile(path string) ([]PackageEntry, error) {
 		}
 
 		entries = append(entries, PackageEntry{
-			Name:    name,
-			Version: info.Version,
+			Name:     name,
+			Version:  info.Version,
+			Resolved: info.Resolved,
 		})
 	}
 

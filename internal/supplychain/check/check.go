@@ -4,6 +4,7 @@ package check
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +25,27 @@ type Result struct {
 	Warnings   []string
 	Checked    int
 	Skipped    int
+
+	// RegistryViolations lists npm-family packages whose lockfile-recorded
+	// resolved URL host does not match the approved registry (PPSC-994). It is
+	// populated only when an approved RegistryURL is threaded in and the
+	// ecosystem records a per-package source URL; it is always empty for
+	// ecosystems that do not (poetry/pdm/uv/pip, maven/gradle).
+	RegistryViolations []RegistryViolation
+	// RegistryChecked is the number of packages whose resolved URL could be
+	// compared against the approved registry (those with a parseable host). It
+	// scopes the coverage count ("12 npm packages checked") honestly.
+	RegistryChecked int
+}
+
+// RegistryViolation records a package resolved from a registry host other than
+// the approved one. The host fields are bare hosts (with port) for a compact,
+// actionable message.
+type RegistryViolation struct {
+	Name         string
+	Version      string
+	ResolvedHost string
+	ApprovedHost string
 }
 
 // registryFn resolves publish dates for a set of packages in an ecosystem. It
@@ -33,10 +55,31 @@ type Result struct {
 type registryFn func(ctx context.Context, ecosystem supplychain.Ecosystem, packages []registry.PackageRequest) []registry.QueryResult
 
 func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string) (*Result, error) {
-	return runCheck(ctx, policy, lockfilePath, baseLockfilePath, queryRegistry)
+	return runCheck(ctx, policy, lockfilePath, baseLockfilePath, queryRegistry, "")
 }
 
-func runCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string, queryRegistryFn registryFn) (*Result, error) {
+// RunCheckWithRegistry is RunCheck plus an approved registry URL (PPSC-994).
+// When registryURL is non-empty: age checks query THAT registry (not the public
+// one) via queryRegistryWithURL, and npm-family packages whose lockfile resolved
+// URL points at a different host are flagged as RegistryViolations. An empty
+// registryURL is exactly RunCheck. The caller is responsible for having
+// validated registryURL via supplychain.ValidateRegistryURL.
+func RunCheckWithRegistry(ctx context.Context, policy supplychain.Policy, lockfilePath, baseLockfilePath, registryURL string) (*Result, error) {
+	fn := queryRegistry
+	if registryURL != "" {
+		fn = queryRegistryWithURL(registryURL)
+	}
+	return runCheck(ctx, policy, lockfilePath, baseLockfilePath, fn, registryURL)
+}
+
+// runCheck is the testable core. registryURL is variadic so the many existing
+// age-only tests (which pass no URL) keep compiling; only the new
+// registry-divergence tests pass it. At most one value is meaningful.
+func runCheck(ctx context.Context, policy supplychain.Policy, lockfilePath string, baseLockfilePath string, queryRegistryFn registryFn, registryURLArg ...string) (*Result, error) {
+	var registryURL string
+	if len(registryURLArg) > 0 {
+		registryURL = registryURLArg[0]
+	}
 	ecosystem := detectEcosystemFromPath(lockfilePath)
 
 	// armis:ignore cwe:22 cwe:23 cwe:73 reason:local CLI auditing the user's own project; lockfilePath comes from lockfile auto-detection or an explicit --lockfile flag the user controls, not untrusted network input (readLockfile also size-bounds the read)
@@ -64,8 +107,17 @@ func runCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 		toCheck = append(toCheck, registry.PackageRequest{Name: e.Name, Version: e.Version})
 	}
 
+	// Registry-divergence flagging is independent of the age query: it reads the
+	// lockfile's resolved URLs, so it runs even when there are no age violations
+	// (and even when toCheck is empty after exclusions).
+	regViolations, regChecked := detectRegistryDivergence(ecosystem, entries, registryURL)
+
 	if len(toCheck) == 0 {
-		return &Result{Skipped: skipped}, nil
+		return &Result{
+			Skipped:            skipped,
+			RegistryViolations: regViolations,
+			RegistryChecked:    regChecked,
+		}, nil
 	}
 
 	results := queryRegistryFn(ctx, ecosystem, toCheck)
@@ -95,10 +147,12 @@ func runCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 	}
 
 	return &Result{
-		Violations: violations,
-		Warnings:   warnings,
-		Checked:    len(toCheck),
-		Skipped:    skipped,
+		Violations:         violations,
+		Warnings:           warnings,
+		Checked:            len(toCheck),
+		Skipped:            skipped,
+		RegistryViolations: regViolations,
+		RegistryChecked:    regChecked,
 	}, nil
 }
 
@@ -142,6 +196,83 @@ func queryRegistry(ctx context.Context, ecosystem supplychain.Ecosystem, package
 		client := registry.NewClient()
 		return client.GetPublishDates(ctx, packages)
 	}
+}
+
+// queryRegistryWithURL returns a registryFn that resolves publish dates from a
+// configured approved registry instead of the public one (E6). For npm-family
+// ecosystems it points the npm metadata client at registryURL; for PyPI-family
+// it points the PyPI client there. registryURL must already be validated by the
+// caller (supplychain.ValidateRegistryURL). Maven/Gradle stay on the public
+// client — they are audit-path only and not routable in v1.
+func queryRegistryWithURL(registryURL string) registryFn {
+	return func(ctx context.Context, ecosystem supplychain.Ecosystem, packages []registry.PackageRequest) []registry.QueryResult {
+		switch ecosystem {
+		case supplychain.EcosystemPip, supplychain.EcosystemUV:
+			client := registry.NewPyPIClientWithHTTP(nil, registryURL)
+			return client.GetPublishDates(ctx, packages)
+		case supplychain.EcosystemMaven, supplychain.EcosystemGradle,
+			supplychain.EcosystemPoetry, supplychain.EcosystemPipfile, supplychain.EcosystemPDM:
+			// Not routable in v1: fall back to the default public clients.
+			return queryRegistry(ctx, ecosystem, packages)
+		default:
+			client := registry.NewClientWithHTTP(nil, registryURL)
+			return client.GetPublishDates(ctx, packages)
+		}
+	}
+}
+
+// isNPMFamily reports whether an ecosystem records a per-package resolved
+// registry URL in its lockfile and is therefore eligible for the
+// non-approved-registry check. v1 covers exactly the npm-family formats; every
+// other ecosystem (PyPI-family, Maven/Gradle) records no per-package source URL
+// and is explicitly NOT covered.
+func isNPMFamily(eco supplychain.Ecosystem) bool {
+	switch eco {
+	case supplychain.EcosystemNPM, supplychain.EcosystemPNPM, supplychain.EcosystemBun, supplychain.EcosystemYarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// detectRegistryDivergence flags npm-family packages whose lockfile-recorded
+// resolved URL host differs from the approved registry host. It returns the
+// violations and the count of packages it could actually compare (those with a
+// parseable resolved host) — the honest coverage denominator. It is a no-op
+// (nil, 0) when registryURL is empty, the ecosystem is not npm-family, or the
+// approved URL has no parseable host.
+func detectRegistryDivergence(eco supplychain.Ecosystem, entries []PackageEntry, registryURL string) ([]RegistryViolation, int) {
+	if registryURL == "" || !isNPMFamily(eco) {
+		return nil, 0
+	}
+	approvedURL, err := url.Parse(registryURL)
+	if err != nil || approvedURL.Host == "" {
+		return nil, 0
+	}
+	approvedHost := strings.ToLower(approvedURL.Host)
+
+	var violations []RegistryViolation
+	checked := 0
+	for _, e := range entries {
+		if e.Resolved == "" {
+			continue // no recorded source URL → cannot compare (not counted)
+		}
+		ru, err := url.Parse(e.Resolved)
+		if err != nil || ru.Host == "" {
+			continue
+		}
+		checked++
+		host := strings.ToLower(ru.Host)
+		if host != approvedHost {
+			violations = append(violations, RegistryViolation{
+				Name:         e.Name,
+				Version:      e.Version,
+				ResolvedHost: host,
+				ApprovedHost: approvedHost,
+			})
+		}
+	}
+	return violations, checked
 }
 
 // DetectEcosystemFromPath classifies a lockfile path to its ecosystem using the

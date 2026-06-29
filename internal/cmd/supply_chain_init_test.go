@@ -654,6 +654,47 @@ func TestRunInitNpmrc_PrependsNewline(t *testing.T) {
 	}
 }
 
+// TestRunInitConfig_RegistryScaffold verifies the generated config carries the
+// PPSC-994 registries scaffold and the DX7/DX8 guidance notes, and that the
+// generated file itself parses cleanly (the commented examples must not break
+// LoadConfig).
+func TestRunInitConfig_RegistryScaffold(t *testing.T) {
+	dir := chdirTemp(t)
+	scInitDryRun = false
+	scInitYes = true
+	t.Cleanup(func() { scInitDryRun = false; scInitYes = false })
+
+	if err := runInitConfig(); err != nil {
+		t.Fatalf("runInitConfig: %v", err)
+	}
+	// runInitConfig writes ConfigFileName into the cwd (chdir'd to dir above);
+	// read the constant leaf directly to avoid a tainted-path lint on a join.
+	data, err := os.ReadFile(supplychain.ConfigFileName)
+	if err != nil {
+		t.Fatalf("reading generated config: %v", err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		"registries:",
+		"registry-enforcement: warn",
+		"_authToken", // DX7: credential note
+		"NOT _auth",  // DX7: explicit "not _auth"
+		"/simple/",   // pypi URL guidance
+		"ignored",    // DX8: ecosystems-scope-suppresses-registries note
+		"registry-ca-bundle",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("generated scaffold missing %q", want)
+		}
+	}
+
+	// The scaffold (with registries commented out) must parse cleanly.
+	if _, err := supplychain.LoadConfig(dir); err != nil {
+		t.Errorf("generated scaffold does not parse: %v", err)
+	}
+}
+
 func TestRunInitNpmrc_Idempotent(t *testing.T) {
 	chdirTemp(t)
 	scInitDryRun = false

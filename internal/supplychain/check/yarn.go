@@ -134,6 +134,7 @@ func shouldSkipYarnResolution(resolution string) bool {
 //	  integrity sha512-...
 var yarnV1HeaderRe = regexp.MustCompile(`^"?(@?[^@"]+)@`)
 var yarnV1VersionRe = regexp.MustCompile(`^\s+version\s+"([^"]+)"`)
+var yarnV1ResolvedRe = regexp.MustCompile(`^\s+resolved\s+"([^"]+)"`)
 
 func parseYarnClassic(data []byte) ([]PackageEntry, error) {
 	// bytes.NewReader reads directly from the lockfile slice; converting to a
@@ -142,8 +143,29 @@ func parseYarnClassic(data []byte) ([]PackageEntry, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 
 	var entries []PackageEntry
-	var currentName string
+	var currentName, currentVersion, currentResolved string
 	seen := make(map[string]bool)
+
+	// flush emits the pending entry (if any). Emission is deferred to the next
+	// header / EOF rather than fired on the version line, because the `resolved`
+	// URL appears AFTER `version` in a yarn-classic block and is needed for the
+	// non-approved-registry check.
+	flush := func() {
+		if currentName == "" || currentVersion == "" {
+			currentName, currentVersion, currentResolved = "", "", ""
+			return
+		}
+		key := currentName + "@" + currentVersion
+		if !seen[key] {
+			seen[key] = true
+			entries = append(entries, PackageEntry{
+				Name:     currentName,
+				Version:  currentVersion,
+				Resolved: currentResolved,
+			})
+		}
+		currentName, currentVersion, currentResolved = "", "", ""
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -155,6 +177,7 @@ func parseYarnClassic(data []byte) ([]PackageEntry, error) {
 
 		// Package header line (no leading whitespace)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			flush() // close out the previous block before starting a new one
 			name := extractClassicPackageName(line)
 			if name != "" && !shouldSkipClassicProtocol(line) {
 				currentName = name
@@ -164,22 +187,20 @@ func parseYarnClassic(data []byte) ([]PackageEntry, error) {
 			continue
 		}
 
+		if currentName == "" {
+			continue
+		}
 		// Version line (indented)
-		if currentName != "" {
-			if matches := yarnV1VersionRe.FindStringSubmatch(line); matches != nil {
-				version := matches[1]
-				key := currentName + "@" + version
-				if !seen[key] {
-					seen[key] = true
-					entries = append(entries, PackageEntry{
-						Name:    currentName,
-						Version: version,
-					})
-				}
-				currentName = ""
-			}
+		if matches := yarnV1VersionRe.FindStringSubmatch(line); matches != nil {
+			currentVersion = matches[1]
+			continue
+		}
+		// Resolved line (indented) — capture the registry URL for divergence.
+		if matches := yarnV1ResolvedRe.FindStringSubmatch(line); matches != nil {
+			currentResolved = matches[1]
 		}
 	}
+	flush() // emit the final block at EOF
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scanning yarn lockfile: %w", err)

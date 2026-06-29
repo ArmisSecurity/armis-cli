@@ -54,8 +54,9 @@ func ParsePNPMLockfile(path string) ([]PackageEntry, error) {
 		}
 
 		entries = append(entries, PackageEntry{
-			Name:    name,
-			Version: version,
+			Name:     name,
+			Version:  version,
+			Resolved: info.Resolution.Tarball,
 		})
 	}
 

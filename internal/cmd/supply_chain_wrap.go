@@ -75,7 +75,26 @@ var allowedPMs = map[string]bool{
 // runProxyWrap/runPreInstallBlock unit-testable.
 var execPMFunc = execPM
 
+// scWrapDryRun, when set, makes runProxyWrap resolve and report the registry
+// configuration (approved registry, whether auth/timestamps were found) without
+// running the package manager (DX6). Because the wrap command sets
+// DisableFlagParsing (so PM flags pass through verbatim), it is recognized only
+// as a LEADING token before the PM name — `wrap --dry-run npm install` — which
+// cannot collide with a package manager's own flags.
+var scWrapDryRun bool
+
 func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
+	// Strip a leading --dry-run (armis's own flag) before the PM name. Reset each
+	// call so the package-level var never leaks across invocations in tests.
+	scWrapDryRun = false
+	if len(args) > 0 && args[0] == "--dry-run" {
+		scWrapDryRun = true
+		args = args[1:]
+		if len(args) == 0 {
+			return fmt.Errorf("wrap --dry-run requires a package manager name")
+		}
+	}
+
 	// pmName is the exact command the user invoked (e.g. "pip3.12"); execName is
 	// the binary actually run. canonicalPM collapses pip variants (pip3, pip3.12)
 	// to "pip" for every policy decision — the allowlist, pre-install routing, and
@@ -87,6 +106,14 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 
 	if !allowedPMs[canonical] {
 		return fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, uvx, poetry, pipenv, pdm, mvn, gradle)", pmName)
+	}
+
+	// --dry-run resolves and reports the registry configuration without running
+	// the package manager (DX6). It short-circuits every execution path so it is
+	// always safe to run, including for audit-path PMs (which report "no proxy
+	// registry routing in this version").
+	if scWrapDryRun {
+		return runWrapDryRun(pmName)
 	}
 
 	if os.Getenv(envSCActive) == "1" {
@@ -170,6 +197,27 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		}
 	}
 
+	// Resolve the approved registry + credentials for this ecosystem (PPSC-994).
+	// A zero-value result keeps the proxy on the public-registry path with the
+	// pre-existing behavior unchanged. A credential-resolution error (unset
+	// ${VAR}, bad token charset) is fatal — a misconfigured credential must fail
+	// loudly, not silently fall through to an unauthenticated 401.
+	rs, err := resolveRegistrySettings(canonicalPM(pmName))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry credential error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// When an approved registry is configured, validate it once more here (S1)
+	// before constructing a proxy that forwards credentials to it — defense in
+	// depth even though LoadConfig already validated it.
+	if rs.Configured {
+		if _, verr := supplychain.ValidateRegistryURL(rs.UpstreamURL); verr != nil {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: invalid approved registry, falling through: %v\n", verr)
+			return exitWithCode(execPMFunc(pmName, pmArgs, nil))
+		}
+	}
+
 	cfg := supplychain.ProxyConfig{
 		Policy:       policy,
 		Mode:         mode,
@@ -177,7 +225,20 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		// Pass nil when undeterminable so the proxy treats every package as direct
 		// (fail-safe block). When warn is off, directDeps is nil too — harmless,
 		// since the proxy never consults it under the block policy.
-		DirectDeps: directDeps,
+		DirectDeps:   directDeps,
+		UpstreamURL:  rs.UpstreamURL,
+		AuthHeader:   rs.AuthHeader,
+		CABundlePath: rs.CABundlePath,
+		// Degrade gracefully on missing timestamps ONLY for a configured
+		// artifactory upstream; the default public path stays fail-closed.
+		DegradeOnMissingTimestamps: rs.Configured,
+	}
+
+	// The soft routing warning fires before the install when the developer's
+	// effective registry is EXPLICITLY off-policy (DX1). It is rate-limited to
+	// once per shell session and never trains the user toward the kill switch.
+	if rs.Configured {
+		maybeWarnOffPolicyRegistry(canonicalPM(pmName), rs.ApprovedURL)
 	}
 
 	proxy, err := supplychain.NewProxy(cfg)
@@ -212,7 +273,13 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// the wrapper. Sweep those artifacts and rewrite the origin back to the real
 	// upstream — even when the PM exited non-zero, since a failed install can
 	// still have rewritten the lockfile first.
-	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, proxy.Upstream())
+	// Strip any embedded userinfo from the upstream origin before it becomes the
+	// rewrite target (S3): a credential must never be written into a lockfile.
+	// proxy.Upstream() is already userinfo-free for a registries.<eco> URL
+	// (validated to carry none), but stripping defensively covers any future
+	// origin derived from an index-url that did carry userinfo.
+	upstreamOrigin := supplychain.StripURLUserinfo(proxy.Upstream())
+	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, upstreamOrigin)
 
 	// installOK reflects what the package manager actually did, not what the proxy
 	// offered: proxy.Allowed() only records the version "latest" was repointed to,

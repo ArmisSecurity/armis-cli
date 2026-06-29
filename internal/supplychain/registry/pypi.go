@@ -54,10 +54,14 @@ func NewPyPIClient() *PyPIClient {
 }
 
 // NewPyPIClientWithHTTP builds a PyPIClient with an injected HTTP client and
-// base URL. It exists for tests that point the client at an httptest server;
-// the baseURL is therefore a trusted construction-time value, not request- or
-// network-derived input. Production code uses NewPyPIClient, which hardcodes
-// the pypi.org HTTPS endpoint.
+// base URL. Two callers use it: tests pointing at an httptest server, and the
+// CI `check` path pointing at a configured corporate artifactory (PPSC-994). In
+// both cases baseURL is a construction-time value the caller controls — for the
+// artifactory case it MUST have passed supplychain.ValidateRegistryURL
+// (https-only, no userinfo, no loopback/RFC1918/link-local host) at config-load
+// before reaching here, which keeps the cwe:918 suppressions in fetchReleases
+// sound now that the URL is configurable. Production age checks against public
+// PyPI use NewPyPIClient, which hardcodes pypi.org.
 func NewPyPIClientWithHTTP(httpClient *http.Client, baseURL string) *PyPIClient {
 	if baseURL == "" {
 		baseURL = defaultPyPIURL
@@ -159,17 +163,17 @@ func (c *PyPIClient) fetchReleases(ctx context.Context, name string) (map[string
 	}
 
 	encodedName := url.PathEscape(name)
-	// armis:ignore cwe:918 reason:baseURL is a trusted construction-time config value (production NewPyPIClient hardcodes the pypi.org HTTPS constant; the URL-accepting NewPyPIClientWithHTTP is test-only); name is regex-validated above and PathEscaped, so it cannot alter the host
+	// armis:ignore cwe:918 reason:baseURL is either the hardcoded pypi.org HTTPS constant (NewPyPIClient) or a custom upstream validated at config-load by supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local) before NewPyPIClientWithHTTP is called; name is regex-validated above and PathEscaped, so neither can alter the host
 	reqURL := fmt.Sprintf("%s/pypi/%s/json", c.baseURL, encodedName)
-	// armis:ignore cwe:918 reason:reqURL is built from the trusted baseURL constant + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
+	// armis:ignore cwe:918 reason:reqURL is built from baseURL (pypi.org constant or a config-load-validated custom upstream) + a PathEscaped, regex-validated package name, so the host is not attacker-controlled
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", name, err)
 	}
 	req.Header.Set("Accept", "application/json")
 
-	// armis:ignore cwe:918 reason:c.baseURL is a trusted construction-time config value (production NewPyPIClient hardcodes the pypi.org HTTPS constant; the URL-accepting NewPyPIClientWithHTTP is test-only), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/configured registry host + regex-validated, PathEscaped package name
+	// armis:ignore cwe:918 reason:c.baseURL is either the hardcoded pypi.org HTTPS constant (NewPyPIClient) or a custom upstream validated at config-load by supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/config-load-validated registry host + regex-validated, PathEscaped package name
 	if err != nil {
 		return nil, fmt.Errorf("fetching PyPI metadata for %s: %w", name, err)
 	}
