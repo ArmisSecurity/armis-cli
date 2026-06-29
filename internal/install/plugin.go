@@ -349,13 +349,17 @@ func pythonNotFoundError() error {
 	default:
 		hint = "install it from https://www.python.org/downloads/"
 	}
+	// "no suitable ... found" covers both cases findPython rejects: no interpreter
+	// on PATH at all, and one that exists but is older than 3.11 (the version probe
+	// fails). "not found in PATH" alone would mislead users who do have Python.
 	// armis:ignore reason:"Python" is a proper noun; leading capital is intentional
-	return fmt.Errorf("Python 3.11+ is required for the MCP server but was not found in PATH (tried %s)\n%s", //nolint:staticcheck // proper noun
+	return fmt.Errorf("no suitable Python 3.11+ interpreter found on PATH (tried %s)\n%s", //nolint:staticcheck // proper noun
 		strings.Join(pythonCandidates, ", "), hint)
 }
 
 func findPython() string {
 	for _, name := range pythonCandidates {
+		// armis:ignore cwe:426 cwe:427 reason:name is from the hardcoded pythonCandidates allowlist (not user input); resolved path is validated via EvalSymlinks + IsAbs below
 		resolved, err := exec.LookPath(name)
 		if err != nil {
 			continue

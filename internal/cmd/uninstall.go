@@ -169,13 +169,18 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	// Armis section is present, so it is safe to call unconditionally.
 	preCommitRemoved := false
 	if repoRoot := install.DetectGitRoot(); repoRoot != "" {
+		// Record whether a hook was actually present first: RemovePreCommit
+		// returns nil for the no-op cases too (no hook file, no Armis section),
+		// so a nil result alone would wrongly claim a removal. Only report one
+		// when a hook was installed before the call and is gone after it.
+		hadHook := install.IsPreCommitInstalled(repoRoot)
 		if err := install.RemovePreCommit(repoRoot); err != nil {
 			if styled {
 				fmt.Fprintf(os.Stderr, "  %s Pre-commit hook: %v\n", warnMark.Render("⚠"), err)
 			} else {
 				fmt.Fprintf(os.Stderr, "  ⚠ Pre-commit hook: %v\n", err)
 			}
-		} else {
+		} else if hadHook {
 			preCommitRemoved = true
 		}
 	}
