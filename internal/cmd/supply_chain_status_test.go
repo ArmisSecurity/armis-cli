@@ -77,6 +77,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	go func() {
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
+		_ = r.Close()
 		done <- buf.String()
 	}()
 
