@@ -67,7 +67,7 @@ func TestRunAuth(t *testing.T) {
 			clientSecret: "test-secret",
 			setupServer:  true,
 			wantErr:      true,
-			errContains:  "--client-id is required",
+			errContains:  "both --client-id and --client-secret must be provided",
 		},
 		{
 			name:         "missing client-secret",
@@ -75,7 +75,7 @@ func TestRunAuth(t *testing.T) {
 			clientSecret: "",
 			setupServer:  true,
 			wantErr:      true,
-			errContains:  "--client-secret is required",
+			errContains:  "both --client-id and --client-secret must be provided",
 		},
 		{
 			name:           "successful authentication",
@@ -116,6 +116,10 @@ func TestRunAuth(t *testing.T) {
 					_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 				}
 			})
+
+			// Redirect HOME to a temp dir so no real stored SSO token (~/.armis)
+			// short-circuits the credential resolution this test exercises.
+			t.Setenv("HOME", t.TempDir())
 
 			// Clear legacy auth vars to ensure JWT path is taken
 			token = ""
@@ -196,6 +200,8 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 			_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 		}
 	})
+
+	t.Setenv("HOME", t.TempDir())
 
 	// Clear legacy auth vars
 	token = ""

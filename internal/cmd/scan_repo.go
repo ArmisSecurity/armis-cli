@@ -55,7 +55,7 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("path is not a directory: %s", repoPath)
 		}
 
-		authProvider, err := getAuthProvider()
+		authProvider, err := getAuthProvider(cmd.Context())
 		if err != nil {
 			return err
 		}

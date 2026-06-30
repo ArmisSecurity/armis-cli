@@ -42,7 +42,7 @@ func runAgentDetectionCollect(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := NewSignalContext()
 	defer cancel()
 
-	authProvider, err := getAuthProvider()
+	authProvider, err := getAuthProvider(ctx)
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}

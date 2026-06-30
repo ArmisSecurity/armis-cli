@@ -53,6 +53,11 @@ var (
 	clientSecret string
 	region       string
 
+	// credFlagsExplicit is set in PersistentPreRunE when the user passed
+	// --client-id/--client-secret/--token explicitly. It lets those flags
+	// override a stored SSO token in getAuthProvider.
+	credFlagsExplicit bool
+
 	version = versionDev
 	commit  = "none"
 	date    = "unknown"
@@ -132,6 +137,12 @@ var rootCmd = &cobra.Command{
 		if !cmd.Flags().Changed("client-secret") {
 			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
 		}
+		// Record whether the user explicitly passed credential flags. When they
+		// did, those flags take precedence over any stored SSO token (an escape
+		// hatch for forcing client-credentials/Basic auth without logging out).
+		credFlagsExplicit = cmd.Flags().Changed("client-id") ||
+			cmd.Flags().Changed("client-secret") ||
+			cmd.Flags().Changed("token")
 		if !cmd.Flags().Changed("region") {
 			region = os.Getenv("ARMIS_REGION")
 		}
@@ -431,10 +442,47 @@ func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) s
 	return getAPIBaseURL()
 }
 
-// getAuthProvider creates an AuthProvider based on the provided credentials.
-// Priority: JWT auth (--client-id, --client-secret) > Basic auth (--token)
-func getAuthProvider() (*auth.AuthProvider, error) {
-	return auth.NewAuthProvider(auth.AuthConfig{
+// getAuthProvider creates an AuthProvider based on the available credentials.
+//
+// Resolution order (PPSC-1037):
+//  1. Stored SSO token (keychain / fallback file) from `armis-cli auth login`,
+//     unless the user explicitly passed --client-id/--client-secret/--token,
+//     which act as an escape hatch to force the credential path.
+//  2. Client credentials (--client-id/--client-secret or ARMIS_CLIENT_ID/SECRET).
+//  3. Legacy --token (Basic auth).
+//  4. When ARMIS_DEFAULT_AUTH_METHOD=SSO and no credentials are configured,
+//     trigger an interactive browser login (device flow) instead of erroring.
+//  5. Otherwise an error pointing at `auth login` / env credentials.
+//
+// CI/CD is unaffected: with no stored token, resolution falls straight through
+// to env-var client credentials exactly as before. The SSO auto-login in step 4
+// only fires when no other credential is available, so it never overrides
+// configured client credentials or a legacy token.
+//
+// ctx bounds any interactive login triggered here, so callers must pass a
+// long-lived context (the command context), not a short per-request timeout.
+func getAuthProvider(ctx context.Context) (*auth.AuthProvider, error) {
+	if !credFlagsExplicit {
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+	}
+
+	// Opt-in: when the user has asked for SSO as the default auth method and no
+	// other credentials are configured, sign in interactively rather than
+	// failing. This makes `armis-cli scan ...` self-bootstrap a session on a
+	// developer machine while leaving credentialed (CI) runs untouched.
+	if shouldAutoLoginSSO() {
+		if _, err := performDeviceLogin(ctx, auth.DefaultDeviceClientID); err != nil {
+			return nil, err
+		}
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+		return nil, fmt.Errorf("signed in, but no stored session was found for %s", getAPIBaseURL())
+	}
+
+	provider, err := auth.NewAuthProvider(auth.AuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		BaseURL:      getAPIBaseURL(),
@@ -443,6 +491,65 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		TenantID:     tenantID,
 		Debug:        debug,
 	})
+	if err != nil {
+		// Improve the no-credentials message to mention SSO login.
+		return nil, augmentNoCredentialsError(err)
+	}
+	return provider, nil
+}
+
+// shouldAutoLoginSSO reports whether getAuthProvider should start an interactive
+// device-flow login. It fires only when ARMIS_DEFAULT_AUTH_METHOD=SSO (case
+// insensitive) and no other credentials are configured — no explicit credential
+// flags, no client credentials, and no legacy token — so it never shadows a
+// working CI/service-account setup.
+func shouldAutoLoginSSO() bool {
+	if !strings.EqualFold(os.Getenv("ARMIS_DEFAULT_AUTH_METHOD"), "sso") {
+		return false
+	}
+	if credFlagsExplicit {
+		return false
+	}
+	return clientID == "" && clientSecret == "" && token == ""
+}
+
+// storedAuthProvider builds an SSO-backed AuthProvider from a previously stored
+// device-flow token, or returns ok=false when none is present (or it cannot be
+// used), so callers fall through to credential-based auth.
+func storedAuthProvider() (*auth.AuthProvider, bool) {
+	// The environment key is the resolved API base URL, so each environment
+	// (prod, dev, a local stack) has its own token entry. This is also where
+	// the refresh grant is sent, so the token's own issuer is not consulted.
+	env := getAPIBaseURL()
+
+	store := auth.NewTokenStore()
+	stored, err := store.Load(env)
+	if err != nil || stored == nil {
+		return nil, false
+	}
+
+	deviceClient, err := auth.NewDeviceClient(env, debug)
+	if err != nil {
+		return nil, false
+	}
+	provider, err := auth.NewProviderFromStored(store, deviceClient, env, stored)
+	if err != nil {
+		return nil, false
+	}
+	return provider, true
+}
+
+// augmentNoCredentialsError replaces the auth package's generic
+// "authentication required" error with a CLI-friendly, browser-login-first list
+// of options. Other errors pass through unchanged.
+func augmentNoCredentialsError(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "authentication required") {
+		return err
+	}
+	return fmt.Errorf("not authenticated — use one of the following options:\n" +
+		"  - run 'armis-cli auth login' to sign in with your company IdP\n" +
+		"  - or set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET (or --client-id / --client-secret) for JWT auth\n" +
+		"  - or set ARMIS_API_TOKEN (or --token) for legacy auth")
 }
 
 func getPageLimit() (int, error) {
