@@ -56,7 +56,7 @@ func init() {
 }
 
 func runAuth(cmd *cobra.Command, _ []string) error {
-	provider, err := getAuthProvider()
+	provider, err := getAuthProvider(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}

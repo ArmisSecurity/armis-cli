@@ -25,7 +25,7 @@ func init() {
 }
 
 func runAuthWhoami(cmd *cobra.Command, _ []string) error {
-	provider, err := getAuthProvider()
+	provider, err := getAuthProvider(cmd.Context())
 	if err != nil {
 		// getAuthProvider already returns a self-describing message (the
 		// no-credentials case lists the sign-in options); don't re-wrap it.

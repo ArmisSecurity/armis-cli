@@ -416,15 +416,36 @@ func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) s
 //     which act as an escape hatch to force the credential path.
 //  2. Client credentials (--client-id/--client-secret or ARMIS_CLIENT_ID/SECRET).
 //  3. Legacy --token (Basic auth).
-//  4. Otherwise an error pointing at `auth login` / env credentials.
+//  4. When ARMIS_DEFAULT_AUTH_METHOD=SSO and no credentials are configured,
+//     trigger an interactive browser login (device flow) instead of erroring.
+//  5. Otherwise an error pointing at `auth login` / env credentials.
 //
 // CI/CD is unaffected: with no stored token, resolution falls straight through
-// to env-var client credentials exactly as before.
-func getAuthProvider() (*auth.AuthProvider, error) {
+// to env-var client credentials exactly as before. The SSO auto-login in step 4
+// only fires when no other credential is available, so it never overrides
+// configured client credentials or a legacy token.
+//
+// ctx bounds any interactive login triggered here, so callers must pass a
+// long-lived context (the command context), not a short per-request timeout.
+func getAuthProvider(ctx context.Context) (*auth.AuthProvider, error) {
 	if !credFlagsExplicit {
 		if provider, ok := storedAuthProvider(); ok {
 			return provider, nil
 		}
+	}
+
+	// Opt-in: when the user has asked for SSO as the default auth method and no
+	// other credentials are configured, sign in interactively rather than
+	// failing. This makes `armis-cli scan ...` self-bootstrap a session on a
+	// developer machine while leaving credentialed (CI) runs untouched.
+	if shouldAutoLoginSSO() {
+		if _, err := performDeviceLogin(ctx, auth.DefaultDeviceClientID, ""); err != nil {
+			return nil, err
+		}
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+		return nil, fmt.Errorf("signed in, but no stored session was found for %s", getAPIBaseURL())
 	}
 
 	provider, err := auth.NewAuthProvider(auth.AuthConfig{
@@ -441,6 +462,21 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		return nil, augmentNoCredentialsError(err)
 	}
 	return provider, nil
+}
+
+// shouldAutoLoginSSO reports whether getAuthProvider should start an interactive
+// device-flow login. It fires only when ARMIS_DEFAULT_AUTH_METHOD=SSO (case
+// insensitive) and no other credentials are configured — no explicit credential
+// flags, no client credentials, and no legacy token — so it never shadows a
+// working CI/service-account setup.
+func shouldAutoLoginSSO() bool {
+	if !strings.EqualFold(os.Getenv("ARMIS_DEFAULT_AUTH_METHOD"), "sso") {
+		return false
+	}
+	if credFlagsExplicit {
+		return false
+	}
+	return clientID == "" && clientSecret == "" && token == ""
 }
 
 // storedAuthProvider builds an SSO-backed AuthProvider from a previously stored

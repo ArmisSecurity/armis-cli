@@ -49,42 +49,55 @@ func init() {
 }
 
 func runAuthLogin(cmd *cobra.Command, _ []string) error {
+	_, err := performDeviceLogin(cmd.Context(), loginClientID, loginOrg)
+	return err
+}
+
+// performDeviceLogin runs the OAuth2 device-authorization flow end to end:
+// request a device code, open (or print) the verification URL, poll until the
+// user approves, and persist the resulting tokens. It returns the stored token
+// on success. It is shared by the `auth login` command and the
+// ARMIS_DEFAULT_AUTH_METHOD=SSO auto-login path in getAuthProvider.
+//
+// ctx bounds the whole interactive flow, so callers should pass a long-lived
+// context (e.g. the command context), not a short per-request timeout.
+func performDeviceLogin(ctx context.Context, clientID, org string) (*auth.StoredToken, error) {
 	if tenantID == "" {
-		return fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
+		return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 	}
 
 	issuer := getAPIBaseURL()
 	deviceClient, err := auth.NewDeviceClient(issuer, debug)
 	if err != nil {
-		return fmt.Errorf("failed to initialize login: %w", err)
+		return nil, fmt.Errorf("failed to initialize login: %w", err)
 	}
 
 	// Step 1: request a device code. Use a short timeout for this single call.
-	reqCtx, cancelReq := context.WithTimeout(cmd.Context(), 30*time.Second)
-	da, err := deviceClient.RequestDeviceCode(reqCtx, loginClientID, tenantID, "")
+	reqCtx, cancelReq := context.WithTimeout(ctx, 30*time.Second)
+	da, err := deviceClient.RequestDeviceCode(reqCtx, clientID, tenantID, "")
 	cancelReq()
 	if err != nil {
-		return fmt.Errorf("failed to start login: %w", err)
+		return nil, fmt.Errorf("failed to start login: %w", err)
 	}
 
 	// Step 2: send the user to the verification page. The browser URL carries
 	// the user_code, so the happy path needs no manual entry. --org is appended
 	// as a hint for the verification page to preselect the organization.
-	browseURL := withOrgHint(da.VerificationURIComplete, loginOrg)
+	browseURL := withOrgHint(da.VerificationURIComplete, org)
 	opened := auth.OpenBrowser(browseURL) == nil
 	printVerificationInstructions(da, browseURL, opened)
 
 	// Step 3: poll until approval, expiry, or denial. Bound the wait by the
 	// device code's lifetime.
-	pollCtx, cancelPoll := context.WithTimeout(cmd.Context(), time.Duration(da.ExpiresIn)*time.Second)
+	pollCtx, cancelPoll := context.WithTimeout(ctx, time.Duration(da.ExpiresIn)*time.Second)
 	defer cancelPoll()
 
 	spinner := progress.NewSpinner("Waiting for you to finish signing in…", noProgress)
 	spinner.Start()
-	stored, err := deviceClient.PollToken(pollCtx, da.DeviceCode, loginClientID, da.Interval)
+	stored, err := deviceClient.PollToken(pollCtx, da.DeviceCode, clientID, da.Interval)
 	spinner.Stop()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Step 4: persist the tokens for reuse by the CLI and MCP plugins, keyed by
@@ -92,11 +105,11 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	stored.Issuer = issuer
 	store := auth.NewTokenStore()
 	if err := store.Save(issuer, stored); err != nil {
-		return fmt.Errorf("signed in, but failed to store credentials: %w", err)
+		return nil, fmt.Errorf("signed in, but failed to store credentials: %w", err)
 	}
 
 	printLoginSuccess(stored)
-	return nil
+	return stored, nil
 }
 
 // withOrgHint appends an `org` query parameter to the verification URL when an

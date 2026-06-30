@@ -242,7 +242,7 @@ func TestStoredTokenTakesPrecedence(t *testing.T) {
 	clientID = "env-client"
 	clientSecret = "env-secret"
 
-	provider, err := getAuthProvider()
+	provider, err := getAuthProvider(context.Background())
 	if err != nil {
 		t.Fatalf("getAuthProvider: %v", err)
 	}
@@ -254,12 +254,101 @@ func TestStoredTokenTakesPrecedence(t *testing.T) {
 func TestNoCredentialsErrorMentionsLogin(t *testing.T) {
 	setupAuthTest(t, "https://moose.armis.com")
 	// No stored token, no credentials.
-	_, err := getAuthProvider()
+	_, err := getAuthProvider(context.Background())
 	if err == nil {
 		t.Fatal("expected error with no credentials")
 	}
 	if !strings.Contains(err.Error(), "auth login") {
 		t.Errorf("error %q should mention 'auth login'", err.Error())
+	}
+}
+
+// TestShouldAutoLoginSSO pins the gating rules: SSO auto-login fires only when
+// ARMIS_DEFAULT_AUTH_METHOD=SSO and no other credential is configured.
+func TestShouldAutoLoginSSO(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      string
+		clientID string
+		token    string
+		explicit bool
+		want     bool
+	}{
+		{name: "unset", env: "", want: false},
+		{name: "sso, no creds", env: "SSO", want: true},
+		{name: "sso lowercase", env: "sso", want: true},
+		{name: "other value", env: "client-credentials", want: false},
+		{name: "sso but client creds present", env: "sso", clientID: "id", want: false},
+		{name: "sso but legacy token present", env: "sso", token: "tok", want: false},
+		{name: "sso but explicit cred flags", env: "sso", explicit: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupAuthTest(t, "https://moose.armis.com")
+			t.Setenv("ARMIS_DEFAULT_AUTH_METHOD", tt.env)
+			clientID = tt.clientID
+			token = tt.token
+			credFlagsExplicit = tt.explicit
+
+			if got := shouldAutoLoginSSO(); got != tt.want {
+				t.Errorf("shouldAutoLoginSSO() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAutoLoginSSOTriggersDeviceFlow verifies that, with ARMIS_DEFAULT_AUTH_METHOD=SSO
+// and no stored token or credentials, getAuthProvider runs the device flow,
+// persists the token, and returns an SSO-backed provider.
+func TestAutoLoginSSOTriggersDeviceFlow(t *testing.T) {
+	jwt := deviceJWT(tenant7, "alice@example.com", "admin", time.Now().Add(time.Hour).Unix())
+	var mu sync.Mutex
+	tokenCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth2/device":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"device_code":               "dev-code",
+				"user_code":                 "WDJB-MJHT",
+				"verification_uri":          "https://moose.armis.com/oauth2/device/verify",
+				"verification_uri_complete": "https://moose.armis.com/oauth2/device/verify?user_code=WDJB-MJHT",
+				"expires_in":                900,
+				"interval":                  1,
+			})
+		case "/oauth2/token":
+			mu.Lock()
+			tokenCalls++
+			n := tokenCalls
+			mu.Unlock()
+			if n < 2 {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "authorization_pending"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": jwt, "token_type": "Bearer",
+				"expires_in": 3600, "refresh_token": "refresh-7",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	setupAuthTest(t, srv.URL)
+	t.Setenv("ARMIS_DEFAULT_AUTH_METHOD", "SSO")
+	tenantID = tenant7 // device authorization requires a tenant
+
+	provider, err := getAuthProvider(context.Background())
+	if err != nil {
+		t.Fatalf("getAuthProvider with SSO auto-login: %v", err)
+	}
+	if provider.AuthMethod() != auth.AuthMethodSSO {
+		t.Errorf("AuthMethod = %q, want sso", provider.AuthMethod())
+	}
+	if stored, _ := auth.NewTokenStore().Load(srv.URL); stored == nil || stored.RefreshToken != "refresh-7" {
+		t.Errorf("expected auto-login to persist token, got %+v", stored)
 	}
 }
 
