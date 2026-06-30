@@ -771,8 +771,8 @@ func TestShellReloadCommand(t *testing.T) {
 		{shellBash, "source " + rc},
 		{shellZsh, "source " + rc},
 		{shellFish, "source " + rc},
-		{shellPwsh, ". " + rc},
-		{shellWindowsPowerShell, ". " + rc},
+		{shellPwsh, ". '" + rc + "'"},
+		{shellWindowsPowerShell, ". '" + rc + "'"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.shell, func(t *testing.T) {
