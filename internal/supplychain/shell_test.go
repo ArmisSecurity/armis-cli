@@ -559,6 +559,7 @@ func TestDetectShells(t *testing.T) {
 	t.Run("no RC files and no SHELL yields nothing", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("SHELL", "")
+		t.Setenv("PATH", "") // prevent pwsh on the runner's PATH from triggering PowerShell detection
 		if shells := DetectShells(); len(shells) != 0 {
 			t.Errorf("expected no shells for an empty home with no $SHELL, got %v", shells)
 		}
