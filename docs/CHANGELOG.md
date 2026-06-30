@@ -9,14 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `supply-chain init`: PowerShell profile injection is now supported. On machines where PowerShell (`pwsh`) is detected, `init` writes wrapper functions into the `CurrentUserAllHosts` profile (`~/.config/powershell/profile.ps1` on Unix/macOS, `Documents\PowerShell\profile.ps1` for pwsh on Windows, or `Documents\WindowsPowerShell\profile.ps1` for Windows PowerShell 5.1). Package managers with dotted names (e.g. `pip3.12`) are skipped in the PowerShell profile — PowerShell function names may not contain dots — and a muted note explains the skip, listing any non-dotted alternatives that are still wrapped. (PPSC-1065)
-- `supply-chain`: a wrapped install that fails right after the age filter now names the likely culprit instead of a generic note. The proxy is graph-blind — when it withholds a brand-new release and repoints `latest` to an older version, that older version may no longer satisfy a dependent's range, and npm/pnpm/bun/yarn then reject the install. On the npm family a deterministic post-install, one-hop constraint check reports exactly which dependency became unsatisfiable and which package required it (e.g. `scheduler has no version older than the 3-day policy that satisfies ^0.24.0 (required by react-dom)`). The check reads dependency ranges npm already embeds in the metadata the proxy fetched — it is one hop, advisory, and recover-guarded so it can never affect the finished install; multi-hop chains and full resolution are out of scope. pip/uv get the blocked-package name plus a pointer to `uv tree`/`pipdeptree` (PyPI's Simple API carries no dependency ranges). The failure note leads with the protection rationale and lays out remediation surgical-first (allow one package → team exception → relax window), deliberately omitting the global kill switch so a frustrated developer isn't nudged to the blunt instrument. (PPSC-984)
-- `supply-chain`: a machine-readable compliance report for audit trails ("prove no young package entered this build"). Set `ARMIS_SUPPLY_CHAIN_REPORT=<path>` for a wrapped install (`-` writes to stderr), or pass `--report <path>` to `supply-chain check`. The JSON carries the effective policy, the enforcement mode (`proxy`/`pre-install`/`check`), and the `checked`/`blocked`/`resolved`/`warned_through`/`conflicts` sets plus `install_status`, so CI can gate with `jq`. A wrap report uses an env var, not a flag, because the wrapped command forwards every flag verbatim to the underlying package manager. (PPSC-984)
-- `supply-chain`: an opt-in `transitive-policy: warn` config key (and `ARMIS_SUPPLY_CHAIN_TRANSITIVE=warn` env override for the wrap path) that lets a young **transitive** dependency through with a warning instead of failing the build, while still hard-blocking young **direct** dependencies. The default stays `block` — no posture change without opt-in. Direct vs. transitive is determined by reading the root `package.json` (npm family only); if the direct set can't be determined the proxy fails safe and treats every package as direct (blocks). Each warned-through package is printed and marked in the compliance report so security teams can audit exactly which freshly-published packages entered the build. Residual risk and scope are documented in `docs/FEATURES.md`. (PPSC-984)
-
 ### Changed
-
-- Command help is no longer cluttered with scan-only flags. The output flags `--format`, `--no-progress`, `--fail-on`, `--exit-code`, and `--page-limit` were registered as root persistent flags, so they appeared in the `--help` of every command — including non-scan commands like `hook`, `supply-chain`, `install`, and `agent-detection`, where they have no effect. They are now scoped to the `scan` command subtree where they belong. `supply-chain check`, a sibling of `scan` that does use `--format`/`--fail-on`/`--exit-code`, re-registers exactly those three locally (mirroring its existing `--output` handling), so its behavior is unchanged. (PPSC-1009)
 
 ### Deprecated
 
@@ -24,9 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `hook init` no longer refuses to install a pre-commit hook when the Armis MCP plugin is absent. It previously hard-errored with "Armis MCP server not installed — run 'armis-cli install' first", even though the hook installer already falls back to a direct `armis-cli scan repo . --changed=staged --no-progress --fail-on HIGH` hook when the plugin's own pre-commit script is missing. The redundant gate is removed, so `hook init` installs the direct-scan hook and prints a one-line advisory ("Armis MCP plugin not found; installing direct-scan hook…") instead of blocking. (PPSC-1009)
-
 ### Security
+
+---
+
+## [1.17.0] - 2026-06-30
+
+### Added
+
+- `supply-chain init`: PowerShell profile injection is now supported. On machines where PowerShell (`pwsh`) is detected, `init` writes wrapper functions into the `CurrentUserAllHosts` profile (`~/.config/powershell/profile.ps1` on Unix/macOS, `Documents\PowerShell\profile.ps1` for pwsh on Windows, or `Documents\WindowsPowerShell\profile.ps1` for Windows PowerShell 5.1). Package managers with dotted names (e.g. `pip3.12`) are skipped in the PowerShell profile — PowerShell function names may not contain dots — and a muted note explains the skip, listing any non-dotted alternatives that are still wrapped. (#255)
+- `supply-chain`: a wrapped install that fails right after the age filter now names the likely culprit instead of a generic note. The proxy is graph-blind — when it withholds a brand-new release and repoints `latest` to an older version, that older version may no longer satisfy a dependent's range, and npm/pnpm/bun/yarn then reject the install. On the npm family a deterministic post-install, one-hop constraint check reports exactly which dependency became unsatisfiable and which package required it (e.g. `scheduler has no version older than the 3-day policy that satisfies ^0.24.0 (required by react-dom)`). The check reads dependency ranges npm already embeds in the metadata the proxy fetched — it is one hop, advisory, and recover-guarded so it can never affect the finished install; multi-hop chains and full resolution are out of scope. pip/uv get the blocked-package name plus a pointer to `uv tree`/`pipdeptree` (PyPI's Simple API carries no dependency ranges). The failure note leads with the protection rationale and lays out remediation surgical-first (allow one package → team exception → relax window), deliberately omitting the global kill switch so a frustrated developer isn't nudged to the blunt instrument. (#246)
+- `supply-chain`: a machine-readable compliance report for audit trails ("prove no young package entered this build"). Set `ARMIS_SUPPLY_CHAIN_REPORT=<path>` for a wrapped install (`-` writes to stderr), or pass `--report <path>` to `supply-chain check`. The JSON carries the effective policy, the enforcement mode (`proxy`/`pre-install`/`check`), and the `checked`/`blocked`/`resolved`/`warned_through`/`conflicts` sets plus `install_status`, so CI can gate with `jq`. A wrap report uses an env var, not a flag, because the wrapped command forwards every flag verbatim to the underlying package manager. (#246)
+- `supply-chain`: an opt-in `transitive-policy: warn` config key (and `ARMIS_SUPPLY_CHAIN_TRANSITIVE=warn` env override for the wrap path) that lets a young **transitive** dependency through with a warning instead of failing the build, while still hard-blocking young **direct** dependencies. The default stays `block` — no posture change without opt-in. Direct vs. transitive is determined by reading the root `package.json` (npm family only); if the direct set can't be determined the proxy fails safe and treats every package as direct (blocks). Each warned-through package is printed and marked in the compliance report so security teams can audit exactly which freshly-published packages entered the build. Residual risk and scope are documented in `docs/FEATURES.md`. (#246)
+- `agent-detection`: CLI ergonomics improvements for more intuitive detection workflow and output. (#253)
+
+### Changed
+
+- Command help is no longer cluttered with scan-only flags. The output flags `--format`, `--no-progress`, `--fail-on`, `--exit-code`, and `--page-limit` were registered as root persistent flags, so they appeared in the `--help` of every command — including non-scan commands like `hook`, `supply-chain`, `install`, and `agent-detection`, where they have no effect. They are now scoped to the `scan` command subtree where they belong. `supply-chain check`, a sibling of `scan` that does use `--format`/`--fail-on`/`--exit-code`, re-registers exactly those three locally (mirroring its existing `--output` handling), so its behavior is unchanged. (#250)
+- Upload now uses a presigned S3 URL flow: the CLI requests a presigned URL from the API, uploads the archive directly to S3, then notifies the API to begin scanning. This improves reliability and reduces upload latency for large repositories. (#225)
+- Documentation updated to cover `.armisignore` path patterns and suppression directives in depth. (#248)
+
+### Fixed
+
+- `hook init` no longer refuses to install a pre-commit hook when the Armis MCP plugin is absent. It previously hard-errored with "Armis MCP server not installed — run 'armis-cli install' first", even though the hook installer already falls back to a direct `armis-cli scan repo . --changed=staged --no-progress --fail-on HIGH` hook when the plugin's own pre-commit script is missing. The redundant gate is removed, so `hook init` installs the direct-scan hook and prints a one-line advisory ("Armis MCP plugin not found; installing direct-scan hook…") instead of blocking. (#250)
+- `supply-chain check`: polished check gate behavior, uninit cleanup, and npmrc handling edge cases. (#254)
+- `install`: pip now uses `--prefer-binary` when creating the virtual environment to avoid source-building the `cryptography` package behind a TLS-inspecting proxy (e.g. Zscaler), which previously caused `rustup` to fail when downloading its toolchain through the proxy certificate. (#252)
+- `install`/`uninstall`: hardened lifecycle handling for more reliable installation and removal. (#251)
 
 ---
 
@@ -584,7 +600,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...v1.14.0
