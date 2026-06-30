@@ -955,6 +955,7 @@ You can also sign in explicitly at any time with `armis-cli auth login`; setting
   - Use JWT authentication (client ID/secret) for production — it supports automatic token refresh and does not require a separate tenant ID
   - Rotate credentials periodically
   - Credentials are never logged or exposed in output
+  - SSO session tokens (`armis-cli auth login`) are stored per-user in `~/.armis/.sessions` — owner-only (`0600`) on macOS/Linux, protected by the user-profile ACL on Windows
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
 - **CI Detection**: Progress bars automatically disabled in CI environments

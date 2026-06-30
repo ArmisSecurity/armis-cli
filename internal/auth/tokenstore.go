@@ -24,9 +24,12 @@ import (
 // A plain file (not the OS keychain) is the deliberate choice: the MCP plugins
 // are Python, and the refresh-token rotation + reuse-detection on the backend
 // requires a SINGLE source of truth (a divergent second store would replay a
-// rotated token and get the whole token family revoked). The file is 0600 in a
-// 0700 directory; protection at rest relies on the OS account + full-disk
-// encryption (FileVault/BitLocker/LUKS), matching the AWS/gcloud/kubectl model.
+// rotated token and get the whole token family revoked). This matches the
+// AWS/gcloud/kubectl/gh model of a per-user credential file.
+//
+// At rest: Unix writes 0600 in a 0700 ~/.armis. On Windows those mode bits are a
+// no-op (NTFS uses ACLs; os.Stat reports 0666); confidentiality there relies on
+// the %USERPROFILE% ACL ~/.armis inherits, same as the tools above.
 //
 // FILE SHAPE — a JSON array of per-environment entries, so one dev machine can
 // hold tokens for several Armis environments at once (prod, dev, a local stack):

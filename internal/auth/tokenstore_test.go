@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -35,14 +36,17 @@ func TestTokenStoreRoundTrip(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// File should exist with 0600 perms in a 0700 dir.
 	path := filepath.Join(dir, tokenStoreFileName)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("expected token file: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("token file perm = %o, want 600", perm)
+	// Must be 0600 on Unix. On Windows mode bits are a no-op (os.Stat reports
+	// 0666); confidentiality relies on the profile ACL — see tokenstore.go.
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("token file perm = %o, want 600", perm)
+		}
 	}
 
 	got, err := store.Load(envProd)
