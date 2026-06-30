@@ -494,6 +494,27 @@ func TestDetectOrgScopes_SkipsYarn(t *testing.T) {
 	}
 }
 
+// TestScInitExampleIncludesModeConfig guards #33: the init Examples block must
+// show the --mode config path (the recommended way to generate a committable
+// policy file), which was previously omitted.
+func TestScInitExampleIncludesModeConfig(t *testing.T) {
+	if !strings.Contains(scInitCmd.Example, "--mode config") {
+		t.Errorf("init Example block must include --mode config:\n%s", scInitCmd.Example)
+	}
+}
+
+// TestScInitReverseClaimScoped guards #14 (part 3): init's Long must no longer
+// promise uninit reverses *all* changes (it cannot remove the committable config
+// file); the claim must be scoped to the shell RC and .npmrc artifacts.
+func TestScInitReverseClaimScoped(t *testing.T) {
+	if strings.Contains(scInitCmd.Long, "reverse changes made by this command") {
+		t.Errorf("init Long still makes the unscoped reverse-changes claim:\n%s", scInitCmd.Long)
+	}
+	if !strings.Contains(scInitCmd.Long, "shell RC and .npmrc") {
+		t.Errorf("init Long should scope the reverse claim to shell RC and .npmrc:\n%s", scInitCmd.Long)
+	}
+}
+
 // chdirTemp switches into a fresh temp dir for the duration of the test and
 // restores the original cwd on cleanup. runInitNpmrc operates on ".npmrc" in
 // the working directory, so each case needs an isolated dir.

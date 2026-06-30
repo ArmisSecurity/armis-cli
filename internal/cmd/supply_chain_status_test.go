@@ -1,10 +1,98 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 )
+
+// TestRunSupplyChainStatusJSON_MinAgeHumanReadable guards #22: the JSON policy
+// min_age must use the human-readable formatter ("3 days"), not Go's internal
+// Duration.String() ("72h0m0s"). With no config present, status falls back to
+// DefaultPolicy (72h), so the field must render as "3 days".
+func TestRunSupplyChainStatusJSON_MinAgeHumanReadable(t *testing.T) {
+	dir := chdirTemp(t) // empty dir → no config → DefaultPolicy (72h)
+
+	out := captureStdout(t, func() {
+		if err := runSupplyChainStatusJSON(dir); err != nil {
+			t.Fatalf("runSupplyChainStatusJSON: %v", err)
+		}
+	})
+
+	var parsed struct {
+		Policy struct {
+			MinAge string `json:"min_age"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("unmarshal status JSON: %v\n%s", err, out)
+	}
+	if parsed.Policy.MinAge != "3 days" {
+		t.Errorf("min_age = %q, want %q (not the raw Duration.String())", parsed.Policy.MinAge, "3 days")
+	}
+}
+
+// TestRunSupplyChainStatusJSON_MinAgeNonDefault drives a non-default config
+// through the JSON path so a branch other than "days" is exercised end-to-end,
+// and pins the singular form ("1 hour", not "1 hours") in the serialized output.
+func TestRunSupplyChainStatusJSON_MinAgeNonDefault(t *testing.T) {
+	dir := chdirTemp(t)
+	writeConfig(t, dir, "version: 1\nmin-age: 1h\n")
+
+	out := captureStdout(t, func() {
+		if err := runSupplyChainStatusJSON(dir); err != nil {
+			t.Fatalf("runSupplyChainStatusJSON: %v", err)
+		}
+	})
+
+	var parsed struct {
+		Policy struct {
+			MinAge string `json:"min_age"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("unmarshal status JSON: %v\n%s", err, out)
+	}
+	if parsed.Policy.MinAge != "1 hour" {
+		t.Errorf("min_age = %q, want %q (singular, human-readable)", parsed.Policy.MinAge, "1 hour")
+	}
+}
+
+// captureStdout swaps os.Stdout for a pipe, runs fn, and returns what fn wrote.
+// A goroutine drains the pipe so output larger than the buffer cannot deadlock.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		_ = r.Close()
+		done <- buf.String()
+	}()
+
+	// t.Cleanup runs even when fn calls t.Fatalf (which calls runtime.Goexit),
+	// guaranteeing the pipe is closed and os.Stdout is restored.
+	t.Cleanup(func() {
+		_ = w.Close()
+		os.Stdout = orig
+	})
+
+	fn()
+	_ = w.Close()
+	os.Stdout = orig
+	return <-done
+}
 
 func TestCollapsePipVariants(t *testing.T) {
 	tests := []struct {

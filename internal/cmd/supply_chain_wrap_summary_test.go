@@ -29,8 +29,16 @@ func captureStderr(t *testing.T, fn func()) string {
 	go func() {
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
+		_ = r.Close()
 		done <- buf.String()
 	}()
+
+	// t.Cleanup runs even when fn calls t.Fatalf (which calls runtime.Goexit),
+	// guaranteeing the pipe is closed and os.Stderr is restored.
+	t.Cleanup(func() {
+		_ = w.Close()
+		os.Stderr = orig
+	})
 
 	fn()
 	_ = w.Close()

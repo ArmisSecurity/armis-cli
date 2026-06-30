@@ -43,7 +43,10 @@ Four modes are available:
            dynamically by 'supply-chain wrap'; use with the rc or env modes)
   config — Generate .armis-supply-chain.yaml policy file for this project
 
-Run 'armis-cli supply-chain uninit' to reverse changes made by this command.`,
+Run 'armis-cli supply-chain uninit' to reverse the shell RC and .npmrc changes
+made by this command. The --mode config policy file (.armis-supply-chain.yaml) is
+meant to be committed and shared with your team, so uninit leaves it in place;
+remove it manually if you no longer want it.`,
 	Example: `  # Interactive setup (default)
   armis-cli supply-chain init
 
@@ -57,7 +60,10 @@ Run 'armis-cli supply-chain uninit' to reverse changes made by this command.`,
   armis-cli supply-chain init --mode env
 
   # Add the supply-chain marker comment to .npmrc
-  armis-cli supply-chain init --mode npmrc`,
+  armis-cli supply-chain init --mode npmrc
+
+  # Generate a committable .armis-supply-chain.yaml for this project
+  armis-cli supply-chain init --mode config`,
 	Args: cobra.NoArgs,
 	RunE: runSupplyChainInit,
 }
@@ -384,8 +390,8 @@ func runInitEnv(pms []string) error {
 
 func runInitNpmrc() error {
 	s := output.GetStyles()
-	npmrcPath := ".npmrc"
-	line := "# armis-cli supply-chain: registry override applied at install time via 'supply-chain wrap'\n"
+	npmrcPath := supplychain.NpmrcFileName
+	line := supplychain.NpmrcMarkerComment + "\n"
 
 	if scInitDryRun {
 		fmt.Fprintf(os.Stderr, "%s\n", s.MutedText.Render(fmt.Sprintf("Would add comment to %s noting that supply-chain wrap handles registry override.", npmrcPath)))
@@ -401,7 +407,7 @@ func runInitNpmrc() error {
 		// empty file, which would make the "already configured" check unreliable.
 		return fmt.Errorf("reading %s: %w", npmrcPath, err)
 	}
-	if strings.Contains(string(content), "armis-cli supply-chain") {
+	if supplychain.HasNpmrcMarker(content) {
 		fmt.Fprintf(os.Stderr, "%s already contains armis-cli supply-chain configuration.\n", s.Bold.Render(npmrcPath))
 		return nil
 	}

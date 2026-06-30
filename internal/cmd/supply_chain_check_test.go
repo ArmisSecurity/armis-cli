@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/spf13/cobra"
 )
@@ -272,18 +275,20 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 	outPath := filepath.Join(dir, "report.sarif")
 
 	// Save/restore every package-level var the check command reads so this test
-	// can't leak state into others sharing the cmd package.
+	// can't leak state into others sharing the cmd package. The gate var is
+	// scFailOn (the check-local shadow runSupplyChainCheck reads), not the root
+	// failOn global.
 	origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn :=
-		scLockfile, scAll, scMinAge, format, outputFile, failOn
+		scLockfile, scAll, scMinAge, format, outputFile, scFailOn
 	t.Cleanup(func() {
-		scLockfile, scAll, scMinAge, format, outputFile, failOn =
+		scLockfile, scAll, scMinAge, format, outputFile, scFailOn =
 			origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn
 	})
 	scLockfile = "package-lock.json"
 	scAll = true // skip base-lockfile git detection
 	scMinAge = "72h"
 	format = "human" // left at default; extension should override to SARIF
-	failOn = []string{"CRITICAL"}
+	scFailOn = []string{"CRITICAL"}
 
 	cmd := newWrapTestCmd() // command with a live context
 	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
@@ -328,10 +333,13 @@ func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
 func TestRunSupplyChainCheck_FailOnValidatedFirst(t *testing.T) {
 	chdirTemp(t) // empty dir: no lockfile, no network
 
-	origAll, origFailOn := scAll, failOn
-	t.Cleanup(func() { scAll, failOn = origAll, origFailOn })
+	// Set the bogus value on scFailOn (the check-local shadow runSupplyChainCheck
+	// reads), not the root failOn global, so the validation under test actually
+	// sees it.
+	origAll, origFailOn := scAll, scFailOn
+	t.Cleanup(func() { scAll, scFailOn = origAll, origFailOn })
 	scAll = true
-	failOn = []string{"bogus"}
+	scFailOn = []string{"bogus"}
 
 	cmd := newWrapTestCmd()
 	err := runSupplyChainCheck(cmd, []string{"."})
@@ -372,5 +380,94 @@ func TestSupplyChainCheckOutputFlagRegistered(t *testing.T) {
 	}
 	if outputFile != "out.sarif" {
 		t.Errorf("--output not bound to outputFile: outputFile = %q, want %q", outputFile, "out.sarif")
+	}
+}
+
+// TestRunSupplyChainCheck_NoGitBaseNotice guards #21: when there is no git base
+// and the user did not pass --all, check silently audits all packages. It must
+// announce that it switched to the broader scope. Runs in a non-git temp dir so
+// detectBaseLockfile returns "" and the notice path is taken.
+func TestRunSupplyChainCheck_NoGitBaseNotice(t *testing.T) {
+	forceNoColor(t)
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origLockfile, origAll, origMinAge, origFormat, origFailOn :=
+		scLockfile, scAll, scMinAge, format, scFailOn
+	t.Cleanup(func() {
+		scLockfile, scAll, scMinAge, format, scFailOn =
+			origLockfile, origAll, origMinAge, origFormat, origFailOn
+	})
+	scLockfile = "package-lock.json"
+	scAll = false // exercise the auto-detect path; temp dir is not a git repo
+	scMinAge = "72h"
+	format = "human"
+	scFailOn = []string{"medium"}
+
+	cmd := newWrapTestCmd()
+	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
+	cmd.Flags().StringSliceVar(&scExclude, "exclude", nil, "")
+	cmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "")
+
+	out := captureStderr(t, func() {
+		if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
+			t.Fatalf("runSupplyChainCheck: %v", err)
+		}
+	})
+	if !strings.Contains(out, "no git base detected") {
+		t.Errorf("expected a no-git-base notice in stderr, got:\n%s", out)
+	}
+}
+
+// TestSupplyChainCheckFailOnDefaultsToMedium guards #12: the real scCheckCmd
+// must register a local --fail-on whose default is "medium", shadowing root's
+// [CRITICAL] persistent default. supply-chain violations are graded MEDIUM/HIGH
+// and never CRITICAL, so the root default would make a copy-pasted CI gate
+// permanently green; the local default must be able to gate.
+func TestSupplyChainCheckFailOnDefaultsToMedium(t *testing.T) {
+	f := scCheckCmd.Flags().Lookup("fail-on")
+	if f == nil {
+		t.Fatal("supply-chain check must register a local --fail-on flag")
+	}
+	if got := f.DefValue; !strings.Contains(strings.ToLower(got), "medium") {
+		t.Errorf("--fail-on default = %q, want it to contain \"medium\"", got)
+	}
+	if strings.Contains(strings.ToUpper(f.DefValue), "CRITICAL") {
+		t.Errorf("--fail-on default = %q, must not be the ungateable CRITICAL", f.DefValue)
+	}
+}
+
+// TestSupplyChainCheckDefaultGatesMediumViolation proves the end-to-end gate the
+// #12 fix restores: with the check-local default, a MEDIUM violation must cause a
+// non-zero exit (a returned ErrFindingsExceeded), where the old [CRITICAL]
+// default would have silently passed. It drives the exact pipeline
+// runSupplyChainCheck uses: cmdutil.GetFailOn(scFailOn) → output.CheckExit.
+func TestSupplyChainCheckDefaultGatesMediumViolation(t *testing.T) {
+	orig := scFailOn
+	t.Cleanup(func() { scFailOn = orig })
+	scFailOn = []string{"medium"} // the registered default
+
+	failOnSeverities, err := cmdutil.GetFailOn(scFailOn)
+	if err != nil {
+		t.Fatalf("GetFailOn: %v", err)
+	}
+
+	result := &model.ScanResult{
+		Findings: []model.Finding{{Severity: model.SeverityMedium}},
+	}
+	if err := output.CheckExit(result, failOnSeverities, 1); err == nil {
+		t.Error("expected a MEDIUM violation to gate (non-nil error) with the default --fail-on, got nil")
+	}
+
+	// Sanity check on the old behavior: CRITICAL would NOT have gated this.
+	criticalSeverities, err := cmdutil.GetFailOn([]string{"critical"})
+	if err != nil {
+		t.Fatalf("GetFailOn(critical): %v", err)
+	}
+	if err := output.CheckExit(result, criticalSeverities, 1); err != nil {
+		t.Errorf("CRITICAL fail-on should not gate a MEDIUM finding, but it returned: %v", err)
 	}
 }
