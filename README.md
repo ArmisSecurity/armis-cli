@@ -26,6 +26,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 - [Quick Start](#quick-start)
 - [Verification](#verification)
 - [Usage](#usage)
+- [Ignoring Files and Suppressing Findings](#ignoring-files-and-suppressing-findings)
 - [Supply Chain Protection](#supply-chain-protection)
 - [Output Formats](#output-formats)
 - [CI/CD Integration](#cicd-integration)
@@ -572,6 +573,64 @@ armis-cli completion zsh > "${fpath[1]}/_armis-cli"
 ```
 
 Run `armis-cli <command> --help` for the full flag reference of any command.
+
+---
+
+## Ignoring Files and Suppressing Findings
+
+A `.armisignore` file in your repository root controls two things: which files are excluded from the scan upload, and which findings are suppressed from results.
+
+### Path exclusion (gitignore syntax)
+
+Standard gitignore-style patterns exclude files and directories **before** the upload archive is created. Nested `.armisignore` files are supported and apply relative to their directory.
+
+```gitignore
+# Exclude directories
+node_modules/
+vendor/
+**/dist/
+
+# Exclude file patterns
+*.generated.go
+*.log
+
+# Re-include a specific file
+!important.config.json
+```
+
+### Finding suppression directives
+
+Directives in the **root** `.armisignore` suppress matched findings post-scan. They are excluded from `--fail-on` evaluation and from human/JUnit output, and marked as suppressed in SARIF and JSON. Use `--show-suppressed` to include them in output.
+
+Format: `<type>:<value> -- <optional reason>`
+
+| Directive | Accepted values | Example |
+|-----------|-----------------|---------|
+| `rule:` | Any rule ID (free-form string) | `rule:G304 -- path validated upstream` |
+| `category:` | `sast`, `secrets`, `iac`, `sca`, `license` | `category:license` |
+| `severity:` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` | `severity:LOW` |
+| `cwe:` | Any non-negative integer | `cwe:73 -- intentional, sanitized` |
+
+Example `.armisignore`:
+
+```gitignore
+# Path patterns
+node_modules/
+test/fixtures/
+
+# Suppression directives (root .armisignore only)
+severity:LOW
+category:license
+cwe:73 -- file path is sanitized via SanitizePath
+rule:G304 -- false positive, internal path
+```
+
+**Notes:**
+
+- Suppression directives are only honored in the **root** `.armisignore`. In nested files they are treated as path patterns.
+- Lines starting with `#` are comments.
+- Maximum file size: 1 MB. Maximum 1000 lines and 100 directives per type.
+- For in-code suppression of a single finding, use inline `armis:ignore` comments (e.g., `// armis:ignore cwe:73 reason:...`) in the source itself.
 
 ---
 
