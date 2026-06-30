@@ -208,7 +208,8 @@ func GenerateWrapper(shell string, pms []string) string {
 func ShellReloadCommand(shell, rcFile string) string {
 	switch shell {
 	case shellPwsh, shellWindowsPowerShell:
-		return ". " + rcFile
+		// armis:ignore cwe:78 cwe:77 cwe:94 reason:rcFile derives from powershellProfiles() which joins $HOME/Documents with hardcoded path segments; the return value is printed to stderr as a human-readable suggestion and never executed programmatically
+		return ". " + shellQuotePowerShell(rcFile)
 	default:
 		return "source " + rcFile
 	}

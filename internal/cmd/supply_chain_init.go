@@ -516,9 +516,19 @@ func runInitRC(pms []string) error {
 	// dotted variant is actually present — so the user knows the skip is intentional
 	// and that pip/pip3 still cover the common case.
 	if dotted := powerShellSkippedDottedPMs(pms, shells); len(dotted) > 0 {
+		var nonDottedPip []string
+		for _, pm := range pms {
+			if (pm == "pip" || pm == "pip3") && !strings.Contains(pm, ".") {
+				nonDottedPip = append(nonDottedPip, pm)
+			}
+		}
+		var suffix string
+		if len(nonDottedPip) > 0 {
+			suffix = fmt.Sprintf("; %s are wrapped instead", strings.Join(nonDottedPip, " and "))
+		}
 		fmt.Fprintf(os.Stderr, "%s\n\n", s.MutedText.Render(fmt.Sprintf(
-			"Note: %s can't be wrapped in PowerShell (dotted function names are unsupported); pip and pip3 are wrapped instead.",
-			strings.Join(dotted, ", "))))
+			"Note: %s can't be wrapped in PowerShell (dotted function names are unsupported)%s.",
+			strings.Join(dotted, ", "), suffix)))
 	}
 
 	// Preview each distinct wrapper. bash/zsh share the posix wrapper while fish
