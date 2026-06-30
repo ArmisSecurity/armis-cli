@@ -48,7 +48,6 @@ func setupAuthTest(t *testing.T, serverURL string) {
 		tenantID = origGlobals.tenantID
 		credFlagsExplicit = false
 		noProgress = false
-		loginOrg = ""
 		loginClientID = auth.DefaultDeviceClientID
 		logoutAll = false
 	})

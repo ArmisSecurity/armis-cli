@@ -439,7 +439,7 @@ func getAuthProvider(ctx context.Context) (*auth.AuthProvider, error) {
 	// failing. This makes `armis-cli scan ...` self-bootstrap a session on a
 	// developer machine while leaving credentialed (CI) runs untouched.
 	if shouldAutoLoginSSO() {
-		if _, err := performDeviceLogin(ctx, auth.DefaultDeviceClientID, ""); err != nil {
+		if _, err := performDeviceLogin(ctx, auth.DefaultDeviceClientID); err != nil {
 			return nil, err
 		}
 		if provider, ok := storedAuthProvider(); ok {

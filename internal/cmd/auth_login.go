@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
@@ -13,10 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	loginOrg      string
-	loginClientID string
-)
+var loginClientID string
 
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
@@ -34,22 +30,18 @@ A tenant is required: pass --tenant-id or set ARMIS_TENANT_ID.
 If the browser cannot be opened automatically (for example over SSH), the CLI
 prints a URL and a code to enter manually.`,
 	Example: `  # Sign in interactively
-  armis-cli auth login --tenant-id my-tenant
-
-  # Skip org selection in the browser
-  armis-cli auth login --tenant-id my-tenant --org my-company`,
+  armis-cli auth login --tenant-id my-tenant`,
 	Args: cobra.NoArgs,
 	RunE: runAuthLogin,
 }
 
 func init() {
-	authLoginCmd.Flags().StringVar(&loginOrg, "org", "", "Organization slug hint to skip org selection in the browser")
 	authLoginCmd.Flags().StringVar(&loginClientID, "client-id", auth.DefaultDeviceClientID, "OAuth2 client ID to authenticate as")
 	authCmd.AddCommand(authLoginCmd)
 }
 
 func runAuthLogin(cmd *cobra.Command, _ []string) error {
-	_, err := performDeviceLogin(cmd.Context(), loginClientID, loginOrg)
+	_, err := performDeviceLogin(cmd.Context(), loginClientID)
 	return err
 }
 
@@ -61,7 +53,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 //
 // ctx bounds the whole interactive flow, so callers should pass a long-lived
 // context (e.g. the command context), not a short per-request timeout.
-func performDeviceLogin(ctx context.Context, clientID, org string) (*auth.StoredToken, error) {
+func performDeviceLogin(ctx context.Context, clientID string) (*auth.StoredToken, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 	}
@@ -81,9 +73,8 @@ func performDeviceLogin(ctx context.Context, clientID, org string) (*auth.Stored
 	}
 
 	// Step 2: send the user to the verification page. The browser URL carries
-	// the user_code, so the happy path needs no manual entry. --org is appended
-	// as a hint for the verification page to preselect the organization.
-	browseURL := withOrgHint(da.VerificationURIComplete, org)
+	// the user_code, so the happy path needs no manual entry.
+	browseURL := da.VerificationURIComplete
 	opened := auth.OpenBrowser(browseURL) == nil
 	printVerificationInstructions(da, browseURL, opened)
 
@@ -110,22 +101,6 @@ func performDeviceLogin(ctx context.Context, clientID, org string) (*auth.Stored
 
 	printLoginSuccess(stored)
 	return stored, nil
-}
-
-// withOrgHint appends an `org` query parameter to the verification URL when an
-// org slug was supplied. A parse failure returns the URL unchanged.
-func withOrgHint(rawURL, org string) string {
-	if org == "" {
-		return rawURL
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	q := u.Query()
-	q.Set("org", org)
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 // printVerificationInstructions tells the user where to authenticate, covering
