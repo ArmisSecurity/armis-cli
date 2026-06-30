@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,11 @@ var (
 	clientID     string
 	clientSecret string
 	region       string
+
+	// credFlagsExplicit is set in PersistentPreRunE when the user passed
+	// --client-id/--client-secret/--token explicitly. It lets those flags
+	// override a stored SSO token in getAuthProvider.
+	credFlagsExplicit bool
 
 	version = versionDev
 	commit  = "none"
@@ -129,6 +135,12 @@ var rootCmd = &cobra.Command{
 		if !cmd.Flags().Changed("client-secret") {
 			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
 		}
+		// Record whether the user explicitly passed credential flags. When they
+		// did, those flags take precedence over any stored SSO token (an escape
+		// hatch for forcing client-credentials/Basic auth without logging out).
+		credFlagsExplicit = cmd.Flags().Changed("client-id") ||
+			cmd.Flags().Changed("client-secret") ||
+			cmd.Flags().Changed("token")
 		if !cmd.Flags().Changed("region") {
 			region = os.Getenv("ARMIS_REGION")
 		}
@@ -396,10 +408,26 @@ func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) s
 	return getAPIBaseURL()
 }
 
-// getAuthProvider creates an AuthProvider based on the provided credentials.
-// Priority: JWT auth (--client-id, --client-secret) > Basic auth (--token)
+// getAuthProvider creates an AuthProvider based on the available credentials.
+//
+// Resolution order (PPSC-1037):
+//  1. Stored SSO token (keychain / fallback file) from `armis-cli auth login`,
+//     unless the user explicitly passed --client-id/--client-secret/--token,
+//     which act as an escape hatch to force the credential path.
+//  2. Client credentials (--client-id/--client-secret or ARMIS_CLIENT_ID/SECRET).
+//  3. Legacy --token (Basic auth).
+//  4. Otherwise an error pointing at `auth login` / env credentials.
+//
+// CI/CD is unaffected: with no stored token, resolution falls straight through
+// to env-var client credentials exactly as before.
 func getAuthProvider() (*auth.AuthProvider, error) {
-	return auth.NewAuthProvider(auth.AuthConfig{
+	if !credFlagsExplicit {
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+	}
+
+	provider, err := auth.NewAuthProvider(auth.AuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		BaseURL:      getAPIBaseURL(),
@@ -408,6 +436,50 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		TenantID:     tenantID,
 		Debug:        debug,
 	})
+	if err != nil {
+		// Improve the no-credentials message to mention SSO login.
+		return nil, augmentNoCredentialsError(err)
+	}
+	return provider, nil
+}
+
+// storedAuthProvider builds an SSO-backed AuthProvider from a previously stored
+// device-flow token, or returns ok=false when none is present (or it cannot be
+// used), so callers fall through to credential-based auth.
+func storedAuthProvider() (*auth.AuthProvider, bool) {
+	// The environment key is the resolved API base URL, so each environment
+	// (prod, dev, a local stack) has its own token entry. This is also where
+	// the refresh grant is sent, so the token's own issuer is not consulted.
+	env := getAPIBaseURL()
+
+	store := auth.NewTokenStore()
+	stored, err := store.Load(env)
+	if err != nil || stored == nil {
+		return nil, false
+	}
+
+	deviceClient, err := auth.NewDeviceClient(env, debug)
+	if err != nil {
+		return nil, false
+	}
+	provider, err := auth.NewProviderFromStored(store, deviceClient, env, stored)
+	if err != nil {
+		return nil, false
+	}
+	return provider, true
+}
+
+// augmentNoCredentialsError replaces the auth package's generic
+// "authentication required" error with a CLI-friendly, browser-login-first list
+// of options. Other errors pass through unchanged.
+func augmentNoCredentialsError(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "authentication required") {
+		return err
+	}
+	return fmt.Errorf("not authenticated — use one of the following options:\n" +
+		"  - run 'armis-cli auth login' to sign in with your company IdP\n" +
+		"  - or set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET (or --client-id / --client-secret) for JWT auth\n" +
+		"  - or set ARMIS_API_TOKEN (or --token) for legacy auth")
 }
 
 func getPageLimit() (int, error) {
