@@ -64,6 +64,14 @@ inputs:
     description: 'Build CLI from source instead of downloading release (for testing)'
     required: false
     default: 'false'
+  pr-comment:
+    description: 'Post a branded PR comment via the Armis backend (requires the armis-appsec GitHub App installed on the repo). Only runs on pull_request events. Requires a persisted SARIF file: keep the default format (sarif) and set output-file (e.g. armis-results.sarif), otherwise the comment is skipped.'
+    required: false
+    default: 'false'
+  api-url:
+    description: 'Override the Armis API base URL (advanced; defaults to region-derived or production). Equivalent to ARMIS_API_URL.'
+    required: false
+    default: ''
 
 outputs:
   results:
@@ -166,6 +174,7 @@ runs:
         INPUT_REGION: ${{ inputs.region }}
         INPUT_API_TOKEN: ${{ inputs.api-token }}
         INPUT_TENANT_ID: ${{ inputs.tenant-id }}
+        INPUT_API_URL: ${{ inputs.api-url }}
         SCAN_TYPE: ${{ inputs.scan-type }}
         SCAN_TARGET: ${{ inputs.scan-target }}
         OUTPUT_FORMAT: ${{ inputs.format }}
@@ -185,6 +194,7 @@ runs:
         if [ -n "$INPUT_REGION" ]; then export ARMIS_REGION="$INPUT_REGION"; fi
         if [ -n "$INPUT_API_TOKEN" ]; then export ARMIS_API_TOKEN="$INPUT_API_TOKEN"; fi
         if [ -n "$INPUT_TENANT_ID" ]; then export ARMIS_TENANT_ID="$INPUT_TENANT_ID"; fi
+        if [ -n "$INPUT_API_URL" ]; then export ARMIS_API_URL="$INPUT_API_URL"; fi
 
         # Validate authentication: require JWT (client-id + client-secret) OR Basic (api-token + tenant-id)
         if [ -n "$ARMIS_CLIENT_ID" ] && [ -z "$ARMIS_CLIENT_SECRET" ]; then
@@ -261,3 +271,136 @@ runs:
         echo "EOF" >> $GITHUB_OUTPUT
 
         exit $SCAN_EXIT_CODE
+
+    - name: Post Branded PR Comment
+      # Only on pull requests when explicitly enabled. Requires the armis-appsec
+      # GitHub App installed on the target repo (server-side branded comment).
+      # always() so the comment is still posted when the scan step exits non-zero
+      # (e.g. findings exceeded --fail-on), matching the prior workflow behavior.
+      if: always() && inputs.pr-comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
+        INPUT_API_TOKEN: ${{ inputs.api-token }}
+        INPUT_REGION: ${{ inputs.region }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+      run: |
+        # Commenting must NEVER fail the build: soft-fail everywhere (warn + exit 0).
+        set +e
+
+        warn() { echo "::warning::Armis branded PR comment skipped: $1"; exit 0; }
+
+        # Keep the request payload (full SARIF) and response private and transient:
+        # mktemp + an EXIT trap guarantees cleanup even on an early warn (exit 0), so
+        # these never linger in the workspace for later steps to pick up.
+        PAYLOAD_FILE=$(mktemp)
+        RESPONSE_FILE=$(mktemp)
+        chmod 600 "$PAYLOAD_FILE" "$RESPONSE_FILE"
+        trap 'rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"' EXIT
+
+        # 1. Resolve API base URL: ARMIS_API_URL/api-url override -> region -> production.
+        # The base URL comes from operator-controlled action config (not PR content);
+        # we still require HTTPS for ALL base URLs so the credential sent below can
+        # never traverse plaintext. This is stricter than the CLI's NewAuthClient,
+        # which additionally permits http://localhost / http://127.0.0.1 for local
+        # development — an exception that has no use case in CI.
+        # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), HTTPS-enforced; not derived from untrusted request data
+        BASE_URL="${INPUT_API_URL:-${ARMIS_API_URL:-}}"
+        if [ -z "$BASE_URL" ]; then
+          if [ -n "$INPUT_REGION" ]; then
+            if echo "$INPUT_REGION" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
+              BASE_URL="https://moose.${INPUT_REGION}.armis.com"
+            else
+              warn "invalid region '$INPUT_REGION'"
+            fi
+          else
+            BASE_URL="https://moose.armis.com"
+          fi
+        fi
+        BASE_URL="${BASE_URL%/}"
+        # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), HTTPS-enforced here; not derived from untrusted request data
+        case "$BASE_URL" in
+          https://*) ;;
+          *) warn "API base URL must use HTTPS (got '${BASE_URL%%:*}://...')" ;;
+        esac
+
+        # 2. Locate the SARIF file produced by the scan step.
+        SARIF_FILE="${INPUT_OUTPUT_FILE:-armis-results.sarif}"
+        if [ ! -s "$SARIF_FILE" ]; then
+          warn "SARIF file '$SARIF_FILE' is missing or empty — pr-comment needs a persisted SARIF file (keep format: sarif and set output-file)"
+        fi
+        if ! jq -e '.runs' "$SARIF_FILE" > /dev/null 2>&1; then
+          warn "SARIF file '$SARIF_FILE' has no 'runs' key"
+        fi
+
+        # 3. Resolve repo and PR number (composite actions lack github.event.* context).
+        REPO="$GITHUB_REPOSITORY"
+        if ! echo "$REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+          warn "unexpected repository name '$REPO'"
+        fi
+        PR_NUMBER=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH" 2>/dev/null)
+        if ! echo "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then
+          warn "could not determine pull request number"
+        fi
+
+        # 4. Build the Authorization header.
+        #    Prefer JWT (exchange client-id/secret); fall back to Basic api-token.
+        AUTH=""
+        if [ -n "$INPUT_CLIENT_ID" ] && [ -n "$INPUT_CLIENT_SECRET" ]; then
+          # Write the credential payload to a private file and send it via @file so the
+          # client secret never appears on the curl command line (process list / /proc).
+          TOKEN_REQ_FILE=$(mktemp)
+          chmod 600 "$TOKEN_REQ_FILE"
+          if [ -n "$INPUT_REGION" ]; then
+            jq -n --arg id "$INPUT_CLIENT_ID" --arg secret "$INPUT_CLIENT_SECRET" --arg region "$INPUT_REGION" \
+              '{client_id:$id, client_secret:$secret, region:$region}' > "$TOKEN_REQ_FILE"
+          else
+            jq -n --arg id "$INPUT_CLIENT_ID" --arg secret "$INPUT_CLIENT_SECRET" \
+              '{client_id:$id, client_secret:$secret}' > "$TOKEN_REQ_FILE"
+          fi
+          TOKEN_RESP=$(curl -sS --max-time 30 -X POST "${BASE_URL}/api/v1/auth/token" \
+            -H 'Content-Type: application/json' --data-binary @"$TOKEN_REQ_FILE")
+          rm -f "$TOKEN_REQ_FILE"
+          JWT=$(echo "$TOKEN_RESP" | jq -r '.token // empty' 2>/dev/null)
+          if [ -z "$JWT" ]; then
+            warn "JWT token exchange failed (check client-id/client-secret)"
+          fi
+          AUTH="Bearer ${JWT}"
+        elif [ -n "$INPUT_API_TOKEN" ]; then
+          # Backend compares the value after 'Basic ' verbatim (not base64-encoded),
+          # matching the CLI's own scheme; base64-encoding would break authentication.
+          # Sent over HTTPS only (enforced above); never logged.
+          # armis:ignore cwe:522 reason:Basic scheme requires the raw token in the header per the backend contract (verbatim hmac compare); sent over HTTPS, never echoed
+          AUTH="Basic ${INPUT_API_TOKEN}"
+        else
+          warn "no credentials provided (set client-id/client-secret or api-token)"
+        fi
+
+        # 5. Build the request payload safely (no string interpolation of SARIF).
+        if ! jq -n --arg repo "$REPO" --argjson pr "$PR_NUMBER" --slurpfile sarif "$SARIF_FILE" \
+          '{repo:$repo, pr_number:$pr, sarif:$sarif[0]}' > "$PAYLOAD_FILE" 2>/dev/null; then
+          warn "failed to build request payload"
+        fi
+
+        # 6. POST to the branded-comment webhook.
+        HTTP_CODE=$(curl -sS --max-time 60 -o "$RESPONSE_FILE" -w '%{http_code}' \
+          -X POST "${BASE_URL}/api/v1/webhook/pr-comment" \
+          -H "Authorization: ${AUTH}" \
+          -H 'Content-Type: application/json' \
+          --data-binary @"$PAYLOAD_FILE")
+        CURL_EXIT=$?
+
+        if [ "$CURL_EXIT" -ne 0 ]; then
+          warn "request to backend failed (curl exit $CURL_EXIT)"
+        fi
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          DETAIL=$(jq -r '.detail // empty' "$RESPONSE_FILE" 2>/dev/null)
+          warn "backend returned HTTP $HTTP_CODE${DETAIL:+ ($DETAIL)}"
+        fi
+
+        COMMENT_URL=$(jq -r '.comment_url // empty' "$RESPONSE_FILE" 2>/dev/null)
+        echo "Branded PR comment posted: ${COMMENT_URL:-ok}"

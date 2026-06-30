@@ -9,11 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GitHub Action: new `pr-comment` input posts a branded PR comment (as `armis-appsec[bot]`) by sending the scan's SARIF to the Armis backend for server-side formatting. Requires the `armis-appsec` GitHub App installed on the repository. Authentication reuses existing `client-id`/`client-secret` (JWT) or `api-token` (Basic) credentials, and commenting failures never fail the build. (PPSC-556)
+- GitHub Action: new `api-url` input to override the Armis API base URL (equivalent to `ARMIS_API_URL`). (PPSC-556)
+
 ### Changed
+
+- Reusable security-scan workflow now delegates PR commenting to the Armis action's branded backend flow instead of formatting comments in-workflow, giving consistent branding across the bot-assignment and Action integrations. (PPSC-556)
 
 ### Deprecated
 
 ### Removed
+
+- Reusable security-scan workflow: removed the ~130-line `actions/github-script` block that formatted PR comments client-side (superseded by server-side branded comments). (PPSC-556)
 
 ### Fixed
 
