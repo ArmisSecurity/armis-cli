@@ -102,18 +102,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	var size int64
-	var tarFunc func() error
+	var rawSize int64
+	var tarFunc func(io.Writer) error
 	var suppressionConfig *SuppressionConfig
-
-	pr, pw := io.Pipe()
-	// The pipe reader is deferred-closed to ensure cleanup on all code paths.
-	// Error is intentionally ignored (nolint:errcheck) because:
-	// 1. PipeReader.Close() rarely returns meaningful errors
-	// 2. The critical close is PipeWriter.Close() which signals EOF to the reader
-	// 3. Any actual read errors will surface through the main error flow
-	// armis:ignore cwe:253 reason:PipeReader.Close rarely returns meaningful errors; critical close is PipeWriter
-	defer pr.Close() //nolint:errcheck
 
 	if s.includeFiles != nil {
 		// Targeted file scanning mode — only load suppression directives from root
@@ -134,15 +125,13 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 
 		var sizeErr error
-		size, sizeErr = calculateFilesSize(absPath, existing)
+		rawSize, sizeErr = calculateFilesSize(absPath, existing)
 		if sizeErr != nil {
 			return nil, fmt.Errorf("failed to calculate files size: %w", sizeErr)
 		}
 
-		tarFunc = func() error {
-			// armis:ignore cwe:253 reason:pw.Close signals EOF to pipe reader; error not actionable in deferred cleanup
-			defer pw.Close() //nolint:errcheck // signals EOF to reader
-			return s.tarGzFiles(absPath, existing, pw)
+		tarFunc = func(w io.Writer) error {
+			return s.tarGzFiles(absPath, existing, w)
 		}
 	} else {
 		// Full directory scanning mode — walk tree for both ignore patterns and directives.
@@ -153,39 +142,65 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		suppressionConfig = suppCfg
 
 		var sizeErr error
-		size, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		rawSize, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
 		if sizeErr != nil {
 			return nil, fmt.Errorf("failed to calculate directory size: %w", sizeErr)
 		}
 
-		tarFunc = func() error {
-			defer pw.Close() //nolint:errcheck // signals EOF to reader
-			return s.tarGzDirectory(absPath, pw, ignoreMatcher)
+		tarFunc = func(w io.Writer) error {
+			return s.tarGzDirectory(absPath, w, ignoreMatcher)
 		}
 	}
 
-	if size > MaxRepoSize {
-		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", size, MaxRepoSize)
+	if rawSize > MaxRepoSize {
+		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", rawSize, MaxRepoSize)
 	}
 
 	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
-	errChan := make(chan error, 1)
-	go func() {
-		// Security: Check context before starting expensive tar operation
-		// to prevent resource leaks if context is already canceled.
-		select {
-		case <-ctx.Done():
-			// armis:ignore cwe:253 reason:pw.Close error not actionable in cancellation path; purpose is to unblock reader
-			pw.Close() //nolint:errcheck,gosec // Close pipe to unblock StartIngest
-			errChan <- ctx.Err()
-			return
-		default:
+	// Write the tar.gz to a temp file first, then upload from disk. Real S3
+	// requires Content-Length on POST, so we need to know the *compressed*
+	// body size before sending — gzip output size isn't known up front.
+	// Disk-based buffering also makes the upload retryable in the future
+	// without re-tarring.
+	tmpFile, err := os.CreateTemp("", "armis-repo-*.tar.gz")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp tarball: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFileClosed := false
+	defer func() {
+		// Best-effort close on early-exit paths (errors before the explicit
+		// Close below). Any close error here is irrelevant because we're
+		// already returning a different error. The post-upload Close is
+		// handled explicitly so its error is surfaced.
+		if !tmpFileClosed {
+			_ = tmpFile.Close()
 		}
-		errChan <- tarFunc()
+		_ = os.Remove(tmpPath)
 	}()
+
+	// Honor cancellation before starting the tar walk.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if tarErr := tarFunc(tmpFile); tarErr != nil {
+		return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return nil, fmt.Errorf("failed to flush tarball: %w", err)
+	}
+	tarInfo, err := tmpFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat tarball: %w", err)
+	}
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to rewind tarball: %w", err)
+	}
 
 	spinner.Update("Uploading to Armis Cloud...")
 
@@ -193,8 +208,8 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		TenantID:     s.tenantID,
 		ArtifactType: "repo",
 		Filename:     filepath.Base(absPath) + ".tar.gz",
-		Data:         pr,
-		Size:         size,
+		Data:         tmpFile,
+		Size:         tarInfo.Size(),
 	}
 	if s.sbomVEXOpts != nil {
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
@@ -206,8 +221,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
 	}
 
-	if tarErr := <-errChan; tarErr != nil {
-		return nil, fmt.Errorf("failed to tar directory: %w", tarErr)
+	// Close the tarball explicitly now that StartIngest has finished reading it.
+	// A failure here means buffered writes never reached disk; the upload
+	// already succeeded so the bytes on S3 are fine, but flagging this lets
+	// the user know that something is off with their local environment
+	// (e.g. disk full, network filesystem disconnect) rather than swallowing
+	// it silently in the deferred cleanup.
+	tmpFileClosed = true
+	if err := tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp tarball: %w", err)
 	}
 
 	spinner.Stop()

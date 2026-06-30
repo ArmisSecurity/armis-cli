@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -524,42 +523,53 @@ func TestScanTarball(t *testing.T) {
 		// Create a temporary tarball
 		tmpDir := t.TempDir()
 		tarballPath := filepath.Join(tmpDir, "test-image.tar")
-		if err := os.WriteFile(tarballPath, []byte("fake tarball content"), 0600); err != nil {
-			t.Fatalf("failed to create test tarball: %v", err)
-		}
+		testhelpers.WriteMinimalTar(t, tarballPath)
 
-		// Create mock server
-		requestCount := 0
+		// Create mock server. The new ingest flow has 3 calls
+		// (presigned-url + S3 multipart POST + scan).
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			requestCount++
-
 			switch {
-			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
-				// StartIngest
-				response := model.IngestUploadResponse{
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 					ScanID:       "scan-123",
 					ArtifactType: "image",
 					TenantID:     "tenant-456",
-					Filename:     "test-image.tar",
-					Message:      "Upload successful",
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+					PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{
+						"key":             "ingest/tenant-456/scan-123/test-image.tar",
+						"policy":          "test-policy",
+						"x-amz-signature": "test-sig",
+					},
+					MaxUploadBytes: 2 << 30,
+					ExpiresIn:      1800,
+				})
+
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				testutil.AssertValidS3Upload(t, r)
+				w.WriteHeader(http.StatusNoContent)
+
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID:       "scan-123",
+					ScanStatus:   "INITIATED",
+					ArtifactType: "image",
+					TenantID:     "tenant-456",
+					Filename:     "test-image",
+					Message:      "Upload confirmed and scan initiated successfully",
+				})
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
-				// WaitForIngest
-				response := model.IngestStatusResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
 					Data: []model.IngestStatusData{
-						{
-							ScanID:     "scan-123",
-							ScanStatus: "completed",
-						},
+						{ScanID: "scan-123", ScanStatus: "completed"},
 					},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
-				// FetchAllNormalizedResults
-				response := model.NormalizedResultsResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
 					Data: model.NormalizedResultsData{
 						TenantID: "tenant-456",
 						ScanResults: []model.ScanResultData{
@@ -583,8 +593,7 @@ func TestScanTarball(t *testing.T) {
 							},
 						},
 					},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 
 			default:
 				t.Errorf("Unexpected request path: %s", r.URL.Path)
@@ -592,9 +601,12 @@ func TestScanTarball(t *testing.T) {
 			}
 		})
 
-		// Create API client pointing to mock server
+		// Create API client pointing to mock server. allowLocalURLs is set
+		// so the SSRF guard accepts the test server's host as the S3 endpoint.
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -653,9 +665,7 @@ func TestScanTarball(t *testing.T) {
 	t.Run("fails on upload error", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tarballPath := filepath.Join(tmpDir, "test-image.tar")
-		if err := os.WriteFile(tarballPath, []byte("fake tarball content"), 0600); err != nil {
-			t.Fatalf("failed to create test tarball: %v", err)
-		}
+		testhelpers.WriteMinimalTar(t, tarballPath)
 
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			testutil.ErrorResponse(w, http.StatusInternalServerError, "Upload failed")
@@ -680,32 +690,36 @@ func TestScanTarball(t *testing.T) {
 	t.Run("fails on scan timeout", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tarballPath := filepath.Join(tmpDir, "test-image.tar")
-		if err := os.WriteFile(tarballPath, []byte("fake tarball content"), 0600); err != nil {
-			t.Fatalf("failed to create test tarball: %v", err)
-		}
+		testhelpers.WriteMinimalTar(t, tarballPath)
 
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if strings.Contains(r.URL.Path, "/api/v1/ingest/tar") {
-				response := model.IngestUploadResponse{
-					ScanID: "scan-123",
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
-			} else if strings.Contains(r.URL.Path, "/api/v1/ingest/status") {
-				// Always return processing to simulate timeout
-				response := model.IngestStatusResponse{
-					Data: []model.IngestStatusData{
-						{
-							ScanID:     "scan-123",
-							ScanStatus: "processing",
-						},
-					},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+			switch {
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+					ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{"key": "k"}, MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
+				})
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				testutil.AssertValidS3Upload(t, r)
+				w.WriteHeader(http.StatusNoContent)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID: "scan-123", ScanStatus: "INITIATED",
+				})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "processing"}},
+				})
 			}
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -720,27 +734,38 @@ func TestScanTarball(t *testing.T) {
 	t.Run("fails on fetch results error", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tarballPath := filepath.Join(tmpDir, "test-image.tar")
-		if err := os.WriteFile(tarballPath, []byte("fake tarball content"), 0600); err != nil {
-			t.Fatalf("failed to create test tarball: %v", err)
-		}
+		testhelpers.WriteMinimalTar(t, tarballPath)
 
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			switch {
-			case strings.Contains(r.URL.Path, "/api/v1/ingest/tar"):
-				response := model.IngestUploadResponse{ScanID: "scan-123"}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				testutil.AssertHasAuthorization(t, r)
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+					ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{"key": "k"}, MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
+				})
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				testutil.AssertValidS3Upload(t, r)
+				w.WriteHeader(http.StatusNoContent)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.AssertHasAuthorization(t, r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID: "scan-123", ScanStatus: "INITIATED",
+				})
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
-				response := model.IngestStatusResponse{
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
 					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "completed"}},
-				}
-				testutil.JSONResponse(t, w, http.StatusOK, response)
+				})
 			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
 				testutil.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch results")
 			}
 		})
 
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
-		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, api.WithHTTPClient(httpClient))
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
@@ -761,9 +786,7 @@ func TestScanTarball(t *testing.T) {
 	t.Run("respects context cancellation", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tarballPath := filepath.Join(tmpDir, "test-image.tar")
-		if err := os.WriteFile(tarballPath, []byte("fake tarball content"), 0600); err != nil {
-			t.Fatalf("failed to create test tarball: %v", err)
-		}
+		testhelpers.WriteMinimalTar(t, tarballPath)
 
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			// Delay to ensure context cancellation takes effect
@@ -859,4 +882,57 @@ func TestScanTarballEdgeCases(t *testing.T) {
 			t.Error("Expected error when path is a directory")
 		}
 	})
+}
+
+// TestScanTarball_ServerCapRejection verifies that the image scanner
+// surfaces the orchestrator's server-side max_upload_bytes pre-check.
+// Image's local MaxImageSize (5 GB) is wider than the server's default
+// (2 GB); without this pre-check, a 3 GB image would only fail after a
+// fruitless upload attempt.
+func TestScanTarball_ServerCapRejection(t *testing.T) {
+	tmpDir := t.TempDir()
+	tarballPath := filepath.Join(tmpDir, "big-image.tar")
+	testhelpers.WriteMinimalTar(t, tarballPath)
+
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+			testutil.AssertHasAuthorization(t, r)
+			scheme := testhelpers.SchemeFromRequest(r)
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:       "scan-cap",
+				ArtifactType: "image",
+				TenantID:     "tenant-456",
+				PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+				// Tiny cap → orchestrator rejects locally before uploading.
+				Fields:         map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+				MaxUploadBytes: 32,
+				ExpiresIn:      1800,
+			})
+		case strings.HasPrefix(r.URL.Path, "/_s3/"):
+			t.Errorf("S3 must not be called when upload exceeds server cap")
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+			t.Errorf("/scan must not be called when upload exceeds server cap")
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-cap"})
+		}
+	})
+
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+		api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).
+		WithPollInterval(10 * time.Millisecond)
+
+	_, err = scanner.ScanTarball(context.Background(), tarballPath)
+	if err == nil {
+		t.Fatal("expected error from server-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "exceeds server limit") {
+		t.Errorf("expected 'exceeds server limit' error, got: %v", err)
+	}
 }

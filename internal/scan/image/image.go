@@ -129,6 +129,13 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 	tarballPath = sanitizedPath
 
+	// Reject malformed tarballs locally — saves an upload of garbage to S3 and
+	// gives the user a clear "not a tar archive" error instead of a vague
+	// extraction failure later in the scan pipeline.
+	if err := scan.ValidateTarballFormat(tarballPath); err != nil {
+		return nil, fmt.Errorf("invalid tarball: %w", err)
+	}
+
 	info, err := os.Stat(tarballPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat tarball: %w", err)

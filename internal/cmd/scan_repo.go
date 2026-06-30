@@ -59,6 +59,13 @@ var scanRepoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Defensive nil-check. getAuthProvider returns (nil, err) on
+		// failure and (non-nil, nil) on success — the explicit guard
+		// here exists so a future refactor can't silently slip a nil
+		// past the err check and crash the API client constructor.
+		if authProvider == nil {
+			return fmt.Errorf("internal error: nil auth provider")
+		}
 
 		tid, err := authProvider.GetTenantID(cmd.Context())
 		if err != nil {
@@ -76,7 +83,8 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		baseURL := resolveDataPlaneURL(cmd.Context(), authProvider)
-		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute,
+			clientOptionsForBaseURL(baseURL)...)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}

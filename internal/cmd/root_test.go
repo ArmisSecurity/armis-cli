@@ -875,3 +875,35 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 		t.Error("expected error when no credentials are provided")
 	}
 }
+
+// TestClientOptionsForBaseURL guards a production-config invariant: the new
+// presigned-URL flow's SSRF allowlist (api.ValidatePresignedURL) is only
+// relaxed via WithAllowLocalURLs(true), and that option must ONLY be
+// returned for localhost-bound base URLs. A regression here would
+// silently weaken production SSRF protection.
+func TestClientOptionsForBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		want    bool // true = expect WithAllowLocalURLs(true) in result
+	}{
+		{"localhost http", "http://localhost:8080", true},
+		{"localhost https", "https://localhost:8443", true},
+		{"127.0.0.1", "http://127.0.0.1:8001", true},
+		{"prod https", "https://api.armis.com", false},
+		{"dev https", "https://moose-dev.armis.com", false},
+		{"stg https", "https://moose-stg.armis.com", false},
+		{"empty", "", false},
+		{"unparseable", "://nope", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clientOptionsForBaseURL(tc.baseURL)
+			has := len(got) > 0
+			if has != tc.want {
+				t.Errorf("clientOptionsForBaseURL(%q) returned %d options (has=%v), want has=%v",
+					tc.baseURL, len(got), has, tc.want)
+			}
+		})
+	}
+}
