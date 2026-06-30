@@ -404,6 +404,72 @@ func TestSummarizeDetectedPMs(t *testing.T) {
 	}
 }
 
+// TestPowerShellSkippedDottedPMs verifies the helper that drives the init-time
+// note about pip variants PowerShell can't wrap: it reports dotted PM names only
+// when a PowerShell shell is among those detected, and stays silent on a
+// POSIX/fish-only machine (where dotted variants wrap fine).
+func TestPowerShellSkippedDottedPMs(t *testing.T) {
+	pwsh := []supplychain.Shell{{Name: "pwsh", RCFile: "/p/profile.ps1"}}
+	posix := []supplychain.Shell{{Name: "bash", RCFile: "/h/.bashrc"}}
+	mixed := []supplychain.Shell{
+		{Name: "zsh", RCFile: "/h/.zshrc"},
+		{Name: "powershell", RCFile: "/p/profile.ps1"},
+	}
+
+	tests := []struct {
+		name   string
+		pms    []string
+		shells []supplychain.Shell
+		want   []string
+	}{
+		{
+			name:   "powershell detected with a dotted variant",
+			pms:    []string{"npm", "pip", "pip3", "pip3.12"},
+			shells: pwsh,
+			want:   []string{"pip3.12"},
+		},
+		{
+			name:   "multiple dotted variants are all reported",
+			pms:    []string{"pip3.11", "pip3.12"},
+			shells: pwsh,
+			want:   []string{"pip3.11", "pip3.12"},
+		},
+		{
+			name:   "powershell among mixed shells still reports",
+			pms:    []string{"pip", "pip3.10"},
+			shells: mixed,
+			want:   []string{"pip3.10"},
+		},
+		{
+			name:   "no powershell means no note even with a dotted variant",
+			pms:    []string{"pip", "pip3.12"},
+			shells: posix,
+			want:   nil,
+		},
+		{
+			name:   "powershell but no dotted variant is silent",
+			pms:    []string{"npm", "pip", "pip3"},
+			shells: pwsh,
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := powerShellSkippedDottedPMs(tt.pms, tt.shells)
+			if len(got) != len(tt.want) {
+				t.Fatalf("powerShellSkippedDottedPMs = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("powerShellSkippedDottedPMs = %v, want %v", got, tt.want)
+					break
+				}
+			}
+		})
+	}
+}
+
 func TestExtractScope(t *testing.T) {
 	tests := []struct {
 		name string

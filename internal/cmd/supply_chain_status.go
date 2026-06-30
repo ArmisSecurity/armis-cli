@@ -375,7 +375,7 @@ func runSupplyChainStatusJSON(dir string) error {
 		result.Ecosystems = []statusEcosystemJSON{}
 	}
 
-	// armis:ignore cwe:770 reason:DetectShells returns at most one entry per known shell (bash/zsh/fish); the result set is bounded by a fixed allowlist, not by attacker input
+	// armis:ignore cwe:770 reason:DetectShells returns at most one entry per known shell (bash/zsh/fish/powershell); the result set is bounded by a fixed allowlist, not by attacker input
 	shells := supplychain.DetectShells()
 	for _, sh := range shells {
 		active := supplychain.HasInjection(sh.RCFile)

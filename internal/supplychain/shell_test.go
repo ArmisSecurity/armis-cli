@@ -39,6 +39,77 @@ func TestGenerateWrapper_Fish(t *testing.T) {
 	}
 }
 
+// TestGenerateWrapper_PowerShell verifies the PowerShell wrapper carries the
+// marker block and emits a `function npm {` declaration that routes through
+// `supply-chain wrap npm @args`. Both PowerShell editions (pwsh and Windows
+// PowerShell) must produce byte-identical output — the syntax is the same and
+// only profile-path selection differs in DetectShells.
+func TestGenerateWrapper_PowerShell(t *testing.T) {
+	wrapper := GenerateWrapper(shellPwsh, []string{"npm"})
+
+	if !strings.Contains(wrapper, markerStart) {
+		t.Error("missing start marker")
+	}
+	if !strings.Contains(wrapper, markerEnd) {
+		t.Error("missing end marker")
+	}
+	if !strings.Contains(wrapper, "function npm {") {
+		t.Errorf("missing PowerShell function declaration:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "supply-chain wrap npm @args") {
+		t.Errorf("unexpected PowerShell wrapper: %s", wrapper)
+	}
+
+	// pwsh and powershell are the same script; only the profile path differs.
+	if other := GenerateWrapper(shellWindowsPowerShell, []string{"npm"}); other != wrapper {
+		t.Errorf("pwsh and powershell wrappers differ:\npwsh:\n%s\npowershell:\n%s", wrapper, other)
+	}
+}
+
+// TestGenerateWrapper_PowerShellContainsGuard verifies the PowerShell wrapper is
+// fail-closed and recursion-safe: it resolves armis-cli via `Get-Command
+// -CommandType Application` (which bypasses the wrapper function itself), warns
+// on real stderr via [Console]::Error.WriteLine when the binary is missing, and
+// falls back to running the real package manager through its Application
+// resolution so an install never silently breaks after an armis-cli upgrade.
+func TestGenerateWrapper_PowerShellContainsGuard(t *testing.T) {
+	wrapper := GenerateWrapper(shellPwsh, []string{"npm"})
+
+	if !strings.Contains(wrapper, "Get-Command") {
+		t.Errorf("PowerShell wrapper missing `Get-Command` guard:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "-CommandType Application") {
+		t.Errorf("PowerShell wrapper missing `-CommandType Application` recursion guard:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "armis-cli not found") {
+		t.Errorf("PowerShell wrapper missing the missing-binary warning:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "[Console]::Error.WriteLine") {
+		t.Errorf("PowerShell wrapper must warn on real stderr via [Console]::Error.WriteLine:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "& (Get-Command npm -CommandType Application).Source @args") {
+		t.Errorf("PowerShell wrapper missing the un-wrapped fallback for npm:\n%s", wrapper)
+	}
+}
+
+// TestGenerateWrapper_PowerShellSkipsDottedNames verifies that a versioned pip
+// variant (pip3.12) is omitted from the PowerShell wrapper — PowerShell function
+// names cannot contain a dot — while the non-dotted pip and pip3 are still
+// emitted as wrapper functions.
+func TestGenerateWrapper_PowerShellSkipsDottedNames(t *testing.T) {
+	wrapper := GenerateWrapper(shellPwsh, []string{"pip", "pip3", "pip3.12"})
+
+	if strings.Contains(wrapper, "pip3.12") {
+		t.Errorf("PowerShell wrapper must skip the dotted variant pip3.12:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "function pip {") {
+		t.Errorf("PowerShell wrapper missing `function pip {`:\n%s", wrapper)
+	}
+	if !strings.Contains(wrapper, "function pip3 {") {
+		t.Errorf("PowerShell wrapper missing `function pip3 {`:\n%s", wrapper)
+	}
+}
+
 func TestGenerateWrapper_MultiplePMs(t *testing.T) {
 	wrapper := GenerateWrapper(shellZsh, []string{"npm", "npx"})
 
@@ -67,7 +138,7 @@ func TestGenerateWrapper_RejectsUnsafeNames(t *testing.T) {
 		"npm'quote", // embedded quote
 	}
 
-	for _, shell := range []string{shellBash, shellZsh, shellFish} {
+	for _, shell := range []string{shellBash, shellZsh, shellFish, shellPwsh, shellWindowsPowerShell} {
 		for _, name := range malicious {
 			wrapper := GenerateWrapper(shell, []string{name})
 			// The only content should be the marker block; the unsafe name must
@@ -488,8 +559,129 @@ func TestDetectShells(t *testing.T) {
 	t.Run("no RC files and no SHELL yields nothing", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("SHELL", "")
+		t.Setenv("PATH", "") // prevent pwsh on the runner's PATH from triggering PowerShell detection
 		if shells := DetectShells(); len(shells) != 0 {
 			t.Errorf("expected no shells for an empty home with no $SHELL, got %v", shells)
+		}
+	})
+}
+
+// TestDetectShells_PowerShell verifies pwsh is detected when its executable is on
+// PATH even though no profile file exists yet (the common first-run case). It is
+// gated to non-Windows because it seeds a POSIX-style $PATH and relies on the
+// non-Windows powershellProfiles layout (~/.config/powershell).
+func TestDetectShells_PowerShell(t *testing.T) {
+	if runtime.GOOS == goosWindows {
+		t.Skip("seeds a POSIX $PATH and the ~/.config/powershell layout; Windows uses a different profile path")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "") // no POSIX shell, so only the PowerShell pass can match
+
+	// Seed a pwsh executable on PATH; its profile is deliberately absent.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, shellPwsh), []byte{}, 0o755); err != nil { //nolint:gosec
+		t.Fatalf("seed pwsh: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	shells := DetectShells()
+	var found bool
+	for _, sh := range shells {
+		if sh.Name == shellPwsh {
+			found = true
+			// The profile path is the host-agnostic CurrentUserAllHosts profile.
+			want := filepath.Join(home, ".config", "powershell", "profile.ps1")
+			if sh.RCFile != want {
+				t.Errorf("pwsh RCFile = %q, want %q", sh.RCFile, want)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected pwsh among detected shells when on PATH, got %v", shells)
+	}
+}
+
+// TestDetectShells_PowerShellProfileExists verifies pwsh is detected when its
+// profile file already exists even though the executable is not on PATH — the
+// profile's presence alone qualifies it. Non-Windows-gated because it depends on
+// the ~/.config/powershell layout and a POSIX-style empty $PATH.
+func TestDetectShells_PowerShellProfileExists(t *testing.T) {
+	if runtime.GOOS == goosWindows {
+		t.Skip("depends on the ~/.config/powershell profile layout, which is Unix-only")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "")
+	t.Setenv("PATH", t.TempDir()) // empty dir: pwsh is NOT on PATH
+
+	// Create the profile so detection must qualify it via fileExists, not PATH.
+	profileDir := filepath.Join(home, ".config", "powershell")
+	if err := os.MkdirAll(profileDir, 0o750); err != nil {
+		t.Fatalf("mkdir profile dir: %v", err)
+	}
+	profile := filepath.Join(profileDir, "profile.ps1")
+	if err := os.WriteFile(profile, []byte("# profile\n"), 0o600); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	shells := DetectShells()
+	var found bool
+	for _, sh := range shells {
+		if sh.Name == shellPwsh && sh.RCFile == profile {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected pwsh detected via existing profile, got %v", shells)
+	}
+}
+
+// TestResolveWindowsDocumentsDir exercises the OneDrive-redirection resolution.
+// It is Windows-gated (like TestRemoveFunctions_PreservesPermissions skips
+// non-applicable platforms) because the helper only runs on the Windows
+// detection path and the Documents/OneDrive layout it resolves is Windows-shaped.
+func TestResolveWindowsDocumentsDir(t *testing.T) {
+	if runtime.GOOS != goosWindows {
+		t.Skip("resolveWindowsDocumentsDir is only used on the Windows detection path")
+	}
+
+	t.Run("prefers existing home Documents", func(t *testing.T) {
+		home := t.TempDir()
+		docs := filepath.Join(home, "Documents")
+		if err := os.MkdirAll(docs, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolveWindowsDocumentsDir(home); got != docs {
+			t.Errorf("resolveWindowsDocumentsDir = %q, want %q", got, docs)
+		}
+	})
+
+	t.Run("falls back to OneDrive Documents when home Documents is absent", func(t *testing.T) {
+		home := t.TempDir()         // no Documents subdir here
+		oneDriveRoot := t.TempDir() // simulate the OneDrive root
+		t.Setenv("OneDriveConsumer", "")
+		t.Setenv("OneDrive", oneDriveRoot)
+		t.Setenv("OneDriveCommercial", "")
+		odDocs := filepath.Join(oneDriveRoot, "Documents")
+		if err := os.MkdirAll(odDocs, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolveWindowsDocumentsDir(home); got != odDocs {
+			t.Errorf("resolveWindowsDocumentsDir = %q, want %q", got, odDocs)
+		}
+	})
+
+	t.Run("falls back to home Documents when nothing exists", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("OneDriveConsumer", "")
+		t.Setenv("OneDrive", "")
+		t.Setenv("OneDriveCommercial", "")
+		want := filepath.Join(home, "Documents")
+		if got := resolveWindowsDocumentsDir(home); got != want {
+			t.Errorf("resolveWindowsDocumentsDir = %q, want %q (not-yet-existing default)", got, want)
 		}
 	})
 }
@@ -568,12 +760,48 @@ func TestGenerateWrapper_AbsolutePathGuardChecksExecutable(t *testing.T) {
 	}
 }
 
+// TestShellReloadCommand verifies the per-shell reload hint: POSIX shells and
+// fish source the file, while both PowerShell editions dot-source it.
+func TestShellReloadCommand(t *testing.T) {
+	const rc = "/home/u/.rc"
+	tests := []struct {
+		shell string
+		want  string
+	}{
+		{shellBash, "source " + rc},
+		{shellZsh, "source " + rc},
+		{shellFish, "source " + rc},
+		{shellPwsh, ". '" + rc + "'"},
+		{shellWindowsPowerShell, ". '" + rc + "'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			if got := ShellReloadCommand(tt.shell, rc); got != tt.want {
+				t.Errorf("ShellReloadCommand(%q, %q) = %q, want %q", tt.shell, rc, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestGenerateWrapper_WarningReferencesPMName verifies the fallback warning names
 // the package manager the user actually invoked (not a hard-coded "npm"), for
 // every shell and including versioned pip variants.
 func TestGenerateWrapper_WarningReferencesPMName(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
 		for _, pm := range []string{"npm", "pip3.12", "poetry"} {
+			wrapper := GenerateWrapper(shell, []string{pm})
+			want := "running " + pm + " WITHOUT supply-chain enforcement"
+			if !strings.Contains(wrapper, want) {
+				t.Errorf("%s wrapper for %q missing PM name in warning %q:\n%s", shell, pm, want, wrapper)
+			}
+		}
+	}
+
+	// PowerShell cannot define dotted function names, so pip3.12 is skipped (covered
+	// by TestGenerateWrapper_PowerShellSkipsDottedNames). For the names it does wrap,
+	// the same per-PM warning must name the invoked command.
+	for _, shell := range []string{shellPwsh, shellWindowsPowerShell} {
+		for _, pm := range []string{"npm", "pip3", "poetry"} {
 			wrapper := GenerateWrapper(shell, []string{pm})
 			want := "running " + pm + " WITHOUT supply-chain enforcement"
 			if !strings.Contains(wrapper, want) {
@@ -639,6 +867,19 @@ func TestWrappedPMs(t *testing.T) {
 		rc := writeRC(t, GenerateWrapper(shellFish, []string{"npm", "uv", "uvx"}))
 		got := WrappedPMs(rc)
 		want := []string{"npm", "uv", "uvx"}
+		if !slices.Equal(got, want) {
+			t.Errorf("WrappedPMs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses the PMs from a PowerShell block", func(t *testing.T) {
+		// The wrappedPMLine regex matches `function name {` regardless of the
+		// trailing brace, so a PowerShell block round-trips through WrappedPMs the
+		// same way fish does. pip3.12 is skipped by the generator (dotted names are
+		// unsupported in PowerShell), so it must not appear in the parsed set.
+		rc := writeRC(t, GenerateWrapper(shellPwsh, []string{"npm", "pip", "pip3.12"}))
+		got := WrappedPMs(rc)
+		want := []string{"npm", "pip"}
 		if !slices.Equal(got, want) {
 			t.Errorf("WrappedPMs = %v, want %v", got, want)
 		}
