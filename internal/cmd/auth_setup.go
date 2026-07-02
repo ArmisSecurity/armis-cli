@@ -26,6 +26,10 @@ import (
 const (
 	roleAdmin     = "admin"
 	roleDeveloper = "developer"
+
+	// maxConfigBytes bounds a --config document read from stdin. A configuration
+	// is only a few hundred bytes; the cap guards against an unbounded pipe.
+	maxConfigBytes = 2 << 10 // 2 KiB
 )
 
 var (
@@ -732,6 +736,18 @@ type idpConfigInput struct {
 	Enabled          *bool               `json:"enabled"`
 }
 
+// readConfigFile reads an operator-supplied --config file, bounding the read to
+// maxConfigBytes so a path to a huge file cannot exhaust memory.
+func readConfigFile(path string) ([]byte, error) {
+	// armis:ignore cwe:22 reason:path is the --config value the operator running the CLI chose; reading their own file from any location is the intended behavior, not attacker-controlled input
+	f, err := os.Open(path) // #nosec G304 -- operator-supplied config path, read intentionally
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	return io.ReadAll(io.LimitReader(f, maxConfigBytes))
+}
+
 // loadIdpConfigFromJSON resolves --config (inline JSON, stdin, or a file path)
 // and decodes it. Unknown fields are rejected so typos surface immediately.
 func loadIdpConfigFromJSON(input string) (*auth.IdpConfigCreateRequest, error) {
@@ -740,11 +756,13 @@ func loadIdpConfigFromJSON(input string) (*auth.IdpConfigCreateRequest, error) {
 
 	switch {
 	case input == "-":
-		raw, err = io.ReadAll(os.Stdin)
+		// An IdP config is a few hundred bytes; cap the read so an unbounded pipe
+		// cannot exhaust memory.
+		raw, err = io.ReadAll(io.LimitReader(os.Stdin, maxConfigBytes))
 	case strings.HasPrefix(strings.TrimSpace(input), "{"):
 		raw = []byte(input)
 	default:
-		raw, err = os.ReadFile(input) // #nosec G304 -- operator-supplied config path, read intentionally
+		raw, err = readConfigFile(input)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)

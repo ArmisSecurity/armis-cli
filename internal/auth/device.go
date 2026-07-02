@@ -279,7 +279,7 @@ func (c *DeviceClient) tokenRequest(ctx context.Context, form url.Values, client
 // postForm issues a form-encoded POST and returns the body and status code.
 func (c *DeviceClient) postForm(ctx context.Context, path string, form url.Values) ([]byte, int, error) {
 	endpoint := c.baseURL + path
-	// armis:ignore cwe:918 reason:baseURL validated by NewDeviceClient (HTTPS enforced for non-localhost); path is a hardcoded constant
+	// armis:ignore cwe:918 reason:baseURL validated by NewDeviceClient (HTTPS enforced for non-localhost); path is a hardcoded constant; the client's CheckRedirect returns ErrUseLastResponse so the device_code/refresh_token are never replayed to a redirect target
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
