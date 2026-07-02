@@ -30,6 +30,10 @@ const (
 	// maxConfigBytes bounds a --config document read from stdin. A configuration
 	// is only a few hundred bytes; the cap guards against an unbounded pipe.
 	maxConfigBytes = 2 << 10 // 2 KiB
+
+	// defaultGroupClaim is the ID-token claim carrying the user's groups, used
+	// when the admin does not specify one.
+	defaultGroupClaim = "groups"
 )
 
 var (
@@ -394,7 +398,7 @@ func promptIdpConfig(tenant string) (*auth.IdpConfigCreateRequest, error) {
 
 	cfg := &auth.IdpConfigCreateRequest{
 		TenantID:   tenant,
-		GroupClaim: "groups",
+		GroupClaim: defaultGroupClaim,
 		Enabled:    true,
 	}
 	var adminGroups, developerGroups string
@@ -448,7 +452,7 @@ func promptIdpConfig(tenant string) (*auth.IdpConfigCreateRequest, error) {
 	}
 
 	if cfg.GroupClaim == "" {
-		cfg.GroupClaim = "groups"
+		cfg.GroupClaim = defaultGroupClaim
 	}
 
 	byRole := map[string][]string{}
@@ -793,7 +797,7 @@ func loadIdpConfigFromJSON(input string) (*auth.IdpConfigCreateRequest, error) {
 		Enabled: in.Enabled == nil || *in.Enabled,
 	}
 	if cfg.GroupClaim == "" {
-		cfg.GroupClaim = "groups"
+		cfg.GroupClaim = defaultGroupClaim
 	}
 	return cfg, nil
 }
