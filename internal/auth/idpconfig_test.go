@@ -10,6 +10,13 @@ import (
 	"testing"
 )
 
+// roleAdmin / roleDeveloper are the Armis roles used across these tests as
+// group_mapping values.
+const (
+	roleAdmin     = "admin"
+	roleDeveloper = "developer"
+)
+
 // staticAuthHeader is a trivial AuthHeaderProvider for tests.
 type staticAuthHeader struct {
 	value string
@@ -28,7 +35,7 @@ func sampleCreateReq() *IdpConfigCreateRequest {
 		OIDCClientID:     "client-abc",
 		OIDCClientSecret: "s3cr3t",
 		GroupClaim:       "groups",
-		GroupMapping:     map[string]string{"eng-admins": "admin", "eng": "developer"},
+		GroupMapping:     map[string]string{"eng-admins": roleAdmin, "eng": roleDeveloper},
 		EMAEnabled:       false,
 		Enabled:          true,
 	}
@@ -51,7 +58,7 @@ func TestIdpConfigClientCreateSuccess(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tenant_id": "tenant-7", "idp_type": "okta",
 			"issuer": "https://example.okta.com", "oidc_client_id": "client-abc",
-			"group_claim": "groups", "group_mapping": map[string]string{"eng-admins": "admin"},
+			"group_claim": "groups", "group_mapping": map[string]string{"eng-admins": roleAdmin},
 			"ema_enabled": false, "enabled": true,
 			"created_at": "2026-07-02T00:00:00Z", "updated_at": "2026-07-02T00:00:00Z",
 		})
@@ -86,7 +93,7 @@ func TestIdpConfigClientCreateSuccess(t *testing.T) {
 	if gotBody.OIDCClientSecret != "s3cr3t" {
 		t.Errorf("body secret = %q, want s3cr3t", gotBody.OIDCClientSecret)
 	}
-	if gotBody.GroupMapping["eng-admins"] != "admin" || gotBody.GroupMapping["eng"] != "developer" {
+	if gotBody.GroupMapping["eng-admins"] != roleAdmin || gotBody.GroupMapping["eng"] != roleDeveloper {
 		t.Errorf("group_mapping = %v", gotBody.GroupMapping)
 	}
 	if gotBody.EMAEnabled {
@@ -108,7 +115,7 @@ func TestIdpConfigClientGetSuccess(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tenant_id": "tenant-7", "idp_type": "okta",
 			"issuer": "https://example.okta.com", "oidc_client_id": "client-abc",
-			"group_claim": "groups", "group_mapping": map[string]string{"eng-admins": "admin"},
+			"group_claim": "groups", "group_mapping": map[string]string{"eng-admins": roleAdmin},
 			"ema_enabled": false, "enabled": true,
 			"created_at": "2026-07-02T00:00:00Z", "updated_at": "2026-07-02T00:00:00Z",
 		})
@@ -133,7 +140,7 @@ func TestIdpConfigClientGetSuccess(t *testing.T) {
 	if gotContentType != "" {
 		t.Errorf("GET Content-Type = %q, want empty", gotContentType)
 	}
-	if resp.OIDCClientID != "client-abc" || resp.GroupMapping["eng-admins"] != "admin" {
+	if resp.OIDCClientID != "client-abc" || resp.GroupMapping["eng-admins"] != roleAdmin {
 		t.Errorf("unexpected response %+v", resp)
 	}
 }
