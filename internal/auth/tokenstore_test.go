@@ -43,7 +43,7 @@ func TestTokenStoreRoundTrip(t *testing.T) {
 	}
 	// Must be 0600 on Unix. On Windows mode bits are a no-op (os.Stat reports
 	// 0666); confidentiality relies on the profile ACL — see tokenstore.go.
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != goosWindows {
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Errorf("token file perm = %o, want 600", perm)
 		}

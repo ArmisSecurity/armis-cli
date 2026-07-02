@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -505,11 +506,11 @@ func storedAuthProvider() (*auth.AuthProvider, bool) {
 	return provider, true
 }
 
-// augmentNoCredentialsError replaces the auth package's generic
-// "authentication required" error with a CLI-friendly, browser-login-first list
+// augmentNoCredentialsError replaces the auth package's no-credentials error
+// (auth.ErrAuthenticationRequired) with a CLI-friendly, browser-login-first list
 // of options. Other errors pass through unchanged.
 func augmentNoCredentialsError(err error) error {
-	if err == nil || !strings.Contains(err.Error(), "authentication required") {
+	if !errors.Is(err, auth.ErrAuthenticationRequired) {
 		return err
 	}
 	return fmt.Errorf("not authenticated — use one of the following options:\n" +

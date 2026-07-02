@@ -66,6 +66,10 @@ type AuthProvider struct {
 	env          string // environment key (API base URL) the token is stored under
 }
 
+// ErrAuthenticationRequired is returned by NewAuthProvider when no credentials
+// are configured, letting callers detect the case with errors.Is.
+var ErrAuthenticationRequired = errors.New("authentication required")
+
 // AuthMethod identifies which credential path the provider is using, for display
 // by `armis-cli auth whoami`.
 type AuthMethod string
@@ -176,8 +180,8 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET " +
-			"(or use --client-id / --client-secret) for JWT auth, or ARMIS_API_TOKEN (--token) for legacy auth")
+		return nil, fmt.Errorf("%w: set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET "+
+			"(or use --client-id / --client-secret) for JWT auth, or ARMIS_API_TOKEN (--token) for legacy auth", ErrAuthenticationRequired)
 	}
 
 	return p, nil
