@@ -29,8 +29,8 @@ func setupSetupTest(t *testing.T, serverURL string) {
 	})
 
 	clientID, clientSecret = "", ""
-	token = "admin-token" // Basic auth path
-	tenantID = "acme"      // Basic auth requires a tenant for AuthProvider construction
+	token = "admin-token"    // Basic auth path
+	tenantID = "acme"        // Basic auth requires a tenant for AuthProvider construction
 	credFlagsExplicit = true // force the token path (skip stored-session lookup)
 	setupConfigInput, setupUpdate, setupYes = "", false, false
 

@@ -881,4 +881,4 @@ func maskSecret(s string) string {
 }
 
 func setupStrPtr(s string) *string { return &s }
-func setupBoolPtr(b bool) *bool     { return &b }
+func setupBoolPtr(b bool) *bool    { return &b }
