@@ -1,7 +1,7 @@
 // Package auth provides authentication for the Armis API.
 // This file implements the OAuth2 Device Authorization Grant (RFC 8628) client
 // used by `armis-cli auth login`. The server side is the Moose OAuth2
-// authorization server (PPSC-1033), mounted at the issuer root.
+// authorization server, mounted at the issuer root.
 package auth
 
 import (

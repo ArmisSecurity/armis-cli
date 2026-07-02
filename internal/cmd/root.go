@@ -445,8 +445,8 @@ func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) s
 
 // getAuthProvider creates an AuthProvider based on the available credentials.
 //
-// Resolution order (PPSC-1037):
-//  1. Stored SSO token (keychain / fallback file) from `armis-cli auth login`,
+// Resolution order:
+//  1. Stored SSO token from `armis-cli auth login`,
 //     unless the user explicitly passed --client-id/--client-secret/--token,
 //     which act as an escape hatch to force the credential path.
 //  2. Client credentials (--client-id/--client-secret or ARMIS_CLIENT_ID/SECRET).

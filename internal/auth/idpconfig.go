@@ -1,6 +1,6 @@
 // Package auth provides authentication for the Armis API.
-// This file implements a client for the tenant↔IdP configuration admin API
-// (PPSC-1035), used by `armis-cli auth setup` to register a tenant's IdP with
+// This file implements a client for the tenant↔IdP configuration admin API,
+// used by `armis-cli auth setup` to register a tenant's IdP with
 // the Moose OAuth2 authorization server. The endpoints are mounted under
 // /api/v1/oauth2/idp-configs (api_controller/oauth2/admin_router.py).
 package auth
