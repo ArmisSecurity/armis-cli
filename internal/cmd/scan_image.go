@@ -74,7 +74,7 @@ var scanImageCmd = &cobra.Command{
 			return image.ErrRuntimeNotFound
 		}
 
-		authProvider, err := getAuthProvider()
+		authProvider, err := getAuthProvider(cmd.Context())
 		if err != nil {
 			return err
 		}

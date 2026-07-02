@@ -870,7 +870,7 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	token = ""
 	tenantID = ""
 
-	_, err := getAuthProvider()
+	_, err := getAuthProvider(context.Background())
 	if err == nil {
 		t.Error("expected error when no credentials are provided")
 	}

@@ -974,7 +974,12 @@ pipelines:
 
 ## Environment Variables
 
-**JWT Authentication (Recommended):**
+Pick the authentication method that matches the environment:
+
+- **CI/CD and other non-interactive environments** — use client credentials (`ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`). They authenticate without a browser, which is what automated pipelines need.
+- **Developer machines and other interactive environments** — use SSO (`ARMIS_DEFAULT_AUTH_METHOD=SSO`). The CLI signs in through your company's identity provider in the browser, so no long-lived secret has to be stored on the machine.
+
+**Client Credentials (recommended for CI/CD):**
 
 | Variable | Description |
 |----------|-------------|
@@ -982,14 +987,22 @@ pipelines:
 | `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
 | `ARMIS_REGION` | Armis cloud region (equivalent to `--region` flag) |
 
-When using JWT authentication, the tenant ID is automatically extracted from the token.
+When using client credentials, the tenant ID is automatically extracted from the token.
+
+**SSO (recommended for interactive use):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_DEFAULT_AUTH_METHOD` | Set to `SSO` to sign in through your company's configured identity provider when no other credentials are present (requires `ARMIS_TENANT_ID` or `--tenant-id`) |
+
+You can also sign in explicitly at any time with `armis-cli auth login`; setting `ARMIS_DEFAULT_AUTH_METHOD=SSO` just triggers that sign-in automatically on the first command that needs credentials.
 
 **Basic Authentication (Legacy):**
 
 | Variable | Description |
 |----------|-------------|
 | `ARMIS_API_TOKEN` | API token for Basic authentication |
-| `ARMIS_TENANT_ID` | Tenant identifier (required only with Basic auth) |
+| `ARMIS_TENANT_ID` | Tenant identifier (required with Basic auth or SSO) |
 
 **General:**
 
@@ -1012,6 +1025,7 @@ When using JWT authentication, the tenant ID is automatically extracted from the
   - Use JWT authentication (client ID/secret) for production — it supports automatic token refresh and does not require a separate tenant ID
   - Rotate credentials periodically
   - Credentials are never logged or exposed in output
+  - SSO session tokens (`armis-cli auth login`) are stored per-user in `~/.armis/.sessions` — owner-only (`0600`) on macOS/Linux, protected by the user-profile ACL on Windows
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
 - **CI Detection**: Progress bars automatically disabled in CI environments

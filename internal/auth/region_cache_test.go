@@ -11,6 +11,10 @@ const (
 	testRegionUS1 = "us1"
 	testRegionEU1 = "eu1"
 	testRegionAP1 = "ap1"
+
+	// goosWindows matches runtime.GOOS on Windows; used by tests that skip
+	// Unix-only assertions (e.g. file permission bits).
+	goosWindows = "windows"
 )
 
 func TestRegionCache_RoundTrip(t *testing.T) {
@@ -170,7 +174,7 @@ func TestRegionCache_Overwrite(t *testing.T) {
 }
 
 func TestRegionCache_FilePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		t.Skip("Unix file permissions not supported on Windows")
 	}
 

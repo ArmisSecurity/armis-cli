@@ -22,6 +22,11 @@ const (
 
 	// ProductionBaseURL is the default Armis API endpoint (US region / primary).
 	ProductionBaseURL = "https://moose.armis.com"
+
+	// schemeHTTPS / schemeHTTP are URL scheme literals shared across the auth
+	// package's HTTPS-enforcement checks.
+	schemeHTTPS = "https"
+	schemeHTTP  = "http"
 )
 
 // RegionalBaseURL returns the Armis API base URL for the given region code.
@@ -84,7 +89,7 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
 	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist, never attacker-reachable input; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
-	if parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != schemeHTTPS {
 		host := parsedURL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" {
 			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
