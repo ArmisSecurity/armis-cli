@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `auth` commands for browser-based SSO: `auth login`/`auth logout`/`auth whoami` sign in via your organization's identity provider.
+- `auth setup`: a guided command for IT admins to register (or update) their tenant's identity-provider configuration for SSO.
+
 ### Changed
 
 ### Deprecated

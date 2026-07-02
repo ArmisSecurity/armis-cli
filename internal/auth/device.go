@@ -109,11 +109,8 @@ func NewDeviceClient(baseURL string, debug bool) (*DeviceClient, error) {
 	}
 
 	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
-	if parsedURL.Scheme != schemeHTTPS {
-		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
-		}
+	if err := requireSecureBaseURL(parsedURL); err != nil {
+		return nil, err
 	}
 
 	return &DeviceClient{
