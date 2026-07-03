@@ -284,6 +284,33 @@ func TestSameMapping(t *testing.T) {
 	}
 }
 
+func TestAuthSetupRejectsTrailingContent(t *testing.T) {
+	setupSetupTest(t, "https://moose.armis.com")
+	setupConfigInput = validConfigJSON("acme") + "garbage"
+	setupYes = true
+
+	err := runAuthSetup(newCmdWithCtx(), nil)
+	if err == nil || !strings.Contains(err.Error(), "trailing content") {
+		t.Fatalf("expected trailing-content error, got %v", err)
+	}
+}
+
+func TestAuthSetupRejectsOversizeConfig(t *testing.T) {
+	setupSetupTest(t, "https://moose.armis.com")
+	dir := t.TempDir()
+	path := dir + "/big.json"
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", maxConfigBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setupConfigInput = path
+	setupYes = true
+
+	err := runAuthSetup(newCmdWithCtx(), nil)
+	if err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("expected oversize error, got %v", err)
+	}
+}
+
 func TestAuthSetupConfigFromFile(t *testing.T) {
 	var gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

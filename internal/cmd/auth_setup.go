@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,6 +146,9 @@ func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient) error
 	// Review + confirm (unless --yes). The client secret is masked.
 	printIdpConfigSummary(reqCfg)
 	if !setupYes {
+		if !cli.IsInteractive() {
+			return fmt.Errorf("cannot confirm in a non-interactive terminal: re-run with --yes to apply the configuration")
+		}
 		confirmed, cerr := confirmSetup(setupUpdate)
 		if cerr != nil {
 			return cerr
@@ -162,10 +166,10 @@ func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient) error
 }
 
 // runInteractiveSetup guides an admin through setup. It first resolves the tenant
-// and fetches any existing configuration: if one exists, it shows a pre-filled
-// form where every field is optional (blank means "keep") and sends only the
-// changed fields — so an admin can, say, tweak a group mapping without re-entering
-// the client secret. Otherwise it collects a full configuration and creates it.
+// and fetches any existing configuration: if one exists, it shows a form pre-filled
+// with the current values and sends only the fields the admin edited — so an admin
+// can, say, tweak a group mapping without re-entering the client secret (which the
+// form leaves blank). Otherwise it collects a full configuration and creates it.
 func runInteractiveSetup(ctx context.Context, client *auth.IdpConfigClient) error {
 	tenant, err := promptSetupTenantID(strings.TrimSpace(tenantID))
 	if err != nil {
@@ -269,7 +273,8 @@ func fetchExistingConfig(ctx context.Context, client *auth.IdpConfigClient, tena
 }
 
 // sendCreate POSTs a new configuration. On 409 it offers to switch to the update
-// (PUT) path, automatically when --yes is set and interactively otherwise.
+// (PUT) path interactively; when non-interactive or --yes is set it errors and
+// points at --update, so a scripted create never silently overwrites.
 func sendCreate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.IdpConfigCreateRequest) error {
 	reqCtx, cancel := withRequestTimeout(ctx)
 	defer cancel()
@@ -740,8 +745,8 @@ type idpConfigInput struct {
 	Enabled          *bool               `json:"enabled"`
 }
 
-// readConfigFile reads an operator-supplied --config file, bounding the read to
-// maxConfigBytes so a path to a huge file cannot exhaust memory.
+// readConfigFile reads an operator-supplied --config file, bounding the read so a
+// path to a huge file cannot exhaust memory.
 func readConfigFile(path string) ([]byte, error) {
 	// armis:ignore cwe:22 reason:path is the --config value the operator running the CLI chose; reading their own file from any location is the intended behavior, not attacker-controlled input
 	f, err := os.Open(path) // #nosec G304 -- operator-supplied config path, read intentionally
@@ -749,7 +754,21 @@ func readConfigFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close() //nolint:errcheck // read-only
-	return io.ReadAll(io.LimitReader(f, maxConfigBytes))
+	return readBoundedConfig(f)
+}
+
+// readBoundedConfig reads at most maxConfigBytes, returning an explicit error when
+// the input is larger rather than silently truncating it into a confusing parse
+// failure.
+func readBoundedConfig(r io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxConfigBytes {
+		return nil, fmt.Errorf("configuration is larger than %d bytes; a valid IdP configuration is far smaller", maxConfigBytes)
+	}
+	return raw, nil
 }
 
 // loadIdpConfigFromJSON resolves --config (inline JSON, stdin, or a file path)
@@ -760,9 +779,7 @@ func loadIdpConfigFromJSON(input string) (*auth.IdpConfigCreateRequest, error) {
 
 	switch {
 	case input == "-":
-		// An IdP config is a few hundred bytes; cap the read so an unbounded pipe
-		// cannot exhaust memory.
-		raw, err = io.ReadAll(io.LimitReader(os.Stdin, maxConfigBytes))
+		raw, err = readBoundedConfig(os.Stdin)
 	case strings.HasPrefix(strings.TrimSpace(input), "{"):
 		raw = []byte(input)
 	default:
@@ -773,10 +790,13 @@ func loadIdpConfigFromJSON(input string) (*auth.IdpConfigCreateRequest, error) {
 	}
 
 	in := &idpConfigInput{}
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(in); err != nil {
 		return nil, fmt.Errorf("invalid config JSON: %w", err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("invalid config JSON: unexpected trailing content after the configuration object")
 	}
 
 	mapping, err := assembleGroupMapping(in.GroupMapping)
@@ -875,8 +895,8 @@ func groupsByRole(mapping map[string]string) map[string][]string {
 	return out
 }
 
-// maskSecret returns a fixed-width mask that reveals only the secret's length
-// category, never its content.
+// maskSecret returns a fixed-width mask and the secret's length, never its content,
+// so the admin can sanity-check they pasted the right value.
 func maskSecret(s string) string {
 	if s == "" {
 		return "(none)"
