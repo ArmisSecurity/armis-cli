@@ -20,6 +20,11 @@ The recommended path is browser-based SSO:
   armis-cli auth whoami    Show the current identity, tenant, and token expiry
   armis-cli auth logout    Remove stored credentials
 
+IT admins register their tenant's identity provider (a one-time setup that
+enables SSO login) with:
+
+  armis-cli auth setup     Register your tenant's IdP configuration
+
 For CI/CD and service accounts, set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET
 (client-credentials) instead of logging in interactively.`,
 }

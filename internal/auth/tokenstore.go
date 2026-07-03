@@ -21,7 +21,7 @@ import (
 // epic PPSC-1032). Those tools read and write the SAME file so a single
 // `armis-cli auth login` keeps every tool authenticated.
 //
-// A plain file (not the OS keychain) is the deliberate choice: the MCP plugins
+// A plain file is the deliberate choice: the MCP plugins
 // are Python, and the refresh-token rotation + reuse-detection on the backend
 // requires a SINGLE source of truth (a divergent second store would replay a
 // rotated token and get the whole token family revoked). This matches the

@@ -1,7 +1,7 @@
 // Package auth provides authentication for the Armis API.
 // This file implements the OAuth2 Device Authorization Grant (RFC 8628) client
 // used by `armis-cli auth login`. The server side is the Moose OAuth2
-// authorization server (PPSC-1033), mounted at the issuer root.
+// authorization server, mounted at the issuer root.
 package auth
 
 import (
@@ -109,11 +109,8 @@ func NewDeviceClient(baseURL string, debug bool) (*DeviceClient, error) {
 	}
 
 	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
-	if parsedURL.Scheme != schemeHTTPS {
-		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
-		}
+	if err := requireSecureBaseURL(parsedURL); err != nil {
+		return nil, err
 	}
 
 	return &DeviceClient{
@@ -282,7 +279,7 @@ func (c *DeviceClient) tokenRequest(ctx context.Context, form url.Values, client
 // postForm issues a form-encoded POST and returns the body and status code.
 func (c *DeviceClient) postForm(ctx context.Context, path string, form url.Values) ([]byte, int, error) {
 	endpoint := c.baseURL + path
-	// armis:ignore cwe:918 reason:baseURL validated by NewDeviceClient (HTTPS enforced for non-localhost); path is a hardcoded constant
+	// armis:ignore cwe:918 reason:baseURL validated by NewDeviceClient (HTTPS enforced for non-localhost); path is a hardcoded constant; the client's CheckRedirect returns ErrUseLastResponse so the device_code/refresh_token are never replayed to a redirect target
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)

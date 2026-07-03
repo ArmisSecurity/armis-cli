@@ -27,7 +27,30 @@ const (
 	// package's HTTPS-enforcement checks.
 	schemeHTTPS = "https"
 	schemeHTTP  = "http"
+
+	// hostLocalhost / hostLoopback are the only hosts exempt from the HTTPS
+	// requirement, so local-dev and tests can point at a plain-http listener.
+	hostLocalhost = "localhost"
+	hostLoopback  = "127.0.0.1"
 )
+
+// requireSecureBaseURL enforces the auth package's transport guard: every base
+// URL must be HTTPS unless it targets localhost. This is the shared SSRF /
+// credential-leak check used by AuthClient, DeviceClient, and IdpConfigClient —
+// the request carries a credential and must never be sent in the clear to a
+// remote host.
+//
+// armis:ignore cwe:918 reason:parsedURL comes from operator-controlled config (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist; this function IS the SSRF guard
+func requireSecureBaseURL(parsedURL *url.URL) error {
+	if parsedURL.Scheme == schemeHTTPS {
+		return nil
+	}
+	host := parsedURL.Hostname()
+	if host == hostLocalhost || host == hostLoopback {
+		return nil
+	}
+	return fmt.Errorf("HTTPS required for non-localhost URLs")
+}
 
 // RegionalBaseURL returns the Armis API base URL for the given region code.
 //
@@ -89,11 +112,8 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
 	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist, never attacker-reachable input; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
-	if parsedURL.Scheme != schemeHTTPS {
-		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
-		}
+	if err := requireSecureBaseURL(parsedURL); err != nil {
+		return nil, err
 	}
 
 	return &AuthClient{
