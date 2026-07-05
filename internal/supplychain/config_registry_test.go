@@ -146,6 +146,11 @@ func TestLoadConfigRegistryURLValidation(t *testing.T) {
 			yaml:   "registries:\n  pypi: https://nexus.corp/repository/pypi-group/\n",
 			errHas: "/simple/",
 		},
+		{
+			name:   "pypi path merely containing simple as a substring rejected",
+			yaml:   "registries:\n  pypi: https://nexus.corp/repository/pypi-simplex/\n",
+			errHas: "/simple/",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

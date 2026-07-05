@@ -118,9 +118,11 @@ func NewPyPIClientWithHTTP(httpClient *http.Client, baseURL string) *PyPIClient 
 	baseURL = strings.TrimRight(baseURL, "/")
 	// Guard the exported constructor against a nil client: callers that pass nil
 	// would otherwise hit a nil-pointer panic at c.httpClient.Do(). Default to
-	// the same timeout-configured client NewPyPIClient uses.
+	// the same proxy-aware, timeout-configured client NewPyPIClient uses, so this
+	// fallback also honors WinINET/PAC on Windows instead of silently dropping
+	// proxy support for the injected-client path.
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{Timeout: 30 * time.Second, Transport: httpclient.ProxyAwareTransport()}
 	}
 	return &PyPIClient{
 		httpClient: httpClient,

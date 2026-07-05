@@ -108,9 +108,11 @@ func NewClientWithHTTP(httpClient *http.Client, registryURL string) *Client {
 	registryURL = strings.TrimRight(registryURL, "/")
 	// Guard against a nil client (the production CI-check path passes nil to mean
 	// "use a default client"); without this, c.httpClient.Do panics. Mirrors the
-	// nil-guard in NewPyPIClientWithHTTP.
+	// nil-guard in NewPyPIClientWithHTTP. Use the same proxy-aware transport as
+	// NewClient so this fallback also honors WinINET/PAC on Windows instead of
+	// silently dropping proxy support for the injected-client path.
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{Timeout: 30 * time.Second, Transport: httpclient.ProxyAwareTransport()}
 	}
 	return &Client{
 		httpClient:  httpClient,

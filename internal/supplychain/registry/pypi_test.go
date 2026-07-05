@@ -143,6 +143,16 @@ func TestPyPIGetPublishDate(t *testing.T) {
 		if client.baseURL != defaultPyPIURL {
 			t.Errorf("expected baseURL to default to %q, got %q", defaultPyPIURL, client.baseURL)
 		}
+		// Regression guard: the defaulted client must use the same proxy-aware
+		// transport as NewClient(), so this fallback still honors WinINET/PAC on
+		// Windows instead of silently dropping proxy support. A bare
+		// &http.Client{Timeout: ...} (the pre-fix code) leaves Transport nil; the
+		// fix sets it to httpclient.ProxyAwareTransport(), whose .Proxy field is
+		// always non-nil (the OS proxy resolver).
+		transport, ok := client.httpClient.Transport.(*http.Transport)
+		if !ok || transport.Proxy == nil {
+			t.Error("expected the defaulted client to carry ProxyAwareTransport (non-nil *http.Transport with a Proxy func), got a plain/nil transport")
+		}
 	})
 
 	t.Run("caches responses", func(t *testing.T) {

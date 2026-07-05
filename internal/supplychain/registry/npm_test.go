@@ -333,3 +333,16 @@ func TestCacheCountsDistinctEntries(t *testing.T) {
 		t.Errorf("cacheLen = %d, want 3 (one per distinct package, no double-count)", got)
 	}
 }
+
+// TestNewClientWithHTTPNilClientUsesProxyAwareTransport is the regression
+// guard for the nil-client fallback losing proxy-awareness: a caller passing
+// nil (the production `check` path, when no injected client is needed) must
+// still get WinINET/PAC support on Windows, same as NewClient(). A bare
+// &http.Client{Timeout: ...} (the pre-fix code) leaves Transport nil.
+func TestNewClientWithHTTPNilClientUsesProxyAwareTransport(t *testing.T) {
+	client := NewClientWithHTTP(nil, "")
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		t.Error("expected the defaulted client to carry ProxyAwareTransport (non-nil *http.Transport with a Proxy func), got a plain/nil transport")
+	}
+}

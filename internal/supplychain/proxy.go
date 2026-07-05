@@ -373,12 +373,21 @@ func newUpstreamHTTPClient(upstreamURL *url.URL, caBundlePath string) (*http.Cli
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
 	if caBundlePath != "" {
-		// armis:ignore cwe:22 cwe:23 cwe:73 reason:caBundlePath is an operator-supplied path from the committed config / ARMIS_REGISTRY_CA_BUNDLE env (the deploying platform team's own file), read once at proxy startup to trust their corporate CA; not untrusted input crossing a trust boundary
+		// armis:ignore cwe:22 cwe:23 cwe:73 cwe:770 reason:caBundlePath is an operator-supplied path from the committed config / ARMIS_REGISTRY_CA_BUNDLE env (the deploying platform team's own file), read once at proxy startup to trust their corporate CA; not untrusted input crossing a trust boundary, and a CA bundle is a small local file the platform team controls, not attacker-sized input
 		pem, err := os.ReadFile(caBundlePath) //nolint:gosec // operator-configured CA bundle
 		if err != nil {
 			return nil, fmt.Errorf("reading registry CA bundle %q: %w", caBundlePath, err)
 		}
-		pool := x509.NewCertPool()
+		// Start from the system trust store rather than an empty pool so the bundle
+		// AUGMENTS trust instead of replacing it — a registry whose chain anchors in
+		// a public CA (fronted by a CDN, e.g.) must keep working alongside a
+		// corporate CA added for an internal Nexus. SystemCertPool() can fail on some
+		// platforms; fall back to an empty pool rather than erroring the whole proxy
+		// startup over an environment quirk.
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, fmt.Errorf("registry CA bundle %q contains no valid PEM certificates", caBundlePath)
 		}

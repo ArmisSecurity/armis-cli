@@ -172,8 +172,9 @@ func (c *Config) validate() error {
 		if err != nil {
 			return fmt.Errorf("registries.%s: %w", eco, err)
 		}
-		if eco == registryKeyPyPI && !strings.Contains(u.Path, "/simple") {
-			return fmt.Errorf("registries.pypi: %q should point at the PEP 503 Simple API (a URL containing \"/simple/\", e.g. https://nexus.corp/repository/pypi-group/simple/)", raw)
+		if eco == registryKeyPyPI && !strings.HasSuffix(strings.TrimSuffix(u.Path, "/"), "/simple") {
+			// armis:ignore cwe:201 reason:raw already passed ValidateRegistryURL a few lines above, which hard-rejects any URL with embedded userinfo (u.User != nil) before reaching here — raw cannot contain credentials by the time this error message includes it
+			return fmt.Errorf("registries.pypi: %q should point at the PEP 503 Simple API (a URL ending in \"/simple\" or \"/simple/\", e.g. https://nexus.corp/repository/pypi-group/simple/)", raw)
 		}
 	}
 
