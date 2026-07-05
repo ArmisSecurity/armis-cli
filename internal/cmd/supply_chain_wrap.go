@@ -1286,6 +1286,7 @@ func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) erro
 		if _, verr := supplychain.ValidateRegistryURL(rs.UpstreamURL); verr != nil {
 			fmt.Fprintf(os.Stderr, "[armis] supply-chain: invalid approved registry, checking against the public registry: %v\n", verr)
 		} else {
+			// armis:ignore cwe:295 cwe:918 reason:this branch only runs after ValidateRegistryURL returned no error on the line above (https-only, no userinfo, rejects loopback/RFC1918/link-local) — the same validated-then-used pattern already suppressed at every other ValidateRegistryURL call site in this codebase (supply_chain_check.go, proxy.go); rs.CABundlePath below is separately the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or committed config path, not attacker-controlled
 			registryURL = rs.UpstreamURL
 			registryHTTPClient, err = supplychain.NewRegistryHTTPClient(registryURL, rs.CABundlePath)
 			if err != nil {

@@ -146,6 +146,7 @@ func basicAuthFromIndexURL(rawIndexURL string) (string, bool, error) {
 	if !ok {
 		return "", false, nil
 	}
+	// armis:ignore cwe:522 reason:base64-encoding is the standard HTTP Basic Authorization header encoding (RFC 7617), not a secrecy mechanism; the credential is sent only to the registry URL that resolveUpstreamAuth's caller has validated via supplychain.ValidateRegistryURL (https-only), same as the HTTPS-enforced credential pattern already suppressed in internal/auth/client.go
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(cred)), true, nil
 }
 
@@ -153,6 +154,7 @@ func basicAuthFromIndexURL(rawIndexURL string) (string, bool, error) {
 // preferring the ARMIS_REGISTRY_CA_BUNDLE env var over the config field so a
 // per-runner override works without editing the committed policy.
 func resolveCABundlePath(cfg *supplychain.Config) string {
+	// armis:ignore cwe:295 reason:ARMIS_REGISTRY_CA_BUNDLE is an operator-set env var (the deploying platform team's own file path), not attacker-controlled; every caller of this value (NewRegistryHTTPClient in supply_chain_check.go and supply_chain_wrap.go) is already suppressed for the same reason
 	if v := os.Getenv(envRegistryCABundle); v != "" {
 		return v
 	}
