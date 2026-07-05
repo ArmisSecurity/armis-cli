@@ -233,6 +233,21 @@ func TestPyPIGetPublishDate(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	// Regression guard: the default public URL with a trailing slash
+	// ("https://pypi.org/") must be treated as the default host (legacy JSON
+	// API), not as a "custom" artifactory — custom-detection used to run BEFORE
+	// trailing-slash normalization, so this equivalent-to-default URL took the
+	// wrong (Simple API) code path purely because of a cosmetic trailing slash.
+	t.Run("default public URL with trailing slash is still treated as default", func(t *testing.T) {
+		client := NewPyPIClientWithHTTP(nil, defaultPyPIURL+"/")
+		if client.simpleAPI {
+			t.Errorf("expected simpleAPI=false for a trailing-slash default URL, got true (treated as custom)")
+		}
+		if client.baseURL != defaultPyPIURL {
+			t.Errorf("baseURL = %q, want %q", client.baseURL, defaultPyPIURL)
+		}
+	})
 }
 
 func TestPyPIGetPublishDates(t *testing.T) {

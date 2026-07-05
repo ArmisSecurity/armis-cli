@@ -358,6 +358,20 @@ func (p *Proxy) modifyUpstreamResponse(resp *http.Response) error {
 	return nil
 }
 
+// BaseUpstreamTransport returns the *http.Transport newUpstreamHTTPClient
+// clones as its starting point. Production always clones http.DefaultTransport
+// (system proxy settings, standard timeouts); TESTS ONLY may override this var
+// — always saving the previous value and restoring it via t.Cleanup — to inject
+// a custom DialContext (e.g. redirecting a synthetic test hostname to
+// 127.0.0.1) without mutating the process-global http.DefaultTransport, which
+// would otherwise race against any parallel test elsewhere in the module that
+// also makes an HTTP request. Exported (despite the internal/ package) only so
+// internal/cmd's tests can reach it; mirrors the execPMFunc seam used
+// elsewhere in this codebase for the same reason. Not part of any public API.
+var BaseUpstreamTransport = func() *http.Transport {
+	return http.DefaultTransport.(*http.Transport).Clone()
+}
+
 // newUpstreamHTTPClient builds the HTTP client used for the proxy→upstream leg.
 // Two security properties beyond the default client:
 //
@@ -370,10 +384,10 @@ func (p *Proxy) modifyUpstreamResponse(resp *http.Response) error {
 //     bundle path is a hard error (a TLS failure must be visible, never a silent
 //     fail-open enforcement bypass).
 func newUpstreamHTTPClient(upstreamURL *url.URL, caBundlePath string) (*http.Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := BaseUpstreamTransport()
 
 	if caBundlePath != "" {
-		// armis:ignore cwe:22 cwe:23 cwe:73 cwe:770 reason:caBundlePath is an operator-supplied path from the committed config / ARMIS_REGISTRY_CA_BUNDLE env (the deploying platform team's own file), read once at proxy startup to trust their corporate CA; not untrusted input crossing a trust boundary, and a CA bundle is a small local file the platform team controls, not attacker-sized input
+		// armis:ignore cwe:22 cwe:23 cwe:73 cwe:770 cwe:295 reason:caBundlePath is an operator-supplied path from the committed config / ARMIS_REGISTRY_CA_BUNDLE env (the deploying platform team's own file), read once at proxy startup to trust their corporate CA; not untrusted input crossing a trust boundary, and a CA bundle is a small local file the platform team controls, not attacker-sized input. Trusting its contents for TLS is the deliberate purpose of this feature (letting a minimal CI container reach a private-CA-fronted Nexus), not a validation gap — the same operator-controlled trust source already suppressed for cwe:295 at every other newUpstreamHTTPClient/NewRegistryHTTPClient call site
 		pem, err := os.ReadFile(caBundlePath) //nolint:gosec // operator-configured CA bundle
 		if err != nil {
 			return nil, fmt.Errorf("reading registry CA bundle %q: %w", caBundlePath, err)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -233,12 +234,21 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// a corporate-CA Nexus exactly as the wrap proxy does. Without this, every age
 	// query against such a registry fails TLS verification and is silently reduced
 	// to a warning — a green "0 violations" that never actually checked anything.
-	// A nil client means no custom trust is needed (public registry); a bad bundle
-	// is a hard error so the misconfiguration surfaces instead of failing open.
-	// armis:ignore cwe:295 reason:resolveCABundlePath returns the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or the committed registry-ca-bundle config path (the deploying platform team's own file), not attacker-controlled input; same trust source already suppressed for newUpstreamHTTPClient in proxy.go
-	registryHTTPClient, err := supplychain.NewRegistryHTTPClient(registryURL, resolveCABundlePath(cfg))
-	if err != nil {
-		return fmt.Errorf("configuring registry TLS trust for %s: %w", eco, err)
+	// Gated on registryURL != "": RunCheckWithRegistryClient ignores this client
+	// entirely when there's no approved registry for this ecosystem (it falls
+	// back to the public-registry queryRegistry path), so building it anyway
+	// would be pointless work — reading a CA bundle configured for a DIFFERENT
+	// ecosystem (registry-ca-bundle is global, not per-ecosystem) even though
+	// this ecosystem has no registries.<eco> entry to use it with. A nil client
+	// means no custom trust is needed; a bad bundle is a hard error so the
+	// misconfiguration surfaces instead of failing open.
+	var registryHTTPClient *http.Client
+	if registryURL != "" {
+		// armis:ignore cwe:295 reason:resolveCABundlePath returns the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or the committed registry-ca-bundle config path (the deploying platform team's own file), not attacker-controlled input; same trust source already suppressed for newUpstreamHTTPClient in proxy.go
+		registryHTTPClient, err = supplychain.NewRegistryHTTPClient(registryURL, resolveCABundlePath(cfg))
+		if err != nil {
+			return fmt.Errorf("configuring registry TLS trust for %s: %w", eco, err)
+		}
 	}
 
 	// Resolve the developer's registry credential from their NATIVE config (the

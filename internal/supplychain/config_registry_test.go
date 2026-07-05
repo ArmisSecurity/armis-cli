@@ -151,6 +151,16 @@ func TestLoadConfigRegistryURLValidation(t *testing.T) {
 			yaml:   "registries:\n  pypi: https://nexus.corp/repository/pypi-simplex/\n",
 			errHas: "/simple/",
 		},
+		// v1 only ROUTES the "npm"/"pypi" keys (RegistryURLFor), but validate()
+		// checks every key's value regardless of whether it's wired up — an
+		// unrecognized key with an insecure URL is still a hard error, not
+		// silently ignored, so a typo'd key doesn't sit unnoticed until it
+		// becomes a live route in a future version.
+		{
+			name:   "unrecognized registries key is still validated",
+			yaml:   "registries:\n  docker: http://nexus.corp/docker/\n",
+			errHas: "https",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

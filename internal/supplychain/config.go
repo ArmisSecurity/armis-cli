@@ -30,10 +30,15 @@ type Config struct {
 	// Registries maps an ecosystem name (npm, pypi) to the approved
 	// artifactory/registry URL for that ecosystem (PPSC-994). When set for an
 	// ecosystem, the proxy's upstream points at that URL and the CI check audits
-	// against it. v1 recognizes the "npm" and "pypi" keys (see RegistryURLFor);
-	// other keys are ignored. Each value is validated by ValidateRegistryURL at
-	// config-load — the committed file is a trust boundary, so a non-https or
-	// non-routable URL is a hard error, not a best-effort parse.
+	// against it. v1 wires only the "npm" and "pypi" keys into actual routing
+	// (see RegistryURLFor) — a key outside that set is never read by any
+	// enforcement path — but validate() checks EVERY key's value regardless,
+	// including unrecognized ones: the committed file is a trust boundary, so
+	// any URL sitting under registries.* must be a syntactically valid, secure
+	// URL, not a best-effort parse. This also catches a value silently doing
+	// nothing today (a typo'd or not-yet-wired key) before it becomes a live
+	// route in a future version. Each value is validated by ValidateRegistryURL
+	// at config-load — a non-https or non-routable URL is a hard error.
 	Registries map[string]string `yaml:"registries,omitempty"`
 
 	// RegistryEnforcement is the routing-enforcement posture, distinct from the

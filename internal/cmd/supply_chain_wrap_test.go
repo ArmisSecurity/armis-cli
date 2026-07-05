@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/spf13/cobra"
 )
 
@@ -434,18 +435,24 @@ func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
 	// server's own default cert (issued for "example.com") would not validate
 	// against this hostname, so this test mints its own self-signed cert for
 	// "nexus.registry.example" and serves it directly over tls.Listen.
-	origTransport := http.DefaultTransport.(*http.Transport).Clone()
-	testTransport := origTransport.Clone()
-	testTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, portStr, splitErr := net.SplitHostPort(addr)
-		// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.registry.example", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
-		if splitErr == nil && host == "nexus.registry.example" {
-			addr = net.JoinHostPort("127.0.0.1", portStr)
+	// Override supplychain.BaseUpstreamTransport (a package-level test seam,
+	// mirroring execPMFunc) instead of mutating the process-global
+	// http.DefaultTransport — the latter would race against any parallel test
+	// elsewhere in this module that makes its own HTTP request.
+	origBaseTransport := supplychain.BaseUpstreamTransport
+	supplychain.BaseUpstreamTransport = func() *http.Transport {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, portStr, splitErr := net.SplitHostPort(addr)
+			// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.registry.example", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
+			if splitErr == nil && host == "nexus.registry.example" {
+				addr = net.JoinHostPort("127.0.0.1", portStr)
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, addr)
+		return transport
 	}
-	http.DefaultTransport = testTransport
-	t.Cleanup(func() { http.DefaultTransport = origTransport })
+	t.Cleanup(func() { supplychain.BaseUpstreamTransport = origBaseTransport })
 
 	var hit bool
 	certPEM, server, port := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {

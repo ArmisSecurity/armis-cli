@@ -102,7 +102,6 @@ func NewPyPIClient() *PyPIClient {
 // PyPI-proprietary API no artifactory implements.
 // armis:ignore cwe:918 reason:baseURL is either "" (defaults to the hardcoded pypi.org constant below) or the config-load-validated registries.pypi value (supplychain.ValidateRegistryURL: https-only, no userinfo, rejects loopback/RFC1918/link-local) per the doc comment above; not a per-request attacker-controlled value
 func NewPyPIClientWithHTTP(httpClient *http.Client, baseURL string) *PyPIClient {
-	custom := baseURL != "" && baseURL != defaultPyPIURL
 	if baseURL == "" {
 		baseURL = defaultPyPIURL
 	}
@@ -116,6 +115,11 @@ func NewPyPIClientWithHTTP(httpClient *http.Client, baseURL string) *PyPIClient 
 	// its own, so baseURL keeping its "/simple" suffix is exactly the path PEP
 	// 503 artifactories expect — nothing to strip here.
 	baseURL = strings.TrimRight(baseURL, "/")
+	// Compute custom AFTER normalization: "https://pypi.org/" (trailing slash)
+	// must be treated as the default public host, not as a custom artifactory —
+	// computing this before TrimRight would make an equivalent default URL take
+	// the wrong (Simple API) code path purely due to a cosmetic trailing slash.
+	custom := baseURL != strings.TrimRight(defaultPyPIURL, "/")
 	// Guard the exported constructor against a nil client: callers that pass nil
 	// would otherwise hit a nil-pointer panic at c.httpClient.Do(). Default to
 	// the same proxy-aware, timeout-configured client NewPyPIClient uses, so this
