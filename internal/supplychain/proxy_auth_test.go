@@ -199,6 +199,25 @@ func TestProxyRefusesCrossHostRedirect(t *testing.T) {
 	}
 }
 
+// TestNewUpstreamHTTPClientRefusesSchemeDowngradeRedirect is the regression
+// guard for a same-host https→http redirect: net/http only strips the
+// Authorization header on a cross-HOST redirect, not a scheme change, so a
+// same-host downgrade would otherwise forward the credential over plaintext.
+// CheckRedirect must compare scheme in addition to host.
+func TestNewUpstreamHTTPClientRefusesSchemeDowngradeRedirect(t *testing.T) {
+	client, err := newUpstreamHTTPClient(mustParseURL(t, "https://nexus.corp/repository/npm-group/"), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://nexus.corp/repository/npm-group/express", nil) //nolint:noctx // test-only request object, never sent
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(req, nil); err == nil {
+		t.Fatal("expected a same-host https→http scheme downgrade to be refused, got nil error")
+	}
+}
+
 // TestProxyStripsWWWAuthenticate is test-plan case #10: on a custom upstream, a
 // 401 has its WWW-Authenticate stripped before reaching the PM so npm cannot
 // re-auth directly against the upstream and bypass the proxy.

@@ -421,28 +421,25 @@ url = "https://github.com/user/repo.git"
 // host queried, using a fake Simple-API server as the "approved" registry and
 // asserting it (not pypi.org) receives the hit.
 func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
-	// ValidateRegistryURL (S1) rejects a literal loopback IP as a registry host,
-	// so httptest.NewTLSServer's 127.0.0.1 URL cannot be used directly here (a
-	// deliberate SSRF guard, not a test obstacle to route around) — "nexus.localhost"
-	// resolves to 127.0.0.1 without being a literal IP string, so it passes. That
-	// means the server's own default cert (issued for "example.com") will not
-	// validate against that hostname, so this test mints its own self-signed cert
-	// for "nexus.localhost" and serves it directly over tls.Listen.
-	//
-	// Resolving "nexus.localhost" to 127.0.0.1 relies on the OS resolver
-	// special-casing *.localhost subdomains — true on Linux (systemd-resolved)
-	// and macOS (mDNSResponder), but NOT on Windows, which only special-cases
-	// the bare "localhost" name and attempts a real (failing) DNS lookup for any
-	// subdomain of it. Override the dialer so this test doesn't depend on that
-	// OS-specific behavior: redirect only the "nexus.localhost" host to 127.0.0.1
-	// at the TCP layer, while SNI/certificate validation (which reads the
-	// original hostname from the request URL, not the dial target) is untouched.
+	// ValidateRegistryURL (S1) rejects a literal loopback IP, and (as of the
+	// reserved-name fix below) "localhost"/"*.localhost" by name too, as a
+	// registry host — so httptest.NewTLSServer's 127.0.0.1 URL cannot be used
+	// directly here (a deliberate SSRF guard, not a test obstacle to route
+	// around). "nexus.registry.example" is an IANA-reserved documentation domain
+	// (RFC 2606) that passes validation like any real corporate hostname would,
+	// while making clear it is a fixture, not a real host. It never actually
+	// resolves via DNS; the dialer override below redirects it to 127.0.0.1
+	// directly, so no real lookup happens and no OS-specific resolver behavior
+	// (e.g. *.localhost special-casing, absent on Windows) is depended on. The
+	// server's own default cert (issued for "example.com") would not validate
+	// against this hostname, so this test mints its own self-signed cert for
+	// "nexus.registry.example" and serves it directly over tls.Listen.
 	origTransport := http.DefaultTransport.(*http.Transport).Clone()
 	testTransport := origTransport.Clone()
 	testTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, portStr, splitErr := net.SplitHostPort(addr)
-		// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.localhost", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
-		if splitErr == nil && host == "nexus.localhost" {
+		// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.registry.example", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
+		if splitErr == nil && host == "nexus.registry.example" {
 			addr = net.JoinHostPort("127.0.0.1", portStr)
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, addr)
@@ -470,7 +467,7 @@ func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
 	if err := os.WriteFile(caBundlePath, certPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	registryURL := fmt.Sprintf("https://nexus.localhost:%s/simple/", port)
+	registryURL := fmt.Sprintf("https://nexus.registry.example:%s/simple/", port)
 	writeConfig(t, dir, "version: 1\nmin-age: 72h\nregistries:\n  pypi: "+registryURL+"\nregistry-enforcement: warn\nregistry-ca-bundle: "+caBundlePath+"\n")
 
 	lock := `version = 1
@@ -496,11 +493,12 @@ version = "1.0.0"
 }
 
 // newTLSTestServer starts an HTTPS server on 127.0.0.1 with a self-signed cert
-// issued for "nexus.localhost" (which resolves to 127.0.0.1 without being a
-// literal IP string, so it passes ValidateRegistryURL's loopback-IP rejection —
-// httptest.NewTLSServer's own cert, issued for "example.com", would not
-// validate against that hostname). It returns the cert as a PEM block (for
-// registry-ca-bundle) alongside the listening server and its port.
+// issued for "nexus.registry.example" — a hostname string, not a literal IP,
+// so it passes ValidateRegistryURL's loopback/reserved-name checks the way a
+// real corporate hostname would. httptest.NewTLSServer's own cert, issued for
+// "example.com", would not validate against that hostname. It returns the
+// cert as a PEM block (for registry-ca-bundle) alongside the listening server
+// and its port.
 func newTLSTestServer(t *testing.T, handler http.HandlerFunc) ([]byte, *httptest.Server, string) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -509,8 +507,8 @@ func newTLSTestServer(t *testing.T, handler http.HandlerFunc) ([]byte, *httptest
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "nexus.localhost"},
-		DNSNames:     []string{"nexus.localhost"},
+		Subject:      pkix.Name{CommonName: "nexus.registry.example"},
+		DNSNames:     []string{"nexus.registry.example"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

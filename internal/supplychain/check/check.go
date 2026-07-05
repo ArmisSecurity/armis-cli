@@ -283,6 +283,17 @@ func detectRegistryDivergence(eco supplychain.Ecosystem, entries []PackageEntry,
 		if err != nil || ru.Host == "" {
 			continue
 		}
+		// A resolved URL is only comparable against an approved registry when it
+		// is itself an http(s) registry fetch. Non-registry resolution schemes
+		// (git+https://, git+ssh://, file:, workspace:, link:) still parse with a
+		// non-empty Host (e.g. url.Parse treats "git+https" as the scheme and
+		// "github.com" as the host for a git dependency) but are not registry
+		// resolutions at all, so counting/flagging them would produce false
+		// "non-approved registry" violations for git-based and local/workspace
+		// dependencies that never touch any registry.
+		if ru.Scheme != "http" && ru.Scheme != "https" {
+			continue
+		}
 		checked++
 		host := strings.ToLower(ru.Host)
 		if host != approvedHost {

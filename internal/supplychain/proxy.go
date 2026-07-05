@@ -397,17 +397,21 @@ func newUpstreamHTTPClient(upstreamURL *url.URL, caBundlePath string) (*http.Cli
 		transport.TLSClientConfig.RootCAs = pool
 	}
 
-	// Compare the full origin (host:port), not just the hostname: a redirect to a
-	// different port on the same host is still a different origin the credential
-	// must not leak to. This is the strict reading of S2 ("off the approved
-	// host") and the safe default for a security control.
+	// Compare the full origin (scheme + host:port), not just the hostname: a
+	// redirect to a different port on the same host is still a different origin
+	// the credential must not leak to, and a same-host https→http downgrade
+	// would let net/http forward the Authorization header over plaintext (Go
+	// only strips it on a cross-HOST redirect, not a scheme change). This is the
+	// strict reading of S2 ("off the approved host") and the safe default for a
+	// security control.
 	upstreamOrigin := upstreamURL.Host
+	upstreamScheme := upstreamURL.Scheme
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			if req.URL.Host != upstreamOrigin {
-				return fmt.Errorf("refusing cross-host redirect to %q (credentials must not leave the approved registry origin %q)", req.URL.Host, upstreamOrigin)
+			if req.URL.Host != upstreamOrigin || req.URL.Scheme != upstreamScheme {
+				return fmt.Errorf("refusing redirect to %q (credentials must not leave the approved registry origin %s://%s)", req.URL, upstreamScheme, upstreamOrigin)
 			}
 			return nil
 		},

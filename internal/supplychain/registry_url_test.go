@@ -68,6 +68,14 @@ func TestValidateRegistryURL(t *testing.T) {
 		{name: "RFC1918 192.168/16", raw: "https://192.168.1.1/npm/", wantErr: true, errHas: "private"},
 		{name: "IPv6 unique-local", raw: "https://[fc00::1]/npm/", wantErr: true, errHas: "private"},
 		{name: "unspecified v4", raw: "https://0.0.0.0/npm/", wantErr: true, errHas: "unspecified"},
+
+		// --- rejected: reserved loopback names (SSRF) -- a literal-IP-only check
+		// would miss these, since localhost/*.localhost are hostnames, not literal
+		// IPs, yet resolve to loopback by OS/resolver convention (RFC 6761).
+		{name: "reserved name localhost", raw: "https://localhost/npm/", wantErr: true, errHas: "reserved loopback name"},
+		{name: "reserved name subdomain of localhost", raw: "https://nexus.localhost/npm/", wantErr: true, errHas: "reserved loopback name"},
+		{name: "reserved name case-insensitive", raw: "https://LocalHost/npm/", wantErr: true, errHas: "reserved loopback name"},
+		{name: "hostname merely containing localhost as substring accepted", raw: "https://nexus-localhost-mirror.corp/npm/"},
 	}
 
 	for _, tt := range tests {

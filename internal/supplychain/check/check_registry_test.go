@@ -71,6 +71,29 @@ func TestDetectRegistryDivergence(t *testing.T) {
 			t.Errorf("no registryURL → no divergence check, got %d / %d", len(vios), checked)
 		}
 	})
+
+	// Regression guard: url.Parse("git+https://github.com/u/r.git") yields
+	// Scheme="git+https" and a non-empty Host ("github.com") — so a naive
+	// "Host != ''" comparability check would count a git dependency as an
+	// off-registry package and flag it, even though it never touched any
+	// registry. Same reasoning applies to git+ssh, file:, and workspace:
+	// resolutions, which lockfiles use for local/monorepo/VCS dependencies.
+	t.Run("non-registry resolution schemes are not counted or flagged", func(t *testing.T) {
+		entries := []PackageEntry{
+			{Name: "gitdep", Version: "1.0.0", Resolved: "git+https://github.com/user/repo.git"},
+			{Name: "sshdep", Version: "1.0.0", Resolved: "git+ssh://git@github.com/user/repo.git"},
+			{Name: "localdep", Version: "1.0.0", Resolved: "file:../local"},
+			{Name: "workspacedep", Version: "1.0.0", Resolved: "workspace:*"},
+			{Name: "approveddep", Version: "1.0.0", Resolved: "https://nexus.corp/repository/npm-group/approveddep/-/approveddep-1.0.0.tgz"},
+		}
+		vios, checked := detectRegistryDivergence(supplychain.EcosystemNPM, entries, approved)
+		if checked != 1 {
+			t.Errorf("checked = %d, want 1 (only the http(s) registry resolution is comparable)", checked)
+		}
+		if len(vios) != 0 {
+			t.Errorf("expected 0 violations (git/file/workspace resolutions are not registry fetches), got %d: %+v", len(vios), vios)
+		}
+	})
 }
 
 // TestRunCheckWithRegistryFlagsDivergence wires the divergence check through

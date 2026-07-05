@@ -58,6 +58,18 @@ func ValidateRegistryURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("registry URL %q has no host", raw)
 	}
 
+	// "localhost" and any "*.localhost" name are reserved (RFC 6761) and resolve
+	// to loopback on every major OS/browser/resolver by convention, even though
+	// they are not literal IPs — so the literal-IP check below would miss them
+	// entirely. Reject them by name for the same reason a literal 127.0.0.1 is
+	// rejected: a registry pointed at the proxy's own host would let the proxy
+	// forward the developer's injected credential back to a process on the local
+	// machine.
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") {
+		return nil, fmt.Errorf("registry URL %q: %q is a reserved loopback name (RFC 6761) and is not allowed as a registry host", raw, host)
+	}
+
 	// A literal IP is validated directly. A DNS name is allowed through (an
 	// internal registry commonly uses a private name); we deliberately do not
 	// resolve it here to avoid a TOCTOU between validation and use.
