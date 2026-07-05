@@ -4,6 +4,7 @@ package check
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -65,9 +66,24 @@ func RunCheck(ctx context.Context, policy supplychain.Policy, lockfilePath strin
 // registryURL is exactly RunCheck. The caller is responsible for having
 // validated registryURL via supplychain.ValidateRegistryURL.
 func RunCheckWithRegistry(ctx context.Context, policy supplychain.Policy, lockfilePath, baseLockfilePath, registryURL string) (*Result, error) {
+	return RunCheckWithRegistryClient(ctx, policy, lockfilePath, baseLockfilePath, registryURL, nil, "")
+}
+
+// RunCheckWithRegistryClient is RunCheckWithRegistry plus an explicit HTTP
+// client and Authorization header for the age-query leg (PPSC-994). The client
+// carries the approved registry's private-CA trust (registry-ca-bundle /
+// ARMIS_REGISTRY_CA_BUNDLE) and authHeader carries the developer's registry
+// credential ("Bearer <tok>" / "Basic <b64>" resolved from the native .npmrc /
+// index-url), so `check` can verify ages against a private-CA, auth-gated Nexus
+// exactly as the wrap proxy does. Pass a nil client and empty authHeader to use
+// the registry package's default unauthenticated client (public-registry path).
+// The caller is responsible for having validated registryURL via
+// supplychain.ValidateRegistryURL and for building httpClient/authHeader from
+// that URL's settings.
+func RunCheckWithRegistryClient(ctx context.Context, policy supplychain.Policy, lockfilePath, baseLockfilePath, registryURL string, httpClient *http.Client, authHeader string) (*Result, error) {
 	fn := queryRegistry
 	if registryURL != "" {
-		fn = queryRegistryWithURL(registryURL)
+		fn = queryRegistryWithURL(registryURL, httpClient, authHeader)
 	}
 	return runCheck(ctx, policy, lockfilePath, baseLockfilePath, fn, registryURL)
 }
@@ -202,20 +218,26 @@ func queryRegistry(ctx context.Context, ecosystem supplychain.Ecosystem, package
 // configured approved registry instead of the public one (E6). For npm-family
 // ecosystems it points the npm metadata client at registryURL; for PyPI-family
 // it points the PyPI client there. registryURL must already be validated by the
-// caller (supplychain.ValidateRegistryURL). Maven/Gradle stay on the public
-// client — they are audit-path only and not routable in v1.
-func queryRegistryWithURL(registryURL string) registryFn {
+// caller (supplychain.ValidateRegistryURL). httpClient carries the registry's
+// private-CA trust (or nil to let the registry clients build their own default)
+// and authHeader carries the developer's registry credential (or "" for none);
+// both are passed straight through to the injected-client constructors so a
+// private-CA, auth-gated Nexus is reachable here exactly as it is on the wrap
+// path. Maven/Gradle stay on the public client — they are audit-path only and
+// not routable in v1.
+// armis:ignore cwe:918 reason:registryURL is documented above as already validated by the caller via supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local) before this function is invoked; every production caller (supply_chain_check.go, supply_chain_wrap.go) does so, and tests pass an httptest server URL
+func queryRegistryWithURL(registryURL string, httpClient *http.Client, authHeader string) registryFn {
 	return func(ctx context.Context, ecosystem supplychain.Ecosystem, packages []registry.PackageRequest) []registry.QueryResult {
 		switch ecosystem {
 		case supplychain.EcosystemPip, supplychain.EcosystemUV:
-			client := registry.NewPyPIClientWithHTTP(nil, registryURL)
+			client := registry.NewPyPIClientWithHTTP(httpClient, registryURL).WithAuthHeader(authHeader)
 			return client.GetPublishDates(ctx, packages)
 		case supplychain.EcosystemMaven, supplychain.EcosystemGradle,
 			supplychain.EcosystemPoetry, supplychain.EcosystemPipfile, supplychain.EcosystemPDM:
 			// Not routable in v1: fall back to the default public clients.
 			return queryRegistry(ctx, ecosystem, packages)
 		default:
-			client := registry.NewClientWithHTTP(nil, registryURL)
+			client := registry.NewClientWithHTTP(httpClient, registryURL).WithAuthHeader(authHeader)
 			return client.GetPublishDates(ctx, packages)
 		}
 	}

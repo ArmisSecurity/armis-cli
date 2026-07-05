@@ -101,7 +101,7 @@ func TestRunCheckWithRegistryFlagsDivergence(t *testing.T) {
 	policy := supplychain.Policy{MinReleaseAge: 72 * time.Hour}
 	// Use the internal runCheck with an injected resolver + the approved URL so
 	// the test does not depend on the real npmjs.org.
-	resolver := queryRegistryWithURL(server.URL)
+	resolver := queryRegistryWithURL(server.URL, nil, "")
 	res, err := runCheck(context.Background(), policy, lockPath, "", resolver, "https://nexus.corp/repository/npm-group/")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -128,7 +128,7 @@ func TestQueryRegistryWithURLHitsConfiguredHost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fn := queryRegistryWithURL(server.URL)
+	fn := queryRegistryWithURL(server.URL, nil, "")
 	results := fn(context.Background(), supplychain.EcosystemNPM, []registry.PackageRequest{{Name: "leftpad", Version: "1.0.0"}})
 	if !hit {
 		t.Fatal("the configured registry host was not queried")
@@ -136,4 +136,76 @@ func TestQueryRegistryWithURLHitsConfiguredHost(t *testing.T) {
 	if len(results) != 1 || results[0].Err != nil {
 		t.Fatalf("unexpected results: %+v", results)
 	}
+}
+
+// TestQueryRegistryWithURLUsesInjectedTLSClient is the bug #2a regression guard:
+// `supply-chain check` must reach a private-CA (here: self-signed) registry
+// using the CA-bundle-configured HTTP client. A nil client (the old behavior)
+// cannot verify the self-signed cert and every age check fails; the injected
+// client that trusts the cert succeeds. This proves the client actually flows
+// through queryRegistryWithURL into the registry client rather than being
+// dropped (the original defect, where check always used a default client).
+func TestQueryRegistryWithURLUsesInjectedTLSClient(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"time":{"1.0.0":"2020-01-01T00:00:00Z"}}`) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	pkgs := []registry.PackageRequest{{Name: "leftpad", Version: "1.0.0"}}
+
+	t.Run("nil client fails against self-signed TLS", func(t *testing.T) {
+		fn := queryRegistryWithURL(server.URL, nil, "")
+		results := fn(context.Background(), supplychain.EcosystemNPM, pkgs)
+		if len(results) != 1 || results[0].Err == nil {
+			t.Fatalf("expected a TLS verification error with a nil client, got: %+v", results)
+		}
+	})
+
+	t.Run("injected trusting client succeeds", func(t *testing.T) {
+		// server.Client() trusts the httptest server's self-signed cert — the
+		// stand-in for a client built from registry-ca-bundle.
+		fn := queryRegistryWithURL(server.URL, server.Client(), "")
+		results := fn(context.Background(), supplychain.EcosystemNPM, pkgs)
+		if len(results) != 1 || results[0].Err != nil {
+			t.Fatalf("expected success with the trusting client, got: %+v", results)
+		}
+	})
+}
+
+// TestQueryRegistryWithURLForwardsAuth is the regression guard for the
+// auth-gated-registry fix: `check` must forward the developer's credential on
+// its age queries so an auth-required artifactory answers 200 instead of 401.
+// The server 401s any request without the expected Bearer token; the query
+// succeeds only because queryRegistryWithURL threaded the authHeader into the
+// registry client.
+func TestQueryRegistryWithURLForwardsAuth(t *testing.T) {
+	const token = "Bearer check-forward-tok"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"time":{"1.0.0":"2020-01-01T00:00:00Z"}}`) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	pkgs := []registry.PackageRequest{{Name: "leftpad", Version: "1.0.0"}}
+
+	t.Run("without auth → 401 surfaced as an error", func(t *testing.T) {
+		fn := queryRegistryWithURL(server.URL, nil, "")
+		results := fn(context.Background(), supplychain.EcosystemNPM, pkgs)
+		if len(results) != 1 || results[0].Err == nil {
+			t.Fatalf("expected a 401-derived error without a token, got: %+v", results)
+		}
+	})
+
+	t.Run("with auth → 200", func(t *testing.T) {
+		fn := queryRegistryWithURL(server.URL, nil, token)
+		results := fn(context.Background(), supplychain.EcosystemNPM, pkgs)
+		if len(results) != 1 || results[0].Err != nil {
+			t.Fatalf("expected success with the forwarded token, got: %+v", results)
+		}
+	})
 }
