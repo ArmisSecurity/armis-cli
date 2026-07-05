@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,7 +302,7 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 
 	warned := proxy.Warned()
 	printWarnThroughSummary(warned, policy)
-	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), policy, pmName, installOK, pmArgs, conflicts)
+	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), proxy.VerifyFailed(), policy, pmName, installOK, pmArgs, conflicts)
 
 	// WS3 compliance report: written post-install when ARMIS_SUPPLY_CHAIN_REPORT
 	// is set. Best-effort — a report write never changes the install's exit code.
@@ -472,10 +473,27 @@ type pkgFilterResult struct {
 	NewAge     time.Duration  // age of the resolved version, 0 when unknown
 }
 
-func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked int, policy supplychain.Policy, pmName string, installOK bool, pmArgs []string, conflicts []supplychain.ConstraintConflict) {
+func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked, verifyFailed int, policy supplychain.Policy, pmName string, installOK bool, pmArgs []string, conflicts []supplychain.ConstraintConflict) {
 	s := output.GetStyles()
 
 	if len(blocked) == 0 {
+		// verifyFailed packages were counted in `checked` but their age could not
+		// actually be verified (upstream unreachable, untrusted TLS, unreadable
+		// response — the fail-closed paths). A green "N checked, all pass" here
+		// would overstate coverage the org did not get and contradict the TLS/error
+		// lines already on stderr, so report the failures honestly instead. The
+		// install itself fails-closed on those packages (the proxy returned 502),
+		// so this is a reporting-honesty fix, not an enforcement change.
+		if verifyFailed > 0 {
+			verified := checked - verifyFailed
+			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
+				s.MutedText.Render(scPrefix),
+				s.WarningText.Render("⚠"),
+				s.WarningText.Render(fmt.Sprintf("supply-chain: %s could not be verified against the registry (age not checked); %s",
+					countNoun(verifyFailed, "package"), verifiedClause(verified))),
+				s.MutedText.Render(fmt.Sprintf("(%s policy)", formatPolicyShort(policy.MinReleaseAge))))
+			return
+		}
 		if checked > 0 {
 			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
 				s.MutedText.Render(scPrefix),
@@ -933,6 +951,16 @@ func groupBlockedByPackage(blocked []supplychain.BlockedPackage, allowedVersions
 	return results
 }
 
+// verifiedClause renders the trailing "N passed" / "no other packages verified"
+// half of the partial-verification warning, so the summary states how many
+// checks did succeed alongside the ones that could not run.
+func verifiedClause(verified int) string {
+	if verified <= 0 {
+		return "no packages could be age-checked"
+	}
+	return fmt.Sprintf("%s passed", countNoun(verified, "package"))
+}
+
 // checkedAllPass renders the "N packages checked, all pass" clause with verb
 // agreement: countNoun inflects the noun ("1 package" vs "N packages") but not
 // the verb, so the singular case collapses "all pass" → "passed" ("all" implies
@@ -1239,10 +1267,39 @@ func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) erro
 		fmt.Fprintf(os.Stderr, "  coverage, consider a lockfile plugin (e.g., io.github.chains-project:maven-lockfile)\n")
 	}
 
+	// Resolve the approved registry + credentials for this ecosystem (PPSC-994),
+	// same as runProxyWrap. Without this, the audit path (poetry/pipenv/pdm/
+	// maven/gradle, and any uv invocation that writes uv.lock) always queried
+	// the PUBLIC registry regardless of a configured registries.<eco>, silently
+	// never checking the approved artifactory at all — `check` would report
+	// "all pass" having verified nothing against it. A credential-resolution
+	// error is fatal, matching runProxyWrap's fail-loud contract.
+	rs, err := resolveRegistrySettings(canonicalPM(pmName))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry credential error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var registryURL string
+	var registryHTTPClient *http.Client
+	if rs.Configured {
+		if _, verr := supplychain.ValidateRegistryURL(rs.UpstreamURL); verr != nil {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: invalid approved registry, checking against the public registry: %v\n", verr)
+		} else {
+			registryURL = rs.UpstreamURL
+			registryHTTPClient, err = supplychain.NewRegistryHTTPClient(registryURL, rs.CABundlePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry TLS trust error: %v\n", err)
+				os.Exit(1)
+			}
+			maybeWarnOffPolicyRegistry(canonicalPM(pmName), rs.ApprovedURL)
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 	defer cancel()
 
-	result, err := check.RunCheck(ctx, policy, lockfilePath, "")
+	result, err := check.RunCheckWithRegistryClient(ctx, policy, lockfilePath, "", registryURL, registryHTTPClient, rs.AuthHeader)
 	if err != nil {
 		// Honor the fail-open policy the same way the proxy path does: with
 		// FailOpen set, a failed audit (e.g. PyPI unreachable, lockfile parse

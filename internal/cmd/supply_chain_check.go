@@ -175,7 +175,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// pass rather than checking an out-of-scope ecosystem. loadConfigUpward
 	// returns nil (enforce-all) when no config is present, and EnforcesEcosystem
 	// fails safe on an all-typo list.
-	cfg, _, err := loadConfigUpward(dir)
+	cfg, configDir, err := loadConfigUpward(dir)
 	if err != nil {
 		return err
 	}
@@ -228,9 +228,42 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Build the age-query HTTP client with the approved registry's private-CA
+	// trust (registry-ca-bundle / ARMIS_REGISTRY_CA_BUNDLE), so `check` can reach
+	// a corporate-CA Nexus exactly as the wrap proxy does. Without this, every age
+	// query against such a registry fails TLS verification and is silently reduced
+	// to a warning — a green "0 violations" that never actually checked anything.
+	// A nil client means no custom trust is needed (public registry); a bad bundle
+	// is a hard error so the misconfiguration surfaces instead of failing open.
+	// armis:ignore cwe:295 reason:resolveCABundlePath returns the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or the committed registry-ca-bundle config path (the deploying platform team's own file), not attacker-controlled input; same trust source already suppressed for newUpstreamHTTPClient in proxy.go
+	registryHTTPClient, err := supplychain.NewRegistryHTTPClient(registryURL, resolveCABundlePath(cfg))
+	if err != nil {
+		return fmt.Errorf("configuring registry TLS trust for %s: %w", eco, err)
+	}
+
+	// Resolve the developer's registry credential from their NATIVE config (the
+	// .npmrc _authToken / index-url userinfo — never the committed policy file) so
+	// `check` authenticates its age queries the same way the wrap proxy does. An
+	// auth-gated artifactory returns 401 without it, which would silently degrade
+	// every age check to an unverified warning. An unusable credential (e.g. an
+	// unset ${VAR} in the .npmrc) is a hard error — the same fail-loud contract
+	// resolveRegistrySettings uses for wrap — never a silent 401.
+	var registryAuthHeader string
+	if registryURL != "" {
+		upstreamURL, perr := url.Parse(registryURL)
+		if perr != nil {
+			return fmt.Errorf("parsing approved registry URL for %s: %w", eco, perr)
+		}
+		authHeader, _, aerr := resolveUpstreamAuth(eco, configDir, upstreamURL)
+		if aerr != nil {
+			return fmt.Errorf("resolving registry credentials for %s: %w", eco, aerr)
+		}
+		registryAuthHeader = authHeader
+	}
+
 	ctx := cmd.Context()
 	// armis:ignore cwe:73 cwe:22 reason:lockfilePath and baseLockfile derive from the user-controlled --lockfile/--base-lockfile CLI flags (or auto-detected paths) naming files on the user's own machine; reading them is the purpose of `supply-chain check`, same no-trust-boundary pattern as --output suppressed at the flag registration above
-	result, err := check.RunCheckWithRegistry(ctx, policy, lockfilePath, baseLockfile, registryURL)
+	result, err := check.RunCheckWithRegistryClient(ctx, policy, lockfilePath, baseLockfile, registryURL, registryHTTPClient, registryAuthHeader)
 	if err != nil {
 		if policy.FailOpen {
 			cli.PrintWarningf("supply-chain check failed (--fail-open): %v", err)
