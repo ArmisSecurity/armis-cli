@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,8 +34,15 @@ var validPackageName = regexp.MustCompile(`^(@[a-z0-9\-~][a-z0-9\-._~]*/)?[a-z0-
 type Client struct {
 	httpClient  *http.Client
 	registryURL string
-	cache       sync.Map // map[string]*registryResponse
-	cacheLen    atomic.Int64
+	// authHeader is an optional pre-built Authorization value ("Bearer <tok>")
+	// attached to every metadata request. It lets `supply-chain check` query an
+	// auth-gated artifactory with the developer's .npmrc credential, exactly as
+	// the wrap proxy does — an auth-required registry returns 401 without it, so
+	// the age check would otherwise silently degrade to a warning. Empty on the
+	// public path (npmjs.org needs no credential to read metadata).
+	authHeader string
+	cache      sync.Map // map[string]*registryResponse
+	cacheLen   atomic.Int64
 }
 
 // registryResponse models the subset of npm package metadata we need. The npm
@@ -86,10 +94,18 @@ func NewClient() *Client {
 // before reaching here, which is what keeps the cwe:918 suppressions in
 // fetchMetadata sound now that the URL is configurable. Production age checks
 // against the public registry use NewClient, which hardcodes npmjs.org.
+// armis:ignore cwe:918 reason:registryURL is either "" (defaults to the hardcoded npmjs.org constant below) or the config-load-validated registries.npm value (supplychain.ValidateRegistryURL: https-only, no userinfo, rejects loopback/RFC1918/link-local) per the doc comment above; not a per-request attacker-controlled value
 func NewClientWithHTTP(httpClient *http.Client, registryURL string) *Client {
-	if registryURL == "" {
+	if registryURL == "" { // armis:ignore cwe:918 reason:registryURL is either empty here (defaulted to the hardcoded npmjs.org constant) or config-load-validated by ValidateRegistryURL before this constructor runs, per the doc comment above
 		registryURL = defaultRegistryURL
 	}
+	// Trim a trailing slash so fetchMetadata's "%s/%s" join never yields a
+	// "//<pkg>" path: a configured artifactory URL commonly carries one (e.g.
+	// "https://nexus.corp/repository/npm-group/"), and many registries 404 on the
+	// resulting double slash. Same normalization the proxy's joinUpstreamURL does
+	// for the wrap path.
+	// armis:ignore cwe:918 reason:registryURL is either "" (defaults to the hardcoded npmjs.org constant above) or the config-load-validated registries.npm value (supplychain.ValidateRegistryURL: https-only, no userinfo, rejects loopback/RFC1918/link-local) per the NewClientWithHTTP doc comment; trimming a trailing slash does not widen what hosts are reachable
+	registryURL = strings.TrimRight(registryURL, "/")
 	// Guard against a nil client (the production CI-check path passes nil to mean
 	// "use a default client"); without this, c.httpClient.Do panics. Mirrors the
 	// nil-guard in NewPyPIClientWithHTTP.
@@ -100,6 +116,17 @@ func NewClientWithHTTP(httpClient *http.Client, registryURL string) *Client {
 		httpClient:  httpClient,
 		registryURL: registryURL,
 	}
+}
+
+// WithAuthHeader sets the Authorization header value ("Bearer <tok>") sent on
+// every metadata request and returns the client for chaining. The caller (the
+// `check` path) resolves it from the developer's native .npmrc; an empty value
+// is a no-op, keeping the public-registry path unauthenticated. It must be set
+// before any concurrent GetPublishDates call, which is how the check flow uses
+// it (set once at construction, then queried).
+func (c *Client) WithAuthHeader(authHeader string) *Client {
+	c.authHeader = authHeader
+	return c
 }
 
 func (c *Client) GetPublishDate(ctx context.Context, name, version string) (time.Time, error) {
@@ -178,6 +205,11 @@ func (c *Client) fetchMetadata(ctx context.Context, name string) (*registryRespo
 		return nil, fmt.Errorf("creating request for %s: %w", name, err)
 	}
 	req.Header.Set("Accept", "application/json")
+	// Forward the developer's registry credential when configured so an
+	// auth-gated artifactory answers 200 instead of 401 (the `check` path).
+	if c.authHeader != "" {
+		req.Header.Set("Authorization", c.authHeader)
+	}
 
 	// armis:ignore cwe:918 reason:c.registryURL is either the hardcoded npmjs.org HTTPS constant (NewClient) or a custom upstream validated at config-load by supplychain.ValidateRegistryURL (https-only, no userinfo, rejects loopback/RFC1918/link-local), so the request host is not attacker-controlled; the package name is regex-validated and PathEscaped
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: reqURL is a constant/config-load-validated registry host + regex-validated, PathEscaped package name

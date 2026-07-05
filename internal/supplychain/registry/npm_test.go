@@ -33,6 +33,68 @@ func TestGetPublishDate(t *testing.T) {
 		}
 	})
 
+	t.Run("registry URL with trailing slash does not double-slash", func(t *testing.T) {
+		// Bug #1 (check path): a configured artifactory URL commonly ends in "/".
+		// The metadata request must reach "/express", not "//express".
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/express" {
+				t.Errorf("path = %q, want /express (double-slash regression)", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL+"/")
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("unexpected error with trailing-slash registry URL: %v", err)
+		}
+	})
+
+	t.Run("auth header forwarded to auth-gated registry", func(t *testing.T) {
+		// Bug: `check` against an auth-required artifactory 401'd because no
+		// credential was sent. With WithAuthHeader the metadata request carries the
+		// Bearer token and the registry answers 200.
+		const token = "Bearer check-tok"
+		var gotAuth string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAuth = r.Header.Get("Authorization")
+			if gotAuth != token {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL).WithAuthHeader(token)
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("expected success with forwarded auth, got: %v", err)
+		}
+		if gotAuth != token {
+			t.Errorf("Authorization = %q, want %q", gotAuth, token)
+		}
+	})
+
+	t.Run("no auth header when unset (public path)", func(t *testing.T) {
+		var gotAuth string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL)
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotAuth != "" {
+			t.Errorf("no Authorization header expected on public path, got %q", gotAuth)
+		}
+	})
+
 	t.Run("scoped package URL encoding", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// url.PathEscape encodes @types/node as %40types%2Fnode
