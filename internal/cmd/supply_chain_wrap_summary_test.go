@@ -146,6 +146,85 @@ func TestPrintBlockSummary_SingleResolved(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_UninstallReframesWording(t *testing.T) {
+	// `npm uninstall` (and remove/rm/un/r/unlink) can still hit the registry via
+	// npm's dependency-tree reify pass. The summary must name the real verb and
+	// explain the registry hit, not claim an install happened.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
+	})
+
+	wantSubstrings := []string{
+		"uninstall re-resolved remaining dependencies",
+		"filtered 1 too-new release → kept safe version (3-day policy)",
+		"axios",
+		"1.16.1 kept (10 days old)",
+		"— skipped 1.17.0 (1 day old)",
+		"Disable: ARMIS_SUPPLY_CHAIN=off",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "installed") {
+		t.Errorf("uninstall summary must not claim anything was \"installed\"; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UninstallFailureNamesRealVerb(t *testing.T) {
+	// A failed uninstall must say "uninstall did not complete", not "install did
+	// not complete" — the wording drives the culprit explanation too.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, nil, 5, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
+	})
+
+	wantSubstrings := []string{
+		"filtered 1 too-new release; remove did not complete",
+		"the remove did not complete",
+		"why the remove failed",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestActionLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"install (default)", []string{"install", "axios"}, "install"},
+		{"add", []string{"add", "axios"}, "install"},
+		{"no args", nil, "install"},
+		{"only flags", []string{"--save-dev"}, "install"},
+		{"uninstall", []string{"uninstall", "vercel"}, "uninstall"},
+		{"remove", []string{"remove", "vercel"}, "remove"},
+		{"rm", []string{"rm", "vercel"}, "rm"},
+		{"un shorthand", []string{"un", "vercel"}, "un"},
+		{"r shorthand", []string{"r", "vercel"}, "r"},
+		{"unlink", []string{"unlink", "vercel"}, "unlink"},
+		{"flag before uninstall", []string{"--global", "uninstall", "vercel"}, "uninstall"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := actionLabel(tc.args); got != tc.want {
+				t.Errorf("actionLabel(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
 	// Regression: a PyPI BlockedPackage carries a *filename* in Version
 	// ("filelock-3.29.2.tar.gz"). The summary must classify on DisplayVersion, not
