@@ -198,6 +198,26 @@ func TestPrintBlockSummary_UninstallFailureNamesRealVerb(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_FailedUninstallNeverSaysKept(t *testing.T) {
+	// A failed uninstall (installOK=false) must say "available", not "kept" —
+	// installOK must win over isRemoval, since a run that never completed kept
+	// nothing.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
+	})
+
+	if strings.Contains(out, "kept") {
+		t.Errorf("failed uninstall must not claim a version was \"kept\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "1.16.1 available") {
+		t.Errorf("failed uninstall must say \"available\", not \"installed\"/\"kept\"; got:\n%s", out)
+	}
+}
+
 func TestActionLabel(t *testing.T) {
 	tests := []struct {
 		name string
@@ -215,6 +235,8 @@ func TestActionLabel(t *testing.T) {
 		{"r shorthand", []string{"r", "vercel"}, "r"},
 		{"unlink", []string{"unlink", "vercel"}, "unlink"},
 		{"flag before uninstall", []string{"--global", "uninstall", "vercel"}, "uninstall"},
+		{"value-taking flag before uninstall", []string{"--prefix", "/tmp", "uninstall", "vercel"}, "uninstall"},
+		{"value-taking flag before remove", []string{"--cwd", "/tmp", "remove", "vercel"}, "remove"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

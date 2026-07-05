@@ -408,12 +408,29 @@ var removalSubcommands = map[string]bool{
 	"unlink":    true,
 }
 
+// flagsWithValue are global package-manager flags that consume the following
+// token as their value rather than a subcommand, e.g. `--prefix /tmp`.
+// firstSubcommand must skip both the flag and its value, or it mistakes the
+// value (like a directory path) for the subcommand and misses a removal verb
+// that follows (`npm --prefix /tmp remove vercel`).
+var flagsWithValue = map[string]bool{
+	"--prefix":   true,
+	"--cwd":      true,
+	"--registry": true,
+	"--filter":   true,
+	"-C":         true,
+}
+
 // firstSubcommand returns the first non-flag token in pmArgs — the
 // package-manager subcommand the user actually typed (e.g. "uninstall" out of
 // ["uninstall", "--save", "vercel"]) — or "" if pmArgs is empty or all flags.
 func firstSubcommand(pmArgs []string) string {
-	for _, a := range pmArgs {
+	for i := 0; i < len(pmArgs); i++ {
+		a := pmArgs[i]
 		if strings.HasPrefix(a, "-") {
+			if flagsWithValue[a] && i+1 < len(pmArgs) {
+				i++
+			}
 			continue
 		}
 		return a
@@ -877,10 +894,13 @@ func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, p
 
 	resolvedWord := "installed"
 	switch {
+	case !installOK:
+		// A failed run never completed, so nothing was kept or installed —
+		// this must win over isRemoval or a failed uninstall would misreport
+		// "kept" for a package the PM never finished touching.
+		resolvedWord = "available"
 	case isRemoval:
 		resolvedWord = "kept"
-	case !installOK:
-		resolvedWord = "available"
 	}
 
 	var glyph string
