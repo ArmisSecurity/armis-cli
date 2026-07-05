@@ -128,17 +128,26 @@ type Proxy struct {
 	authHeader                 string // pre-built "Bearer <tok>" / "Basic <b64>" value, or ""
 	degradeOnMissingTimestamps bool
 
-	httpClient   *http.Client
-	revProxy     *httputil.ReverseProxy
-	listener     net.Listener
-	server       *http.Server
-	blocked      []BlockedPackage
-	blockedMu    sync.Mutex
-	allowed      map[string]allowedVersion // package name → resolved safe version
-	allowedMu    sync.Mutex
-	checked      int
-	checkedMu    sync.Mutex
-	skipPackages map[string]bool
+	httpClient *http.Client
+	revProxy   *httputil.ReverseProxy
+	listener   net.Listener
+	server     *http.Server
+	blocked    []BlockedPackage
+	blockedMu  sync.Mutex
+	allowed    map[string]allowedVersion // package name → resolved safe version
+	allowedMu  sync.Mutex
+	checked    int
+	checkedMu  sync.Mutex
+	// verifyFailed counts metadata requests that were counted in `checked` (a real
+	// age check was attempted) but could NOT be verified because the upstream was
+	// unreachable, its TLS could not be trusted, or its response was unreadable —
+	// the fail-closed error paths. It exists so the wrap summary never claims
+	// "N packages checked, all pass" when some checks in fact failed to run (e.g.
+	// a wrong registry-ca-bundle): a green checkmark must never overstate coverage
+	// the org did not actually get. Guarded by verifyFailedMu.
+	verifyFailed   int
+	verifyFailedMu sync.Mutex
+	skipPackages   map[string]bool
 
 	// degradeWarned guards the one-time missing-timestamp degraded-enforcement
 	// warning emitted when degradeOnMissingTimestamps is set (PPSC-994).
@@ -233,6 +242,19 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	upstreamURL, err := url.Parse(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("parsing upstream URL: %w", err)
+	}
+
+	// A configured PyPI upstream is validated to end in "/simple" (PEP 503) — see
+	// config.go's registries.pypi check. The local index the proxy exposes to
+	// pip/uv already models that same "/simple/<pkg>/" shape (mirroring the
+	// pypi.org default, whose upstream has no "/simple" suffix of its own), so
+	// joinUpstreamURL's requestURI already carries "/simple/...". Strip the
+	// configured upstream's own "/simple" suffix here so the join produces
+	// ".../pypi-group/simple/<pkg>/" instead of a double
+	// ".../pypi-group/simple/simple/<pkg>/", which 404s into an HTML error page
+	// on real artifactories (Nexus, Artifactory) instead of the PEP 691 JSON.
+	if cfg.Mode == ModePyPI && customUpstream {
+		upstreamURL.Path = strings.TrimSuffix(strings.TrimSuffix(upstreamURL.Path, "/"), "/simple")
 	}
 
 	skipSet := make(map[string]bool, len(cfg.SkipPackages))
@@ -383,6 +405,28 @@ func newUpstreamHTTPClient(upstreamURL *url.URL, caBundlePath string) (*http.Cli
 	}, nil
 }
 
+// NewRegistryHTTPClient builds an HTTP client for talking to a configured
+// approved registry from OUTSIDE the proxy — specifically the `supply-chain
+// check` age-query path (PPSC-994), which reaches the same custom artifactory
+// the wrap proxy does and therefore needs the same private-CA trust. It shares
+// newUpstreamHTTPClient's two guarantees: an optional CA bundle (so a private-CA
+// Nexus is reachable) and a cross-host-redirect refusal. registryURL must have
+// passed ValidateRegistryURL. A nil return with nil error means "no custom
+// trust needed" (empty registryURL and empty caBundlePath) — the caller should
+// fall back to its default client. A bad CA bundle path is a hard error so a
+// TLS misconfiguration surfaces instead of silently failing every age check.
+// armis:ignore cwe:918 reason:registryURL is the config-load-validated registries.<eco> value (supplychain.ValidateRegistryURL: https-only, no userinfo, rejects loopback/RFC1918/link-local) at every call site (supply_chain_check.go, supply_chain_wrap.go); this constructor never receives a per-request or otherwise unvalidated URL
+func NewRegistryHTTPClient(registryURL, caBundlePath string) (*http.Client, error) {
+	if registryURL == "" && caBundlePath == "" {
+		return nil, nil
+	}
+	u, err := url.Parse(registryURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing approved registry URL %q: %w", registryURL, err)
+	}
+	return newUpstreamHTTPClient(u, caBundlePath)
+}
+
 func (p *Proxy) Start(ctx context.Context) (string, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -448,6 +492,28 @@ func (p *Proxy) Checked() int {
 	p.checkedMu.Lock()
 	defer p.checkedMu.Unlock()
 	return p.checked
+}
+
+// VerifyFailed returns the number of packages counted in Checked() whose age
+// could not actually be verified because the upstream errored out on the
+// fail-closed path (unreachable, untrusted TLS, or unreadable response). The
+// wrap summary subtracts this from Checked() so it never reports a package as
+// "checked, passed" when the check itself did not complete.
+func (p *Proxy) VerifyFailed() int {
+	p.verifyFailedMu.Lock()
+	defer p.verifyFailedMu.Unlock()
+	return p.verifyFailed
+}
+
+// markVerifyFailed records that one metadata age check attempted (and counted in
+// Checked) could not be verified against the upstream. Only the fail-closed
+// error paths call it — the fail-open paths pass the package through under an
+// explicit "allowing (fail-open)" notice, which is a deliberate, separately
+// surfaced posture rather than a silently-missed check.
+func (p *Proxy) markVerifyFailed() {
+	p.verifyFailedMu.Lock()
+	p.verifyFailed++
+	p.verifyFailedMu.Unlock()
 }
 
 func (p *Proxy) Allowed() []InstalledPackage {
@@ -528,12 +594,38 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	p.handleMetadataFiltering(w, r, pkgName)
 }
 
+// joinUpstreamURL concatenates a base upstream URL and a request-URI path,
+// collapsing exactly one slash at the boundary so a trailing slash on the base
+// and a leading slash on the path do not produce a "//" in the result. It
+// mirrors httputil.NewSingleHostReverseProxy's internal singleJoiningSlash so
+// the metadata leg and the tarball (Director) leg build byte-identical upstream
+// URLs. Both inputs are trusted at this point (see handleMetadataFiltering's
+// cwe:918 note); this is a formatting fix, not a security boundary.
+// armis:ignore cwe:628 cwe:22 cwe:73 cwe:918 reason:base is the proxy's own validated upstream URL (constant default or ValidateRegistryURL-checked config); requestURI is the local wrapped-install client's own request path/query (r.URL.RequestURI() at the sole call site in handleMetadataFiltering), which the proxy is intentionally forwarding — this function only collapses a boundary slash, it introduces no new traversal beyond what the client already requested of itself, and httputil's reverse-proxy Director performs the identical unsanitized join for the tarball leg
+func joinUpstreamURL(base, requestURI string) string {
+	baseSlash := strings.HasSuffix(base, "/")
+	uriSlash := strings.HasPrefix(requestURI, "/")
+	switch {
+	case baseSlash && uriSlash:
+		return base + requestURI[1:]
+	case !baseSlash && !uriSlash:
+		return base + "/" + requestURI
+	default:
+		return base + requestURI
+	}
+}
+
 func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, pkgName string) {
 	// Use RequestURI() (escaped path + raw query) rather than just Path so the
 	// filtered branch is symmetric with the reverse-proxy passthrough: query
 	// params (e.g. ?write=true) and path-escaping nuances reach the upstream.
-	// armis:ignore cwe:918 reason:p.upstreamURL is the default npmjs.org/pypi.org constant or a custom upstream validated by ValidateRegistryURL at config-load (https-only, no userinfo, rejects loopback/RFC1918/link-local); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.upstreamURL.String()+r.URL.RequestURI(), nil) //nolint:gosec // upstream URL is a constant default or config-load-validated; path is from the local proxy
+	// joinUpstreamURL collapses the boundary slash so a configured upstream with a
+	// trailing slash (e.g. "https://nexus.corp/") does not produce a "//lodash"
+	// double-slash path that many registries 404 on — the same single-slash join
+	// the reverse-proxy Director (tarball leg) already applies via httputil, so
+	// both legs build identical URLs.
+	// armis:ignore cwe:918 cwe:73 cwe:22 reason:p.upstreamURL is the default npmjs.org/pypi.org constant or a custom upstream validated by ValidateRegistryURL at config-load (https-only, no userinfo, rejects loopback/RFC1918/link-local); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host — joinUpstreamURL only collapses a boundary slash, it does not accept a caller-chosen path outside that request, so no traversal beyond the client's own request is possible
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, joinUpstreamURL(p.upstreamURL.String(), r.URL.RequestURI()), nil) //nolint:gosec // upstream URL is a constant default or config-load-validated; path is from the local proxy
 	if err != nil {
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to create request for %s", pkgName), http.StatusBadGateway)
 		return
@@ -567,6 +659,9 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 			p.reverseProxy(w, r)
 			return
 		}
+		// Fail-closed: the age check was attempted (counted in `checked`) but could
+		// not be verified. Record that so the summary does not claim "all pass".
+		p.markVerifyFailed()
 		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry unreachable for %s: %v\n", pkgName, err)
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: registry unreachable for %s", pkgName), http.StatusBadGateway)
 		return
@@ -610,6 +705,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 			p.reverseProxy(w, r)
 			return
 		}
+		p.markVerifyFailed()
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: failed to read upstream response for %s", pkgName), http.StatusBadGateway)
 		return
 	}
@@ -619,6 +715,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 			p.reverseProxy(w, r)
 			return
 		}
+		p.markVerifyFailed()
 		http.Error(w, fmt.Sprintf("[armis] supply-chain: upstream response too large for %s", pkgName), http.StatusBadGateway)
 		return
 	}
