@@ -428,6 +428,28 @@ func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
 	// means the server's own default cert (issued for "example.com") will not
 	// validate against that hostname, so this test mints its own self-signed cert
 	// for "nexus.localhost" and serves it directly over tls.Listen.
+	//
+	// Resolving "nexus.localhost" to 127.0.0.1 relies on the OS resolver
+	// special-casing *.localhost subdomains — true on Linux (systemd-resolved)
+	// and macOS (mDNSResponder), but NOT on Windows, which only special-cases
+	// the bare "localhost" name and attempts a real (failing) DNS lookup for any
+	// subdomain of it. Override the dialer so this test doesn't depend on that
+	// OS-specific behavior: redirect only the "nexus.localhost" host to 127.0.0.1
+	// at the TCP layer, while SNI/certificate validation (which reads the
+	// original hostname from the request URL, not the dial target) is untouched.
+	origTransport := http.DefaultTransport.(*http.Transport).Clone()
+	testTransport := origTransport.Clone()
+	testTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, portStr, splitErr := net.SplitHostPort(addr)
+		// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.localhost", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
+		if splitErr == nil && host == "nexus.localhost" {
+			addr = net.JoinHostPort("127.0.0.1", portStr)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	http.DefaultTransport = testTransport
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
 	var hit bool
 	certPEM, server, port := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		hit = true
