@@ -192,7 +192,7 @@ func TestPrintBlockSummary_UninstallReframesWording(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
 	})
 
 	wantSubstrings := []string{
@@ -220,7 +220,7 @@ func TestPrintBlockSummary_UninstallFailureNamesRealVerb(t *testing.T) {
 	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, nil, 5, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
 	})
 
 	wantSubstrings := []string{
@@ -244,7 +244,7 @@ func TestPrintBlockSummary_FailedUninstallNeverSaysKept(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
 	})
 
 	if strings.Contains(out, "kept") {
