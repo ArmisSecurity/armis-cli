@@ -1,0 +1,129 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/auth"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/spf13/cobra"
+)
+
+var loginClientID string
+
+var authLoginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Sign in to Armis Cloud via your browser",
+	Long: `Authenticate with Armis Cloud using browser-based SSO (OAuth2 Device
+Authorization Grant, RFC 8628).
+
+The CLI requests a device code, opens your browser to the Armis sign-in page,
+and waits while you authenticate with your corporate identity provider. On
+success the access and refresh tokens are stored in a 0600 file under ~/.armis
+and shared with the Armis MCP plugins.
+
+A tenant is required: pass --tenant-id or set ARMIS_TENANT_ID.
+
+If the browser cannot be opened automatically (for example over SSH), the CLI
+prints a URL and a code to enter manually.`,
+	Example: `  # Sign in interactively
+  armis-cli auth login --tenant-id my-tenant`,
+	Args: cobra.NoArgs,
+	RunE: runAuthLogin,
+}
+
+func init() {
+	authLoginCmd.Flags().StringVar(&loginClientID, "client-id", auth.DefaultDeviceClientID, "OAuth2 client ID to authenticate as")
+	authCmd.AddCommand(authLoginCmd)
+}
+
+func runAuthLogin(cmd *cobra.Command, _ []string) error {
+	_, err := performDeviceLogin(cmd.Context(), loginClientID)
+	return err
+}
+
+// performDeviceLogin runs the OAuth2 device-authorization flow end to end:
+// request a device code, open (or print) the verification URL, poll until the
+// user approves, and persist the resulting tokens. It returns the stored token
+// on success. It is shared by the `auth login` command and the
+// ARMIS_DEFAULT_AUTH_METHOD=SSO auto-login path in getAuthProvider.
+//
+// ctx bounds the whole interactive flow, so callers should pass a long-lived
+// context (e.g. the command context), not a short per-request timeout.
+func performDeviceLogin(ctx context.Context, clientID string) (*auth.StoredToken, error) {
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
+	}
+
+	issuer := getAPIBaseURL()
+	deviceClient, err := auth.NewDeviceClient(issuer, debug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize login: %w", err)
+	}
+
+	// Step 1: request a device code. Use a short timeout for this single call.
+	reqCtx, cancelReq := context.WithTimeout(ctx, 30*time.Second)
+	da, err := deviceClient.RequestDeviceCode(reqCtx, clientID, tenantID, "")
+	cancelReq()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start login: %w", err)
+	}
+
+	// Step 2: send the user to the verification page. The browser URL carries
+	// the user_code, so the happy path needs no manual entry.
+	browseURL := da.VerificationURIComplete
+	opened := auth.OpenBrowser(browseURL) == nil
+	printVerificationInstructions(da, browseURL, opened)
+
+	// Step 3: poll until approval, expiry, or denial. Bound the wait by the
+	// device code's lifetime.
+	pollCtx, cancelPoll := context.WithTimeout(ctx, time.Duration(da.ExpiresIn)*time.Second)
+	defer cancelPoll()
+
+	spinner := progress.NewSpinner("Waiting for you to finish signing in…", noProgress)
+	spinner.Start()
+	stored, err := deviceClient.PollToken(pollCtx, da.DeviceCode, clientID, da.Interval)
+	spinner.Stop()
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: persist the tokens for reuse by the CLI and MCP plugins, keyed by
+	// this environment (the API base URL) so multiple environments coexist.
+	stored.Issuer = issuer
+	store := auth.NewTokenStore()
+	if err := store.Save(issuer, stored); err != nil {
+		return nil, fmt.Errorf("signed in, but failed to store credentials: %w", err)
+	}
+
+	printLoginSuccess(stored)
+	return stored, nil
+}
+
+// printVerificationInstructions tells the user where to authenticate, covering
+// both the auto-opened-browser case and the manual fallback.
+func printVerificationInstructions(da *auth.DeviceAuthorization, browseURL string, opened bool) {
+	if opened {
+		fmt.Fprintf(os.Stderr, "Opened your browser to complete sign-in.\n")
+		fmt.Fprintf(os.Stderr, "If it didn't open, visit:\n\n    %s\n\n", browseURL)
+		fmt.Fprintf(os.Stderr, "Verify this code is shown: %s\n\n", output.GetStyles().Bold.Render(da.UserCode))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "To sign in, open the following URL in your browser:\n\n")
+	fmt.Fprintf(os.Stderr, "    %s\n\n", da.VerificationURI)
+	fmt.Fprintf(os.Stderr, "and enter this code:  %s\n\n", output.GetStyles().Bold.Render(da.UserCode))
+}
+
+// printLoginSuccess confirms the signed-in identity and tenant.
+func printLoginSuccess(stored *auth.StoredToken) {
+	fmt.Fprintf(os.Stderr, "%s Signed in successfully.\n", output.IconSuccess)
+	if stored.Subject != "" {
+		fmt.Fprintf(os.Stderr, "  Identity: %s\n", stored.Subject)
+	}
+	if stored.TenantID != "" {
+		fmt.Fprintf(os.Stderr, "  Tenant:   %s\n", stored.TenantID)
+	}
+}

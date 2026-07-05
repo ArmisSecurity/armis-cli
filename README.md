@@ -974,7 +974,12 @@ pipelines:
 
 ## Environment Variables
 
-**JWT Authentication (Recommended):**
+Pick the authentication method that matches the environment:
+
+- **CI/CD and other non-interactive environments** — use client credentials (`ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`). They authenticate without a browser, which is what automated pipelines need.
+- **Developer machines and other interactive environments** — use SSO (`ARMIS_DEFAULT_AUTH_METHOD=SSO`). The CLI signs in through your company's identity provider in the browser, so no long-lived secret has to be stored on the machine.
+
+**Client Credentials (recommended for CI/CD):**
 
 | Variable | Description |
 |----------|-------------|
@@ -982,14 +987,24 @@ pipelines:
 | `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
 | `ARMIS_REGION` | Armis cloud region (equivalent to `--region` flag) |
 
-When using JWT authentication, the tenant ID is automatically extracted from the token.
+When using client credentials, the tenant ID is automatically extracted from the token.
+
+**SSO (recommended for interactive use):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_DEFAULT_AUTH_METHOD` | Set to `SSO` to sign in through your company's configured identity provider when no other credentials are present (requires `ARMIS_TENANT_ID` or `--tenant-id`) |
+
+You can also sign in explicitly at any time with `armis-cli auth login`; setting `ARMIS_DEFAULT_AUTH_METHOD=SSO` just triggers that sign-in automatically on the first command that needs credentials.
+
+Before users can sign in with SSO, an IT admin registers the tenant's identity provider once with `armis-cli auth setup` (see below).
 
 **Basic Authentication (Legacy):**
 
 | Variable | Description |
 |----------|-------------|
 | `ARMIS_API_TOKEN` | API token for Basic authentication |
-| `ARMIS_TENANT_ID` | Tenant identifier (required only with Basic auth) |
+| `ARMIS_TENANT_ID` | Tenant identifier (required with Basic auth or SSO) |
 
 **General:**
 
@@ -999,6 +1014,42 @@ When using JWT authentication, the tenant ID is automatically extracted from the
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
 | `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
 | `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
+
+### Registering an identity provider (IT admins)
+
+Before your users can sign in with SSO, register your tenant's identity provider once with `armis-cli auth setup`. Run it after you register `armis-cli` as an OIDC application in your IdP (Okta, Entra ID, Keycloak, …); it posts the resulting configuration to the Armis admin API. Authentication uses your existing Armis admin credentials (resolved the same way as the scan commands).
+
+```bash
+# Interactive — the CLI walks you through each value
+armis-cli auth setup
+
+# Non-interactive, from a JSON file (for MDM / CI)
+armis-cli auth setup --config idp.json --yes
+
+# Update an existing configuration (rotate the secret, change mappings)
+armis-cli auth setup --config idp.json --update
+```
+
+`--config` accepts a file path, `-` to read stdin, or an inline JSON string:
+
+```json
+{
+  "tenant_id": "acme",
+  "idp_type": "okta",
+  "issuer": "https://acme.okta.com",
+  "oidc_client_id": "0oa1b2c3d4",
+  "oidc_client_secret": "…",
+  "group_claim": "groups",
+  "group_mapping": {
+    "admin": ["eng-admins"],
+    "developer": ["core-developers", "contract-developers"]
+  }
+}
+```
+
+`group_mapping` maps each Armis role to the IdP groups that grant it, so several groups can share a role. Only the two recognized roles — `admin` and `developer` — are accepted, and a group may appear under only one role. In interactive mode the same is entered as a comma-separated list of groups per role. The command shows a review summary (with the client secret masked) and confirms before sending; the secret is transmitted only in the registration request and is never stored or printed.
+
+If a configuration already exists for your tenant, running `armis-cli auth setup` interactively lets you edit it: the form is pre-filled with the current values, and you can update just what you need — for example, change a group mapping without re-entering the client secret. To update from a JSON document non-interactively, use `--config … --update`.
 
 ---
 
@@ -1012,6 +1063,7 @@ When using JWT authentication, the tenant ID is automatically extracted from the
   - Use JWT authentication (client ID/secret) for production — it supports automatic token refresh and does not require a separate tenant ID
   - Rotate credentials periodically
   - Credentials are never logged or exposed in output
+  - SSO session tokens (`armis-cli auth login`) are stored per-user in `~/.armis/.sessions` — owner-only (`0600`) on macOS/Linux, protected by the user-profile ACL on Windows
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
 - **CI Detection**: Progress bars automatically disabled in CI environments

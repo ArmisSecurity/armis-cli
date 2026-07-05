@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,8 +119,10 @@ func TestNewAuthProvider_LegacyAuth(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for missing credentials")
 		}
-		if !strings.Contains(err.Error(), "authentication required") {
-			t.Errorf("Expected authentication error, got: %v", err)
+		// Assert the sentinel, not the message: the CLI relies on errors.Is
+		// (see cmd.augmentNoCredentialsError) to detect this case.
+		if !errors.Is(err, ErrAuthenticationRequired) {
+			t.Errorf("Expected ErrAuthenticationRequired, got: %v", err)
 		}
 	})
 

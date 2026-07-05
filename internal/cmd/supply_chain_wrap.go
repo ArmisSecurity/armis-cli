@@ -459,6 +459,66 @@ func exitWithCode(code int, err error) error {
 
 const maxBlockedDisplay = 5
 
+// removalSubcommands are npm/pnpm/yarn/bun subcommands whose purpose is to
+// remove a package, not install one. npm (7+), pnpm, and bun still hit the
+// registry during these: they run a full dependency-tree reify pass to keep
+// the lockfile consistent after the removal, so any *remaining* package
+// pinned to a loose semver range gets its "latest" re-resolved and re-checked
+// by the proxy. That traffic is real and the filter result is real, but
+// "installed safe version" reads as a non sequitur to someone who only ran
+// `npm uninstall` — this set drives the wording override in actionLabel.
+var removalSubcommands = map[string]bool{
+	"uninstall": true,
+	"remove":    true,
+	"rm":        true,
+	"un":        true,
+	"r":         true,
+	"unlink":    true,
+}
+
+// flagsWithValue are global package-manager flags that consume the following
+// token as their value rather than a subcommand, e.g. `--prefix /tmp`.
+// firstSubcommand must skip both the flag and its value, or it mistakes the
+// value (like a directory path) for the subcommand and misses a removal verb
+// that follows (`npm --prefix /tmp remove vercel`).
+var flagsWithValue = map[string]bool{
+	"--prefix":   true,
+	"--cwd":      true,
+	"--registry": true,
+	"--filter":   true,
+	"-C":         true,
+}
+
+// firstSubcommand returns the first non-flag token in pmArgs — the
+// package-manager subcommand the user actually typed (e.g. "uninstall" out of
+// ["uninstall", "--save", "vercel"]) — or "" if pmArgs is empty or all flags.
+func firstSubcommand(pmArgs []string) string {
+	for i := 0; i < len(pmArgs); i++ {
+		a := pmArgs[i]
+		if strings.HasPrefix(a, "-") {
+			if flagsWithValue[a] && i+1 < len(pmArgs) {
+				i++
+			}
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
+// actionLabel names, for summary wording, what the wrapped command was doing.
+// It returns the actual subcommand for a known removal verb, since "install"
+// would misdescribe the registry traffic an uninstall triggers; every other
+// invocation (install, add, ci, update, or an unrecognized/absent subcommand)
+// falls back to "install" — the case this summary's wording was designed
+// around and still the overwhelming common case.
+func actionLabel(pmArgs []string) string {
+	if sub := firstSubcommand(pmArgs); removalSubcommands[sub] {
+		return sub
+	}
+	return "install"
+}
+
 // pkgFilterResult is the per-package view of the proxy's filtering decision. It
 // collapses the possibly-several blocked versions of one package into a single
 // line: the youngest blocked version (the one the PM would have installed as
@@ -539,6 +599,15 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 	// the PM exited non-zero we report the filter as a fact and stay neutral.
 	success := allResolved && installOK
 
+	// action names what the wrapped command was actually doing, for wording only.
+	// It defaults to "install" (the common case this summary was written for) but
+	// switches to the real verb (uninstall, remove, rm, …) for removal-style
+	// subcommands, and isRemoval gates the extra clarifying clause below — someone
+	// who typed `npm uninstall` sees registry-filtering output and needs to know
+	// it came from npm's own dependency-tree reify pass, not a hidden install.
+	action := actionLabel(pmArgs)
+	isRemoval := action != "install"
+
 	// Header. When every filtered package resolved to a safe older version AND the
 	// install completed, the user was both protected and unblocked — frame it as
 	// success (green). Otherwise stay neutral (muted): either a package had no safe
@@ -553,6 +622,20 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 			s.MutedText.Render(scPrefix),
 			s.MutedText.Render(fmt.Sprintf("supply-chain: withheld %s; a default install was unaffected (%s policy)",
 				countNoun(len(results), "prerelease"), policyShort)))
+	case success && isRemoval:
+		// npm/pnpm/bun re-resolve the remaining dependency tree during uninstall to
+		// keep the lockfile consistent, which can touch the registry even though the
+		// user asked to remove a package, not install one. Name the real subcommand
+		// and explain the registry hit so this doesn't read as a non sequitur.
+		versionWord := "version"
+		if len(results) > 1 {
+			versionWord = "versions"
+		}
+		fmt.Fprintf(os.Stderr, "\n%s %s %s\n",
+			s.MutedText.Render(scPrefix),
+			s.SuccessText.Render(output.IconSuccess),
+			s.SuccessText.Render(fmt.Sprintf("supply-chain: %s re-resolved remaining dependencies; filtered %s → kept safe %s (%s policy)",
+				action, countNoun(len(results), "too-new release"), versionWord, policyShort)))
 	case success:
 		versionWord := "version"
 		if len(results) > 1 {
@@ -566,8 +649,8 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 	case !installOK:
 		fmt.Fprintf(os.Stderr, "\n%s %s\n",
 			s.MutedText.Render(scPrefix),
-			s.WarningText.Render(fmt.Sprintf("supply-chain: filtered %s; install did not complete (%s policy)",
-				countNoun(len(results), "too-new release"), policyShort)))
+			s.WarningText.Render(fmt.Sprintf("supply-chain: filtered %s; %s did not complete (%s policy)",
+				countNoun(len(results), "too-new release"), action, policyShort)))
 	default:
 		fmt.Fprintf(os.Stderr, "\n%s %s\n",
 			s.MutedText.Render(scPrefix),
@@ -597,7 +680,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 		}
 	}
 	for _, r := range results[:displayCount] {
-		printPkgFilterLine(s, r, !allResolved, installOK, onlyPrerelease, cols)
+		printPkgFilterLine(s, r, !allResolved, installOK, onlyPrerelease, isRemoval, cols)
 	}
 	if remaining := len(results) - displayCount; remaining > 0 {
 		fmt.Fprintf(os.Stderr, "    %s\n",
@@ -609,7 +692,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 	// error), so the language stays hedged — but pointing at a specific package is
 	// far more actionable than "if a dependency pins a version…".
 	if !installOK {
-		printFailureCulprits(s, results, conflicts, policy, pmName, pmArgs)
+		printFailureCulprits(s, results, conflicts, policy, pmName, pmArgs, action)
 	}
 
 	// One-time rationale: the first time a user sees a filter on an interactive
@@ -635,7 +718,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 			fmt.Fprintf(os.Stderr, "\n  %s\n", s.MutedText.Render(strings.Repeat("─", scSepLen)))
 			fmt.Fprintf(os.Stderr, "  %s %s\n\n",
 				s.MutedText.Render("Disable:"),
-				s.Bold.Render(fmt.Sprintf("%s=off %s install", envSCOff, pmName)))
+				s.Bold.Render(fmt.Sprintf("%s=off %s %s", envSCOff, pmName, action)))
 		} else {
 			fmt.Fprintf(os.Stderr, "  %s %s\n",
 				s.MutedText.Render("Disable:"),
@@ -662,7 +745,7 @@ func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplycha
 // exclusions → min-age (surgical/reviewable → broad), and deliberately omits the
 // global ARMIS_SUPPLY_CHAIN=off kill switch so a 3am developer does not reach for
 // the nuclear option first.
-func printFailureCulprits(s *output.Styles, results []pkgFilterResult, conflicts []supplychain.ConstraintConflict, policy supplychain.Policy, pmName string, pmArgs []string) {
+func printFailureCulprits(s *output.Styles, results []pkgFilterResult, conflicts []supplychain.ConstraintConflict, policy supplychain.Policy, pmName string, pmArgs []string, action string) {
 	policyShort := formatPolicyShort(policy.MinReleaseAge)
 
 	// Lead with protection, not apology: state the security win first so the
@@ -670,7 +753,7 @@ func printFailureCulprits(s *output.Styles, results []pkgFilterResult, conflicts
 	// source obvious to someone who didn't add armis to their pipeline.
 	fmt.Fprintf(os.Stderr, "\n  %s %s\n",
 		s.Bold.Render("[armis supply-chain]"),
-		s.MutedText.Render("the install did not complete. This tool withheld brand-new releases on purpose — a common supply-chain attack vector. The block may be why the install failed (or it could be unrelated, e.g. a typo or network error)."))
+		s.MutedText.Render(fmt.Sprintf("the %s did not complete. This tool withheld brand-new releases on purpose — a common supply-chain attack vector. The block may be why the %s failed (or it could be unrelated, e.g. a typo or network error).", action, action)))
 
 	// nuclearShown tracks whether we named at least one specific culprit; it
 	// gates the closing "managed by your platform team" pointer.
@@ -867,10 +950,14 @@ func rightPad(s string, width int) string {
 // colored severity tier that would imply averted risk. The resolved-version
 // wording is "installed" only when the PM completed (installOK); otherwise it
 // reads "available" — the safe version exists, but we cannot claim it was
-// installed. When no safe fallback existed (NewVersion == "") the line inverts:
-// it leads with a warning instead of an install. cols pads the columns so the
-// skipped clauses line up across rows.
-func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, prerelease bool, cols colWidths) {
+// installed. When the wrapped command was a removal (isRemoval) — the PM
+// re-resolved this package as a side effect of uninstalling another one, not
+// because the user asked to install it — the line reads "kept" instead, since
+// "installed" would misdescribe what a removal command did. When no safe
+// fallback existed (NewVersion == "") the line inverts: it leads with a
+// warning instead of an install. cols pads the columns so the skipped clauses
+// line up across rows.
+func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, prerelease, isRemoval bool, cols colWidths) {
 	// Omit the age when it is unknown (OldAge == 0 for an undatable PyPI file, or
 	// non-positive under clock skew) rather than claiming a precise "(0 minutes
 	// old)". The version alone is still actionable.
@@ -891,8 +978,14 @@ func printPkgFilterLine(s *output.Styles, r pkgFilterResult, mixed, installOK, p
 	}
 
 	resolvedWord := "installed"
-	if !installOK {
+	switch {
+	case !installOK:
+		// A failed run never completed, so nothing was kept or installed —
+		// this must win over isRemoval or a failed uninstall would misreport
+		// "kept" for a package the PM never finished touching.
 		resolvedWord = "available"
+	case isRemoval:
+		resolvedWord = "kept"
 	}
 
 	var glyph string
