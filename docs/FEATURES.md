@@ -237,6 +237,57 @@ The report carries the effective `policy`, the enforcement `mode`, and the
 jq -e '.install_status == "ok" and (.warned_through | length) == 0' supply-chain-report.json
 ```
 
+<a name="supply-chain-custom-registry"></a>
+
+### Custom approved registry (private artifactory)
+
+By default, age checks query the public registries (npm, PyPI). If your org
+routes installs through a private artifactory (Nexus, JFrog Artifactory), point
+Armis at it so age checks — and the `wrap`/`check` age enforcement — run against
+the registry you actually use, not the public one:
+
+```yaml
+# .armis-supply-chain.yaml
+registries:
+  npm: https://nexus.corp/repository/npm-group/
+  pypi: https://nexus.corp/repository/pypi-group/simple/   # must expose the PEP 503 Simple API
+registry-enforcement: warn   # optional: warn when an install resolves off the approved registry
+registry-ca-bundle: /etc/armis/nexus-ca.pem   # optional: trust a private/corporate CA
+```
+
+- **`registries.<npm|pypi>`** — the approved registry URL for that ecosystem.
+  Must be `https://` with no embedded credentials and no loopback/private/
+  link-local host (the committed config is a trust boundary — validated at
+  load time, not a best-effort parse). The PyPI URL must end in `/simple` or
+  `/simple/` (the PEP 503 Simple API path); Maven/Gradle are audit-path only
+  and not routable to a custom registry in this version.
+- **`registry-enforcement: warn`** — when set, a package that resolves from a
+  host *other than* the approved registry is flagged with a warning (currently
+  npm-family only). Only `warn` is supported; `block` is rejected at config
+  load so it can never be silently downgraded.
+- **`registry-ca-bundle`** — path to a PEM file to trust a private CA for the
+  registry connection, e.g. a self-signed or corporate-CA-issued artifactory
+  certificate. Override per-run with `ARMIS_REGISTRY_CA_BUNDLE=<path>`. A bad
+  or unreadable bundle is a hard error, never a silent fallback to unverified
+  TLS.
+
+**Credentials** are read from your existing package-manager config, never from
+the committed policy file: npm-family reads the `.npmrc` `_authToken` (host- or
+host+path-scoped); pip/uv read Basic-auth userinfo embedded in
+`PIP_INDEX_URL`/`UV_INDEX_URL`. If a credential is configured but unusable
+(e.g. an `.npmrc` referencing an unset `${VAR}`), that's a hard error rather
+than a silent unauthenticated request.
+
+**Check your setup** before relying on it:
+
+```bash
+armis-cli supply-chain wrap --dry-run npm
+```
+
+This resolves and prints the approved registry, whether a credential was
+found, the enforcement posture, and the CA bundle in use — without running
+the package manager.
+
 <a name="supply-chain-scope-notes"></a>
 
 ### Scope and known limitations
@@ -495,6 +546,7 @@ JWT authentication is recommended. Obtain JWT credentials from the VIPR external
 | `ARMIS_SUPPLY_CHAIN_SKIP` | Comma/space-separated package names to exempt from the age check (persists in the env; exempts future versions) |
 | `ARMIS_SUPPLY_CHAIN_TRANSITIVE` | Set to `warn` to let young *transitive* deps through with a warning (direct deps still blocked); default `block` |
 | `ARMIS_SUPPLY_CHAIN_REPORT` | Path to write the JSON compliance report for a wrapped install (`-` for stderr) |
+| `ARMIS_REGISTRY_CA_BUNDLE` | Path to a PEM CA bundle to trust for the configured custom registry connection; overrides `registry-ca-bundle` in `.armis-supply-chain.yaml` |
 
 ### Default Behavior
 

@@ -695,6 +695,10 @@ exclusions:
 #   - pip
 # transitive-policy: warn   # optional: let young TRANSITIVE deps through with a warning
 #                           # (direct deps still blocked); default: block
+# registries:               # optional: route age checks through a private artifactory
+#   npm: https://nexus.corp/repository/npm-group/
+#   pypi: https://nexus.corp/repository/pypi-group/simple/
+# registry-ca-bundle: /etc/armis/nexus-ca.pem   # optional: trust a private CA
 fail-open: false
 ```
 
@@ -707,7 +711,7 @@ When a brand-new release is blocking you, prefer the most reviewable option:
 3. **Relax the window for all packages**: edit `min-age:` in `.armis-supply-chain.yaml`
 4. **Emergency kill switch**: `ARMIS_SUPPLY_CHAIN=off npm install`
 
-Because the age proxy is graph-blind, a withheld young version can make a transitive dependency unsatisfiable and fail an install. On the npm family Armis names the culprit (and who required it); you can also opt into `transitive-policy: warn` to let young *transitive* deps through while still blocking young *direct* ones. Generate an audit trail with `ARMIS_SUPPLY_CHAIN_REPORT=<path>` (wrapped installs) or `--report <path>` (`check`). See **[docs/FEATURES.md → Supply Chain Enforcement](docs/FEATURES.md#-supply-chain-enforcement)** for the full model, limitations, and residual-risk notes.
+Because the age proxy is graph-blind, a withheld young version can make a transitive dependency unsatisfiable and fail an install. On the npm family Armis names the culprit (and who required it); you can also opt into `transitive-policy: warn` to let young *transitive* deps through while still blocking young *direct* ones. Generate an audit trail with `ARMIS_SUPPLY_CHAIN_REPORT=<path>` (wrapped installs) or `--report <path>` (`check`). Route age checks through a private artifactory instead of the public registries with `registries:` (see **[docs/FEATURES.md → Custom approved registry](docs/FEATURES.md#supply-chain-custom-registry)**). See **[docs/FEATURES.md → Supply Chain Enforcement](docs/FEATURES.md#-supply-chain-enforcement)** for the full model, limitations, and residual-risk notes.
 
 ---
 

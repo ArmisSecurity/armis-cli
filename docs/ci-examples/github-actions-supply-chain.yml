@@ -8,7 +8,10 @@
 #
 # No Armis Cloud authentication is required: supply-chain queries public
 # registries (npm, PyPI, Maven Central) directly, so this workflow needs no
-# secrets.
+# secrets. If your org routes installs through a private artifactory (Nexus,
+# JFrog), configure `registries:` in .armis-supply-chain.yaml so age checks
+# run against it instead — see docs/FEATURES.md → "Custom approved registry".
+# That setup may need a registry credential and/or CA bundle available to CI.
 #
 # Notes:
 #   - By default `check` reports only packages that are NEW versus the base
