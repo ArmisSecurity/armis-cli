@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,7 +76,26 @@ var allowedPMs = map[string]bool{
 // runProxyWrap/runPreInstallBlock unit-testable.
 var execPMFunc = execPM
 
+// scWrapDryRun, when set, makes runProxyWrap resolve and report the registry
+// configuration (approved registry, whether auth/timestamps were found) without
+// running the package manager (DX6). Because the wrap command sets
+// DisableFlagParsing (so PM flags pass through verbatim), it is recognized only
+// as a LEADING token before the PM name — `wrap --dry-run npm install` — which
+// cannot collide with a package manager's own flags.
+var scWrapDryRun bool
+
 func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
+	// Strip a leading --dry-run (armis's own flag) before the PM name. Reset each
+	// call so the package-level var never leaks across invocations in tests.
+	scWrapDryRun = false
+	if len(args) > 0 && args[0] == "--dry-run" {
+		scWrapDryRun = true
+		args = args[1:]
+		if len(args) == 0 {
+			return fmt.Errorf("wrap --dry-run requires a package manager name")
+		}
+	}
+
 	// pmName is the exact command the user invoked (e.g. "pip3.12"); execName is
 	// the binary actually run. canonicalPM collapses pip variants (pip3, pip3.12)
 	// to "pip" for every policy decision — the allowlist, pre-install routing, and
@@ -87,6 +107,14 @@ func runSupplyChainWrap(cmd *cobra.Command, args []string) error {
 
 	if !allowedPMs[canonical] {
 		return fmt.Errorf("unsupported package manager: %s (allowed: npm, npx, pnpm, bun, yarn, pip, uv, uvx, poetry, pipenv, pdm, mvn, gradle)", pmName)
+	}
+
+	// --dry-run resolves and reports the registry configuration without running
+	// the package manager (DX6). It short-circuits every execution path so it is
+	// always safe to run, including for audit-path PMs (which report "no proxy
+	// registry routing in this version").
+	if scWrapDryRun {
+		return runWrapDryRun(pmName)
 	}
 
 	if os.Getenv(envSCActive) == "1" {
@@ -170,6 +198,27 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		}
 	}
 
+	// Resolve the approved registry + credentials for this ecosystem (PPSC-994).
+	// A zero-value result keeps the proxy on the public-registry path with the
+	// pre-existing behavior unchanged. A credential-resolution error (unset
+	// ${VAR}, bad token charset) is fatal — a misconfigured credential must fail
+	// loudly, not silently fall through to an unauthenticated 401.
+	rs, err := resolveRegistrySettings(canonicalPM(pmName))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry credential error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// When an approved registry is configured, validate it once more here (S1)
+	// before constructing a proxy that forwards credentials to it — defense in
+	// depth even though LoadConfig already validated it.
+	if rs.Configured {
+		if _, verr := supplychain.ValidateRegistryURL(rs.UpstreamURL); verr != nil {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: invalid approved registry, falling through: %v\n", verr)
+			return exitWithCode(execPMFunc(pmName, pmArgs, nil))
+		}
+	}
+
 	cfg := supplychain.ProxyConfig{
 		Policy:       policy,
 		Mode:         mode,
@@ -177,7 +226,20 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 		// Pass nil when undeterminable so the proxy treats every package as direct
 		// (fail-safe block). When warn is off, directDeps is nil too — harmless,
 		// since the proxy never consults it under the block policy.
-		DirectDeps: directDeps,
+		DirectDeps:   directDeps,
+		UpstreamURL:  rs.UpstreamURL,
+		AuthHeader:   rs.AuthHeader,
+		CABundlePath: rs.CABundlePath,
+		// Degrade gracefully on missing timestamps ONLY for a configured
+		// artifactory upstream; the default public path stays fail-closed.
+		DegradeOnMissingTimestamps: rs.Configured,
+	}
+
+	// The soft routing warning fires before the install when the developer's
+	// effective registry is EXPLICITLY off-policy (DX1). It is rate-limited to
+	// once per shell session and never trains the user toward the kill switch.
+	if rs.Configured {
+		maybeWarnOffPolicyRegistry(canonicalPM(pmName), rs.ApprovedURL)
 	}
 
 	proxy, err := supplychain.NewProxy(cfg)
@@ -212,7 +274,13 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	// the wrapper. Sweep those artifacts and rewrite the origin back to the real
 	// upstream — even when the PM exited non-zero, since a failed install can
 	// still have rewritten the lockfile first.
-	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, proxy.Upstream())
+	// Strip any embedded userinfo from the upstream origin before it becomes the
+	// rewrite target (S3): a credential must never be written into a lockfile.
+	// proxy.Upstream() is already userinfo-free for a registries.<eco> URL
+	// (validated to carry none), but stripping defensively covers any future
+	// origin derived from an index-url that did carry userinfo.
+	upstreamOrigin := supplychain.StripURLUserinfo(proxy.Upstream())
+	normalizeProxyResidue(canonicalPM(pmName), pmArgs, "http://"+addr, upstreamOrigin)
 
 	// installOK reflects what the package manager actually did, not what the proxy
 	// offered: proxy.Allowed() only records the version "latest" was repointed to,
@@ -234,7 +302,7 @@ func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
 
 	warned := proxy.Warned()
 	printWarnThroughSummary(warned, policy)
-	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), policy, pmName, installOK, pmArgs, conflicts)
+	printBlockSummary(proxy.Blocked(), proxy.Allowed(), proxy.Checked(), proxy.VerifyFailed(), policy, pmName, installOK, pmArgs, conflicts)
 
 	// WS3 compliance report: written post-install when ARMIS_SUPPLY_CHAIN_REPORT
 	// is set. Best-effort — a report write never changes the install's exit code.
@@ -465,10 +533,27 @@ type pkgFilterResult struct {
 	NewAge     time.Duration  // age of the resolved version, 0 when unknown
 }
 
-func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked int, policy supplychain.Policy, pmName string, installOK bool, pmArgs []string, conflicts []supplychain.ConstraintConflict) {
+func printBlockSummary(blocked []supplychain.BlockedPackage, allowed []supplychain.InstalledPackage, checked, verifyFailed int, policy supplychain.Policy, pmName string, installOK bool, pmArgs []string, conflicts []supplychain.ConstraintConflict) {
 	s := output.GetStyles()
 
 	if len(blocked) == 0 {
+		// verifyFailed packages were counted in `checked` but their age could not
+		// actually be verified (upstream unreachable, untrusted TLS, unreadable
+		// response — the fail-closed paths). A green "N checked, all pass" here
+		// would overstate coverage the org did not get and contradict the TLS/error
+		// lines already on stderr, so report the failures honestly instead. The
+		// install itself fails-closed on those packages (the proxy returned 502),
+		// so this is a reporting-honesty fix, not an enforcement change.
+		if verifyFailed > 0 {
+			verified := checked - verifyFailed
+			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
+				s.MutedText.Render(scPrefix),
+				s.WarningText.Render("⚠"),
+				s.WarningText.Render(fmt.Sprintf("supply-chain: %s could not be verified against the registry (age not checked); %s",
+					countNoun(verifyFailed, "package"), verifiedClause(verified))),
+				s.MutedText.Render(fmt.Sprintf("(%s policy)", formatPolicyShort(policy.MinReleaseAge))))
+			return
+		}
 		if checked > 0 {
 			fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
 				s.MutedText.Render(scPrefix),
@@ -959,6 +1044,16 @@ func groupBlockedByPackage(blocked []supplychain.BlockedPackage, allowedVersions
 	return results
 }
 
+// verifiedClause renders the trailing "N passed" / "no other packages verified"
+// half of the partial-verification warning, so the summary states how many
+// checks did succeed alongside the ones that could not run.
+func verifiedClause(verified int) string {
+	if verified <= 0 {
+		return "no packages could be age-checked"
+	}
+	return fmt.Sprintf("%s passed", countNoun(verified, "package"))
+}
+
 // checkedAllPass renders the "N packages checked, all pass" clause with verb
 // agreement: countNoun inflects the noun ("1 package" vs "N packages") but not
 // the verb, so the singular case collapses "all pass" → "passed" ("all" implies
@@ -1265,10 +1360,40 @@ func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) erro
 		fmt.Fprintf(os.Stderr, "  coverage, consider a lockfile plugin (e.g., io.github.chains-project:maven-lockfile)\n")
 	}
 
+	// Resolve the approved registry + credentials for this ecosystem (PPSC-994),
+	// same as runProxyWrap. Without this, the audit path (poetry/pipenv/pdm/
+	// maven/gradle, and any uv invocation that writes uv.lock) always queried
+	// the PUBLIC registry regardless of a configured registries.<eco>, silently
+	// never checking the approved artifactory at all — `check` would report
+	// "all pass" having verified nothing against it. A credential-resolution
+	// error is fatal, matching runProxyWrap's fail-loud contract.
+	rs, err := resolveRegistrySettings(canonicalPM(pmName))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry credential error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var registryURL string
+	var registryHTTPClient *http.Client
+	if rs.Configured {
+		if _, verr := supplychain.ValidateRegistryURL(rs.UpstreamURL); verr != nil {
+			fmt.Fprintf(os.Stderr, "[armis] supply-chain: invalid approved registry, checking against the public registry: %v\n", verr)
+		} else {
+			// armis:ignore cwe:295 cwe:918 reason:this branch only runs after ValidateRegistryURL returned no error on the line above (https-only, no userinfo, rejects loopback/RFC1918/link-local) — the same validated-then-used pattern already suppressed at every other ValidateRegistryURL call site in this codebase (supply_chain_check.go, proxy.go); rs.CABundlePath below is separately the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or committed config path, not attacker-controlled
+			registryURL = rs.UpstreamURL
+			registryHTTPClient, err = supplychain.NewRegistryHTTPClient(registryURL, rs.CABundlePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[armis] supply-chain: registry TLS trust error: %v\n", err)
+				os.Exit(1)
+			}
+			maybeWarnOffPolicyRegistry(canonicalPM(pmName), rs.ApprovedURL)
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 	defer cancel()
 
-	result, err := check.RunCheck(ctx, policy, lockfilePath, "")
+	result, err := check.RunCheckWithRegistryClient(ctx, policy, lockfilePath, "", registryURL, registryHTTPClient, rs.AuthHeader)
 	if err != nil {
 		// Honor the fail-open policy the same way the proxy path does: with
 		// FailOpen set, a failed audit (e.g. PyPI unreachable, lockfile parse

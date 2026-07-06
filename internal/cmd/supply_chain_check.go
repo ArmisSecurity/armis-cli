@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,7 +176,7 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// pass rather than checking an out-of-scope ecosystem. loadConfigUpward
 	// returns nil (enforce-all) when no config is present, and EnforcesEcosystem
 	// fails safe on an all-typo list.
-	cfg, _, err := loadConfigUpward(dir)
+	cfg, configDir, err := loadConfigUpward(dir)
 	if err != nil {
 		return err
 	}
@@ -217,9 +219,61 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 			s.MutedText.Render("supply-chain: no git base detected, checking all packages (use --all to suppress this notice)"))
 	}
 
+	// Thread the approved registry for this lockfile's ecosystem (PPSC-994): age
+	// checks query it, and npm-family packages resolved from a different host are
+	// flagged. The URL was validated at config-load; validate once more defensively.
+	registryURL := cfg.RegistryURLFor(eco)
+	if registryURL != "" {
+		if _, verr := supplychain.ValidateRegistryURL(registryURL); verr != nil {
+			return fmt.Errorf("approved registry for %s is invalid: %w", eco, verr)
+		}
+	}
+
+	// Build the age-query HTTP client with the approved registry's private-CA
+	// trust (registry-ca-bundle / ARMIS_REGISTRY_CA_BUNDLE), so `check` can reach
+	// a corporate-CA Nexus exactly as the wrap proxy does. Without this, every age
+	// query against such a registry fails TLS verification and is silently reduced
+	// to a warning — a green "0 violations" that never actually checked anything.
+	// Gated on registryURL != "": RunCheckWithRegistryClient ignores this client
+	// entirely when there's no approved registry for this ecosystem (it falls
+	// back to the public-registry queryRegistry path), so building it anyway
+	// would be pointless work — reading a CA bundle configured for a DIFFERENT
+	// ecosystem (registry-ca-bundle is global, not per-ecosystem) even though
+	// this ecosystem has no registries.<eco> entry to use it with. A nil client
+	// means no custom trust is needed; a bad bundle is a hard error so the
+	// misconfiguration surfaces instead of failing open.
+	var registryHTTPClient *http.Client
+	if registryURL != "" {
+		// armis:ignore cwe:295 reason:resolveCABundlePath returns the operator-supplied ARMIS_REGISTRY_CA_BUNDLE env or the committed registry-ca-bundle config path (the deploying platform team's own file), not attacker-controlled input; same trust source already suppressed for newUpstreamHTTPClient in proxy.go
+		registryHTTPClient, err = supplychain.NewRegistryHTTPClient(registryURL, resolveCABundlePath(cfg))
+		if err != nil {
+			return fmt.Errorf("configuring registry TLS trust for %s: %w", eco, err)
+		}
+	}
+
+	// Resolve the developer's registry credential from their NATIVE config (the
+	// .npmrc _authToken / index-url userinfo — never the committed policy file) so
+	// `check` authenticates its age queries the same way the wrap proxy does. An
+	// auth-gated artifactory returns 401 without it, which would silently degrade
+	// every age check to an unverified warning. An unusable credential (e.g. an
+	// unset ${VAR} in the .npmrc) is a hard error — the same fail-loud contract
+	// resolveRegistrySettings uses for wrap — never a silent 401.
+	var registryAuthHeader string
+	if registryURL != "" {
+		upstreamURL, perr := url.Parse(registryURL)
+		if perr != nil {
+			return fmt.Errorf("parsing approved registry URL for %s: %w", eco, perr)
+		}
+		authHeader, _, aerr := resolveUpstreamAuth(eco, configDir, upstreamURL)
+		if aerr != nil {
+			return fmt.Errorf("resolving registry credentials for %s: %w", eco, aerr)
+		}
+		registryAuthHeader = authHeader
+	}
+
 	ctx := cmd.Context()
 	// armis:ignore cwe:73 cwe:22 reason:lockfilePath and baseLockfile derive from the user-controlled --lockfile/--base-lockfile CLI flags (or auto-detected paths) naming files on the user's own machine; reading them is the purpose of `supply-chain check`, same no-trust-boundary pattern as --output suppressed at the flag registration above
-	result, err := check.RunCheck(ctx, policy, lockfilePath, baseLockfile)
+	result, err := check.RunCheckWithRegistryClient(ctx, policy, lockfilePath, baseLockfile, registryURL, registryHTTPClient, registryAuthHeader)
 	if err != nil {
 		if policy.FailOpen {
 			cli.PrintWarningf("supply-chain check failed (--fail-open): %v", err)
@@ -238,6 +292,13 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	s := output.GetStyles()
+
+	// Coverage header LEADS the output when any registry is configured, so a
+	// CISO reading CI logs sees exactly which ecosystems are covered and which
+	// fall back to the public registry — never a green checkmark that implies
+	// coverage the org isn't getting (E4/DX3 honesty).
+	printRegistryCoverage(s, cfg, eco, registryURL, result.RegistryChecked)
+
 	fmt.Fprintf(os.Stderr, "%s %s\n",
 		s.MutedText.Render("[armis]"),
 		s.MutedText.Render(fmt.Sprintf("supply-chain: checked %s, %d skipped, %s (%s policy)",
@@ -273,9 +334,12 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 		writeComplianceReport(scReport, rep)
 	} // armis:ignore cwe:22 cwe:23 cwe:73 reason:scanner attributes the scReport write-path finding to this closing brace; scReport is the user's own --report CLI flag naming a file on their machine (same trust model as scan's --output), not attacker-controlled input crossing a trust boundary
 
-	findings := make([]model.Finding, 0, len(result.Violations))
+	findings := make([]model.Finding, 0, len(result.Violations)+len(result.RegistryViolations))
 	for _, v := range result.Violations {
 		findings = append(findings, supplychain.ViolationToFinding(v, lockfilePath))
+	}
+	for _, rv := range result.RegistryViolations {
+		findings = append(findings, registryViolationToFinding(rv, lockfilePath))
 	}
 
 	scanResult := &model.ScanResult{
@@ -306,6 +370,73 @@ func runSupplyChainCheck(cmd *cobra.Command, args []string) error {
 	// function (before the scan ran) from the check-local scFailOn flag, so a
 	// lowercase "medium" correctly trips ShouldFail's exact match here.
 	return output.CheckExit(scanResult, failOnSeverities, exitCode)
+}
+
+// printRegistryCoverage emits the CISO-facing coverage header (E4/DX3). It
+// prints NOTHING when no registry is configured anywhere (the pre-PPSC-994
+// behavior — no header noise for users not using this feature). Once ANY
+// registry is set, it states this ecosystem's coverage explicitly: a configured
+// host with a scoped count, or "not configured — public registry" so a green
+// check never implies coverage the org isn't getting.
+func printRegistryCoverage(s *output.Styles, cfg *supplychain.Config, eco supplychain.Ecosystem, registryURL string, registryChecked int) {
+	if !cfg.HasAnyRegistry() {
+		return
+	}
+
+	ecoName := string(eco)
+	if registryURL != "" {
+		host := registryURL
+		if u, err := url.Parse(registryURL); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		fmt.Fprintf(os.Stderr, "%s %s\n",
+			s.MutedText.Render("[armis] Registry coverage:"),
+			s.SuccessText.Render(fmt.Sprintf("%s ✓ (%s)", ecoName, host)))
+		if isNPMFamilyEco(eco) {
+			fmt.Fprintf(os.Stderr, "%s\n",
+				s.MutedText.Render(fmt.Sprintf("  %s resolved-registry checked; packages from other registries are flagged.",
+					countNoun(registryChecked, ecoName+" package"))))
+		}
+		return
+	}
+
+	// No registry configured for THIS ecosystem, but one is set for another —
+	// be explicit that this ecosystem falls back to the public registry.
+	fmt.Fprintf(os.Stderr, "%s %s\n",
+		s.MutedText.Render("[armis] Registry coverage:"),
+		s.WarningText.Render(fmt.Sprintf("%s ✗ (not configured — public registry)", ecoName)))
+}
+
+// isNPMFamilyEco reports whether an ecosystem is part of the npm family (the
+// only family whose lockfiles record a per-package resolved registry URL, and
+// thus the only one the non-approved-registry check covers in v1). Mirrors
+// check.isNPMFamily without exporting it across the package boundary.
+func isNPMFamilyEco(eco supplychain.Ecosystem) bool {
+	switch eco {
+	case supplychain.EcosystemNPM, supplychain.EcosystemPNPM, supplychain.EcosystemBun, supplychain.EcosystemYarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// registryViolationToFinding converts a non-approved-registry violation into a
+// model.Finding so it flows through the existing output formatters and the
+// --fail-on gate, mirroring ViolationToFinding's shape. Severity is MEDIUM:
+// resolving from an unapproved registry is a policy/routing concern, not the
+// HIGH-severity "brand-new release" age signal.
+func registryViolationToFinding(rv check.RegistryViolation, lockfilePath string) model.Finding {
+	return model.Finding{
+		ID:              fmt.Sprintf("SUPPLY_CHAIN_REGISTRY/%s@%s", rv.Name, rv.Version),
+		Type:            model.FindingTypeSCA,
+		Severity:        model.SeverityMedium,
+		Title:           fmt.Sprintf("Package resolved from non-approved registry: %s@%s", rv.Name, rv.Version),
+		Description:     fmt.Sprintf("Package %s@%s was resolved from %s, which is not the approved registry (%s). Re-resolve it through the approved registry.", rv.Name, rv.Version, rv.ResolvedHost, rv.ApprovedHost),
+		File:            lockfilePath,
+		Package:         rv.Name,
+		Version:         rv.Version,
+		FindingCategory: "SUPPLY_CHAIN_REGISTRY",
+	}
 }
 
 // countNoun formats a count with its noun, pluralizing with a trailing "s" when

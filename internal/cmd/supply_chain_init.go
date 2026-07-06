@@ -619,9 +619,34 @@ min-age: 72h
 %s
 # Restrict enforcement to specific ecosystems (default: all detected).
 # Supported: npm, pnpm, bun, yarn, pip, poetry, pipenv, pdm, uv, maven, gradle
+# NOTE: if you set "ecosystems" below, any "registries" entry for an excluded
+# ecosystem is ignored — scoping enforcement out also scopes out its routing.
 # ecosystems:
 #   - npm
 #   - pip
+
+# Approved corporate registry per ecosystem (Nexus / JFrog Artifactory).
+# When set, wrapped installs route through this registry (with your existing
+# credentials forwarded) and CI 'check' flags packages resolved elsewhere.
+#   - npm:  the npm group/proxy repo URL.
+#   - pypi: the PyPI index URL — it MUST end in /simple/ (PEP 503).
+# Credentials are read from your NATIVE config, never from this file:
+#   - npm:  .npmrc  //host/path/:_authToken=...   (use _authToken, NOT _auth;
+#           the legacy base64 _auth form is not supported in this version)
+#   - pip:  the userinfo embedded in your index-url (https://user:token@host/...)
+# registries:
+#   npm: https://nexus.corp/repository/npm-group/
+#   pypi: https://nexus.corp/repository/pypi-group/simple/
+
+# Routing enforcement posture. Only "warn" is supported in this version:
+# it prints a one-time notice when your effective registry is explicitly
+# off-policy. ("block" is rejected at load time — it is not yet implemented,
+# and silently downgrading it would give a false sense of enforcement.)
+# registry-enforcement: warn
+
+# Optional CA bundle (PEM) for the proxy's TLS connection to the registry, for
+# a Nexus fronted by a corporate/private CA. Overridable via ARMIS_REGISTRY_CA_BUNDLE.
+# registry-ca-bundle: /etc/ssl/corp-ca.pem
 
 # If true, allow installs when the registry is unreachable
 fail-open: false

@@ -2,6 +2,18 @@ package cmd
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/spf13/cobra"
 )
 
@@ -397,6 +410,135 @@ url = "https://github.com/user/repo.git"
 	if cap.pm != pmPoetry {
 		t.Errorf("pm = %q, want %q", cap.pm, pmPoetry)
 	}
+}
+
+// TestRunPreInstallBlock_QueriesConfiguredRegistry is the regression guard for
+// the bug where the pre-install audit path (poetry/pipenv/pdm/maven/gradle, and
+// any lockfile-writing uv command) always called check.RunCheck — never
+// RunCheckWithRegistry — so a configured registries.<eco> was silently
+// ignored: every age check queried the PUBLIC registry regardless of policy,
+// and `check` would report "all pass" having verified nothing against the
+// approved artifactory. This pins that a configured registry is actually the
+// host queried, using a fake Simple-API server as the "approved" registry and
+// asserting it (not pypi.org) receives the hit.
+func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
+	// ValidateRegistryURL (S1) rejects a literal loopback IP, and (as of the
+	// reserved-name fix below) "localhost"/"*.localhost" by name too, as a
+	// registry host — so httptest.NewTLSServer's 127.0.0.1 URL cannot be used
+	// directly here (a deliberate SSRF guard, not a test obstacle to route
+	// around). "nexus.registry.example" is an IANA-reserved documentation domain
+	// (RFC 2606) that passes validation like any real corporate hostname would,
+	// while making clear it is a fixture, not a real host. It never actually
+	// resolves via DNS; the dialer override below redirects it to 127.0.0.1
+	// directly, so no real lookup happens and no OS-specific resolver behavior
+	// (e.g. *.localhost special-casing, absent on Windows) is depended on. The
+	// server's own default cert (issued for "example.com") would not validate
+	// against this hostname, so this test mints its own self-signed cert for
+	// "nexus.registry.example" and serves it directly over tls.Listen.
+	// Override supplychain.BaseUpstreamTransport (a package-level test seam,
+	// mirroring execPMFunc) instead of mutating the process-global
+	// http.DefaultTransport — the latter would race against any parallel test
+	// elsewhere in this module that makes its own HTTP request.
+	origBaseTransport := supplychain.BaseUpstreamTransport
+	supplychain.BaseUpstreamTransport = func() *http.Transport {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, portStr, splitErr := net.SplitHostPort(addr)
+			// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.registry.example", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
+			if splitErr == nil && host == "nexus.registry.example" {
+				addr = net.JoinHostPort("127.0.0.1", portStr)
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}
+		return transport
+	}
+	t.Cleanup(func() { supplychain.BaseUpstreamTransport = origBaseTransport })
+
+	var hit bool
+	certPEM, server, port := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		if r.URL.Path != "/simple/leftpad/" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+		_, _ = w.Write([]byte(`{"files":[{"filename":"leftpad-1.0.0-py3-none-any.whl","upload-time":"2020-01-01T00:00:00Z"}]}`))
+	})
+	defer server.Close()
+
+	dir := chdirTemp(t)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "")
+	t.Setenv(envSCSkip, "")
+
+	caBundlePath := filepath.Join(dir, "test-ca.pem")
+	if err := os.WriteFile(caBundlePath, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registryURL := fmt.Sprintf("https://nexus.registry.example:%s/simple/", port)
+	writeConfig(t, dir, "version: 1\nmin-age: 72h\nregistries:\n  pypi: "+registryURL+"\nregistry-enforcement: warn\nregistry-ca-bundle: "+caBundlePath+"\n")
+
+	lock := `version = 1
+
+[[package]]
+name = "leftpad"
+version = "1.0.0"
+`
+	if err := os.WriteFile(filepath.Join(dir, "uv.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cap := stubExecPM(t, 0)
+
+	if err := runPreInstallBlock(newWrapTestCmd(), pmUV, []string{"sync"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hit {
+		t.Fatal("the configured registry was never queried — audit path silently used the public registry")
+	}
+	if cap.calls != 1 {
+		t.Errorf("execPMFunc called %d times, want 1", cap.calls)
+	}
+}
+
+// newTLSTestServer starts an HTTPS server on 127.0.0.1 with a self-signed cert
+// issued for "nexus.registry.example" — a hostname string, not a literal IP,
+// so it passes ValidateRegistryURL's loopback/reserved-name checks the way a
+// real corporate hostname would. httptest.NewTLSServer's own cert, issued for
+// "example.com", would not validate against that hostname. It returns the
+// cert as a PEM block (for registry-ca-bundle) alongside the listening server
+// and its port.
+func newTLSTestServer(t *testing.T, handler http.HandlerFunc) ([]byte, *httptest.Server, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "nexus.registry.example"},
+		DNSNames:     []string{"nexus.registry.example"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: priv}},
+		MinVersion:   tls.VersionTLS12,
+	}
+	server.StartTLS()
+
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "https://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return certPEM, server, port
 }
 
 func TestRunSupplyChainWrap_EcosystemScopeExcludesPM(t *testing.T) {

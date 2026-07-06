@@ -51,12 +51,27 @@ func ParseBunLockfile(path string) ([]PackageEntry, error) {
 		}
 
 		entries = append(entries, PackageEntry{
-			Name:    name,
-			Version: version,
+			Name:     name,
+			Version:  version,
+			Resolved: bunResolvedURL(tuple),
 		})
 	}
 
 	return entries, nil
+}
+
+// bunResolvedURL returns the registry URL recorded for a bun.lock entry (the
+// tuple's second element), or "" when absent. bun records a full tarball URL
+// here for registry packages, which is what the non-approved-registry check
+// compares against the approved host.
+func bunResolvedURL(tuple []interface{}) string {
+	if len(tuple) < 2 {
+		return ""
+	}
+	if resolved, ok := tuple[1].(string); ok {
+		return resolved
+	}
+	return ""
 }
 
 func parseBunPackageKey(key string, tuple []interface{}) (string, string) {

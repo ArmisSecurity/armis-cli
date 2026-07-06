@@ -65,7 +65,7 @@ func TestPrintBlockSummary_AllPass(t *testing.T) {
 	// uses countNoun (no "(s)").
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 12, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(nil, nil, 12, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if !strings.Contains(out, "12 packages checked, all pass") {
 		t.Errorf("missing all-pass line; got:\n%s", out)
@@ -85,7 +85,7 @@ func TestPrintBlockSummary_AllPassSingular(t *testing.T) {
 	// ("all" implies more than one).
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 1, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(nil, nil, 1, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if !strings.Contains(out, "1 package checked, passed") {
 		t.Errorf("singular all-pass line should read \"1 package checked, passed\"; got:\n%s", out)
@@ -95,11 +95,48 @@ func TestPrintBlockSummary_AllPassSingular(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_VerifyFailedNotAllPass(t *testing.T) {
+	// Bug #2b regression: when some checked packages could not be verified against
+	// the registry (e.g. wrong registry-ca-bundle → TLS failure), the summary must
+	// NOT print a green "all pass" — it must warn that N could not be verified.
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		// 3 checked, all 3 failed to verify.
+		printBlockSummary(nil, nil, 3, 3, testPolicy(), pmNPM, false, []string{"install"}, nil)
+	})
+	if strings.Contains(out, "all pass") || strings.Contains(out, "checked, passed") {
+		t.Errorf("must not claim success when checks failed to verify; got:\n%s", out)
+	}
+	if !strings.Contains(out, "could not be verified") {
+		t.Errorf("expected a 'could not be verified' warning; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no packages could be age-checked") {
+		t.Errorf("with 0 verified, expected 'no packages could be age-checked'; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_VerifyFailedPartial(t *testing.T) {
+	// Mixed: 5 checked, 2 failed → warn about the 2, credit the 3 that passed.
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		printBlockSummary(nil, nil, 5, 2, testPolicy(), pmNPM, false, []string{"install"}, nil)
+	})
+	if strings.Contains(out, "all pass") {
+		t.Errorf("partial-verify must not claim 'all pass'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "2 packages could not be verified") {
+		t.Errorf("expected '2 packages could not be verified'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "3 packages passed") {
+		t.Errorf("expected '3 packages passed' credit; got:\n%s", out)
+	}
+}
+
 func TestPrintBlockSummary_AllPassZeroChecked(t *testing.T) {
 	// Nothing checked → nothing printed (e.g. a fully cached install).
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 0, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(nil, nil, 0, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if out != "" {
 		t.Errorf("expected no output when nothing was checked; got:\n%s", out)
@@ -115,7 +152,7 @@ func TestPrintBlockSummary_SingleResolved(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	wantSubstrings := []string{
@@ -155,7 +192,7 @@ func TestPrintBlockSummary_UninstallReframesWording(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
 	})
 
 	wantSubstrings := []string{
@@ -183,7 +220,7 @@ func TestPrintBlockSummary_UninstallFailureNamesRealVerb(t *testing.T) {
 	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, nil, 5, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
 	})
 
 	wantSubstrings := []string{
@@ -207,7 +244,7 @@ func TestPrintBlockSummary_FailedUninstallNeverSaysKept(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
 	})
 
 	if strings.Contains(out, "kept") {
@@ -265,7 +302,7 @@ func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 2, testPolicy(), pmUV, true, nil, nil)
+		printBlockSummary(blocked, allowed, 2, 0, testPolicy(), pmUV, true, nil, nil)
 	})
 
 	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
@@ -303,7 +340,7 @@ func TestPrintBlockSummary_UnparseableFilenameNotPrerelease(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "filelock", Version: "3.29.1", Age: 9 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 1, testPolicy(), pmUV, true, nil, nil)
+		printBlockSummary(blocked, allowed, 1, 0, testPolicy(), pmUV, true, nil, nil)
 	})
 
 	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
@@ -325,7 +362,7 @@ func TestPrintBlockSummary_UndatableSkippedOmitsAge(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "mystery", Version: "0.9.0", Age: 30 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 1, testPolicy(), pmUV, true, nil, nil)
+		printBlockSummary(blocked, allowed, 1, 0, testPolicy(), pmUV, true, nil, nil)
 	})
 
 	if strings.Contains(out, "0 minutes old") {
@@ -351,7 +388,7 @@ func TestPrintBlockSummary_MixedUnresolved(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 7, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(blocked, allowed, 7, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "filtered 2 too-new releases (3-day policy)") {
@@ -380,7 +417,7 @@ func TestPrintBlockSummary_InstallFailed(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false, []string{"install"}, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, nil)
 	})
 
 	if !strings.Contains(out, "install did not complete") {
@@ -421,7 +458,7 @@ func TestPrintBlockSummary_NoFallbackNamesCulprit(t *testing.T) {
 	blocked := []supplychain.BlockedPackage{{Name: "leftpad", Version: "2.0.0", DisplayVersion: "2.0.0", Age: 3 * time.Hour}}
 	// No allowed entry → no safe fallback.
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, nil, 5, testPolicy(), pmNPM, false, []string{"install"}, nil)
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, nil)
 	})
 
 	if !strings.Contains(out, "leftpad@2.0.0") {
@@ -445,7 +482,7 @@ func TestPrintBlockSummary_ConflictNamesDependentAndRange(t *testing.T) {
 	conflicts := []supplychain.ConstraintConflict{{Dep: "scheduler", Range: "^0.24.0", ByPkg: "react-dom"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false, []string{"install"}, conflicts)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, conflicts)
 	})
 
 	flat := strings.Join(strings.Fields(out), " ")
@@ -464,7 +501,7 @@ func TestPrintFailureCulprits_PipAttributionGap(t *testing.T) {
 	forceNoColor(t)
 	blocked := []supplychain.BlockedPackage{{Name: "requests", Version: "requests-2.99.0.tar.gz", DisplayVersion: "2.99.0", Age: 2 * time.Hour}}
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, nil, 5, testPolicy(), pmPip, false, []string{"install", "requests"}, nil)
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmPip, false, []string{"install", "requests"}, nil)
 	})
 
 	if !strings.Contains(out, "constraint attribution isn't available for pip/uv") {
@@ -487,7 +524,7 @@ func TestPrintBlockSummary_OnlyPrerelease(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "withheld 1 prerelease") {
@@ -516,7 +553,7 @@ func TestPrintBlockSummary_StableStillClaimsFilter(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "installed safe version") {
@@ -568,7 +605,7 @@ func TestPrintBlockSummary_LongListVerbose(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, len(names), testPolicy(), pmNPM, true, nil, nil)
+		printBlockSummary(blocked, allowed, len(names), 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "… and 1 more") {
