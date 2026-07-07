@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Documentation: an SSO Setup Guide for IT admins (`docs/SSO-SETUP.md`) covering the end-to-end workflow — registering `armis-cli` as an OIDC app in IdP, and deploying to developer machines via MDM.
+
 ### Changed
+
+- `auth setup`: now auto-detects your tenant ID and region from your Armis credentials — the detected tenant seeds the interactive prompt, and the region routes the registration request to the correct regional host. On success the command prints the exact environment variables to deploy to developer machines.
 
 ### Deprecated
 
