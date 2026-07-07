@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `auth` commands for browser-based SSO: `auth login`/`auth logout`/`auth whoami` sign in via your organization's identity provider.
-- `auth setup`: a guided command for IT admins to register (or update) their tenant's identity-provider configuration for SSO.
-
 ### Changed
 
 ### Deprecated
@@ -21,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+---
+
+## [1.18.0] - 2026-07-07
+
+### Added
+
+- `auth` commands for browser-based SSO: `auth login`/`auth logout`/`auth whoami` sign in via your organization's identity provider using the OAuth2 device flow; `ARMIS_DEFAULT_LOGIN_METHOD` can trigger the login sequence automatically. (#257)
+- `auth setup`: a guided command for IT admins to register (or update) their tenant's identity-provider configuration for SSO. (#258)
+- `supply-chain`: custom/private package registry support (npm, PyPI) with authentication and TLS trust. Configurable via `registries`, `registry-enforcement`, and `registry-ca-bundle` in `.armis-supply-chain.yaml`, plus the `ARMIS_REGISTRY_CA_BUNDLE` env var. Credentials are resolved from `.npmrc`/`PIP_INDEX_URL`/`UV_INDEX_URL`, upstream URLs are validated against SSRF (https-only, no embedded userinfo, no loopback/RFC1918/link-local), and a new `supply-chain registry` subcommand reports coverage. (#261)
+
+### Changed
+
+- Updated dependencies: `golang.org/x/term` to v0.44.0 (#223), `github.com/Masterminds/semver/v3` to v3.5.0 (#263), `golang.org/x/sys` to v0.46.0 (#224), `github.com/alecthomas/chroma/v2` to v2.27.0 (#234), `golang.org/x/net` to v0.55.0 (#259), `github.com/mattn/go-runewidth` to v0.0.24 (#208), and `actions/checkout` to v7 (#235).
+
+### Fixed
+
+- `supply-chain`: raised the yarn classic lockfile parser's buffer cap to match pip/gradle, so a `yarn.lock` line with a long resolved URL or integrity hash no longer hard-fails parsing. (#265)
+- `supply-chain`: uninstall-family commands (`npm uninstall`, `pnpm remove`, `yarn remove`, etc.) now report accurate wording ("kept" instead of "installed") in the filter summary. (#260)
+
+### Security
+
+- CI: pinned every third-party GitHub Actions `uses:` reference to a commit SHA instead of a mutable tag, closing a supply-chain foothold where a moved tag could be repointed to malicious code in internet-reachable, PR-triggered workflows. (#262)
 
 ---
 
@@ -603,7 +623,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.14.0...v1.15.0
