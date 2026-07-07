@@ -355,5 +355,23 @@ func TestMain(m *testing.M) {
 	// Ensure no test accidentally spawns a real browser: stub the opener to a
 	// no-op (success) for the whole cmd test binary.
 	auth.SetBrowserOpener(func(string) error { return nil })
+
+	// Clear ambient Armis configuration so a developer's shell (e.g. an exported
+	// ARMIS_DEFAULT_AUTH_METHOD=SSO or ARMIS_API_TOKEN for local work) cannot
+	// change test outcomes. Tests that need these set them explicitly via
+	// t.Setenv. Without this, running the suite from a configured shell/IDE makes
+	// credential-resolution tests non-hermetic.
+	for _, k := range []string{
+		"ARMIS_DEFAULT_AUTH_METHOD",
+		"ARMIS_CLIENT_ID",
+		"ARMIS_CLIENT_SECRET",
+		"ARMIS_API_TOKEN",
+		"ARMIS_TENANT_ID",
+		"ARMIS_REGION",
+		"ARMIS_API_URL",
+	} {
+		_ = os.Unsetenv(k)
+	}
+
 	os.Exit(m.Run())
 }
