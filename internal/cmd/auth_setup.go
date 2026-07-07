@@ -41,6 +41,10 @@ var (
 	setupConfigInput string // --config: file path, "-" for stdin, or inline JSON
 	setupUpdate      bool   // --update: force the PUT (update) path
 	setupYes         bool   // --yes: skip the review confirmation
+
+	// setupDetectedRegion is the region resolved from the admin's credentials (or
+	// an explicit --region), surfaced in the post-setup hint. Empty means default.
+	setupDetectedRegion string
 )
 
 var authSetupCmd = &cobra.Command{
@@ -96,16 +100,27 @@ func runAuthSetup(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	client, err := auth.NewIdpConfigClient(getAPIBaseURL(), provider, debug)
-	if err != nil {
-		return err
-	}
-
 	// Pass the command's context through; each network call applies its own
 	// per-request timeout (see withRequestTimeout). We must NOT wrap a single
 	// deadline around the whole flow — the interactive forms can take minutes and
 	// would otherwise consume the budget before the request is even sent.
 	ctx := cmd.Context()
+
+	// The tenant seeds the interactive prompt; the region feeds the post-setup
+	// hint. An explicit --region/ARMIS_REGION wins over the detected region.
+	detectedTenant, detectedRegion := detectIdentity(ctx, provider)
+	if region != "" {
+		detectedRegion = region
+	}
+	setupDetectedRegion = detectedRegion
+
+	// Route the admin API through the region-aware resolver (the same one the scan
+	// data plane uses) so a non-default region is auto-detected from the JWT and
+	// the admin need not pass --region. Explicit config still wins.
+	client, err := auth.NewIdpConfigClient(resolveDataPlaneURL(ctx, provider), provider, debug)
+	if err != nil {
+		return err
+	}
 
 	// The --config path is for scripting (MDM, CI): the caller supplies the whole
 	// configuration as one document, so we don't pre-flight or prompt.
@@ -115,7 +130,22 @@ func runAuthSetup(cmd *cobra.Command, _ []string) error {
 	if !cli.IsInteractive() {
 		return fmt.Errorf("no configuration provided: pass --config (a file, '-' for stdin, or inline JSON), or run in an interactive terminal")
 	}
-	return runInteractiveSetup(ctx, client)
+	return runInteractiveSetup(ctx, client, detectedTenant)
+}
+
+// detectIdentity resolves the tenant and region the active credentials imply.
+// Best-effort: a resolution failure is left for the first admin-API call to
+// surface, so it returns empty strings rather than erroring here.
+func detectIdentity(ctx context.Context, provider *auth.AuthProvider) (tenant, region string) {
+	reqCtx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+
+	tenant, err := provider.GetTenantID(reqCtx)
+	if err != nil {
+		return "", ""
+	}
+	region, _ = provider.GetRegion(reqCtx)
+	return strings.TrimSpace(tenant), strings.TrimSpace(region)
 }
 
 // idpRequestTimeout bounds a single admin-API request. It is applied per call so
@@ -170,8 +200,14 @@ func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient) error
 // with the current values and sends only the fields the admin edited — so an admin
 // can, say, tweak a group mapping without re-entering the client secret (which the
 // form leaves blank). Otherwise it collects a full configuration and creates it.
-func runInteractiveSetup(ctx context.Context, client *auth.IdpConfigClient) error {
-	tenant, err := promptSetupTenantID(strings.TrimSpace(tenantID))
+func runInteractiveSetup(ctx context.Context, client *auth.IdpConfigClient, detectedTenant string) error {
+	// Prefer an explicit --tenant-id/ARMIS_TENANT_ID; otherwise fall back to the
+	// tenant detected from the credentials so the admin isn't asked to retype it.
+	known := strings.TrimSpace(tenantID)
+	if known == "" {
+		known = strings.TrimSpace(detectedTenant)
+	}
+	tenant, err := promptSetupTenantID(known)
 	if err != nil {
 		return err
 	}
@@ -359,9 +395,24 @@ func detailOr(ce *auth.IdpConfigError, fallback string) string {
 	return fallback
 }
 
-// printPostSetupHint points the admin at the next step once a config exists.
+// printPostSetupHint points the admin at the next step once a config exists:
+// the environment variables to deploy to developer machines (via MDM). It prints
+// ARMIS_REGION only for a non-default region, matching the deployment guide.
 func printPostSetupHint(tenantID string) {
-	fmt.Fprintf(os.Stderr, "  Users can now sign in with: armis-cli auth login --tenant-id %s\n", tenantID)
+	fmt.Fprintln(os.Stderr, "  Deploy these environment variables to developer machines (e.g. via MDM):")
+	fmt.Fprintf(os.Stderr, "    ARMIS_TENANT_ID=%s\n", tenantID)
+	fmt.Fprintln(os.Stderr, "    ARMIS_DEFAULT_AUTH_METHOD=SSO")
+	if isNonDefaultRegion(setupDetectedRegion) {
+		fmt.Fprintf(os.Stderr, "    ARMIS_REGION=%s\n", setupDetectedRegion)
+	}
+	fmt.Fprintf(os.Stderr, "  Users can then sign in with: armis-cli auth login\n")
+}
+
+// isNonDefaultRegion reports whether a region code routes to a dedicated
+// (non-primary) data plane and therefore must be set on developer machines.
+// Codes that fall back to the primary host (us1, au1, "") need no ARMIS_REGION.
+func isNonDefaultRegion(region string) bool {
+	return region != "" && auth.RegionalBaseURL(region) != auth.ProductionBaseURL
 }
 
 // -- Interactive prompting ---------------------------------------------------

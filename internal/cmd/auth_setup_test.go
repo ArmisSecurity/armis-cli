@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -340,4 +342,79 @@ func TestAuthSetupConfigFromFile(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
+}
+
+// detectIdentity should pull the tenant (customer_id) and region claim straight
+// from the client-credentials JWT, so `auth setup` can seed the tenant prompt
+// and the post-setup hint without the admin supplying either.
+func TestDetectIdentity(t *testing.T) {
+	region = ""
+	t.Setenv("ARMIS_API_URL", "")
+	p := newRegionAuthProvider(t, "eu1")
+
+	tenant, reg := detectIdentity(context.Background(), p)
+	if tenant != "customer-123" {
+		t.Errorf("tenant = %q, want customer-123", tenant)
+	}
+	if reg != "eu1" {
+		t.Errorf("region = %q, want eu1", reg)
+	}
+}
+
+func TestIsNonDefaultRegion(t *testing.T) {
+	cases := map[string]bool{
+		"":    false, // default host
+		"us1": false, // primary data plane
+		"au1": false, // no dedicated data plane yet — falls back to primary
+		"eu1": true,  // dedicated EU data plane
+	}
+	for region, want := range cases {
+		if got := isNonDefaultRegion(region); got != want {
+			t.Errorf("isNonDefaultRegion(%q) = %v, want %v", region, got, want)
+		}
+	}
+}
+
+// The post-setup hint tells the admin which env vars to deploy. ARMIS_REGION is
+// emitted only for a non-default region; the default region omits it.
+func TestPrintPostSetupHint(t *testing.T) {
+	capture := func(f func()) string {
+		old := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+		f()
+		_ = w.Close()
+		os.Stderr = old
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		return buf.String()
+	}
+
+	t.Run("default region omits ARMIS_REGION", func(t *testing.T) {
+		orig := setupDetectedRegion
+		t.Cleanup(func() { setupDetectedRegion = orig })
+		setupDetectedRegion = ""
+
+		out := capture(func() { printPostSetupHint("acme") })
+		if !strings.Contains(out, "ARMIS_TENANT_ID=acme") {
+			t.Errorf("missing tenant env var: %q", out)
+		}
+		if !strings.Contains(out, "ARMIS_DEFAULT_AUTH_METHOD=SSO") {
+			t.Errorf("missing auth-method env var: %q", out)
+		}
+		if strings.Contains(out, "ARMIS_REGION") {
+			t.Errorf("default region should not emit ARMIS_REGION: %q", out)
+		}
+	})
+
+	t.Run("non-default region emits ARMIS_REGION", func(t *testing.T) {
+		orig := setupDetectedRegion
+		t.Cleanup(func() { setupDetectedRegion = orig })
+		setupDetectedRegion = "eu1"
+
+		out := capture(func() { printPostSetupHint("acme") })
+		if !strings.Contains(out, "ARMIS_REGION=eu1") {
+			t.Errorf("missing ARMIS_REGION=eu1: %q", out)
+		}
+	})
 }
