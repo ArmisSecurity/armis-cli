@@ -81,15 +81,24 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 ### Environment Variables
 
+**Authentication:**
 - `ARMIS_CLIENT_ID` - Client ID for JWT authentication (recommended)
 - `ARMIS_CLIENT_SECRET` - Client secret for JWT authentication
 - `ARMIS_API_TOKEN` - API token for Basic authentication (fallback)
 - `ARMIS_TENANT_ID` - Tenant identifier (required only with Basic auth; JWT extracts it from token)
+
+**API Configuration:**
 - `ARMIS_API_URL` - Override base URL for Armis API (advanced; defaults based on --dev flag)
 - `ARMIS_REGION` - Override Armis cloud region (equivalent to `--region`; used for region-aware authentication)
+- `ARMIS_LOCAL_S3_ENDPOINT` - Comma-separated list of host:port entries for mock S3 services in local development (e.g., `awsmock-dev:4566,localstack:4566`). **SECURITY:** Only enabled when `ARMIS_API_URL` is localhost or RFC 1918 private IP. Allows HTTP access to configured hosts for SBOM/VEX downloads. Blocked for all remote/cloud endpoints.
+
+**Output Configuration:**
 - `ARMIS_FORMAT` - Default output format
 - `ARMIS_PAGE_LIMIT` - Results pagination size
 - `ARMIS_THEME` - Terminal background theme: auto, dark, light (default: auto)
+
+**Other:**
+- `ARMIS_NO_UPDATE_CHECK` - Disable automatic version update checking
 
 When both JWT and Basic credentials are configured, JWT takes precedence.
 

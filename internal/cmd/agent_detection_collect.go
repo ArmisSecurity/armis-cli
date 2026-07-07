@@ -44,7 +44,9 @@ func runAgentDetectionCollect(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to get tenant ID: %w", err)
 	}
 
-	client, err := api.NewClient(getAPIBaseURL(), authProvider, debug, 0)
+	baseURL := getAPIBaseURL()
+	clientOpts := clientOptionsForBaseURL(baseURL)
+	client, err := api.NewClient(baseURL, authProvider, debug, 0, clientOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}

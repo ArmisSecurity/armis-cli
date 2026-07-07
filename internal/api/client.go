@@ -49,6 +49,7 @@ const MaxAPIResponseSize = 50 * 1024 * 1024
 // URL scheme and host constants for security validation.
 const (
 	schemeHTTPS    = "https"
+	schemeHTTP     = "http"
 	hostLocalhost  = "localhost"
 	hostLoopbackIP = "127.0.0.1"
 )
@@ -134,6 +135,7 @@ type Client struct {
 	debug            bool
 	uploadTimeout    time.Duration
 	allowLocalURLs   bool
+	localS3Hosts     []string // exact host:port allowlist for mock S3 (dev only)
 }
 
 // ClientOption is a functional option for configuring the Client.
@@ -162,6 +164,36 @@ func WithUploadHTTPClient(client *httpclient.Client) ClientOption {
 func WithAllowLocalURLs(allow bool) ClientOption {
 	return func(c *Client) {
 		c.allowLocalURLs = allow
+	}
+}
+
+// WithLocalS3Hosts adds host:port entries to the allowlist for bypassing HTTPS
+// and amazonaws.com validation in ValidatePresignedURL. This enables HTTP access
+// to mock S3 services during local development (e.g., "awsmock-dev:4566").
+//
+// Security considerations:
+//   - Only use for local development with mock S3 services
+//   - Hosts are normalized (trimmed, lowercased) for consistent matching
+//   - Matching uses exact string comparison including port numbers
+//   - Empty strings are silently ignored
+//
+// This option should ONLY be set when the CLI is running against localhost or
+// private network IPs. See clientOptionsForBaseURL in cmd/root.go for the
+// environment detection logic that controls when this option is used.
+//
+// Example usage:
+//
+//	client := api.NewClient(baseURL, auth, debug, timeout,
+//	    api.WithLocalS3Hosts("awsmock-dev:4566", "localstack:4566"))
+func WithLocalS3Hosts(hosts ...string) ClientOption {
+	return func(c *Client) {
+		for _, h := range hosts {
+			// Normalize host entries: trim whitespace and convert to lowercase
+			// for consistent case-insensitive matching in ValidatePresignedURL
+			if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
+				c.localS3Hosts = append(c.localS3Hosts, h)
+			}
+		}
 	}
 }
 
@@ -732,18 +764,54 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 
 // ValidatePresignedURL validates that a presigned URL points to a recognized S3 endpoint
 // and uses HTTPS to protect authentication signatures embedded in the URL.
-// This prevents SSRF attacks by ensuring downloads only go to expected cloud storage hosts.
-// Localhost URLs are only allowed if WithAllowLocalURLs(true) was set on the client.
+//
+// This function is a critical security control that prevents Server-Side Request
+// Forgery (SSRF) attacks by ensuring presigned URLs only point to trusted S3
+// endpoints. It enforces HTTPS to protect AWS authentication signatures from
+// being exposed over cleartext channels.
+//
+// Validation rules (in order of precedence):
+//  1. Localhost/127.0.0.1: Only allowed if c.allowLocalURLs is true (test-only)
+//  2. HTTP URLs: Only allowed if host:port exactly matches c.localS3Hosts allowlist
+//  3. HTTPS URLs: Must match *.s3*.amazonaws.com pattern (standard AWS S3)
+//  4. All other URLs: Rejected
+//
+// Local development bypass:
+// The c.localS3Hosts allowlist enables HTTP access to mock S3 services during
+// local development. This bypass is ONLY enabled when:
+//   - ARMIS_LOCAL_S3_ENDPOINT environment variable is set
+//   - AND the API base URL is localhost or RFC 1918 private IP
+//   - See clientOptionsForBaseURL in cmd/root.go for details
+//
+// Security properties:
+//   - Default deny: URLs are rejected unless they match a specific allow rule
+//   - Exact matching: localS3Hosts uses strings.EqualFold for exact host:port match
+//   - No wildcards: Cannot use patterns like "*.local:4566"
+//   - Port included: "host:4566" and "host:4567" are different entries
+//   - Case insensitive: "Host:4566" matches "host:4566"
+//
+// Example allowed URLs:
+//   - https://bucket.s3.amazonaws.com/key
+//   - https://bucket.s3.us-west-2.amazonaws.com/key
+//   - http://awsmock-dev:4566/bucket/key (if in localS3Hosts)
+//
+// Example rejected URLs:
+//   - http://attacker.com/steal?token=...
+//   - https://not-s3.amazonaws.com/bucket/key
+//   - http://192.168.1.1/internal-api
 func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	parsed, err := url.Parse(presignedURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
+	// Extract and normalize URL components for comparison
+	// Hostname() returns the host without port; Host includes port
 	host := strings.ToLower(parsed.Hostname())
 	scheme := strings.ToLower(parsed.Scheme)
 
-	// Only allow localhost/127.0.0.1 if explicitly enabled (for testing only)
+	// Only allow localhost/127.0.0.1 if explicitly enabled via WithAllowLocalURLs.
+	// This option is ONLY used in unit tests, never in production code.
 	if host == hostLocalhost || host == hostLoopbackIP {
 		if c.allowLocalURLs {
 			return nil
@@ -751,21 +819,51 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 		return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
 	}
 
-	// Require HTTPS for non-localhost URLs to protect presigned URL signatures
-	// Presigned URLs contain AWS authentication signatures that must not be exposed
+	// Presigned URLs contain AWS authentication signatures (X-Amz-Signature) that
+	// must be protected from interception. HTTPS is required to prevent signature
+	// exposure to network observers.
+	// armis:ignore cwe:319 reason:this IS the cleartext transmission prevention (HTTPS enforcement)
 	if scheme != schemeHTTPS {
+		// HTTP is only allowed for operator-configured mock S3 hosts during local development.
+		// The allowlist (c.localS3Hosts) is ONLY populated when the API base URL indicates
+		// local development (localhost or RFC 1918 private IPs). For all remote/cloud
+		// environments, this slice is empty and all HTTP URLs are rejected.
+		//
+		// Matching uses parsed.Host (includes port) for exact comparison:
+		//   - "awsmock-dev:4566" matches "awsmock-dev:4566" ✓
+		//   - "awsmock-dev:4566" DOES NOT match "awsmock-dev:4567" ✗
+		//   - "awsmock-dev:4566" DOES NOT match "evil.awsmock-dev:4566" ✗
+		//
+		// strings.EqualFold provides case-insensitive matching to handle URL
+		// variations (e.g., "AwsMock-Dev:4566" matches "awsmock-dev:4566").
+		for _, allowed := range c.localS3Hosts {
+			if strings.EqualFold(parsed.Host, allowed) {
+				// SECURITY: This bypass is safe because:
+				// 1. localS3Hosts is only populated for local development URLs
+				// 2. Exact match required (no wildcards, includes port)
+				// 3. Operator explicitly configured via ARMIS_LOCAL_S3_ENDPOINT
+				// armis:ignore cwe:319 reason:opt-in dev-only bypass via ARMIS_LOCAL_S3_ENDPOINT env var
+				return nil
+			}
+		}
+
+		// No match found in allowlist - reject HTTP URL
+		// If localS3Hosts is empty (typical for production), this rejects ALL HTTP URLs
 		return fmt.Errorf("presigned URL must use HTTPS to protect authentication signatures")
 	}
 
-	// Allow AWS S3 bucket URL patterns:
-	// - bucket.s3.amazonaws.com (legacy)
-	// - bucket.s3.region.amazonaws.com (current)
-	// - s3.region.amazonaws.com/bucket (path-style)
+	// Allow standard AWS S3 URL patterns (must contain "s3" and end with ".amazonaws.com"):
+	//   - bucket.s3.amazonaws.com (legacy virtual-hosted-style)
+	//   - bucket.s3.us-west-2.amazonaws.com (current virtual-hosted-style with region)
+	//   - s3.us-west-2.amazonaws.com/bucket (path-style)
+	//
+	// This intentionally does NOT use wildcards or regex to avoid bypass attacks.
 	// armis:ignore cwe:918 reason:this IS the SSRF validation function; allowlisting verified S3 endpoints
 	if strings.HasSuffix(host, ".amazonaws.com") && strings.Contains(host, "s3") {
 		return nil
 	}
 
+	// Reject any URL that doesn't match the rules above
 	return fmt.Errorf("URL host %q is not a recognized S3 endpoint", host)
 }
 
