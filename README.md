@@ -1001,7 +1001,7 @@ When using client credentials, the tenant ID is automatically extracted from the
 
 You can also sign in explicitly at any time with `armis-cli auth login`; setting `ARMIS_DEFAULT_AUTH_METHOD=SSO` just triggers that sign-in automatically on the first command that needs credentials.
 
-Before users can sign in with SSO, an IT admin registers the tenant's identity provider once with `armis-cli auth setup` (see below).
+Before users can sign in with SSO, an IT admin registers the tenant's identity provider once with `armis-cli auth setup`. See the **[SSO Setup Guide](docs/SSO-SETUP.md)** for the full end-to-end walkthrough (IdP registration for Okta / Entra ID / Keycloak, group-to-role mapping, and MDM deployment).
 
 **Basic Authentication (Legacy):**
 
@@ -1019,41 +1019,6 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 | `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
 | `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
 
-### Registering an identity provider (IT admins)
-
-Before your users can sign in with SSO, register your tenant's identity provider once with `armis-cli auth setup`. Run it after you register `armis-cli` as an OIDC application in your IdP (Okta, Entra ID, Keycloak, …); it posts the resulting configuration to the Armis admin API. Authentication uses your existing Armis admin credentials (resolved the same way as the scan commands).
-
-```bash
-# Interactive — the CLI walks you through each value
-armis-cli auth setup
-
-# Non-interactive, from a JSON file (for MDM / CI)
-armis-cli auth setup --config idp.json --yes
-
-# Update an existing configuration (rotate the secret, change mappings)
-armis-cli auth setup --config idp.json --update
-```
-
-`--config` accepts a file path, `-` to read stdin, or an inline JSON string:
-
-```json
-{
-  "tenant_id": "acme",
-  "idp_type": "okta",
-  "issuer": "https://acme.okta.com",
-  "oidc_client_id": "0oa1b2c3d4",
-  "oidc_client_secret": "…",
-  "group_claim": "groups",
-  "group_mapping": {
-    "admin": ["eng-admins"],
-    "developer": ["core-developers", "contract-developers"]
-  }
-}
-```
-
-`group_mapping` maps each Armis role to the IdP groups that grant it, so several groups can share a role. Only the two recognized roles — `admin` and `developer` — are accepted, and a group may appear under only one role. In interactive mode the same is entered as a comma-separated list of groups per role. The command shows a review summary (with the client secret masked) and confirms before sending; the secret is transmitted only in the registration request and is never stored or printed.
-
-If a configuration already exists for your tenant, running `armis-cli auth setup` interactively lets you edit it: the form is pre-filled with the current values, and you can update just what you need — for example, change a group mapping without re-entering the client secret. To update from a JSON document non-interactively, use `--config … --update`.
 
 ---
 
