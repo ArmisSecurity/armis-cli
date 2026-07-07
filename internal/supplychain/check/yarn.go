@@ -141,6 +141,13 @@ func parseYarnClassic(data []byte) ([]PackageEntry, error) {
 	// string first (strings.NewReader(string(data))) would copy up to the 64MB
 	// readLockfile cap into a second buffer for no benefit.
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	// A single yarn.lock line can carry a long resolved URL or integrity hash
+	// and exceed bufio.Scanner's default 64KB token limit, which would otherwise
+	// surface as scanner.Err() = "token too long" and turn a valid lockfile into
+	// a hard failure. Allow one line to grow up to the same maxLockfileSize cap
+	// readLockfile already enforces, matching pip.go/gradle.go.
+	// armis:ignore cwe:770 reason:data is already size-bounded by readLockfile's maxLockfileSize cap; this only raises the per-line token limit to that same bound, matching pip.go/gradle.go
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxLockfileSize)
 
 	var entries []PackageEntry
 	var currentName, currentVersion, currentResolved string
