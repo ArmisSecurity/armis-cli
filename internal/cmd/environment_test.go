@@ -149,11 +149,17 @@ func TestClientOptionsForBaseURL_LocalCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set or clear env var
 			if tt.localS3Endpoint != "" {
-				os.Setenv("ARMIS_LOCAL_S3_ENDPOINT", tt.localS3Endpoint)
+				if err := os.Setenv("ARMIS_LOCAL_S3_ENDPOINT", tt.localS3Endpoint); err != nil {
+					t.Fatalf("failed to set env var: %v", err)
+				}
 			} else {
-				os.Unsetenv("ARMIS_LOCAL_S3_ENDPOINT")
+				if err := os.Unsetenv("ARMIS_LOCAL_S3_ENDPOINT"); err != nil {
+					t.Fatalf("failed to unset env var: %v", err)
+				}
 			}
-			defer os.Unsetenv("ARMIS_LOCAL_S3_ENDPOINT")
+			defer func() {
+				_ = os.Unsetenv("ARMIS_LOCAL_S3_ENDPOINT")
+			}()
 
 			opts := clientOptionsForBaseURL(tt.baseURL)
 

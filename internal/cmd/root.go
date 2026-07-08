@@ -397,24 +397,6 @@ func getAPIBaseURL() string {
 	return productionBaseURL
 }
 
-// clientOptionsForBaseURL returns the api.ClientOptions that vary by the
-// configured base URL. When the operator points the CLI at a localhost API
-// (via ARMIS_API_URL during local dev or in tests), we allow the SSRF guard
-// on the new presigned-URL flow to accept localhost as a valid S3 endpoint
-// — the test harness serves both the API and a fake S3 path on the same
-// listener. Production URLs (HTTPS) get the strict allowlist.
-func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return nil
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || host == "127.0.0.1" {
-		return []api.ClientOption{api.WithAllowLocalURLs(true)}
-	}
-	return nil
-}
-
 // resolveDataPlaneURL returns the base URL for region-pinned data-plane calls
 // (upload, status polling, results fetch).
 //
@@ -585,7 +567,17 @@ func augmentNoCredentialsError(err error) error {
 func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
 	var opts []api.ClientOption
 
-	// Check for local S3 endpoint configuration
+	// For localhost base URLs, enable WithAllowLocalURLs for test harness support.
+	// The test harness serves both the API and a fake S3 path on the same localhost listener.
+	parsed, err := url.Parse(baseURL)
+	if err == nil {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "localhost" || host == "127.0.0.1" {
+			opts = append(opts, api.WithAllowLocalURLs(true))
+		}
+	}
+
+	// Check for local S3 endpoint configuration (separate from test harness support above)
 	// SECURITY: This bypass is ONLY enabled for local development environments.
 	// Remote/cloud endpoints always enforce HTTPS regardless of this setting.
 	if raw := os.Getenv("ARMIS_LOCAL_S3_ENDPOINT"); raw != "" {
