@@ -143,6 +143,42 @@ func TestConfigToPolicy(t *testing.T) {
 			t.Error("expected error for invalid duration")
 		}
 	})
+
+	t.Run("transitive-policy defaults to block", func(t *testing.T) {
+		// An unset transitive-policy must resolve to the secure block default —
+		// never the warn-through path.
+		cfg := &Config{MinAge: "72h"}
+		policy, err := cfg.ToPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if policy.TransitivePolicy != TransitivePolicyBlock {
+			t.Errorf("unset transitive-policy must default to block; got %q", policy.TransitivePolicy)
+		}
+	})
+
+	t.Run("transitive-policy warn is honored", func(t *testing.T) {
+		cfg := &Config{MinAge: "72h", TransitivePolicy: "warn"}
+		policy, err := cfg.ToPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if policy.TransitivePolicy != TransitivePolicyWarn {
+			t.Errorf("transitive-policy: warn must be honored; got %q", policy.TransitivePolicy)
+		}
+	})
+
+	t.Run("transitive-policy typo fails safe to block", func(t *testing.T) {
+		// A misspelled value must never silently open the warn-through path.
+		cfg := &Config{MinAge: "72h", TransitivePolicy: "wrn"}
+		policy, err := cfg.ToPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if policy.TransitivePolicy != TransitivePolicyBlock {
+			t.Errorf("a typo'd transitive-policy must fail safe to block; got %q", policy.TransitivePolicy)
+		}
+	})
 }
 
 func TestFindConfigDir(t *testing.T) {

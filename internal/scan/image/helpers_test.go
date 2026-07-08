@@ -3,6 +3,7 @@ package image
 import (
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,83 +61,6 @@ func TestCleanDescription(t *testing.T) {
 			result := cleanDescription(tt.input)
 			if result != tt.expected {
 				t.Errorf("cleanDescription() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestShouldFilterByExploitability(t *testing.T) {
-	tests := []struct {
-		name     string
-		labels   []model.Label
-		expected bool
-	}{
-		{
-			name: "scanner code match and not exploitable",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "false"},
-			},
-			expected: true,
-		},
-		{
-			name: "scanner code match and exploitable 0",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "0"},
-			},
-			expected: true,
-		},
-		{
-			name: "scanner code match but exploitable",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-				{Description: "exploitable", Value: "true"},
-			},
-			expected: false,
-		},
-		{
-			name: "no scanner code match",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "12345"},
-				{Description: "exploitable", Value: "false"},
-			},
-			expected: false,
-		},
-		{
-			name: "case insensitive",
-			labels: []model.Label{
-				{Description: "Scanner Code", Value: "38295677"},
-				{Description: "Exploitable", Value: "FALSE"},
-			},
-			expected: true,
-		},
-		{
-			name:     "empty labels",
-			labels:   []model.Label{},
-			expected: false,
-		},
-		{
-			name: "only scanner code",
-			labels: []model.Label{
-				{Description: "scanner code", Value: "38295677"},
-			},
-			expected: false,
-		},
-		{
-			name: "only exploitable",
-			labels: []model.Label{
-				{Description: "exploitable", Value: "false"},
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := shouldFilterByExploitability(tt.labels)
-			if result != tt.expected {
-				t.Errorf("shouldFilterByExploitability() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -263,8 +187,24 @@ func TestNewScanner(t *testing.T) {
 	}
 }
 
+func TestErrRuntimeNotFound_Message(t *testing.T) {
+	msg := ErrRuntimeNotFound.Error()
+	// Three-tier message: names the problem, points at install docs, and offers
+	// the --tarball escape hatch that bypasses the daemon.
+	for _, want := range []string{
+		"container runtime not found",
+		"docs.docker.com",
+		"podman.io",
+		"--tarball",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ErrRuntimeNotFound message missing %q, got: %s", want, msg)
+		}
+	}
+}
+
 func TestIsDockerAvailable(t *testing.T) {
-	result := isDockerAvailable()
+	result := IsDockerAvailable()
 
 	if result {
 		t.Log("Docker is available on this system")
@@ -320,7 +260,7 @@ func TestValidateDockerCommand(t *testing.T) {
 }
 
 func TestImageExistsLocally(t *testing.T) {
-	if !isDockerAvailable() {
+	if !IsDockerAvailable() {
 		t.Skip("Docker/Podman not available, skipping imageExistsLocally tests")
 	}
 

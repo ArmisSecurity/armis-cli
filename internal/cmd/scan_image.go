@@ -29,6 +29,23 @@ var scanImageCmd = &cobra.Command{
   $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
+		// flag error rather than hiding behind an auth failure. This mirrors the
+		// allowlist in determinePullBehavior, which only runs after auth + the docker
+		// check; "" is excluded here because the flag default is "missing".
+		//
+		// Only validate on the image-name path: --pull is documented as "Ignored
+		// when --tarball is used" (tarball scans never pull), so rejecting a bad
+		// --pull alongside --tarball would contradict the flag's contract.
+		if tarballPath == "" {
+			switch pullPolicy {
+			case "always", "missing", "never":
+				// valid
+			default:
+				return fmt.Errorf("invalid --pull value %q: must be one of [always missing never]", pullPolicy)
+			}
+		}
+
 		if tarballPath == "" && len(args) == 0 {
 			return fmt.Errorf("missing target: specify an image name or use --tarball")
 		}
@@ -49,9 +66,24 @@ var scanImageCmd = &cobra.Command{
 			}
 		}
 
-		authProvider, err := getAuthProvider()
+		// Surface a missing container runtime before auth. Scanning by image name
+		// exports via Docker/Podman, so a dev with no runtime would otherwise hit
+		// the auth error first and never learn the real blocker. --tarball bypasses
+		// the daemon, so skip this check on that path.
+		if tarballPath == "" && !image.IsDockerAvailable() {
+			return image.ErrRuntimeNotFound
+		}
+
+		authProvider, err := getAuthProvider(cmd.Context())
 		if err != nil {
 			return err
+		}
+		// Defensive nil-check. getAuthProvider returns (nil, err) on
+		// failure and (non-nil, nil) on success — the explicit guard
+		// here exists so a future refactor can't silently slip a nil
+		// past the err check and crash subsequent calls.
+		if authProvider == nil {
+			return fmt.Errorf("internal error: nil auth provider")
 		}
 
 		tid, err := authProvider.GetTenantID(cmd.Context())
@@ -69,9 +101,9 @@ var scanImageCmd = &cobra.Command{
 			return err
 		}
 
-		baseURL := getAPIBaseURL()
-		clientOpts := clientOptionsForBaseURL(baseURL)
-		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute, clientOpts...)
+		baseURL := resolveDataPlaneURL(cmd.Context(), authProvider)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute,
+			clientOptionsForBaseURL(baseURL)...)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}
@@ -79,13 +111,8 @@ var scanImageCmd = &cobra.Command{
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable).
 			WithPullPolicy(pullPolicy)
 
-		// Warn if output paths are specified without the corresponding generation flags
-		if sbomOutput != "" && !generateSBOM {
-			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
-		}
-		if vexOutput != "" && !generateVEX {
-			cli.PrintWarning("--vex-output is ignored without --vex flag")
-		}
+		// --sbom-output/--vex-output misuse is warned about in scan.PersistentPreRunE
+		// (before auth), so no warning is emitted here.
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {

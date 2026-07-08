@@ -70,10 +70,26 @@ func TestScanCmd(t *testing.T) {
 		if flags.Lookup("group-by") == nil {
 			t.Error("Expected --group-by flag")
 		}
+		// Scan-output flags were relocated from rootCmd to scanCmd (PPSC-1009) to
+		// keep them out of non-scan command help. They must remain available to
+		// the scan subtree.
+		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+			if flags.Lookup(name) == nil {
+				t.Errorf("Expected --%s flag on scanCmd", name)
+			}
+		}
 	})
 }
 
 func TestScanRepoCmd(t *testing.T) {
+	// The "fails without base URL" subtest falls through to a real scan attempt,
+	// which starts the upload spinner. Its ANSI/carriage-return frames corrupt
+	// gotestsum's go-test-json PASS-line parser, producing false "failures" under
+	// `make test` even though `go test` passes. Suppress progress for all subtests.
+	originalNoProgress := noProgress
+	noProgress = true
+	t.Cleanup(func() { noProgress = originalNoProgress })
+
 	t.Run("repo command exists", func(t *testing.T) {
 		if scanRepoCmd == nil {
 			t.Fatal("scanRepoCmd should not be nil")
@@ -83,10 +99,12 @@ func TestScanRepoCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("repo command requires exactly one arg", func(t *testing.T) {
+	t.Run("repo command accepts zero or one arg", func(t *testing.T) {
+		// PPSC-1006 #18: the path is optional and defaults to "." in RunE, so
+		// MaximumNArgs(1) accepts zero args; only two or more are rejected.
 		err := scanRepoCmd.Args(scanRepoCmd, []string{})
-		if err == nil {
-			t.Error("Expected error when no args provided")
+		if err != nil {
+			t.Errorf("Expected no error when no args provided (path defaults to '.'), got %v", err)
 		}
 
 		err = scanRepoCmd.Args(scanRepoCmd, []string{"path1", "path2"})
@@ -428,6 +446,76 @@ func TestScanPersistentPreRunE(t *testing.T) {
 			t.Errorf("expected error from root PreRunE, got: %v", err)
 		}
 	})
+
+	// --fail-on is validated in PersistentPreRunE (PPSC-1006 #17) so a typo surfaces
+	// as a flag error before auth, not as a silent default after auth succeeds.
+	t.Run("fail-on", func(t *testing.T) {
+		originalFailOn := failOn
+		t.Cleanup(func() { failOn = originalFailOn })
+
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = testColorAuto
+
+		t.Run("valid uppercase passes", func(t *testing.T) {
+			failOn = []string{"HIGH", "CRITICAL"}
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected no error for valid --fail-on, got: %v", err)
+			}
+		})
+
+		t.Run("lowercase accepted and normalized in place", func(t *testing.T) {
+			failOn = []string{"medium"}
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected lowercase --fail-on to be accepted, got: %v", err)
+			}
+			if failOn[0] != "MEDIUM" {
+				t.Errorf("expected --fail-on normalized to MEDIUM, got: %q", failOn[0])
+			}
+		})
+
+		t.Run("typo returns error", func(t *testing.T) {
+			failOn = []string{"HIGHT"}
+			err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+			if err == nil {
+				t.Error("expected error for invalid --fail-on 'HIGHT'")
+			}
+			if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid severity level") {
+				t.Errorf("error should mention 'invalid severity level', got: %v", err)
+			}
+		})
+	})
+
+	// --sbom-output/--vex-output without their generation flags is a non-fatal
+	// warning, now emitted before auth (PPSC-1006 #25). The pre-run must still
+	// succeed (no error) on this path.
+	t.Run("sbom/vex output without generation flag warns but does not error", func(t *testing.T) {
+		originalFailOn := failOn
+		originalSBOMOutput := sbomOutput
+		originalVEXOutput := vexOutput
+		originalGenerateSBOM := generateSBOM
+		originalGenerateVEX := generateVEX
+		t.Cleanup(func() {
+			failOn = originalFailOn
+			sbomOutput = originalSBOMOutput
+			vexOutput = originalVEXOutput
+			generateSBOM = originalGenerateSBOM
+			generateVEX = originalGenerateVEX
+		})
+
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = testColorAuto
+		failOn = []string{"CRITICAL"}
+		sbomOutput = "sbom.json"
+		vexOutput = "vex.json"
+		generateSBOM = false
+		generateVEX = false
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error on misuse-warning path, got: %v", err)
+		}
+	})
 }
 
 func TestRootCmd(t *testing.T) {
@@ -449,26 +537,19 @@ func TestRootCmd(t *testing.T) {
 		if flags.Lookup("dev") == nil {
 			t.Error("Expected --dev flag")
 		}
-		if flags.Lookup("format") == nil {
-			t.Error("Expected --format flag")
-		}
-		if flags.Lookup("no-progress") == nil {
-			t.Error("Expected --no-progress flag")
-		}
-		if flags.Lookup("fail-on") == nil {
-			t.Error("Expected --fail-on flag")
-		}
-		if flags.Lookup("exit-code") == nil {
-			t.Error("Expected --exit-code flag")
-		}
 		if flags.Lookup("tenant-id") == nil {
 			t.Error("Expected --tenant-id flag")
 		}
-		if flags.Lookup("page-limit") == nil {
-			t.Error("Expected --page-limit flag")
-		}
 		if flags.Lookup("debug") == nil {
 			t.Error("Expected --debug flag")
+		}
+		// Scan-output flags (--format, --no-progress, --fail-on, --exit-code,
+		// --page-limit) were relocated to scanCmd (PPSC-1009) and must NOT remain
+		// root persistent flags, so they stay out of non-scan command help.
+		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+			if flags.Lookup(name) != nil {
+				t.Errorf("--%s should be scoped to scanCmd, not rootCmd", name)
+			}
 		}
 	})
 

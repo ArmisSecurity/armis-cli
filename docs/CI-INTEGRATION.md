@@ -361,6 +361,12 @@ jobs:
 - Only runs if files actually changed
 - Excludes test files that may contain intentional security test patterns
 
+> **Tip — native `--changed` flag:** Outside GitHub Actions (local pre-commit
+> hooks, GitLab, Jenkins, etc.), the CLI can detect changed files itself with no
+> extra tooling. Use `armis-cli scan repo . --changed=origin/main` to scan only
+> what differs from the base branch, or `--changed` for uncommitted work. See
+> [Scan Only Changed Files](../README.md#scan-only-changed-files) for all three modes.
+
 ---
 
 ### Scheduled Repository Scans
@@ -884,6 +890,77 @@ The reusable workflow's "Check for Failures" step differentiates between:
 
 - The CLI installation verifies **checksums** automatically
 - Release binaries include **SLSA provenance** for verification
+
+---
+
+## Supply Chain Enforcement in CI
+
+The `supply-chain` feature enforces a minimum package **release age** to defend
+against typosquatting and compromised-maintainer attacks. See
+[FEATURES.md → Supply Chain Enforcement](FEATURES.md#-supply-chain-enforcement)
+for the full model; this section covers CI specifics.
+
+### Generating an audit trail
+
+Set `ARMIS_SUPPLY_CHAIN_REPORT` (for wrapped installs) or pass `--report` (for
+`supply-chain check`) to emit a machine-readable JSON compliance report — the
+evidence a security team needs to prove no young package entered a build:
+
+```yaml
+- name: Install dependencies (age-enforced) with compliance report
+  env:
+    ARMIS_SUPPLY_CHAIN_REPORT: supply-chain-report.json
+  run: npm ci
+
+- name: Gate on the compliance report
+  run: |
+    jq -e '.install_status == "ok" and (.warned_through | length) == 0' \
+      supply-chain-report.json
+
+- name: Upload compliance report
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: supply-chain-report
+    path: supply-chain-report.json
+```
+
+The report includes the effective `policy`, the enforcement `mode`
+(`proxy` / `pre-install` / `check`), and the `checked` / `blocked` / `resolved` /
+`warned_through` / `conflicts` sets.
+
+### Supply Chain Troubleshooting
+
+- **An install failed right after a supply-chain filter.** A brand-new release
+  was withheld and an older surviving version may not satisfy a dependent's
+  range. On the npm family the failure note names the dependency and who
+  required it; unblock with the
+  [escape hatches](FEATURES.md#supply-chain-escape-hatches), preferring the most
+  surgical option (`ARMIS_SUPPLY_CHAIN_SKIP=<pkg>`) over the kill switch.
+
+- **A pip/uv install failed but no culprit was named.** The one-hop constraint
+  attribution is npm-family only. Run `uv tree` or `pipdeptree` to find which
+  package requires the blocked dependency.
+
+- **"warn-on-transitive requested but the direct set could not be determined".**
+  You set `transitive-policy: warn` (or `ARMIS_SUPPLY_CHAIN_TRANSITIVE=warn`) but
+  Armis could not read a root manifest to tell direct from transitive, so it
+  failed safe and blocked. Ensure a readable `package.json` is present, or accept
+  the safe `block` behavior.
+
+- **A young transitive keeps breaking CI and you accept the risk.** Either add it
+  to `exclusions:` in `.armis-supply-chain.yaml` (reviewed, scoped), or enable
+  `transitive-policy: warn` (lets young *transitive* deps through with a warning
+  while still blocking young *direct* deps — see the residual-risk note in
+  FEATURES.md).
+
+### Making enforcement visible to your developers (platform teams)
+
+A developer who didn't add Armis to the pipeline may be confused when a build is
+blocked by an unfamiliar `[armis supply-chain]` message. If you roll this out via
+shared CI templates, make it discoverable: name the step clearly (e.g.
+"Supply-chain age enforcement (managed by Platform)"), link your internal runbook,
+and surface the `--report` artifact so the block is auditable rather than opaque.
 
 ---
 

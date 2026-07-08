@@ -3,11 +3,45 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestAnnotateTransportError(t *testing.T) {
+	t.Run("EOF gets proxy guidance and stays unwrappable to io.EOF", func(t *testing.T) {
+		got := annotateTransportError(io.EOF)
+		if !errors.Is(got, io.EOF) {
+			t.Fatalf("annotated error must still unwrap to io.EOF, got %v", got)
+		}
+		msg := got.Error()
+		for _, want := range []string{"proxy", "HTTPS_PROXY"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("expected EOF guidance to mention %q, got: %s", want, msg)
+			}
+		}
+	})
+
+	t.Run("wrapped EOF is also annotated", func(t *testing.T) {
+		wrapped := fmt.Errorf("Post \"https://moose.armis.com\": %w", io.EOF)
+		got := annotateTransportError(wrapped)
+		if !strings.Contains(got.Error(), "proxy") {
+			t.Errorf("expected wrapped EOF to be annotated, got: %s", got.Error())
+		}
+	})
+
+	t.Run("non-EOF errors pass through unchanged", func(t *testing.T) {
+		orig := errors.New("dial tcp: connection refused")
+		got := annotateTransportError(orig)
+		if got.Error() != orig.Error() {
+			t.Errorf("non-EOF error should pass through unchanged, got: %s", got.Error())
+		}
+	})
+}
 
 func TestAuthClient_DoesNotFollowRedirects(t *testing.T) {
 	var redirectTargetHit atomic.Bool
@@ -75,5 +109,30 @@ func TestAuthClient_SuccessfulAuth(t *testing.T) {
 	}
 	if result.Region != "us-east-1" {
 		t.Errorf("expected region 'us-east-1', got %q", result.Region)
+	}
+}
+
+func TestRegionalBaseURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		region string
+		want   string
+	}{
+		{"empty region falls back to production", "", ProductionBaseURL},
+		{"eu1 maps to EU data plane", "eu1", "https://eu.moose.armis.com"},
+		{"us1 (primary) uses production host", "us1", ProductionBaseURL},
+		{"au1 has no data plane yet, uses production host", "au1", ProductionBaseURL},
+		{"unknown region falls back to production", "mars1", ProductionBaseURL},
+		{"injection attempt falls back to production", "eu1.evil.com", ProductionBaseURL},
+		{"path injection falls back to production", "eu1/path", ProductionBaseURL},
+		{"uppercase region falls back to production", "EU1", ProductionBaseURL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RegionalBaseURL(tt.region); got != tt.want {
+				t.Errorf("RegionalBaseURL(%q) = %q, want %q", tt.region, got, tt.want)
+			}
+		})
 	}
 }

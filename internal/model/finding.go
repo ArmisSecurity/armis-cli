@@ -90,13 +90,47 @@ type Summary struct {
 	Suppressed             int                 `json:"suppressed,omitempty"`
 }
 
-// IngestUploadResponse represents the response from uploading a scan artifact.
+// IngestUploadResponse represents the response from uploading a scan artifact
+// via the legacy /api/v1/ingest/tar endpoint and from the /api/v1/ingest/scan
+// trigger in the split-flow path. ScanStatus is populated by /scan only.
 type IngestUploadResponse struct {
 	ScanID       string `json:"scan_id"`
+	ScanStatus   string `json:"scan_status,omitempty"`
 	ArtifactType string `json:"artifact_type"`
 	TenantID     string `json:"tenant_id"`
 	Filename     string `json:"filename"`
 	Message      string `json:"message"`
+}
+
+// PresignedUploadRequest is the JSON body for POST /api/v1/ingest/presigned-url.
+type PresignedUploadRequest struct {
+	TenantID     string `json:"tenant_id"`
+	ArtifactType string `json:"artifact_type"`
+	Filename     string `json:"filename"`
+}
+
+// PresignedUploadResponse is the JSON body returned from
+// POST /api/v1/ingest/presigned-url. The client uses `PresignedURL` and
+// `Fields` to multipart-POST the tarball directly to S3 with a
+// Content-Length-Range policy bounded by `MaxUploadBytes`.
+type PresignedUploadResponse struct {
+	ScanID         string            `json:"scan_id"`
+	ArtifactType   string            `json:"artifact_type"`
+	TenantID       string            `json:"tenant_id"`
+	PresignedURL   string            `json:"presigned_url"`
+	Fields         map[string]string `json:"fields"`
+	MaxUploadBytes int64             `json:"max_upload_bytes"`
+	ExpiresIn      int               `json:"expires_in"`
+}
+
+// IngestScanStartRequest is the JSON body for POST /api/v1/ingest/scan.
+type IngestScanStartRequest struct {
+	ScanID       string   `json:"scan_id"`
+	TenantID     string   `json:"tenant_id"`
+	ScanType     string   `json:"scan_type"`
+	SBOMGenerate bool     `json:"sbom_generate"`
+	VEXGenerate  bool     `json:"vex_generate"`
+	CustomScans  []string `json:"custom_scans,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

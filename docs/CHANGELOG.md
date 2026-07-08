@@ -21,18 +21,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.18.0] - 2026-07-07
+
+### Added
+
+- `auth` commands for browser-based SSO: `auth login`/`auth logout`/`auth whoami` sign in via your organization's identity provider using the OAuth2 device flow; `ARMIS_DEFAULT_LOGIN_METHOD` can trigger the login sequence automatically. (#257)
+- `auth setup`: a guided command for IT admins to register (or update) their tenant's identity-provider configuration for SSO. (#258)
+- `supply-chain`: custom/private package registry support (npm, PyPI) with authentication and TLS trust. Configurable via `registries`, `registry-enforcement`, and `registry-ca-bundle` in `.armis-supply-chain.yaml`, plus the `ARMIS_REGISTRY_CA_BUNDLE` env var. Credentials are resolved from `.npmrc`/`PIP_INDEX_URL`/`UV_INDEX_URL`, upstream URLs are validated against SSRF (https-only, no embedded userinfo, no loopback/RFC1918/link-local), and a new `supply-chain registry` subcommand reports coverage. (#261)
+
+### Changed
+
+- Updated dependencies: `golang.org/x/term` to v0.44.0 (#223), `github.com/Masterminds/semver/v3` to v3.5.0 (#263), `golang.org/x/sys` to v0.46.0 (#224), `github.com/alecthomas/chroma/v2` to v2.27.0 (#234), `golang.org/x/net` to v0.55.0 (#259), `github.com/mattn/go-runewidth` to v0.0.24 (#208), and `actions/checkout` to v7 (#235).
+
+### Fixed
+
+- `supply-chain`: raised the yarn classic lockfile parser's buffer cap to match pip/gradle, so a `yarn.lock` line with a long resolved URL or integrity hash no longer hard-fails parsing. (#265)
+- `supply-chain`: uninstall-family commands (`npm uninstall`, `pnpm remove`, `yarn remove`, etc.) now report accurate wording ("kept" instead of "installed") in the filter summary. (#260)
+
+### Security
+
+- CI: pinned every third-party GitHub Actions `uses:` reference to a commit SHA instead of a mutable tag, closing a supply-chain foothold where a moved tag could be repointed to malicious code in internet-reachable, PR-triggered workflows. (#262)
+
+---
+
+## [1.17.0] - 2026-06-30
+
+### Added
+
+- `supply-chain init`: PowerShell profile injection is now supported. On machines where PowerShell (`pwsh`) is detected, `init` writes wrapper functions into the `CurrentUserAllHosts` profile (`~/.config/powershell/profile.ps1` on Unix/macOS, `Documents\PowerShell\profile.ps1` for pwsh on Windows, or `Documents\WindowsPowerShell\profile.ps1` for Windows PowerShell 5.1). Package managers with dotted names (e.g. `pip3.12`) are skipped in the PowerShell profile — PowerShell function names may not contain dots — and a muted note explains the skip, listing any non-dotted alternatives that are still wrapped. (#255)
+- `supply-chain`: a wrapped install that fails right after the age filter now names the likely culprit instead of a generic note. The proxy is graph-blind — when it withholds a brand-new release and repoints `latest` to an older version, that older version may no longer satisfy a dependent's range, and npm/pnpm/bun/yarn then reject the install. On the npm family a deterministic post-install, one-hop constraint check reports exactly which dependency became unsatisfiable and which package required it (e.g. `scheduler has no version older than the 3-day policy that satisfies ^0.24.0 (required by react-dom)`). The check reads dependency ranges npm already embeds in the metadata the proxy fetched — it is one hop, advisory, and recover-guarded so it can never affect the finished install; multi-hop chains and full resolution are out of scope. pip/uv get the blocked-package name plus a pointer to `uv tree`/`pipdeptree` (PyPI's Simple API carries no dependency ranges). The failure note leads with the protection rationale and lays out remediation surgical-first (allow one package → team exception → relax window), deliberately omitting the global kill switch so a frustrated developer isn't nudged to the blunt instrument. (#246)
+- `supply-chain`: a machine-readable compliance report for audit trails ("prove no young package entered this build"). Set `ARMIS_SUPPLY_CHAIN_REPORT=<path>` for a wrapped install (`-` writes to stderr), or pass `--report <path>` to `supply-chain check`. The JSON carries the effective policy, the enforcement mode (`proxy`/`pre-install`/`check`), and the `checked`/`blocked`/`resolved`/`warned_through`/`conflicts` sets plus `install_status`, so CI can gate with `jq`. A wrap report uses an env var, not a flag, because the wrapped command forwards every flag verbatim to the underlying package manager. (#246)
+- `supply-chain`: an opt-in `transitive-policy: warn` config key (and `ARMIS_SUPPLY_CHAIN_TRANSITIVE=warn` env override for the wrap path) that lets a young **transitive** dependency through with a warning instead of failing the build, while still hard-blocking young **direct** dependencies. The default stays `block` — no posture change without opt-in. Direct vs. transitive is determined by reading the root `package.json` (npm family only); if the direct set can't be determined the proxy fails safe and treats every package as direct (blocks). Each warned-through package is printed and marked in the compliance report so security teams can audit exactly which freshly-published packages entered the build. Residual risk and scope are documented in `docs/FEATURES.md`. (#246)
+- `agent-detection`: CLI ergonomics improvements for more intuitive detection workflow and output. (#253)
+
+### Changed
+
+- Command help is no longer cluttered with scan-only flags. The output flags `--format`, `--no-progress`, `--fail-on`, `--exit-code`, and `--page-limit` were registered as root persistent flags, so they appeared in the `--help` of every command — including non-scan commands like `hook`, `supply-chain`, `install`, and `agent-detection`, where they have no effect. They are now scoped to the `scan` command subtree where they belong. `supply-chain check`, a sibling of `scan` that does use `--format`/`--fail-on`/`--exit-code`, re-registers exactly those three locally (mirroring its existing `--output` handling), so its behavior is unchanged. (#250)
+- Upload now uses a presigned S3 URL flow: the CLI requests a presigned URL from the API, uploads the archive directly to S3, then notifies the API to begin scanning. This improves reliability and reduces upload latency for large repositories. (#225)
+- Documentation updated to cover `.armisignore` path patterns and suppression directives in depth. (#248)
+
+### Fixed
+
+- `hook init` no longer refuses to install a pre-commit hook when the Armis MCP plugin is absent. It previously hard-errored with "Armis MCP server not installed — run 'armis-cli install' first", even though the hook installer already falls back to a direct `armis-cli scan repo . --changed=staged --no-progress --fail-on HIGH` hook when the plugin's own pre-commit script is missing. The redundant gate is removed, so `hook init` installs the direct-scan hook and prints a one-line advisory ("Armis MCP plugin not found; installing direct-scan hook…") instead of blocking. (#250)
+- `supply-chain check`: polished check gate behavior, uninit cleanup, and npmrc handling edge cases. (#254)
+- `install`: pip now uses `--prefer-binary` when creating the virtual environment to avoid source-building the `cryptography` package behind a TLS-inspecting proxy (e.g. Zscaler), which previously caused `rustup` to fail when downloading its toolchain through the proxy certificate. (#252)
+- `install`/`uninstall`: hardened lifecycle handling for more reliable installation and removal. (#251)
+
+---
+
+## [1.16.0] - 2026-06-25
+
+### Added
+
+- Shell completion now suggests values for enumerated flags: `--format`, `--fail-on`, `--color`, `--theme`, and `--group-by` offer their accepted values (with descriptions in zsh/fish) instead of falling back to file-path completion. The candidate lists reuse the same slices the flag validators read, so completions cannot drift from what is actually accepted. The README documents the per-shell setup for `armis-cli completion <shell>` (bash/zsh/fish/PowerShell). (#245)
+
+### Changed
+
+- Update notification now links to the release notes for the available version, so breaking changes can be reviewed before upgrading. (#243)
+- Documentation now covers previously-undocumented surface area: the `--changed` flag (all three modes, with a CI-INTEGRATION cross-link), the `.armisignore` file, and the `agent-detection`, `hook init`, and `completion` commands. CI setup examples use the correct binary name (`armis-cli`) and explain `.armisignore` instead of a stale `--exclude` snippet, and the SBOM/VEX examples drop `--tenant-id` (JWT auto-extracts it). (#242)
+- Contributor first-run experience is cleaner: `make test` no longer reports 8 phantom failures (the upload spinner's ANSI frames and the `[y/N]` confirm prompt were corrupting gotestsum's JSON parser), a new `make lint-clean` target clears the golangci-lint cache that bleeds across sibling worktrees, and the README Go-version badge matches `go.mod` (1.25+). (#244)
+
+### Deprecated
+
+- Legacy Basic auth `--token` / `-t` (env: `ARMIS_API_TOKEN`) now emits a runtime deprecation warning and is hidden from `--help`; use JWT auth (`--client-id` / `--client-secret`, env: `ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`) instead. The flag still functions — auth behavior is unchanged. (#243)
+
+### Fixed
+
+- `auth`/`scan`: the CLI now honors the operating system's proxy configuration instead of only the `HTTP_PROXY`/`HTTPS_PROXY` environment variables. On Windows this resolves the WinINET settings — including a PAC script referenced by `AutoConfigURL` (e.g. Zscaler) — that browsers and PowerShell already use. Previously the binary attempted a direct connection that a corporate proxy silently dropped, so authentication failed on the first request with an opaque `Post "https://…/api/v1/auth/token": EOF` even though the same machine could reach the endpoint in a browser. macOS and Linux behavior is unchanged (the release binaries are built with `CGO_ENABLED=0` and continue to read proxy settings from the environment). The `EOF` failure also now carries actionable guidance pointing at the proxy/`HTTPS_PROXY`, and `--debug` logs transport-level errors (DNS/connect/TLS/EOF), not just non-2xx HTTP responses. (#247)
+- `scan`: invalid flags now fail fast as flag errors instead of hiding behind an auth failure. `--fail-on`, `--pull`, and SBOM/VEX flag misuse are validated and normalized *before* authentication and any network call, so a typo no longer surfaces as an opaque auth error (or silently defaults once auth succeeds). `scan repo` also accepts zero arguments again (path defaults to `.`), and `--pull` validation is skipped when `--tarball` is set, matching the flag's documented "ignored with `--tarball`" contract. (#240)
+- `scan`/`auth`: error messages now follow a problem → cause → fix structure. Auth failures list the `--client-id`/`--client-secret` flags alongside the env vars; unknown-flag errors append a `Run <cmd> --help` hint; `scan image` checks for a missing container runtime *before* authenticating and points to the `--tarball` escape hatch (with Docker/Podman install URLs); and the agent-detection output suggests `armis-cli install` when an agent is missing MCP configuration. (#238)
+
+### Security
+
+---
+
+## [1.15.0] - 2026-06-23
+
+### Changed
+
+- First-run onboarding now reaches a working command faster. The README leads with a "Try it without credentials" Quick Start that runs `supply-chain check` against public registries with no Armis account, and the Quick Start section now precedes the release-verification material (the SLSA/cosign/SBOM steps are collapsed into an expandable block) so an install-to-scan reader is no longer interrupted by 96 lines of signature verification. The credential-setup steps now link to where the VIPR client credentials live, and the auth `401` error message points to the same place ("get credentials from the VIPR external API screen in the Armis Platform") instead of saying only "invalid credentials". The README "General Flags" table and environment-variable table now document the previously-missing `--color`, `--theme`, `--no-update-check`, and `--dev` flags and the `ARMIS_THEME` / `ARMIS_NO_UPDATE_CHECK` variables. (#236)
+- `auth`: the Armis cloud region is now auto-detected from your credentials, so non-US customers no longer need to pass `--region` on every scan. The token exchange already discovers the region server-side and returns it in the JWT (with a response-body fallback for older tokens); the CLI now reads that region and routes the region-pinned data plane (upload, status polling, results) to the matching host automatically. Explicit configuration still wins — `ARMIS_API_URL`, `--dev`, and `--region`/`ARMIS_REGION` are honored ahead of the discovered region, and legacy Basic auth or tokens without a region claim fall back to the primary host. (PPSC-1018)
+
+### Fixed
+
+- `scan`: the `--include-non-exploitable` filter now correctly hides low/medium exploitability findings. The backend's exploitability label schema changed from a boolean (`Exploitable: true/false`) to a graded one (`Exploitability Level: low/medium/high`), which left the old filter matching nothing — the flag was effectively a no-op. Findings graded low or medium are now hidden by default, while high-exploitability and ungraded findings (SCA, container CVEs, false positives) are always shown. Pass `--include-non-exploitable` to restore the previous behavior of showing every finding (PPSC-1015)
+
+---
+
+## [1.14.0] - 2026-06-21
+
+### Added
+
+- `supply-chain status` now leads with a one-line protection verdict answering the only question the command exists to answer — "is protection on right now?". The headline is computed from the same gate the wrapper uses: `ARMIS_SUPPLY_CHAIN=off` reads as **Disabled**, no installed wrappers reads as **Not active** (with the `init` command to fix it), and otherwise **Protected** with a count and the wrapped commands named (green ✓ when protected, ⚠ otherwise). Ecosystem detection now walks upward to find lockfiles the way enforcement does, so running `status` from a project subdirectory no longer reports `(none detected)` when a parent-directory lockfile would in fact be enforced; the empty-lockfile state now explains its scope rather than reading as "nothing is protected". Each active shell also reports which package managers it actually wraps (`wraps: npm, pip, …`), with the dozen `pip3.x` variants collapsed to `pip (+N variants)` in the human view. `--json` gains a `verdict` object (`{state, headline, wrapped_count}`) and per-shell `wraps` arrays so CI can gate with `jq -e '.verdict.state == "protected"'`. (#231)
+- `supply-chain check` now accepts `-o`/`--output` to write results to a file, reusing the same pipeline as `scan repo`/`scan image` with extension-based format auto-detection (`.json`, `.sarif`, `.xml`). As a sibling of `scan` in the command tree, `supply-chain check` did not inherit `scan`'s persistent `--output` flag, so the flag is now registered locally on the subcommand. (#229)
+
+### Fixed
+
+- `auth`: region-pinned uploads now reach the correct data plane. The data plane (`/api/v1/ingest/*`) is physically region-pinned, but only the token exchange was region-aware — a region-scoped JWT was being presented to the primary host on upload and rejected with a 401 (the `eu1` upload bug). A new explicit region→host allowlist feeds the upload endpoint so it matches the JWT's region; this also replaces the old string-interpolated host in `install/validate.go`, which produced the wrong `eu1` URL format and built a host from unvalidated input (CWE-918). (#228)
+- PR scan comments: the alert count in the PR comment now matches the inline Code Scanning annotations. Findings are filtered against the PR diff so a finding outside the changed lines is no longer counted in the comment summary while being absent from the inline annotations. Diff parsing also skips `\ No newline at end of file` sentinel lines to prevent line-number misalignment, uses a null-prototype map to avoid prototype pollution from adversarial filenames, and passes findings through unfiltered for files whose patch is missing (large or binary diffs) to avoid silent under-reporting. (#221)
+- `supply-chain`: the filter summary for PyPI installs no longer mislabels withheld stable releases as prereleases. A PyPI package filename (e.g. `filelock-3.29.2.tar.gz`) was being split on the first `-` and read as a prerelease, which printed the misleading `withheld N prereleases; a default install was unaffected` line for stable versions the proxy actually downgraded. Classification now runs on a normalized version (semver/PEP 440 parsed from the filename) and recognizes dash-less PEP 440 markers (`1.0.0rc1`, `1.0.0b2`, `1.0.0.dev1`); the SemVer `-` branch now requires a numeric dotted core so hyphenated project names like `4ti2-1.0.tar.gz` are not misread. The per-line summary now leads with the installed safe version and its age, with the skipped version as a trailing clause, and omits a false age for undatable files. (#222)
+
+### Security
+
+---
+
 ## [1.13.0] - 2026-06-16
 
 ### Added
 
 - `supply-chain`: `uvx` (uv's on-demand tool runner) is now wrapped alongside `uv`, the PyPI analogue of how `npx` is paired with `npm`. `uvx <tool>` fetches a tool from PyPI and runs it — exactly the supply-chain vector the proxy guards — so wherever `uv` is enforced, `uvx` is too. It shares uv's resolver and config, so it routes through the same transparent PyPI proxy (`UV_INDEX_URL`) and inherits uv's `ecosystems`-scope decision. Enforcement applies to tools `uvx` fetches from the registry; a tool already in the uv tool cache runs without a registry round-trip and is not re-checked. Re-run `armis-cli supply-chain init` to wrap `uvx` on machines where it is installed. (#219)
+  > **Action required:** Re-run `armis-cli supply-chain init` to wrap `uvx` on machines where it is installed.
 - `supply-chain check` now warns when the audited lockfile references a loopback registry (`127.0.0.1`, `localhost`, `[::1]`). The wrap's residue sweep can only remove the proxy origin of the run that just finished — a wrapper killed mid-install leaves a stale port behind, and versions before the sweep existed left residue routinely — so this gives CI a way to catch a corrupted lockfile before it breaks builds that resolve outside the wrapper. The warning is advisory: a deliberate local registry (e.g. Verdaccio) also matches. (#226)
 
 ### Fixed
 
 - `supply-chain`: wrapped `uv` commands that write `uv.lock` (`uv sync`, `uv lock`, `uv add`, `uv run`, …) no longer corrupt the lockfile. uv records the configured index URL as each package's `source.registry` in `uv.lock`, and an index differing from the recorded one triggers a full re-lock — so routing these commands through the transparent proxy stamped the ephemeral `http://127.0.0.1:<port>/simple/` proxy address into every package entry, breaking any subsequent sync outside the wrapper (Docker builds, CI, teammates). Lockfile-writing `uv` invocations now use the same pre-install lockfile audit as poetry/pipenv/pdm: `uv.lock` is checked for too-young packages and the build is blocked before it runs, while uv itself resolves against the real index so the lockfile stays pristine. `uv pip …` and `uv tool …` (which never touch `uv.lock`) and `uvx` keep the transparent proxy. A lockfile already corrupted by an earlier version can be repaired by re-running `uv lock` outside the wrapper (or with `ARMIS_SUPPLY_CHAIN=off`). (#226)
+  > **Action required:** A `uv.lock` corrupted by an earlier version is repaired by re-running `uv lock` outside the wrapper (or with `ARMIS_SUPPLY_CHAIN=off`).
 - `supply-chain`: a wrapped `bun update` no longer leaves the ephemeral proxy address in `bun.lock`. bun records the full tarball URL it fetched from when re-resolving, so the proxy's `http://127.0.0.1:<port>/…` origin was persisted into the lockfile (verified on bun 1.3; `bun add`/`bun install` are unaffected — they record registry-relative entries). After every proxied run the wrapper now sweeps the project's lockfiles and rewrites any occurrence of the proxy origin back to the real upstream registry; the rewrite is atomic and produces exactly the URLs an unwrapped run would have recorded (the proxy forwards tarball paths to the upstream 1:1). The sweep also covers `package-lock.json`, `yarn.lock`, and `pnpm-lock.yaml` defensively — current npm/yarn/pnpm record upstream URLs (verified on npm 10, yarn 1.22, pnpm 10), but older releases recorded the configured registry. A legacy binary `bun.lockb` cannot be rewritten in place; if proxy residue is detected there, a warning explains how to repair (`ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile`). (#226)
+  > **Action required:** A legacy binary `bun.lockb` with proxy residue is repaired with `ARMIS_SUPPLY_CHAIN=off bun install --save-text-lockfile`.
 - `supply-chain`: a wrapped `uv tool install` no longer breaks subsequent `uv tool upgrade` runs. uv records the index it was invoked with as `index-url` in the tool's `uv-receipt.toml`, so upgrades would target the dead ephemeral proxy address; the post-run sweep now restores `https://pypi.org/simple/` in tool receipts. Receipts already poisoned by an earlier version can be repaired by re-running `uv tool install <tool> --force` through the wrapper, or editing the receipt's `index-url` by hand. (#226)
+  > **Action required:** A poisoned `uv-receipt.toml` is repaired by re-running `uv tool install <tool> --force` through the wrapper, or editing the receipt's `index-url` by hand.
 - `supply-chain`: a wrapped `uv pip compile --emit-index-url -o FILE` no longer writes the ephemeral proxy URL as the `--index-url` of the generated requirements file; the post-run sweep restores `https://pypi.org/simple/` in the output file. Output redirected to stdout by the shell happens outside the wrapper and cannot be intercepted — the new `supply-chain check` loopback warning covers that case. (#226)
 - `supply-chain`: wrapped Yarn Berry (2+) installs no longer fail with `YN0081: Unsafe http requests must be explicitly whitelisted`. Berry honors the wrap's registry override but refuses plain-http registries — and the filtering proxy is necessarily plain http on loopback — so every wrapped Berry install errored out with no mention of the wrapper. The wrap now sets `YARN_UNSAFE_HTTP_WHITELIST=127.0.0.1` alongside the registry override (Yarn classic ignores the variable). Verified on Berry 4.16: wrapped installs are filtered by the age policy and Berry's registry-agnostic `yarn.lock` stays clean. (#226)
 - `supply-chain`: the residue sweep also covers `npm-shrinkwrap.json` (package-lock.json's publishable twin), and rewrites symlinked lockfiles through to their target instead of replacing the link with a regular file. (#226)
@@ -64,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `supply-chain init`: the injected shell wrappers no longer break after an `armis-cli` upgrade. The wrapper now references `armis-cli` by bare name (resolved from `PATH` on every call) when it is on `PATH`, falling back to the stable symlink path otherwise — previously it embedded the fully symlink-resolved binary path, which on Homebrew was the version-pinned Cellar directory (e.g. `…/Cellar/armis-cli/1.11.0/…`). After `brew upgrade armis-cli` deleted that directory, every wrapped package manager (npm, pnpm, bun, pip, uv, poetry, npx) failed to run in new shells. The wrappers are also now fail-closed: if `armis-cli` cannot be found at invocation time, the wrapper prints a loud warning to stderr that enforcement has lapsed and runs the real package manager un-wrapped, so installs never silently break. The fish guard now uses fish-native `command -q` (POSIX `command -v` errored under fish and silently disabled enforcement), and the guard adds an executable-path check so an absolute fallback path is detected reliably across shells. Wrappers injected before this fix must be refreshed by re-running `armis-cli supply-chain init` once. (#216)
+  > **Action required:** Re-run `armis-cli supply-chain init` once to refresh shell wrappers injected before v1.11.1.
 
 ---
 
@@ -259,6 +368,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SARIF rule IDs normalized to stable CWE/CVE identifiers, removing unstable fingerprints for consistent GitHub Code Scanning deduplication (#154)
 - Install script now surfaces credential write failures instead of silently swallowing errors (#151)
 - Release pipeline fixed by upgrading cosign-installer to v4 (v3 bootstrap binary was delisted) (#149)
+
+---
+
+## [1.6.1] - 2026-04-28
+
+### Fixed
+
+- Upgraded go-git to v5.18.0 to remediate CVE-2026-41506 (#148)
+- SARIF rule IDs stabilized to prevent recurring false-positive GitHub Code Scanning alerts (#147)
+
+---
+
+## [1.6.0] - 2026-04-22
+
+### Added
+
+- `install claude` command for registering the Armis MCP plugin with Claude (#143)
+
+---
+
+## [1.5.0] - 2026-04-13
+
+### Added
+
+- Graceful degradation when result fetching fails: partial results are surfaced instead of aborting the scan (#141)
+
+### Fixed
+
+- Security hardening from the PPSC-602 code-scanning sweep: `.armisignore` size limit with go-git CVE remediation (#136), upper bounds on scan and upload timeouts to bound resource use (CWE-770, #122), install aborts when checksum-verification tools are unavailable (CWE-494, #124), integer-overflow guard in file-size calculation (CWE-190, #105), and reduced debug-info exposure in auth (CWE-215, #109) (#135)
 
 ---
 
@@ -485,7 +623,12 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...v1.18.0
+[1.17.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...v1.17.0
+[1.16.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...v1.16.0
+[1.15.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.14.0...v1.15.0
+[1.14.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.11.0...v1.11.1
@@ -504,6 +647,9 @@ Manual entries for significant releases:
 [1.8.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.1...v1.7.0
+[1.6.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.2.0...v1.2.1

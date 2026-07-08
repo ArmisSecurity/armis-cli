@@ -33,6 +33,68 @@ func TestGetPublishDate(t *testing.T) {
 		}
 	})
 
+	t.Run("registry URL with trailing slash does not double-slash", func(t *testing.T) {
+		// Bug #1 (check path): a configured artifactory URL commonly ends in "/".
+		// The metadata request must reach "/express", not "//express".
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/express" {
+				t.Errorf("path = %q, want /express (double-slash regression)", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL+"/")
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("unexpected error with trailing-slash registry URL: %v", err)
+		}
+	})
+
+	t.Run("auth header forwarded to auth-gated registry", func(t *testing.T) {
+		// Bug: `check` against an auth-required artifactory 401'd because no
+		// credential was sent. With WithAuthHeader the metadata request carries the
+		// Bearer token and the registry answers 200.
+		const token = "Bearer check-tok"
+		var gotAuth string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAuth = r.Header.Get("Authorization")
+			if gotAuth != token {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL).WithAuthHeader(token)
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("expected success with forwarded auth, got: %v", err)
+		}
+		if gotAuth != token {
+			t.Errorf("Authorization = %q, want %q", gotAuth, token)
+		}
+	})
+
+	t.Run("no auth header when unset (public path)", func(t *testing.T) {
+		var gotAuth string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{"4.18.2":"2022-10-08T14:21:24.484Z"}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL)
+		if _, err := client.GetPublishDate(context.Background(), "express", "4.18.2"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotAuth != "" {
+			t.Errorf("no Authorization header expected on public path, got %q", gotAuth)
+		}
+	})
+
 	t.Run("scoped package URL encoding", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// url.PathEscape encodes @types/node as %40types%2Fnode
@@ -76,6 +138,35 @@ func TestGetPublishDate(t *testing.T) {
 		_, err := client.GetPublishDate(context.Background(), "express", "99.99.99")
 		if err == nil {
 			t.Error("expected error for missing version")
+		}
+	})
+
+	t.Run("time map with unpublished object", func(t *testing.T) {
+		// npm includes non-date keys in "time" whose values are objects, not
+		// strings — most commonly "unpublished": {"time":"...","versions":[...]}
+		// on any package that ever unpublished a version. The whole "time" map
+		// must still parse (json.RawMessage), and the requested version's date
+		// must decode correctly rather than the object aborting the parse and
+		// losing every version's publish date.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"time":{` +
+				`"created":"2025-12-04T21:32:57.747Z",` +
+				`"modified":"2025-12-09T03:31:24.890Z",` +
+				`"99.99.1":"2025-12-04T21:33:00.000Z",` +
+				`"99.99.2":"2025-12-05T10:00:00.000Z",` +
+				`"unpublished":{"time":"2025-12-09T03:31:24.890Z","versions":[]}}}`))
+		}))
+		defer server.Close()
+
+		client := NewClientWithHTTP(server.Client(), server.URL)
+		publishTime, err := client.GetPublishDate(context.Background(), "path-to-regexp-updated", "99.99.1")
+		if err != nil {
+			t.Fatalf("unpublished object must not break parsing: %v", err)
+		}
+		expected := time.Date(2025, 12, 4, 21, 33, 0, 0, time.UTC)
+		if !publishTime.Equal(expected) {
+			t.Errorf("expected %v, got %v", expected, publishTime)
 		}
 	})
 
@@ -240,5 +331,18 @@ func TestCacheCountsDistinctEntries(t *testing.T) {
 
 	if got := client.cacheLen.Load(); got != 3 {
 		t.Errorf("cacheLen = %d, want 3 (one per distinct package, no double-count)", got)
+	}
+}
+
+// TestNewClientWithHTTPNilClientUsesProxyAwareTransport is the regression
+// guard for the nil-client fallback losing proxy-awareness: a caller passing
+// nil (the production `check` path, when no injected client is needed) must
+// still get WinINET/PAC support on Windows, same as NewClient(). A bare
+// &http.Client{Timeout: ...} (the pre-fix code) leaves Transport nil.
+func TestNewClientWithHTTPNilClientUsesProxyAwareTransport(t *testing.T) {
+	client := NewClientWithHTTP(nil, "")
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		t.Error("expected the defaulted client to carry ProxyAwareTransport (non-nil *http.Transport with a Proxy func), got a plain/nil transport")
 	}
 }

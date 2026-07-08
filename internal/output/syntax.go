@@ -66,6 +66,7 @@ func HighlightCode(code, filename string) []string {
 
 	// Format all tokens
 	var buf bytes.Buffer
+	// armis:ignore cwe:822 reason:formatters.Get() never returns nil (falls back to the registered NoOp formatter on a registry miss); nil-check would be dead code
 	err = formatter.Format(&buf, style, iterator)
 	if err != nil {
 		return strings.Split(code, "\n")

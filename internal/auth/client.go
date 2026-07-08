@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,15 +12,73 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 )
 
 const (
 	// maxResponseSize limits auth response body to prevent memory exhaustion attacks
 	maxResponseSize = 1 << 20 // 1MB
 
-	// ProductionBaseURL is the default Armis API endpoint.
+	// ProductionBaseURL is the default Armis API endpoint (US region / primary).
 	ProductionBaseURL = "https://moose.armis.com"
+
+	// schemeHTTPS / schemeHTTP are URL scheme literals shared across the auth
+	// package's HTTPS-enforcement checks.
+	schemeHTTPS = "https"
+	schemeHTTP  = "http"
+
+	// hostLocalhost / hostLoopback are the only hosts exempt from the HTTPS
+	// requirement, so local-dev and tests can point at a plain-http listener.
+	hostLocalhost = "localhost"
+	hostLoopback  = "127.0.0.1"
 )
+
+// requireSecureBaseURL enforces the auth package's transport guard: every base
+// URL must be HTTPS unless it targets localhost. This is the shared SSRF /
+// credential-leak check used by AuthClient, DeviceClient, and IdpConfigClient —
+// the request carries a credential and must never be sent in the clear to a
+// remote host.
+//
+// armis:ignore cwe:918 reason:parsedURL comes from operator-controlled config (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist; this function IS the SSRF guard
+func requireSecureBaseURL(parsedURL *url.URL) error {
+	if parsedURL.Scheme == schemeHTTPS {
+		return nil
+	}
+	host := parsedURL.Hostname()
+	if host == hostLocalhost || host == hostLoopback {
+		return nil
+	}
+	return fmt.Errorf("HTTPS required for non-localhost URLs")
+}
+
+// RegionalBaseURL returns the Armis API base URL for the given region code.
+//
+// The data plane (/api/v1/ingest/*) is physically region-pinned: a JWT issued
+// for one region is rejected by another region's endpoint with a 401. The auth
+// endpoint (/api/v1/auth/token) auto-discovers the region server-side, so the
+// 401 only surfaces on upload — which is why the base URL must encode the region.
+//
+// Region codes are the values issued in the JWT "region" claim (us1, eu1, au1).
+// There are currently two production data planes:
+//   - us1 (primary) -> https://moose.armis.com
+//   - eu1           -> https://eu.moose.armis.com
+//
+// au1 is a valid auth region but has no dedicated data plane yet, so it
+// falls through to the primary host rather than a fabricated one. Unknown or
+// empty regions also fall back to the primary host, so callers may pass an
+// unvalidated flag/env value directly. The explicit allowlist (rather than
+// interpolating the region into the host) prevents an attacker-controlled
+// region from redirecting credentials to an arbitrary host (CWE-918).
+func RegionalBaseURL(region string) string {
+	switch region {
+	case "eu1":
+		return "https://eu.moose.armis.com"
+	default:
+		// "", "us1", "au1", and anything unrecognized resolve to the primary host.
+		return ProductionBaseURL
+	}
+}
 
 // AuthError represents an authentication failure with HTTP status context.
 // This allows callers to distinguish between different failure modes
@@ -52,17 +111,20 @@ func NewAuthClient(baseURL string, debug bool) (*AuthClient, error) {
 	}
 
 	// armis:ignore cwe:522 reason:this code IS the credential protection check (HTTPS enforcement for non-localhost)
-	if parsedURL.Scheme != "https" {
-		host := parsedURL.Hostname()
-		if host != "localhost" && host != "127.0.0.1" {
-			return nil, fmt.Errorf("HTTPS required for non-localhost URLs")
-		}
+	// armis:ignore cwe:918 reason:baseURL is operator-controlled (ARMIS_API_URL) or the hardcoded RegionalBaseURL allowlist, never attacker-reachable input; this block IS the SSRF guard (rejects non-HTTPS non-localhost hosts)
+	if err := requireSecureBaseURL(parsedURL); err != nil {
+		return nil, err
 	}
 
 	return &AuthClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			// Resolve proxies from the OS configuration (WinINET/PAC on Windows),
+			// not just environment variables. Without this, a corporate proxy
+			// distributed via PAC (e.g. Zscaler) is bypassed and the token
+			// exchange fails with a bare "EOF". See httpclient.ProxyAwareTransport.
+			Transport: httpclient.ProxyAwareTransport(),
 			// Disable redirects to prevent leaking client credentials (CWE-601).
 			// On 307/308 redirects, Go re-sends the POST body to the redirect target.
 			// The auth endpoint should never redirect; if it does, return the response as-is.
@@ -124,7 +186,14 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	// armis:ignore cwe:522 reason:credentials are sent over HTTPS (enforced above); this is the auth token exchange endpoint
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: authEndpoint is constructed from validated config, not user input
 	if err != nil {
-		return nil, fmt.Errorf("authentication request failed: %w", err)
+		// A transport-level failure (DNS, connect, TLS, or a connection closed
+		// before any response) never reaches the status-code debug branch below,
+		// so log it here when debugging. The URL is non-sensitive; the request
+		// body (which carries credentials) is intentionally never logged.
+		if c.debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth transport error to %s: %v\n", authEndpoint, err)
+		}
+		return nil, fmt.Errorf("authentication request failed: %w", annotateTransportError(err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
@@ -135,7 +204,10 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, &AuthError{StatusCode: resp.StatusCode, Message: "invalid credentials"}
+		return nil, &AuthError{
+			StatusCode: resp.StatusCode,
+			Message:    "invalid credentials — get credentials from the VIPR external API screen in the Armis Platform",
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -166,4 +238,22 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		Token:  authResp.Token,
 		Region: authResp.Region,
 	}, nil
+}
+
+// annotateTransportError adds actionable guidance to a connection that was
+// closed before any HTTP response arrived (surfaced by Go as io.EOF). The most
+// common cause on managed networks is a corporate proxy distributed via a PAC
+// file (e.g. Zscaler). On Windows the CLI reads the WinINET/PAC system proxy
+// automatically; on macOS and Linux it honors the HTTP(S)_PROXY environment
+// variables, so a persistent failure there points to a proxy that still needs
+// to be configured or a network the machine cannot reach directly. Other
+// transport errors (DNS, TLS, refused) are returned unchanged — their own
+// messages are already descriptive.
+func annotateTransportError(err error) error {
+	if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return fmt.Errorf("%w (connection closed before any response — this often means a corporate proxy or firewall is blocking direct access; "+
+		"the CLI uses your Windows system proxy automatically and honors the HTTPS_PROXY/HTTP_PROXY environment variables elsewhere, "+
+		"so if this persists set HTTPS_PROXY to your proxy address or contact your network team)", err)
 }

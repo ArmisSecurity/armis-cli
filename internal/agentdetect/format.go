@@ -43,7 +43,31 @@ func FormatPlain(result *ScanResult, w io.Writer) error {
 			return err
 		}
 	}
+
+	// MCP:false renders in red above; tell the user how to fix it rather than
+	// leaving the red status with no next step. Shown once, after all users.
+	if anyMCPMissing(result) {
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+		hint := s.MutedText.Render("Run 'armis-cli install' to enable Armis AppSec MCP for detected agents.")
+		if _, err := fmt.Fprintln(w, hint); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// anyMCPMissing reports whether at least one detected agent lacks the Armis MCP.
+func anyMCPMissing(result *ScanResult) bool {
+	for _, u := range result.Users {
+		for _, agent := range u.Agents {
+			if !agent.MCPInstalled {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // FormatJSON writes the flat JSON array of all detected agents.

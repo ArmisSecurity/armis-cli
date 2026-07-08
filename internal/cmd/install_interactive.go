@@ -15,6 +15,13 @@ import (
 )
 
 func runInteractiveInstall(force bool) error {
+	// Fail fast before prompting for credentials/editors: every meaningful path
+	// through the wizard ends in a Python venv build, so a missing interpreter
+	// should stop us before the user invests any setup effort.
+	if err := install.CheckPython(); err != nil {
+		return err
+	}
+
 	theme := cmdutil.GetInstallTheme()
 	accessible := !cli.ColorsEnabled()
 

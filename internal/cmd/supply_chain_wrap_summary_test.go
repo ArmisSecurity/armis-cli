@@ -29,8 +29,16 @@ func captureStderr(t *testing.T, fn func()) string {
 	go func() {
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
+		_ = r.Close()
 		done <- buf.String()
 	}()
+
+	// t.Cleanup runs even when fn calls t.Fatalf (which calls runtime.Goexit),
+	// guaranteeing the pipe is closed and os.Stderr is restored.
+	t.Cleanup(func() {
+		_ = w.Close()
+		os.Stderr = orig
+	})
 
 	fn()
 	_ = w.Close()
@@ -57,7 +65,7 @@ func TestPrintBlockSummary_AllPass(t *testing.T) {
 	// uses countNoun (no "(s)").
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 12, testPolicy(), pmNPM, true)
+		printBlockSummary(nil, nil, 12, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if !strings.Contains(out, "12 packages checked, all pass") {
 		t.Errorf("missing all-pass line; got:\n%s", out)
@@ -77,7 +85,7 @@ func TestPrintBlockSummary_AllPassSingular(t *testing.T) {
 	// ("all" implies more than one).
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 1, testPolicy(), pmNPM, true)
+		printBlockSummary(nil, nil, 1, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if !strings.Contains(out, "1 package checked, passed") {
 		t.Errorf("singular all-pass line should read \"1 package checked, passed\"; got:\n%s", out)
@@ -87,11 +95,48 @@ func TestPrintBlockSummary_AllPassSingular(t *testing.T) {
 	}
 }
 
+func TestPrintBlockSummary_VerifyFailedNotAllPass(t *testing.T) {
+	// Bug #2b regression: when some checked packages could not be verified against
+	// the registry (e.g. wrong registry-ca-bundle → TLS failure), the summary must
+	// NOT print a green "all pass" — it must warn that N could not be verified.
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		// 3 checked, all 3 failed to verify.
+		printBlockSummary(nil, nil, 3, 3, testPolicy(), pmNPM, false, []string{"install"}, nil)
+	})
+	if strings.Contains(out, "all pass") || strings.Contains(out, "checked, passed") {
+		t.Errorf("must not claim success when checks failed to verify; got:\n%s", out)
+	}
+	if !strings.Contains(out, "could not be verified") {
+		t.Errorf("expected a 'could not be verified' warning; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no packages could be age-checked") {
+		t.Errorf("with 0 verified, expected 'no packages could be age-checked'; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_VerifyFailedPartial(t *testing.T) {
+	// Mixed: 5 checked, 2 failed → warn about the 2, credit the 3 that passed.
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		printBlockSummary(nil, nil, 5, 2, testPolicy(), pmNPM, false, []string{"install"}, nil)
+	})
+	if strings.Contains(out, "all pass") {
+		t.Errorf("partial-verify must not claim 'all pass'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "2 packages could not be verified") {
+		t.Errorf("expected '2 packages could not be verified'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "3 packages passed") {
+		t.Errorf("expected '3 packages passed' credit; got:\n%s", out)
+	}
+}
+
 func TestPrintBlockSummary_AllPassZeroChecked(t *testing.T) {
 	// Nothing checked → nothing printed (e.g. a fully cached install).
 	forceNoColor(t)
 	out := captureStderr(t, func() {
-		printBlockSummary(nil, nil, 0, testPolicy(), pmNPM, true)
+		printBlockSummary(nil, nil, 0, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 	if out != "" {
 		t.Errorf("expected no output when nothing was checked; got:\n%s", out)
@@ -99,23 +144,24 @@ func TestPrintBlockSummary_AllPassZeroChecked(t *testing.T) {
 }
 
 func TestPrintBlockSummary_SingleResolved(t *testing.T) {
-	// Tier B: one package filtered and resolved → success header, old→new line,
-	// terse Disable hint, and NO divider/heavy chrome.
+	// Tier B: one package filtered and resolved → success header, an
+	// installed-leads/skipped-trails line, terse Disable hint, and NO
+	// divider/heavy chrome.
 	forceNoColor(t)
-	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", Age: 24 * time.Hour}}
-	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	wantSubstrings := []string{
 		"filtered 1 too-new release → installed safe version (3-day policy)",
 		"axios",
-		"1.17.0",
-		"(1 day old)",
-		"→",
-		"1.16.1 installed",
+		// The line leads with what was installed and its age...
+		"1.16.1 installed (10 days old)",
+		// ...and trails with the skipped version and its age.
+		"— skipped 1.17.0 (1 day old)",
 		"Disable: ARMIS_SUPPLY_CHAIN=off",
 	}
 	for _, want := range wantSubstrings {
@@ -123,12 +169,211 @@ func TestPrintBlockSummary_SingleResolved(t *testing.T) {
 			t.Errorf("missing %q; got:\n%s", want, out)
 		}
 	}
+	// The installed (resolved) version must appear before the skipped one on the
+	// line — the flip is the whole point of the layout.
+	if i, j := strings.Index(out, "1.16.1 installed"), strings.Index(out, "skipped 1.17.0"); i < 0 || j < 0 || i > j {
+		t.Errorf("installed version should lead the skipped version; got:\n%s", out)
+	}
 	// Short list must not draw the divider or the full copy-paste incantation.
 	if strings.Contains(out, strings.Repeat("─", scSepLen)) {
 		t.Errorf("short list should not draw a divider; got:\n%s", out)
 	}
 	if strings.Contains(out, "ARMIS_SUPPLY_CHAIN=off npm install") {
 		t.Errorf("short list should use the terse disable hint; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UninstallReframesWording(t *testing.T) {
+	// `npm uninstall` (and remove/rm/un/r/unlink) can still hit the registry via
+	// npm's dependency-tree reify pass. The summary must name the real verb and
+	// explain the registry hit, not claim an install happened.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, []string{"uninstall", "vercel"}, nil)
+	})
+
+	wantSubstrings := []string{
+		"uninstall re-resolved remaining dependencies",
+		"filtered 1 too-new release → kept safe version (3-day policy)",
+		"axios",
+		"1.16.1 kept (10 days old)",
+		"— skipped 1.17.0 (1 day old)",
+		"Disable: ARMIS_SUPPLY_CHAIN=off",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "installed") {
+		t.Errorf("uninstall summary must not claim anything was \"installed\"; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UninstallFailureNamesRealVerb(t *testing.T) {
+	// A failed uninstall must say "uninstall did not complete", not "install did
+	// not complete" — the wording drives the culprit explanation too.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmNPM, false, []string{"remove", "axios"}, nil)
+	})
+
+	wantSubstrings := []string{
+		"filtered 1 too-new release; remove did not complete",
+		"the remove did not complete",
+		"why the remove failed",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintBlockSummary_FailedUninstallNeverSaysKept(t *testing.T) {
+	// A failed uninstall (installOK=false) must say "available", not "kept" —
+	// installOK must win over isRemoval, since a run that never completed kept
+	// nothing.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", DisplayVersion: "1.17.0", Age: 24 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"uninstall", "vercel"}, nil)
+	})
+
+	if strings.Contains(out, "kept") {
+		t.Errorf("failed uninstall must not claim a version was \"kept\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "1.16.1 available") {
+		t.Errorf("failed uninstall must say \"available\", not \"installed\"/\"kept\"; got:\n%s", out)
+	}
+}
+
+func TestActionLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"install (default)", []string{"install", "axios"}, "install"},
+		{"add", []string{"add", "axios"}, "install"},
+		{"no args", nil, "install"},
+		{"only flags", []string{"--save-dev"}, "install"},
+		{"uninstall", []string{"uninstall", "vercel"}, "uninstall"},
+		{"remove", []string{"remove", "vercel"}, "remove"},
+		{"rm", []string{"rm", "vercel"}, "rm"},
+		{"un shorthand", []string{"un", "vercel"}, "un"},
+		{"r shorthand", []string{"r", "vercel"}, "r"},
+		{"unlink", []string{"unlink", "vercel"}, "unlink"},
+		{"flag before uninstall", []string{"--global", "uninstall", "vercel"}, "uninstall"},
+		{"value-taking flag before uninstall", []string{"--prefix", "/tmp", "uninstall", "vercel"}, "uninstall"},
+		{"value-taking flag before remove", []string{"--cwd", "/tmp", "remove", "vercel"}, "remove"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := actionLabel(tc.args); got != tc.want {
+				t.Errorf("actionLabel(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrintBlockSummary_PyPIFilenameNotPrerelease(t *testing.T) {
+	// Regression: a PyPI BlockedPackage carries a *filename* in Version
+	// ("filelock-3.29.2.tar.gz"). The summary must classify on DisplayVersion, not
+	// the filename — splitting the filename on its first '-' would otherwise read
+	// every PyPI package as a "filelock" prerelease and wrongly print "withheld N
+	// prereleases; a default install was unaffected". These are real stable
+	// releases the proxy downgraded, so the honest framing is a successful filter.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "filelock", Version: "filelock-3.29.2.tar.gz", DisplayVersion: "3.29.2", Age: 11 * time.Minute},
+		{Name: "superdialog", Version: "superdialog-0.2.5.tar.gz", DisplayVersion: "0.2.5", Age: 6 * time.Hour},
+	}
+	allowed := []supplychain.InstalledPackage{
+		{Name: "filelock", Version: "3.29.1", Age: 9 * 24 * time.Hour},
+		{Name: "superdialog", Version: "0.2.3", Age: 8 * 24 * time.Hour},
+	}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 2, 0, testPolicy(), pmUV, true, nil, nil)
+	})
+
+	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
+		t.Errorf("PyPI filenames must not be misread as prereleases; got:\n%s", out)
+	}
+	if !strings.Contains(out, "filtered 2 too-new releases → installed safe versions (3-day policy)") {
+		t.Errorf("expected a genuine-filter success header; got:\n%s", out)
+	}
+	// Clean parsed versions on the line, never the raw filename.
+	if strings.Contains(out, ".tar.gz") {
+		t.Errorf("line should show the parsed version, not the filename; got:\n%s", out)
+	}
+	// Collapse runs of spaces so column-alignment padding does not break the
+	// substring match (versions are right-padded to a common width).
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "0.2.3 installed (8 days old) — skipped 0.2.5 (6 hours old)") {
+		t.Errorf("expected installed-leads/skipped-trails layout with parsed versions; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UnparseableFilenameNotPrerelease(t *testing.T) {
+	// Regression for the IsPrerelease fix: when pypiVersionFromFilename cannot
+	// parse a filename, DisplayVersion is empty and blockedDisplayVersion falls
+	// back to the raw Version (the filename itself). The old SemVer branch flagged
+	// any '-' after the first byte, so "filelock-3.29.2.tar.gz" (head "filelock")
+	// was read as a prerelease — driving the wrong "withheld a prerelease; a
+	// default install was unaffected" framing for a real stable release the proxy
+	// downgraded. With the digit-before-'-' guard it must be framed as a genuine
+	// filter. This is the one path that exercises the empty-DisplayVersion
+	// fallback through the full summary, not the IsPrerelease helper in isolation.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "filelock", Version: "filelock-3.29.2.tar.gz", DisplayVersion: "", Age: 11 * time.Minute},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "filelock", Version: "3.29.1", Age: 9 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 1, 0, testPolicy(), pmUV, true, nil, nil)
+	})
+
+	if strings.Contains(out, "withheld") || strings.Contains(out, "a default install was unaffected") {
+		t.Errorf("an unparseable PyPI filename must not be misread as a prerelease; got:\n%s", out)
+	}
+	if !strings.Contains(out, "filtered 1 too-new release → installed safe version (3-day policy)") {
+		t.Errorf("expected a genuine-filter success header; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_UndatableSkippedOmitsAge(t *testing.T) {
+	// A PyPI file the proxy could not date is blocked with Age == 0 (fail-closed).
+	// The skipped clause must NOT claim a precise "(0 minutes old)" — it should
+	// name the version and omit the age entirely.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{
+		{Name: "mystery", Version: "mystery-1.0.0.tar.gz", DisplayVersion: "1.0.0", Age: 0},
+	}
+	allowed := []supplychain.InstalledPackage{{Name: "mystery", Version: "0.9.0", Age: 30 * 24 * time.Hour}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 1, 0, testPolicy(), pmUV, true, nil, nil)
+	})
+
+	if strings.Contains(out, "0 minutes old") {
+		t.Errorf("undatable skipped version must not claim a precise age; got:\n%s", out)
+	}
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "— skipped 1.0.0") {
+		t.Errorf("expected the skipped version named without an age; got:\n%s", out)
+	}
+	if strings.Contains(flat, "skipped 1.0.0 (") {
+		t.Errorf("skipped clause should carry no age token for an undatable file; got:\n%s", out)
 	}
 }
 
@@ -143,7 +388,7 @@ func TestPrintBlockSummary_MixedUnresolved(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 7, testPolicy(), pmNPM, true)
+		printBlockSummary(blocked, allowed, 7, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "filtered 2 too-new releases (3-day policy)") {
@@ -165,14 +410,14 @@ func TestPrintBlockSummary_InstallFailed(t *testing.T) {
 	// manager exited non-zero — e.g. a pin like ^1.17.0 that only the filtered
 	// version satisfies. The summary must NOT claim the package was "installed":
 	// the header warns the install did not complete, the per-line wording reads
-	// "available" (the version exists) not "installed", and a remediation Note is
-	// shown.
+	// "available" (the version exists) not "installed", and the WS1 culprit/
+	// remediation block is shown.
 	forceNoColor(t)
 	blocked := []supplychain.BlockedPackage{{Name: "axios", Version: "1.17.0", Age: 24 * time.Hour}}
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, false)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, nil)
 	})
 
 	if !strings.Contains(out, "install did not complete") {
@@ -187,8 +432,83 @@ func TestPrintBlockSummary_InstallFailed(t *testing.T) {
 	if strings.Contains(out, "1.16.1 installed") {
 		t.Errorf("must not say 'installed' when the PM did not complete; got:\n%s", out)
 	}
-	if !strings.Contains(out, "Note:") || !strings.Contains(out, "relax the constraint or exclude the package") {
-		t.Errorf("missing remediation note; got:\n%s", out)
+	// WS1: a fallback existed and there was no confirmed conflict, so axios is
+	// listed as a candidate culprit, and the surgical-first remediation ladder is
+	// shown with the full copy-paste SKIP command.
+	if !strings.Contains(out, "Candidates: axios") {
+		t.Errorf("expected axios named as a candidate culprit; got:\n%s", out)
+	}
+	if !strings.Contains(out, "ARMIS_SUPPLY_CHAIN_SKIP=axios npm install") {
+		t.Errorf("expected full copy-paste SKIP command incl. PM + args; got:\n%s", out)
+	}
+	// The global kill switch must NOT appear on the failure path.
+	if strings.Contains(out, "ARMIS_SUPPLY_CHAIN=off") {
+		t.Errorf("global off kill switch must not be surfaced on a failed install; got:\n%s", out)
+	}
+	// Remediation ordering: SKIP (surgical) before min-age (broad).
+	if i, j := strings.Index(out, "Allow one package"), strings.Index(out, "Relax the window"); i < 0 || j < 0 || i > j {
+		t.Errorf("remediation must be ordered surgical→broad; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_NoFallbackNamesCulprit(t *testing.T) {
+	// A package stripped to nothing (NewVersion == "") on a failed install is the
+	// strongest no-conflict signal: WS1 must name it explicitly as the why.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "leftpad", Version: "2.0.0", DisplayVersion: "2.0.0", Age: 3 * time.Hour}}
+	// No allowed entry → no safe fallback.
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, nil)
+	})
+
+	if !strings.Contains(out, "leftpad@2.0.0") {
+		t.Errorf("expected the no-fallback package named; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no version older than the 3-day policy") {
+		t.Errorf("expected the no-older-version explanation; got:\n%s", out)
+	}
+	if !strings.Contains(out, "ARMIS_SUPPLY_CHAIN_SKIP=leftpad npm install") {
+		t.Errorf("expected SKIP command seeded with the culprit; got:\n%s", out)
+	}
+}
+
+func TestPrintBlockSummary_ConflictNamesDependentAndRange(t *testing.T) {
+	// WS2 conflict surfaced through WS1: a removed version satisfied a dependent's
+	// range and no surviving version does. The note names the dependency, the
+	// range, and who required it — the canonical transitive-incompatibility case.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "scheduler", Version: "0.24.0", DisplayVersion: "0.24.0", Age: 2 * time.Hour}}
+	allowed := []supplychain.InstalledPackage{{Name: "scheduler", Version: "0.23.0", Age: 30 * 24 * time.Hour}}
+	conflicts := []supplychain.ConstraintConflict{{Dep: "scheduler", Range: "^0.24.0", ByPkg: "react-dom"}}
+
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, false, []string{"install"}, conflicts)
+	})
+
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(flat, "scheduler has no version older than the 3-day policy that satisfies ^0.24.0 (required by react-dom)") {
+		t.Errorf("expected conflict to name dep, range, and dependent; got:\n%s", out)
+	}
+	if !strings.Contains(out, "ARMIS_SUPPLY_CHAIN_SKIP=scheduler npm install") {
+		t.Errorf("expected SKIP command seeded with the conflicting dependency; got:\n%s", out)
+	}
+}
+
+func TestPrintFailureCulprits_PipAttributionGap(t *testing.T) {
+	// pip/uv get no WS2 attribution (npm-family only), so the failure note must
+	// say so and point at uv tree / pipdeptree — preventing "why did my
+	// colleague's npm failure name a culprit but mine didn't?" confusion.
+	forceNoColor(t)
+	blocked := []supplychain.BlockedPackage{{Name: "requests", Version: "requests-2.99.0.tar.gz", DisplayVersion: "2.99.0", Age: 2 * time.Hour}}
+	out := captureStderr(t, func() {
+		printBlockSummary(blocked, nil, 5, 0, testPolicy(), pmPip, false, []string{"install", "requests"}, nil)
+	})
+
+	if !strings.Contains(out, "constraint attribution isn't available for pip/uv") {
+		t.Errorf("expected the pip/uv attribution-gap note; got:\n%s", out)
+	}
+	if !strings.Contains(out, "uv tree") || !strings.Contains(out, "pipdeptree") {
+		t.Errorf("expected pointer to uv tree / pipdeptree; got:\n%s", out)
 	}
 }
 
@@ -204,7 +524,7 @@ func TestPrintBlockSummary_OnlyPrerelease(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "withheld 1 prerelease") {
@@ -233,7 +553,7 @@ func TestPrintBlockSummary_StableStillClaimsFilter(t *testing.T) {
 	allowed := []supplychain.InstalledPackage{{Name: "axios", Version: "1.16.1"}}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, 5, testPolicy(), pmNPM, true)
+		printBlockSummary(blocked, allowed, 5, 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "installed safe version") {
@@ -255,6 +575,9 @@ func TestAllResultsPrerelease(t *testing.T) {
 		{"single stable", []pkgFilterResult{{OldVersion: testVersion}}, false},
 		{"mixed", []pkgFilterResult{{OldVersion: testVersion + "-beta"}, {OldVersion: "2.0.0"}}, false},
 		{"all prerelease", []pkgFilterResult{{OldVersion: testVersion + "-alpha"}, {OldVersion: "2.0.0-rc.1"}}, true},
+		// PEP 440 prereleases (no SemVer dash) must count as prereleases too.
+		{"pep440 rc", []pkgFilterResult{{OldVersion: "1.0.0rc1"}}, true},
+		{"pep440 mixed with stable", []pkgFilterResult{{OldVersion: "1.0.0b2"}, {OldVersion: "2.0.0"}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,7 +605,7 @@ func TestPrintBlockSummary_LongListVerbose(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() {
-		printBlockSummary(blocked, allowed, len(names), testPolicy(), pmNPM, true)
+		printBlockSummary(blocked, allowed, len(names), 0, testPolicy(), pmNPM, true, nil, nil)
 	})
 
 	if !strings.Contains(out, "… and 1 more") {
@@ -303,7 +626,9 @@ func TestGroupBlockedByPackage_CollapsesToYoungest(t *testing.T) {
 		{Name: "axios", Version: "1.17.0", Age: 48 * time.Hour},
 		{Name: "axios", Version: "1.18.0", Age: 2 * time.Hour},
 	}
-	allowed := map[string]string{"axios": "1.16.1"}
+	allowed := map[string]supplychain.InstalledPackage{
+		"axios": {Name: "axios", Version: "1.16.1", Age: 10 * 24 * time.Hour},
+	}
 
 	got := groupBlockedByPackage(blocked, allowed, 72*time.Hour)
 	if len(got) != 1 {
@@ -318,6 +643,11 @@ func TestGroupBlockedByPackage_CollapsesToYoungest(t *testing.T) {
 	if got[0].NewVersion != "1.16.1" {
 		t.Errorf("NewVersion = %q, want 1.16.1", got[0].NewVersion)
 	}
+	// The resolved version's age must flow through so the line can show
+	// "1.16.1 installed (10 days old)".
+	if got[0].NewAge != 10*24*time.Hour {
+		t.Errorf("NewAge = %v, want 240h", got[0].NewAge)
+	}
 }
 
 func TestGroupBlockedByPackage_SortYoungestFirst(t *testing.T) {
@@ -327,12 +657,59 @@ func TestGroupBlockedByPackage_SortYoungestFirst(t *testing.T) {
 		{Name: "fresh", Version: "1.0.0", Age: 1 * time.Hour},
 		{Name: "mid", Version: "1.0.0", Age: 12 * time.Hour},
 	}
-	got := groupBlockedByPackage(blocked, map[string]string{}, 72*time.Hour)
+	got := groupBlockedByPackage(blocked, map[string]supplychain.InstalledPackage{}, 72*time.Hour)
 	wantOrder := []string{"fresh", "mid", "old"}
 	for i, w := range wantOrder {
 		if got[i].Name != w {
 			t.Errorf("position %d = %q, want %q (full: %#v)", i, got[i].Name, w, got)
 		}
+	}
+}
+
+func TestFormatDurationShort_SingularPluralAgreement(t *testing.T) {
+	// Regression: the unit must agree with the count at every boundary — a count
+	// of 1 takes the singular ("1 hour", not "1 hours"). formatDurationShort
+	// reports in the largest whole unit (minutes < 1h, hours < 1d, else days).
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"one minute", time.Minute, "1 minute"},
+		{"plural minutes", 30 * time.Minute, "30 minutes"},
+		{"one hour", time.Hour, "1 hour"},
+		{"plural hours", 6 * time.Hour, "6 hours"},
+		{"one day", 24 * time.Hour, "1 day"},
+		{"plural days (default policy)", 72 * time.Hour, "3 days"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatDurationShort(tt.d); got != tt.want {
+				t.Errorf("formatDurationShort(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountNounPlural_UsesExplicitForms(t *testing.T) {
+	// countNounPlural must use the explicit plural for irregular nouns rather than
+	// the trailing-"s" rule that would produce "dependencys".
+	tests := []struct {
+		name             string
+		n                int
+		singular, plural string
+		want             string
+	}{
+		{"one", 1, "young transitive dependency", "young transitive dependencies", "1 young transitive dependency"},
+		{"many", 2, "young transitive dependency", "young transitive dependencies", "2 young transitive dependencies"},
+		{"zero takes plural", 0, "dependency", "dependencies", "0 dependencies"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countNounPlural(tt.n, tt.singular, tt.plural); got != tt.want {
+				t.Errorf("countNounPlural(%d, %q, %q) = %q, want %q", tt.n, tt.singular, tt.plural, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -390,5 +767,90 @@ func TestShouldShowRationale_SuppressedWhenNonInteractive(t *testing.T) {
 	}
 	if shouldShowRationale() {
 		t.Error("rationale must be suppressed on a non-interactive terminal")
+	}
+}
+
+func TestPrintWarnThroughSummary_SilentWhenEmpty(t *testing.T) {
+	// WS5: under the default block policy nothing is warned through, so the
+	// summary must print nothing at all (no header, no note).
+	forceNoColor(t)
+	out := captureStderr(t, func() {
+		printWarnThroughSummary(nil, testPolicy())
+	})
+	if out != "" {
+		t.Errorf("expected no output when nothing was warned through; got:\n%s", out)
+	}
+}
+
+func TestPrintWarnThroughSummary_SingleWarned(t *testing.T) {
+	// One young transitive dependency let through under transitive-policy: warn.
+	// The header names the count and the policy window, the line shows
+	// name@version with an age token, and the closing note reaffirms that direct
+	// dependencies are still blocked.
+	forceNoColor(t)
+	warned := []supplychain.WarnedPackage{
+		{Name: "kid-pkg", Version: "2.0.0", Age: 2 * time.Hour},
+	}
+	out := captureStderr(t, func() {
+		printWarnThroughSummary(warned, testPolicy())
+	})
+
+	wantSubstrings := []string{
+		// Singular noun + the exact policy phrasing for the 3-day default.
+		"1 young transitive dependency allowed through by transitive-policy: warn (younger than 3 days)",
+		"kid-pkg@2.0.0",
+		"(2 hours old)",
+		"direct dependencies are still blocked; only indirect (transitive) packages pass with this warning.",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintWarnThroughSummary_TruncatesYoungestFirst(t *testing.T) {
+	// More than maxBlockedDisplay warned packages: the list is capped at the five
+	// YOUNGEST (freshest, riskiest) and the rest collapse to "… and N more". The
+	// note still prints. This is the warn-path twin of TestPrintBlockSummary_
+	// LongListVerbose, which covers the block-list truncation.
+	forceNoColor(t)
+	// Names deliberately NOT in age order so the assertion proves an age sort, not
+	// an incidental input ordering. Ages 2h..8h; sorted youngest-first the five
+	// shown are golf..charlie and the two OLDEST (alpha 8h, bravo 7h) are cut.
+	warned := []supplychain.WarnedPackage{
+		{Name: "alpha", Version: "1.0.0", Age: 8 * time.Hour},
+		{Name: "bravo", Version: "1.0.0", Age: 7 * time.Hour},
+		{Name: "charlie", Version: "1.0.0", Age: 6 * time.Hour},
+		{Name: "delta", Version: "1.0.0", Age: 5 * time.Hour},
+		{Name: "echo", Version: "1.0.0", Age: 4 * time.Hour},
+		{Name: "foxtrot", Version: "1.0.0", Age: 3 * time.Hour},
+		{Name: "golf", Version: "1.0.0", Age: 2 * time.Hour},
+	}
+	out := captureStderr(t, func() {
+		printWarnThroughSummary(warned, testPolicy())
+	})
+
+	// The plural header must read "dependencies", not the trailing-"s" mangle.
+	if !strings.Contains(out, "7 young transitive dependencies allowed through") {
+		t.Errorf("expected correct plural header; got:\n%s", out)
+	}
+	if strings.Contains(out, "dependencys") {
+		t.Errorf("plural must not be the mangled \"dependencys\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "… and 2 more") {
+		t.Errorf("expected the overflow line for 7 warned packages; got:\n%s", out)
+	}
+	// The two oldest must be the ones truncated away (proves youngest-first sort).
+	if strings.Contains(out, "alpha@") || strings.Contains(out, "bravo@") {
+		t.Errorf("the two oldest packages should be truncated, not shown; got:\n%s", out)
+	}
+	// The youngest must lead the displayed list.
+	if i, j := strings.Index(out, "golf@"), strings.Index(out, "foxtrot@"); i < 0 || j < 0 || i > j {
+		t.Errorf("youngest (golf) must be listed before the next-youngest (foxtrot); got:\n%s", out)
+	}
+	// The reaffirming note always prints, even when the list is truncated.
+	if !strings.Contains(out, "direct dependencies are still blocked") {
+		t.Errorf("expected the direct-deps-still-blocked note; got:\n%s", out)
 	}
 }

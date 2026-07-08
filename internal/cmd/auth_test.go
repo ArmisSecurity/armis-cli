@@ -30,6 +30,27 @@ func createMockJWT(customerID string, exp int64) string {
 	return header + "." + payload + "." + signature
 }
 
+// createMockJWTWithRegion creates a mock JWT that includes a region claim.
+// An empty region omits the claim, mimicking older tokens issued before
+// region-aware auth.
+func createMockJWTWithRegion(customerID string, exp int64, region string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	claims := map[string]interface{}{
+		"customer_id": customerID,
+		"exp":         exp,
+	}
+	if region != "" {
+		claims["region"] = region
+	}
+	claimsJSON, _ := json.Marshal(claims)
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	signature := base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
+
+	return header + "." + payload + "." + signature
+}
+
 func TestRunAuth(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -46,7 +67,7 @@ func TestRunAuth(t *testing.T) {
 			clientSecret: "test-secret",
 			setupServer:  true,
 			wantErr:      true,
-			errContains:  "--client-id is required",
+			errContains:  "both --client-id and --client-secret must be provided",
 		},
 		{
 			name:         "missing client-secret",
@@ -54,7 +75,7 @@ func TestRunAuth(t *testing.T) {
 			clientSecret: "",
 			setupServer:  true,
 			wantErr:      true,
-			errContains:  "--client-secret is required",
+			errContains:  "both --client-id and --client-secret must be provided",
 		},
 		{
 			name:           "successful authentication",
@@ -95,6 +116,10 @@ func TestRunAuth(t *testing.T) {
 					_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 				}
 			})
+
+			// Redirect HOME to a temp dir so no real stored SSO token (~/.armis)
+			// short-circuits the credential resolution this test exercises.
+			t.Setenv("HOME", t.TempDir())
 
 			// Clear legacy auth vars to ensure JWT path is taken
 			token = ""
@@ -175,6 +200,8 @@ func TestRunAuth_InvalidEndpoint(t *testing.T) {
 			_ = os.Setenv("ARMIS_API_URL", origAPIURL)
 		}
 	})
+
+	t.Setenv("HOME", t.TempDir())
 
 	// Clear legacy auth vars
 	token = ""

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -40,8 +41,14 @@ type JWTCredentials struct {
 }
 
 // AuthProvider manages authentication tokens with automatic refresh.
-// It supports both JWT authentication and legacy Basic authentication.
-// For JWT auth, tokens are automatically refreshed when within 5 minutes of expiry.
+// It supports three modes:
+//   - SSO / device flow (OAuth2): tokens obtained via `armis-cli auth login`,
+//     persisted in the token store, refreshed via the refresh-token grant.
+//   - JWT client credentials: client_id/client_secret exchanged for a JWT.
+//   - Legacy Basic auth: a static --token.
+//
+// For JWT and SSO auth, tokens are automatically refreshed when within 5 minutes
+// of expiry.
 type AuthProvider struct {
 	config       AuthConfig
 	credentials  *JWTCredentials
@@ -50,6 +57,87 @@ type AuthProvider struct {
 	isLegacy     bool   // true if using Basic auth (--token)
 	cachedRegion string // memoized region from disk cache (loaded once)
 	regionLoaded bool   // true if cachedRegion has been loaded from disk
+
+	// SSO / device-flow mode (mutually exclusive with isLegacy and JWT mode).
+	isOAuth      bool
+	stored       *StoredToken
+	deviceClient *DeviceClient
+	tokenStore   *TokenStore
+	env          string // environment key (API base URL) the token is stored under
+}
+
+// ErrAuthenticationRequired is returned by NewAuthProvider when no credentials
+// are configured, letting callers detect the case with errors.Is.
+var ErrAuthenticationRequired = errors.New("authentication required")
+
+// AuthMethod identifies which credential path the provider is using, for display
+// by `armis-cli auth whoami`.
+type AuthMethod string
+
+const (
+	// AuthMethodSSO is the browser-based device-flow (OAuth2) login.
+	AuthMethodSSO AuthMethod = "sso"
+	// AuthMethodClientCredentials is the client_id/client_secret JWT exchange.
+	AuthMethodClientCredentials AuthMethod = "client-credentials"
+	// AuthMethodBasic is the legacy static-token Basic auth.
+	AuthMethodBasic AuthMethod = "basic"
+)
+
+// NewProviderFromStored builds an AuthProvider backed by an existing device-flow
+// token for the given environment (API base URL). The provider transparently
+// refreshes the access token via the refresh token when it nears expiry,
+// persisting the rotated pair back to the store under that same environment.
+func NewProviderFromStored(store *TokenStore, deviceClient *DeviceClient, env string, stored *StoredToken) (*AuthProvider, error) {
+	if store == nil || deviceClient == nil || stored == nil {
+		return nil, fmt.Errorf("token store, device client, and stored token are required")
+	}
+	if env == "" {
+		return nil, fmt.Errorf("env is required")
+	}
+	return &AuthProvider{
+		isOAuth:      true,
+		stored:       stored,
+		deviceClient: deviceClient,
+		tokenStore:   store,
+		env:          env,
+	}, nil
+}
+
+// AuthMethod returns the credential path in use.
+func (p *AuthProvider) AuthMethod() AuthMethod {
+	switch {
+	case p.isOAuth:
+		return AuthMethodSSO
+	case p.isLegacy:
+		return AuthMethodBasic
+	default:
+		return AuthMethodClientCredentials
+	}
+}
+
+// Identity returns the subject (user/service identifier) for the current
+// session. It is populated for SSO auth and empty otherwise.
+func (p *AuthProvider) Identity() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.isOAuth && p.stored != nil {
+		return p.stored.Subject
+	}
+	return ""
+}
+
+// Expiry returns the access-token expiry for SSO/JWT auth, or the zero time when
+// not applicable (Basic auth).
+func (p *AuthProvider) Expiry() time.Time {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.isOAuth && p.stored != nil {
+		return p.stored.ExpiresAt
+	}
+	if p.credentials != nil {
+		return p.credentials.ExpiresAt
+	}
+	return time.Time{}
 }
 
 // NewAuthProvider creates an AuthProvider from configuration.
@@ -92,7 +180,8 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 			return nil, fmt.Errorf("tenant ID required: use --tenant-id flag or ARMIS_TENANT_ID environment variable")
 		}
 	} else {
-		return nil, fmt.Errorf("authentication required: set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET for JWT auth, or ARMIS_API_TOKEN for legacy auth")
+		return nil, fmt.Errorf("%w: set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET "+
+			"(or use --client-id / --client-secret) for JWT auth, or ARMIS_API_TOKEN (--token) for legacy auth", ErrAuthenticationRequired)
 	}
 
 	return p, nil
@@ -105,6 +194,15 @@ func (p *AuthProvider) GetAuthorizationHeader(ctx context.Context) (string, erro
 	if p.isLegacy {
 		// #nosec G101 -- Basic auth scheme requires token in header per RFC 7617
 		return "Basic " + p.config.Token, nil
+	}
+
+	if p.isOAuth {
+		if err := p.refreshOAuthIfNeeded(ctx); err != nil {
+			return "", err
+		}
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return "Bearer " + p.stored.AccessToken, nil
 	}
 
 	// Refresh JWT if needed
@@ -126,6 +224,15 @@ func (p *AuthProvider) GetTenantID(ctx context.Context) (string, error) {
 		return p.config.TenantID, nil
 	}
 
+	if p.isOAuth {
+		if err := p.refreshOAuthIfNeeded(ctx); err != nil {
+			return "", err
+		}
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.stored.TenantID, nil
+	}
+
 	if err := p.refreshIfNeeded(ctx); err != nil {
 		return "", fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -141,6 +248,15 @@ func (p *AuthProvider) GetTenantID(ctx context.Context) (string, error) {
 func (p *AuthProvider) GetRegion(ctx context.Context) (string, error) {
 	if p.isLegacy {
 		return "", nil // Legacy auth doesn't have region
+	}
+
+	if p.isOAuth {
+		if err := p.refreshOAuthIfNeeded(ctx); err != nil {
+			return "", err
+		}
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.stored.Region, nil
 	}
 
 	if err := p.refreshIfNeeded(ctx); err != nil {
@@ -169,6 +285,16 @@ func (p *AuthProvider) IsLegacy() bool {
 func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
 	if p.isLegacy {
 		return p.config.Token, nil
+	}
+
+	if p.isOAuth {
+		if err := p.refreshOAuthIfNeeded(ctx); err != nil {
+			return "", err
+		}
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		// armis:ignore cwe:522 reason:returning token to caller is the API contract; token is used for authenticated API calls
+		return p.stored.AccessToken, nil
 	}
 
 	// Refresh JWT if needed
@@ -254,11 +380,33 @@ func (p *AuthProvider) exchangeCredentials(ctx context.Context) error {
 		return fmt.Errorf("failed to parse JWT: %w", err)
 	}
 
+	// Resolve the deployment region for data-plane routing. The JWT region claim
+	// is the primary signal, but it is optional (older tokens omit it). When it is
+	// absent, fall back to the region the auth service discovered — by this point
+	// p.cachedRegion holds either the value just returned in the response body or
+	// the previously cached value for this client_id. This keeps GetRegion (and
+	// thus automatic data-plane routing) working whichever signal the server sends.
+	resolvedRegion := claims.Region
+	if resolvedRegion == "" {
+		resolvedRegion = p.cachedRegion
+	}
+
+	// Warm the on-disk cache from the resolved region too. The block above only
+	// caches result.Region (the response body); since the JWT claim is the
+	// primary signal, a server that reports the region only in the token would
+	// otherwise leave the cache cold and force region re-discovery on every
+	// refresh. Persisting resolvedRegion keeps the next token exchange's region
+	// hint warm whichever signal the server uses. (skip if unchanged)
+	if resolvedRegion != "" && resolvedRegion != p.cachedRegion {
+		saveCachedRegion(p.config.ClientID, resolvedRegion)
+		p.cachedRegion = resolvedRegion
+	}
+
 	p.credentials = &JWTCredentials{
 		Token:     result.Token,
 		TenantID:  claims.CustomerID,
 		ExpiresAt: claims.ExpiresAt,
-		Region:    claims.Region,
+		Region:    resolvedRegion,
 	}
 
 	return nil
@@ -276,6 +424,65 @@ func (p *AuthProvider) refreshIfNeeded(ctx context.Context) error {
 	}
 
 	return p.exchangeCredentials(ctx)
+}
+
+// refreshOAuthIfNeeded refreshes the device-flow access token via the refresh
+// token when it is within 5 minutes of expiry, persisting the rotated pair back
+// to the token store. Uses double-checked locking to avoid concurrent refreshes.
+func (p *AuthProvider) refreshOAuthIfNeeded(ctx context.Context) error {
+	p.mu.RLock()
+	needsRefresh := p.stored == nil ||
+		time.Until(p.stored.ExpiresAt) < 5*time.Minute
+	p.mu.RUnlock()
+	if !needsRefresh {
+		return nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// Double-check: another goroutine may have refreshed while we waited.
+	if p.stored != nil && time.Until(p.stored.ExpiresAt) >= 5*time.Minute {
+		return nil
+	}
+	if p.stored == nil || p.stored.RefreshToken == "" {
+		return fmt.Errorf("your session has expired; run 'armis-cli auth login' to sign in again")
+	}
+
+	refreshed, err := p.deviceClient.Refresh(ctx, p.stored.RefreshToken, p.stored.ClientID)
+	if err != nil {
+		var oerr *OAuthError
+		if asOAuthError(err, &oerr) && (oerr.Code == errInvalidGrant || oerr.Code == errExpiredToken) {
+			return fmt.Errorf("your session has expired; run 'armis-cli auth login' to sign in again")
+		}
+		return fmt.Errorf("failed to refresh session: %w", err)
+	}
+
+	// Carry forward identity fields the refresh response may not echo.
+	if refreshed.TenantID == "" {
+		refreshed.TenantID = p.stored.TenantID
+	}
+	if refreshed.Subject == "" {
+		refreshed.Subject = p.stored.Subject
+	}
+	if refreshed.Role == "" {
+		refreshed.Role = p.stored.Role
+	}
+	if refreshed.Region == "" {
+		refreshed.Region = p.stored.Region
+	}
+	if refreshed.ClientID == "" {
+		refreshed.ClientID = p.stored.ClientID
+	}
+
+	p.stored = refreshed
+	if err := p.tokenStore.Save(p.env, refreshed); err != nil {
+		// Non-fatal: the in-memory token is valid for this process even if we
+		// could not persist it. A later invocation will refresh again.
+		if p.config.Debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] failed to persist refreshed token: %v\n", err)
+		}
+	}
+	return nil
 }
 
 // jwtClaims represents the relevant claims from a JWT.

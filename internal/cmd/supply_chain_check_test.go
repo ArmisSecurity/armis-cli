@@ -5,9 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/supplychain"
 	"github.com/spf13/cobra"
 )
@@ -250,5 +254,220 @@ func TestRunSupplyChainCheck_EcosystemScopeSkips(t *testing.T) {
 
 	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
 		t.Fatalf("expected clean skip, got error: %v", err)
+	}
+}
+
+// TestRunSupplyChainCheck_OutputFlagWritesFile verifies the --output flag is
+// honored end-to-end: results are written to the named file (not stdout) and
+// the format is auto-detected from the extension. An empty lockfile yields zero
+// packages to check, so RunCheck short-circuits before any registry query while
+// the full output pipeline (ResolveOutput → formatter → file) still runs. This
+// is the path that was silently dead before --output was registered on the
+// supply-chain check command.
+func TestRunSupplyChainCheck_OutputFlagWritesFile(t *testing.T) {
+	dir := chdirTemp(t)
+	// An npm lockfile with no packages: nothing to check, no network access.
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(dir, "report.sarif")
+
+	// Save/restore every package-level var the check command reads so this test
+	// can't leak state into others sharing the cmd package. The gate var is
+	// scFailOn (the check-local shadow runSupplyChainCheck reads), not the root
+	// failOn global.
+	origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn :=
+		scLockfile, scAll, scMinAge, format, outputFile, scFailOn
+	t.Cleanup(func() {
+		scLockfile, scAll, scMinAge, format, outputFile, scFailOn =
+			origLockfile, origAll, origMinAge, origFormat, origOutput, origFailOn
+	})
+	scLockfile = "package-lock.json"
+	scAll = true // skip base-lockfile git detection
+	scMinAge = "72h"
+	format = "human" // left at default; extension should override to SARIF
+	scFailOn = []string{"CRITICAL"}
+
+	cmd := newWrapTestCmd() // command with a live context
+	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
+	cmd.Flags().StringSliceVar(&scExclude, "exclude", nil, "")
+	cmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "")
+	// --format must exist (unchanged) so ResolveOutput can consult its .Changed
+	// state to decide whether to auto-detect the format from the extension.
+	cmd.Flags().StringVarP(&format, "format", "f", "human", "")
+	// Register -o/--output bound to outputFile exactly as init() does, then drive
+	// the value through the flag (not a direct outputFile = outPath assignment).
+	// This exercises the flag→var binding the PR adds: if the flag were not bound
+	// to outputFile, .Set would not reach the var ResolveOutput reads and the file
+	// would never be written. (Registration on the real scCheckCmd is guarded
+	// separately by TestSupplyChainCheckOutputFlagRegistered.)
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "")
+	if err := cmd.Flags().Set("output", outPath); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
+
+	if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
+		t.Fatalf("runSupplyChainCheck: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("expected output written to %s: %v", outPath, err)
+	}
+	content := string(data)
+	// Format auto-detected from the .sarif extension: a SARIF document carries a
+	// $schema and runs array. If --output were ignored, the file would not exist;
+	// if extension detection failed, this would be human-styled text instead.
+	if !strings.Contains(content, "$schema") || !strings.Contains(content, "runs") {
+		t.Errorf("output file does not look like SARIF (extension auto-detection failed):\n%s", content)
+	}
+}
+
+// TestRunSupplyChainCheck_FailOnValidatedFirst verifies --fail-on is validated at
+// the very top of runSupplyChainCheck, before lockfile detection and the scan
+// (PPSC-1006 #11). With a bogus --fail-on AND no lockfile present, the error must
+// be the fail-on validation error, not "no lockfile detected" — proving the
+// validation runs first and no scan output is produced.
+func TestRunSupplyChainCheck_FailOnValidatedFirst(t *testing.T) {
+	chdirTemp(t) // empty dir: no lockfile, no network
+
+	// Set the bogus value on scFailOn (the check-local shadow runSupplyChainCheck
+	// reads), not the root failOn global, so the validation under test actually
+	// sees it.
+	origAll, origFailOn := scAll, scFailOn
+	t.Cleanup(func() { scAll, scFailOn = origAll, origFailOn })
+	scAll = true
+	scFailOn = []string{"bogus"}
+
+	cmd := newWrapTestCmd()
+	err := runSupplyChainCheck(cmd, []string{"."})
+	if err == nil {
+		t.Fatal("expected error for invalid --fail-on")
+	}
+	if !strings.Contains(err.Error(), "invalid severity level") {
+		t.Errorf("expected fail-on validation error to fire before lockfile detection, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "no lockfile detected") {
+		t.Errorf("--fail-on must be validated before lockfile detection, got: %v", err)
+	}
+}
+
+// TestSupplyChainCheckOutputFlagRegistered guards the exact regression this PR
+// fixes: the real scCheckCmd (built by init()) must expose -o/--output bound to
+// the outputFile var that runSupplyChainCheck reads. Unlike the functional test
+// above — which constructs its own command — this asserts against the package's
+// actual command, so it fails if init() ever stops registering the flag, binds
+// it to the wrong variable, or drops the -o shorthand.
+func TestSupplyChainCheckOutputFlagRegistered(t *testing.T) {
+	f := scCheckCmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("supply-chain check must register the --output flag")
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("--output shorthand = %q, want %q", f.Shorthand, "o")
+	}
+
+	// Setting the flag must reach the outputFile var runSupplyChainCheck reads.
+	orig := outputFile
+	t.Cleanup(func() {
+		outputFile = orig
+		_ = f.Value.Set(orig)
+	})
+	if err := scCheckCmd.Flags().Set("output", "out.sarif"); err != nil {
+		t.Fatalf("set --output: %v", err)
+	}
+	if outputFile != "out.sarif" {
+		t.Errorf("--output not bound to outputFile: outputFile = %q, want %q", outputFile, "out.sarif")
+	}
+}
+
+// TestRunSupplyChainCheck_NoGitBaseNotice guards #21: when there is no git base
+// and the user did not pass --all, check silently audits all packages. It must
+// announce that it switched to the broader scope. Runs in a non-git temp dir so
+// detectBaseLockfile returns "" and the notice path is taken.
+func TestRunSupplyChainCheck_NoGitBaseNotice(t *testing.T) {
+	forceNoColor(t)
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origLockfile, origAll, origMinAge, origFormat, origFailOn :=
+		scLockfile, scAll, scMinAge, format, scFailOn
+	t.Cleanup(func() {
+		scLockfile, scAll, scMinAge, format, scFailOn =
+			origLockfile, origAll, origMinAge, origFormat, origFailOn
+	})
+	scLockfile = "package-lock.json"
+	scAll = false // exercise the auto-detect path; temp dir is not a git repo
+	scMinAge = "72h"
+	format = "human"
+	scFailOn = []string{"medium"}
+
+	cmd := newWrapTestCmd()
+	cmd.Flags().StringVar(&scMinAge, "min-age", "72h", "")
+	cmd.Flags().StringSliceVar(&scExclude, "exclude", nil, "")
+	cmd.Flags().BoolVar(&scFailOpen, "fail-open", false, "")
+
+	out := captureStderr(t, func() {
+		if err := runSupplyChainCheck(cmd, []string{"."}); err != nil {
+			t.Fatalf("runSupplyChainCheck: %v", err)
+		}
+	})
+	if !strings.Contains(out, "no git base detected") {
+		t.Errorf("expected a no-git-base notice in stderr, got:\n%s", out)
+	}
+}
+
+// TestSupplyChainCheckFailOnDefaultsToMedium guards #12: the real scCheckCmd
+// must register a local --fail-on whose default is "medium", shadowing root's
+// [CRITICAL] persistent default. supply-chain violations are graded MEDIUM/HIGH
+// and never CRITICAL, so the root default would make a copy-pasted CI gate
+// permanently green; the local default must be able to gate.
+func TestSupplyChainCheckFailOnDefaultsToMedium(t *testing.T) {
+	f := scCheckCmd.Flags().Lookup("fail-on")
+	if f == nil {
+		t.Fatal("supply-chain check must register a local --fail-on flag")
+	}
+	if got := f.DefValue; !strings.Contains(strings.ToLower(got), "medium") {
+		t.Errorf("--fail-on default = %q, want it to contain \"medium\"", got)
+	}
+	if strings.Contains(strings.ToUpper(f.DefValue), "CRITICAL") {
+		t.Errorf("--fail-on default = %q, must not be the ungateable CRITICAL", f.DefValue)
+	}
+}
+
+// TestSupplyChainCheckDefaultGatesMediumViolation proves the end-to-end gate the
+// #12 fix restores: with the check-local default, a MEDIUM violation must cause a
+// non-zero exit (a returned ErrFindingsExceeded), where the old [CRITICAL]
+// default would have silently passed. It drives the exact pipeline
+// runSupplyChainCheck uses: cmdutil.GetFailOn(scFailOn) → output.CheckExit.
+func TestSupplyChainCheckDefaultGatesMediumViolation(t *testing.T) {
+	orig := scFailOn
+	t.Cleanup(func() { scFailOn = orig })
+	scFailOn = []string{"medium"} // the registered default
+
+	failOnSeverities, err := cmdutil.GetFailOn(scFailOn)
+	if err != nil {
+		t.Fatalf("GetFailOn: %v", err)
+	}
+
+	result := &model.ScanResult{
+		Findings: []model.Finding{{Severity: model.SeverityMedium}},
+	}
+	if err := output.CheckExit(result, failOnSeverities, 1); err == nil {
+		t.Error("expected a MEDIUM violation to gate (non-nil error) with the default --fail-on, got nil")
+	}
+
+	// Sanity check on the old behavior: CRITICAL would NOT have gated this.
+	criticalSeverities, err := cmdutil.GetFailOn([]string{"critical"})
+	if err != nil {
+		t.Fatalf("GetFailOn(critical): %v", err)
+	}
+	if err := output.CheckExit(result, criticalSeverities, 1); err != nil {
+		t.Errorf("CRITICAL fail-on should not gate a MEDIUM finding, but it returned: %v", err)
 	}
 }

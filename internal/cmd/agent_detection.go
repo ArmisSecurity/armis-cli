@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/agentdetect"
 	"github.com/spf13/cobra"
@@ -14,14 +15,23 @@ const (
 
 var agentDetectFormat string
 
-var agentDetectionCmd = &cobra.Command{
-	Use:   "agent-detection",
-	Short: "Detect AI coding agents installed on this system",
-	Long: `Detect AI coding agents (Claude Code, Cursor, Copilot, Windsurf, Google Antigravity)
-across user profiles and check if Armis AppSec MCP is enabled.
+// agentDetectionLong builds the long help text, sourcing the agent list from the
+// detector registry so it stays in sync as detectors are added or removed.
+func agentDetectionLong() string {
+	names := agentdetect.RegisteredAgentDisplayNames()
+	return fmt.Sprintf(`Detect AI coding agents across user profiles and check if Armis AppSec MCP is enabled.
+
+Detects %d agents: %s.
 
 When run as root (macOS/Linux) or SYSTEM (Windows), scans all local user profiles.
 When run as a standard user, scans only the current user's home directory.`,
+		len(names), strings.Join(names, ", "))
+}
+
+var agentDetectionCmd = &cobra.Command{
+	Use:   "agent-detection",
+	Short: "Detect AI coding agents installed on this system",
+	Long:  agentDetectionLong(),
 	Example: `  # Detect agents for current user
   armis-cli agent-detection
 
@@ -30,6 +40,7 @@ When run as a standard user, scans only the current user's home directory.`,
 
   # Detect agents across all users (requires root/admin)
   sudo armis-cli agent-detection`,
+	Args: cobra.NoArgs,
 	RunE: runAgentDetection,
 }
 

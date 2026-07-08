@@ -78,6 +78,232 @@ Features:
 - Gracefully handles non-git directories
 - Caches results to avoid redundant git calls
 
+## 🛡️ Supply Chain Enforcement
+
+Armis CLI can enforce a **minimum package release age** on the packages your
+builds install, defending against supply-chain attacks (typosquatting,
+compromised maintainer accounts, dependency confusion) where a malicious version
+is published and pulled in before anyone notices. The default policy withholds
+any release younger than **72 hours**.
+
+Enforcement is wired into your package managers by `armis-cli supply-chain init`,
+which installs thin shell wrappers. From then on, `npm install`, `pip install`,
+etc. transparently run through the age policy.
+
+### Two enforcement modes
+
+The mechanism differs by package manager, because they resolve dependencies
+differently:
+
+| Mode | Package managers | How it works |
+|------|------------------|--------------|
+| **Proxy** | `npm`, `npx`, `pnpm`, `bun`, `yarn`, `pip`, `uv`, `uvx` | A local, in-process HTTP proxy intercepts every registry metadata request — direct **and** transitive — strips versions younger than the policy, and repoints `dist-tags.latest` to the newest *older* version. |
+| **Pre-install block** | `poetry`, `pipenv`, `pdm`, `mvn`, `gradle` | The lockfile is audited up front; the build is hard-blocked **before** it runs if any package is too new. |
+
+### The transitive-incompatibility limitation
+
+The proxy is a **stateless per-request filter** — it has no model of your
+dependency graph. This creates a real, bounded limitation worth understanding:
+
+> If `express` requires `debug@^4.4.0`, and `debug@4.4.0` was published 12 hours
+> ago, the proxy removes `4.4.0` (too new) and repoints `latest` to `4.3.9`. But
+> `4.3.9` does **not** satisfy `^4.4.0`, so **npm rejects it and the install
+> fails.** The block is correct — a brand-new version really was withheld — but
+> the failure can look opaque.
+
+When this happens, Armis names the culprit at block time. On the **npm family**
+(`npm`/`pnpm`/`bun`/`yarn`), a one-hop constraint check reports exactly which
+dependency became unsatisfiable and which package required it:
+
+```text
+[armis supply-chain] the install did not complete. This tool withheld brand-new
+releases on purpose — a common supply-chain attack vector...
+  → scheduler has no version older than the 3-day policy that satisfies ^0.24.0
+    (required by react-dom) — this is the likely cause.
+```
+
+For **pip/uv**, the PyPI Simple API does not expose per-package dependency
+ranges, so the one-hop attribution is not available there — Armis names the
+blocked package and points you at `uv tree` / `pipdeptree` to find the requiring
+package. See [Out of scope](#supply-chain-scope-notes) below.
+
+<a name="supply-chain-escape-hatches"></a>
+
+### Escape hatches (most surgical → most blunt)
+
+When a young package is blocking you, four knobs unblock the build. They are
+ordered here **least-permissive first** — reach for the lower-numbered, more
+reviewable option before the blunt instruments:
+
+1. **Allow one package, this invocation/environment** — exempts a single package:
+
+   ```bash
+   ARMIS_SUPPLY_CHAIN_SKIP=scheduler npm install
+   ```
+
+   ⚠️ This persists in whatever environment you set it in and exempts **all
+   future versions** of that package, including potentially-malicious ones
+   (skip-list rot). Prefer a reviewed exception (below) for anything permanent.
+
+2. **Permanent, reviewed team exception** — add the package to `exclusions:` in
+   `.armis-supply-chain.yaml` (committed, reviewed, team-wide):
+
+   ```yaml
+   exclusions:
+     - scheduler
+     - "@myorg/*"
+   ```
+
+3. **Relax the policy window for all packages** — edit `min-age:` in
+   `.armis-supply-chain.yaml`:
+
+   ```yaml
+   min-age: 24h   # weakens the check for EVERY package
+   ```
+
+   > Note: the `wrap` path reads policy only from `.armis-supply-chain.yaml`.
+   > There is **no `--min-age` flag** on the wrapped install — that flag exists
+   > only on `armis-cli supply-chain check`.
+
+4. **Emergency kill switch** — disable enforcement entirely for one command:
+
+   ```bash
+   ARMIS_SUPPLY_CHAIN=off npm install
+   ```
+
+   This turns the control off completely. Use it only as a last resort.
+
+<a name="supply-chain-warn-transitive"></a>
+
+### Warn-on-transitive policy (opt-in)
+
+Rather than failing a build that a young transitive dependency would break, you
+can let young **transitive** dependencies through with a warning while still
+hard-blocking young **direct** dependencies. This is **off by default** (the
+secure posture is `block`).
+
+```yaml
+# .armis-supply-chain.yaml
+transitive-policy: warn   # default: block
+```
+
+Or per-invocation for the wrapped path (which can't take flags):
+
+```bash
+ARMIS_SUPPLY_CHAIN_TRANSITIVE=warn npm install
+```
+
+Under `warn`:
+
+- A young **transitive** dependency (one *not* declared in your root manifest)
+  is allowed through. The build succeeds; each allowed-through package is printed
+  as a warning and marked in the compliance report.
+- A young **direct** dependency (declared in your `package.json`
+  `dependencies`/`devDependencies`/`peerDependencies`/`optionalDependencies`) is
+  **still blocked** — that is where you have control and where typosquat/
+  dependency-confusion risk concentrates.
+- If the direct-dependency set **cannot be determined** (e.g. no readable
+  `package.json`, or a non-npm ecosystem), Armis **fails safe**: every package is
+  treated as direct and young versions are blocked, exactly as under `block`.
+
+**Residual risk (read before enabling):** `warn` permits a freshly-published
+*transitive* package into your build. A malicious indirect dependency could
+therefore land before its release has aged. The control still blocks direct
+deps, fails safe on an undeterminable direct set, and records every
+warned-through package in the `--report` audit so security teams can review what
+entered the build. Direct/transitive classification is **npm-family only**; pip/
+uv and the pre-install ecosystems cannot determine a direct set and therefore
+never warn-through (they stay at `block`).
+
+<a name="supply-chain-report"></a>
+
+### Compliance report (audit trail)
+
+To prove no young package entered a build, emit a machine-readable JSON report:
+
+```bash
+# Wrapped install (wrap can't take flags — use the env var; "-" writes to stderr):
+ARMIS_SUPPLY_CHAIN_REPORT=supply-chain-report.json npm install
+
+# The check subcommand parses flags, so a flag is fine there:
+armis-cli supply-chain check --report supply-chain-report.json
+```
+
+The report carries the effective `policy`, the enforcement `mode`, and the
+`checked` / `blocked` / `resolved` / `warned_through` / `conflicts` sets plus an
+`install_status`. CI can gate on it with `jq`:
+
+```bash
+jq -e '.install_status == "ok" and (.warned_through | length) == 0' supply-chain-report.json
+```
+
+<a name="supply-chain-custom-registry"></a>
+
+### Custom approved registry (private artifactory)
+
+By default, age checks query the public registries (npm, PyPI). If your org
+routes installs through a private artifactory (Nexus, JFrog Artifactory), point
+Armis at it so age checks — and the `wrap`/`check` age enforcement — run against
+the registry you actually use, not the public one:
+
+```yaml
+# .armis-supply-chain.yaml
+registries:
+  npm: https://nexus.corp/repository/npm-group/
+  pypi: https://nexus.corp/repository/pypi-group/simple/   # must expose the PEP 503 Simple API
+registry-enforcement: warn   # optional: warn when an install resolves off the approved registry
+registry-ca-bundle: /etc/armis/nexus-ca.pem   # optional: trust a private/corporate CA
+```
+
+- **`registries.<npm|pypi>`** — the approved registry URL for that ecosystem.
+  Must be `https://` with no embedded credentials and no loopback/private/
+  link-local host (the committed config is a trust boundary — validated at
+  load time, not a best-effort parse). The PyPI URL must end in `/simple` or
+  `/simple/` (the PEP 503 Simple API path); Maven/Gradle are audit-path only
+  and not routable to a custom registry in this version.
+- **`registry-enforcement: warn`** — when set, a package that resolves from a
+  host *other than* the approved registry is flagged with a warning (currently
+  npm-family only). Only `warn` is supported; `block` is rejected at config
+  load so it can never be silently downgraded.
+- **`registry-ca-bundle`** — path to a PEM file to trust a private CA for the
+  registry connection, e.g. a self-signed or corporate-CA-issued artifactory
+  certificate. Override per-run with `ARMIS_REGISTRY_CA_BUNDLE=<path>`. A bad
+  or unreadable bundle is a hard error, never a silent fallback to unverified
+  TLS.
+
+**Credentials** are read from your existing package-manager config, never from
+the committed policy file: npm-family reads the `.npmrc` `_authToken` (host- or
+host+path-scoped); pip/uv read Basic-auth userinfo embedded in
+`PIP_INDEX_URL`/`UV_INDEX_URL`. If a credential is configured but unusable
+(e.g. an `.npmrc` referencing an unset `${VAR}`), that's a hard error rather
+than a silent unauthenticated request.
+
+**Check your setup** before relying on it:
+
+```bash
+armis-cli supply-chain wrap --dry-run npm
+```
+
+This resolves and prints the approved registry, whether a credential was
+found, the enforcement posture, and the CA bundle in use — without running
+the package manager.
+
+<a name="supply-chain-scope-notes"></a>
+
+### Scope and known limitations
+
+- **One-hop, npm-family only.** The constraint conflict check is a single hop
+  (a dependent's declared range vs. the dependency's surviving versions) on
+  metadata the proxy already fetched — it is **not** a full resolver and does not
+  backtrack multi-hop chains. It runs for the npm family only; PyPI's Simple API
+  lacks per-package dependency ranges.
+- **pip/uv get culprit-naming but no attribution.** Run `uv tree` or
+  `pipdeptree` to find which package requires a blocked dependency.
+- **Maven `pom.xml` covers direct dependencies only.** Maven resolves transitives
+  at build time, so they are not audited. For full coverage, generate a lockfile
+  (e.g. `mvn dependency:tree`, or a lockfile plugin) — Armis ships no Maven
+  transitive parser.
+
 ## 📦 SBOM and VEX Generation
 
 Generate industry-standard Software Bill of Materials (SBOM) and Vulnerability Exploitability eXchange (VEX) documents alongside your security scans.
@@ -93,19 +319,21 @@ Both documents are generated in [CycloneDX](https://cyclonedx.org/) format, an O
 ### Basic Usage
 
 ```bash
+# ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET set via env (JWT auto-extracts the tenant ID)
+
 # Generate SBOM for a repository scan
-armis-cli scan repo . --tenant-id my-tenant --sbom
+armis-cli scan repo . --sbom
 
 # Generate both SBOM and VEX
-armis-cli scan repo . --tenant-id my-tenant --sbom --vex
+armis-cli scan repo . --sbom --vex
 
 # Specify custom output paths
-armis-cli scan repo . --tenant-id my-tenant \
+armis-cli scan repo . \
   --sbom --sbom-output ./reports/sbom.json \
   --vex --vex-output ./reports/vex.json
 
 # Generate SBOM for container image scan
-armis-cli scan image nginx:latest --tenant-id my-tenant --sbom --vex
+armis-cli scan image nginx:latest --sbom --vex
 ```
 
 ### Flags
@@ -309,6 +537,16 @@ JWT authentication is recommended. Obtain JWT credentials from the VIPR external
 |----------|-------------|
 | `ARMIS_FORMAT` | Default output format |
 | `ARMIS_PAGE_LIMIT` | Results pagination size |
+
+**Supply Chain Enforcement:**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_SUPPLY_CHAIN` | Set to `off` to disable enforcement for one command (kill switch) |
+| `ARMIS_SUPPLY_CHAIN_SKIP` | Comma/space-separated package names to exempt from the age check (persists in the env; exempts future versions) |
+| `ARMIS_SUPPLY_CHAIN_TRANSITIVE` | Set to `warn` to let young *transitive* deps through with a warning (direct deps still blocked); default `block` |
+| `ARMIS_SUPPLY_CHAIN_REPORT` | Path to write the JSON compliance report for a wrapped install (`-` for stderr) |
+| `ARMIS_REGISTRY_CA_BUNDLE` | Path to a PEM CA bundle to trust for the configured custom registry connection; overrides `registry-ca-bundle` in `.armis-supply-chain.yaml` |
 
 ### Default Behavior
 

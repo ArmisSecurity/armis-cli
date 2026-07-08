@@ -23,7 +23,9 @@ With no arguments, removes the plugin from all editors and deletes plugin files.
 Specify editor names to remove from specific tools only (plugin files are kept).
 
 Use --keep-credentials to preserve the .env file for easy reinstall.
-Use --force to skip the confirmation prompt.`,
+Use --force to skip the confirmation prompt.
+
+For a list of valid editor names, run: armis-cli install --help`,
 	Example: `  # Remove from all editors and delete plugin
   armis-cli uninstall
 
@@ -160,6 +162,29 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	// Remove the git pre-commit hook from the current repo BEFORE deleting plugin
+	// files. The hook execs <pluginDir>/git-hooks/pre-commit; once RemovePluginFiles
+	// deletes that path, an orphaned hook would break every future commit with
+	// "no such file". RemovePreCommit is a no-op outside a git repo or when no
+	// Armis section is present, so it is safe to call unconditionally.
+	preCommitRemoved := false
+	if repoRoot := install.DetectGitRoot(); repoRoot != "" {
+		// Record whether a hook was actually present first: RemovePreCommit
+		// returns nil for the no-op cases too (no hook file, no Armis section),
+		// so a nil result alone would wrongly claim a removal. Only report one
+		// when a hook was installed before the call and is gone after it.
+		hadHook := install.IsPreCommitInstalled(repoRoot)
+		if err := install.RemovePreCommit(repoRoot); err != nil {
+			if styled {
+				fmt.Fprintf(os.Stderr, "  %s Pre-commit hook: %v\n", warnMark.Render("⚠"), err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ⚠ Pre-commit hook: %v\n", err)
+			}
+		} else if hadHook {
+			preCommitRemoved = true
+		}
+	}
+
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
@@ -185,6 +210,14 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		fmt.Fprintf(os.Stderr, "  %s Armis AppSec MCP server uninstalled.\n", successMark.Render("✓"))
 	} else {
 		fmt.Fprintln(os.Stderr, "Armis AppSec MCP server uninstalled.")
+	}
+	if preCommitRemoved {
+		msg := "Pre-commit hook removed from this repository. Run `armis-cli hook init --remove` in other repos."
+		if styled {
+			fmt.Fprintf(os.Stderr, "  %s\n", dimStyle.Render(msg))
+		} else {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil
@@ -302,9 +335,15 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 	return nil
 }
 
+// confirmOut is where confirm() writes its prompt. It defaults to stderr (all
+// interactive output goes to stderr), but is a package var so tests can redirect
+// it to io.Discard — the unterminated prompt otherwise corrupts gotestsum's
+// go-test-json parser and produces false failures under `make test`.
+var confirmOut io.Writer = os.Stderr
+
 // armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 func confirm(prompt string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
+	_, _ = fmt.Fprintf(confirmOut, "%s [y/N] ", prompt)
 	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))
 	if !scanner.Scan() {
 		return false

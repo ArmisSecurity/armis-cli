@@ -29,6 +29,11 @@ const (
 	podmanBinary = "podman"
 )
 
+// ErrRuntimeNotFound is returned when neither Docker nor Podman is available to
+// export an image. The message names the problem, the cause, and the fixes:
+// install a runtime or start its daemon, or bypass the daemon entirely with --tarball.
+var ErrRuntimeNotFound = errors.New("container runtime not found or not running: install Docker (https://docs.docker.com/get-docker/) or Podman (https://podman.io) and ensure the daemon is running; or use --tarball ./image.tar to scan a pre-exported image")
+
 // Scanner scans container images for security vulnerabilities.
 type Scanner struct {
 	client                *api.Client
@@ -92,8 +97,8 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	}
 	imageName = normalised
 
-	if !isDockerAvailable() {
-		return nil, fmt.Errorf("container runtime not found: install Docker or Podman")
+	if !IsDockerAvailable() {
+		return nil, ErrRuntimeNotFound
 	}
 
 	tmpFile, err := os.CreateTemp("", "armis-image-*.tar")
@@ -123,6 +128,13 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, fmt.Errorf("invalid tarball path: %w", err)
 	}
 	tarballPath = sanitizedPath
+
+	// Reject malformed tarballs locally — saves an upload of garbage to S3 and
+	// gives the user a clear "not a tar archive" error instead of a vague
+	// extraction failure later in the scan pipeline.
+	if err := scan.ValidateTarballFormat(tarballPath); err != nil {
+		return nil, fmt.Errorf("invalid tarball: %w", err)
+	}
 
 	info, err := os.Stat(tarballPath)
 	if err != nil {
@@ -282,14 +294,17 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	return nil
 }
 
-// armis:ignore cwe:426 reason:exec.Command uses hardcoded binary names ("docker", "podman"); no untrusted path
-func isDockerAvailable() bool {
-	cmd := exec.Command("docker", "version")
+// IsDockerAvailable reports whether a container runtime (Docker or Podman) is
+// reachable on the host. Callers use it to fail fast before auth/network work
+// when an image must be exported via the daemon.
+// armis:ignore cwe:426 cwe:427 reason:exec.Command uses hardcoded binary constants (dockerBinary/podmanBinary); no untrusted path
+func IsDockerAvailable() bool {
+	cmd := exec.Command(dockerBinary, "version")
 	if err := cmd.Run(); err == nil {
 		return true
 	}
 
-	cmd = exec.Command("podman", "version")
+	cmd = exec.Command(podmanBinary, "version")
 	if err := cmd.Run(); err == nil {
 		return true
 	}
@@ -393,7 +408,7 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			continue
 		}
 
-		if !includeNonExploitable && shouldFilterByExploitability(nf.NormalizedTask.Labels) {
+		if !includeNonExploitable && scan.ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
 			filteredCount++
 			continue
 		}
@@ -505,25 +520,6 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 	}
 
 	return findings, filteredCount
-}
-
-func shouldFilterByExploitability(labels []model.Label) bool {
-	var scannerCodeMatch bool
-	var exploitableFalse bool
-
-	for _, label := range labels {
-		desc := strings.ToLower(strings.TrimSpace(label.Description))
-		value := strings.ToLower(strings.TrimSpace(label.Value))
-
-		if desc == "scanner code" && value == "38295677" {
-			scannerCodeMatch = true
-		}
-		if desc == "exploitable" && (value == "false" || value == "0") {
-			exploitableFalse = true
-		}
-	}
-
-	return scannerCodeMatch && exploitableFalse
 }
 
 func cleanDescription(desc string) string {

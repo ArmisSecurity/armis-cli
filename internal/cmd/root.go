@@ -3,7 +3,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +14,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/update"
@@ -50,6 +53,11 @@ var (
 	clientID     string
 	clientSecret string
 	region       string
+
+	// credFlagsExplicit is set in PersistentPreRunE when the user passed
+	// --client-id/--client-secret/--token explicitly. It lets those flags
+	// override a stored SSO token in getAuthProvider.
+	credFlagsExplicit bool
 
 	version = versionDev
 	commit  = "none"
@@ -130,6 +138,12 @@ var rootCmd = &cobra.Command{
 		if !cmd.Flags().Changed("client-secret") {
 			clientSecret = os.Getenv("ARMIS_CLIENT_SECRET")
 		}
+		// Record whether the user explicitly passed credential flags. When they
+		// did, those flags take precedence over any stored SSO token (an escape
+		// hatch for forcing client-credentials/Basic auth without logging out).
+		credFlagsExplicit = cmd.Flags().Changed("client-id") ||
+			cmd.Flags().Changed("client-secret") ||
+			cmd.Flags().Changed("token")
 		if !cmd.Flags().Changed("region") {
 			region = os.Getenv("ARMIS_REGION")
 		}
@@ -183,26 +197,104 @@ func init() {
 	// The help function is inherited by all subcommands added later
 	SetupHelp(rootCmd)
 
+	// Append a help hint to flag-parse errors. SilenceUsage suppresses the full
+	// usage dump, so without this an "unknown flag" error leaves the user with no
+	// next step. Cobra walks up to the parent's FlagErrorFunc when a subcommand
+	// has none, so registering it on rootCmd covers every subcommand. CommandPath()
+	// yields the full path (e.g. "armis-cli scan repo"), unlike Name() (leaf only).
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return fmt.Errorf("%w\n\nRun '%s --help' for usage", err, cmd.CommandPath())
+	})
+
 	// Legacy Basic authentication
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "API token for Basic authentication (env: ARMIS_API_TOKEN)")
+	// Signal that Basic auth is the legacy path: MarkDeprecated prints a stderr
+	// warning whenever --token is used and hides it from --help; the shorthand
+	// (-t) needs its own call. Both error only on an unknown flag name, so the
+	// returns are intentionally discarded. The flag still functions — auth is
+	// unchanged; this is signposting toward JWT (--client-id / --client-secret).
+	_ = rootCmd.PersistentFlags().MarkDeprecated("token", "use --client-id / --client-secret (JWT) instead; see ARMIS_CLIENT_ID + ARMIS_CLIENT_SECRET")
+	_ = rootCmd.PersistentFlags().MarkShorthandDeprecated("token", "use --client-id / --client-secret (JWT) instead")
 	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant-id", "", "Tenant identifier for Armis Cloud (env: ARMIS_TENANT_ID)")
 
 	// JWT authentication
 	rootCmd.PersistentFlags().StringVar(&clientID, "client-id", "", "Client ID for JWT authentication (env: ARMIS_CLIENT_ID)")
 	rootCmd.PersistentFlags().StringVar(&clientSecret, "client-secret", "", "Client secret for JWT authentication (env: ARMIS_CLIENT_SECRET)")
-	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override region for authentication (bypasses auto-discovery) (env: ARMIS_REGION)")
+	rootCmd.PersistentFlags().StringVar(&region, "region", "", "Override Armis cloud region (auto-detected from credentials by default) (env: ARMIS_REGION)")
 
 	// General options
 	rootCmd.PersistentFlags().BoolVar(&useDev, "dev", false, "Use development environment instead of production")
-	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
-	rootCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
-	rootCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", []string{"CRITICAL"}, "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
-	rootCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
-	rootCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
+	// Scan-output flags (--format, --no-progress, --fail-on, --exit-code,
+	// --page-limit) are registered on scanCmd (see scan.go), not here: as root
+	// persistent flags they leaked into the --help of every non-scan command
+	// (hook, supply-chain, install, agent-detection). `supply-chain check` is a
+	// sibling of scan and re-registers the three it actually uses locally.
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode to print detailed API responses")
 	rootCmd.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false, "Disable automatic update checking (env: ARMIS_NO_UPDATE_CHECK)")
 	rootCmd.PersistentFlags().StringVar(&colorFlag, "color", "auto", "Control colored output: auto, always, never")
 	rootCmd.PersistentFlags().StringVar(&themeFlag, "theme", getEnvOrDefault("ARMIS_THEME", themeAuto), "Terminal background theme: auto, dark, light (env: ARMIS_THEME)")
+
+	// Tab-completion for enumerated flags. Without these, Cobra falls back to
+	// (useless) file-path completion. The value lists reuse the same slices the
+	// validators read, so the completion candidates can't drift from what's
+	// actually accepted. --region is intentionally omitted (advisory-only).
+	// --format/--fail-on completions are registered where those flags now live:
+	// on scanCmd (see scan.go) and re-registered on scCheckCmd (see
+	// supply_chain_check.go), since the flags were relocated off rootCmd.
+	_ = rootCmd.RegisterFlagCompletionFunc("color", fixedCompletions(
+		[]string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)},
+		map[string]string{
+			string(cli.ColorModeAuto):   "Enable colors when writing to a terminal (default)",
+			string(cli.ColorModeAlways): "Always emit ANSI colors",
+			string(cli.ColorModeNever):  "Never emit ANSI colors",
+		}))
+	_ = rootCmd.RegisterFlagCompletionFunc("theme", fixedCompletions([]string{themeAuto, themeDark, themeLight}, map[string]string{
+		themeAuto:  "Auto-detect terminal background",
+		themeDark:  "Optimize colors for a dark background",
+		themeLight: "Optimize colors for a light background",
+	}))
+}
+
+// fixedCompletions builds a Cobra completion function that offers a fixed set
+// of values in the given order, attaching a "\tDescription" hint (rendered by
+// zsh/fish) when one is present. It always returns ShellCompDirectiveNoFileComp
+// so the shell does not fall back to file-path completion. Passing the
+// validator's own slice as values keeps the completion set and the accepted set
+// in lockstep.
+func fixedCompletions(values []string, descriptions map[string]string) cobra.CompletionFunc {
+	choices := make([]cobra.Completion, 0, len(values))
+	for _, v := range values {
+		if desc, ok := descriptions[v]; ok {
+			choices = append(choices, cobra.CompletionWithDesc(v, desc))
+		} else {
+			choices = append(choices, v)
+		}
+	}
+	return cobra.FixedCompletions(choices, cobra.ShellCompDirectiveNoFileComp)
+}
+
+// formatCompletions and failOnCompletions return the completion functions for
+// the --format and --fail-on flags. These flags live on scanCmd and are
+// re-registered on scCheckCmd (a sibling of scan with its own flag instances),
+// so the candidate sets are defined once here and reused at both registration
+// sites to keep them from drifting apart.
+func formatCompletions() cobra.CompletionFunc {
+	return fixedCompletions(validFormats, map[string]string{
+		"human": "Human-readable terminal output",
+		"json":  "Machine-readable JSON",
+		"sarif": "SARIF for code-scanning tools",
+		"junit": "JUnit XML for CI test reports",
+	})
+}
+
+func failOnCompletions() cobra.CompletionFunc {
+	return fixedCompletions(cmdutil.ValidSeverities, map[string]string{
+		"INFO":     "Informational findings",
+		"LOW":      "Low-severity findings",
+		"MEDIUM":   "Medium-severity findings",
+		"HIGH":     "High-severity findings",
+		"CRITICAL": "Critical-severity findings",
+	})
 }
 
 // PrintUpdateNotification prints a version update notification if one is available.
@@ -282,21 +374,116 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 }
 
 // getAPIBaseURL returns the Armis API base URL, allowing override via ARMIS_API_URL env var for testing.
-// armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
+//
+// Precedence: ARMIS_API_URL override > --dev > --region > production. The region
+// must feed the upload endpoint as well as the token exchange; otherwise a
+// region-scoped JWT is presented to the global host and rejected with a 401.
+//
+// This resolves the URL from explicit configuration only (it runs before
+// authentication, so it cannot know the token's region). Use
+// resolveDataPlaneURL once an AuthProvider exists to also honor the
+// auto-discovered region.
 func getAPIBaseURL() string {
 	if override := os.Getenv("ARMIS_API_URL"); override != "" {
-		return override
+		return override // armis:ignore cwe:918 reason:ARMIS_API_URL is operator-configured; not reachable from external input
 	}
 	if useDev {
 		return devBaseURL
 	}
+	// armis:ignore cwe:918 reason:RegionalBaseURL is a strict allowlist switch returning only hardcoded hosts; an unrecognized region falls through to the primary host, so region cannot redirect requests to an arbitrary host
+	if region != "" {
+		return auth.RegionalBaseURL(region) // armis:ignore cwe:918 reason:RegionalBaseURL allowlists hosts (hardcoded switch); unknown region falls back to primary host, so region cannot point requests at an attacker-chosen host
+	}
 	return productionBaseURL
 }
 
-// getAuthProvider creates an AuthProvider based on the provided credentials.
-// Priority: JWT auth (--client-id, --client-secret) > Basic auth (--token)
-func getAuthProvider() (*auth.AuthProvider, error) {
-	return auth.NewAuthProvider(auth.AuthConfig{
+// clientOptionsForBaseURL returns the api.ClientOptions that vary by the
+// configured base URL. When the operator points the CLI at a localhost API
+// (via ARMIS_API_URL during local dev or in tests), we allow the SSRF guard
+// on the new presigned-URL flow to accept localhost as a valid S3 endpoint
+// — the test harness serves both the API and a fake S3 path on the same
+// listener. Production URLs (HTTPS) get the strict allowlist.
+func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" {
+		return []api.ClientOption{api.WithAllowLocalURLs(true)}
+	}
+	return nil
+}
+
+// resolveDataPlaneURL returns the base URL for region-pinned data-plane calls
+// (upload, status polling, results fetch).
+//
+// The data plane is physically region-pinned, but the auth endpoint
+// auto-discovers the region server-side: a token exchange against the primary
+// host succeeds even for a non-US customer and returns a region-scoped JWT. So
+// when the user has not pinned a region explicitly, we read the region the auth
+// service issued in that JWT and route the data plane to the matching host
+// automatically — sparing EU (and future-region) customers from passing
+// --region on every scan.
+//
+// Explicit configuration always wins: ARMIS_API_URL, --dev, and
+// --region/ARMIS_REGION are honored ahead of the discovered region. When none
+// of those are set and the region cannot be discovered (legacy Basic auth, or
+// an older token without a region claim), it falls back to getAPIBaseURL.
+func resolveDataPlaneURL(ctx context.Context, authProvider *auth.AuthProvider) string {
+	if region == "" && !useDev && os.Getenv("ARMIS_API_URL") == "" {
+		if discovered, err := authProvider.GetRegion(ctx); err == nil && discovered != "" {
+			dataPlaneURL := auth.RegionalBaseURL(discovered)
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Auto-detected region %q from token; routing data plane to %s\n", discovered, dataPlaneURL)
+			}
+			return dataPlaneURL
+		}
+	}
+	return getAPIBaseURL()
+}
+
+// getAuthProvider creates an AuthProvider based on the available credentials.
+//
+// Resolution order:
+//  1. Stored SSO token from `armis-cli auth login`,
+//     unless the user explicitly passed --client-id/--client-secret/--token,
+//     which act as an escape hatch to force the credential path.
+//  2. Client credentials (--client-id/--client-secret or ARMIS_CLIENT_ID/SECRET).
+//  3. Legacy --token (Basic auth).
+//  4. When ARMIS_DEFAULT_AUTH_METHOD=SSO and no credentials are configured,
+//     trigger an interactive browser login (device flow) instead of erroring.
+//  5. Otherwise an error pointing at `auth login` / env credentials.
+//
+// CI/CD is unaffected: with no stored token, resolution falls straight through
+// to env-var client credentials exactly as before. The SSO auto-login in step 4
+// only fires when no other credential is available, so it never overrides
+// configured client credentials or a legacy token.
+//
+// ctx bounds any interactive login triggered here, so callers must pass a
+// long-lived context (the command context), not a short per-request timeout.
+func getAuthProvider(ctx context.Context) (*auth.AuthProvider, error) {
+	if !credFlagsExplicit {
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+	}
+
+	// Opt-in: when the user has asked for SSO as the default auth method and no
+	// other credentials are configured, sign in interactively rather than
+	// failing. This makes `armis-cli scan ...` self-bootstrap a session on a
+	// developer machine while leaving credentialed (CI) runs untouched.
+	if shouldAutoLoginSSO() {
+		if _, err := performDeviceLogin(ctx, auth.DefaultDeviceClientID); err != nil {
+			return nil, err
+		}
+		if provider, ok := storedAuthProvider(); ok {
+			return provider, nil
+		}
+		return nil, fmt.Errorf("signed in, but no stored session was found for %s", getAPIBaseURL())
+	}
+
+	provider, err := auth.NewAuthProvider(auth.AuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		BaseURL:      getAPIBaseURL(),
@@ -305,6 +492,65 @@ func getAuthProvider() (*auth.AuthProvider, error) {
 		TenantID:     tenantID,
 		Debug:        debug,
 	})
+	if err != nil {
+		// Improve the no-credentials message to mention SSO login.
+		return nil, augmentNoCredentialsError(err)
+	}
+	return provider, nil
+}
+
+// shouldAutoLoginSSO reports whether getAuthProvider should start an interactive
+// device-flow login. It fires only when ARMIS_DEFAULT_AUTH_METHOD=SSO (case
+// insensitive) and no other credentials are configured — no explicit credential
+// flags, no client credentials, and no legacy token — so it never shadows a
+// working CI/service-account setup.
+func shouldAutoLoginSSO() bool {
+	if !strings.EqualFold(os.Getenv("ARMIS_DEFAULT_AUTH_METHOD"), "sso") {
+		return false
+	}
+	if credFlagsExplicit {
+		return false
+	}
+	return clientID == "" && clientSecret == "" && token == ""
+}
+
+// storedAuthProvider builds an SSO-backed AuthProvider from a previously stored
+// device-flow token, or returns ok=false when none is present (or it cannot be
+// used), so callers fall through to credential-based auth.
+func storedAuthProvider() (*auth.AuthProvider, bool) {
+	// The environment key is the resolved API base URL, so each environment
+	// (prod, dev, a local stack) has its own token entry. This is also where
+	// the refresh grant is sent, so the token's own issuer is not consulted.
+	env := getAPIBaseURL()
+
+	store := auth.NewTokenStore()
+	stored, err := store.Load(env)
+	if err != nil || stored == nil {
+		return nil, false
+	}
+
+	deviceClient, err := auth.NewDeviceClient(env, debug)
+	if err != nil {
+		return nil, false
+	}
+	provider, err := auth.NewProviderFromStored(store, deviceClient, env, stored)
+	if err != nil {
+		return nil, false
+	}
+	return provider, true
+}
+
+// augmentNoCredentialsError replaces the auth package's no-credentials error
+// (auth.ErrAuthenticationRequired) with a CLI-friendly, browser-login-first list
+// of options. Other errors pass through unchanged.
+func augmentNoCredentialsError(err error) error {
+	if !errors.Is(err, auth.ErrAuthenticationRequired) {
+		return err
+	}
+	return fmt.Errorf("not authenticated — use one of the following options:\n" +
+		"  - run 'armis-cli auth login' to sign in with your company IdP\n" +
+		"  - or set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET (or --client-id / --client-secret) for JWT auth\n" +
+		"  - or set ARMIS_API_TOKEN (or --token) for legacy auth")
 }
 
 // clientOptionsForBaseURL returns API client options based on the base URL.

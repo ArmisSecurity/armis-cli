@@ -185,6 +185,36 @@ func TestFormatPlain(t *testing.T) {
 	if !strings.Contains(output, "Copilot(MCP:false)") {
 		t.Error("expected 'Copilot(MCP:false)' in output")
 	}
+	// At least one agent has MCP:false, so the remediation hint must appear.
+	if !strings.Contains(output, "armis-cli install") {
+		t.Errorf("expected install hint when an agent lacks MCP, got:\n%s", output)
+	}
+}
+
+func TestFormatPlain_AllMCPInstalled_NoHint(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+
+	result := &ScanResult{
+		Users: []UserResult{
+			{
+				User: "John",
+				Agents: []DetectedAgent{
+					{Name: "ClaudeCode", MCPInstalled: true, User: "John"},
+					{Name: "Cursor", MCPInstalled: true, User: "John"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := FormatPlain(result, &buf); err != nil {
+		t.Fatalf("FormatPlain() error: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "armis-cli install") {
+		t.Errorf("did not expect install hint when all agents have MCP, got:\n%s", buf.String())
+	}
 }
 
 func TestFormatPlain_NoAgentsForUser(t *testing.T) {
@@ -270,5 +300,38 @@ func TestFormatJSON_Empty(t *testing.T) {
 	}
 	if len(agents) != 0 {
 		t.Errorf("expected empty array, got %d agents", len(agents))
+	}
+}
+
+func TestRegisteredAgentDisplayNames(t *testing.T) {
+	t.Parallel()
+
+	names := RegisteredAgentDisplayNames()
+
+	// Must stay in sync with the detector registry so help text never drifts.
+	if got, want := len(names), len(Registry()); got != want {
+		t.Errorf("len(display names) = %d, want %d (one per registered detector)", got, want)
+	}
+
+	// Every name must be human-readable: non-empty and mapped (not a raw identifier).
+	for i, name := range names {
+		if name == "" {
+			t.Errorf("display name at index %d is empty", i)
+		}
+	}
+
+	// Spot-check that identifiers are mapped to friendly names, not passed through raw.
+	joined := strings.Join(names, ", ")
+	for _, want := range []string{"Claude Code", "GitHub Copilot", "Gemini CLI", "Roo Code", "Amazon Q"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("display names missing %q; got: %s", want, joined)
+		}
+	}
+
+	// Every registered detector must have a display-name mapping.
+	for _, d := range Registry() {
+		if _, ok := displayNames[d.Name()]; !ok {
+			t.Errorf("detector %q has no entry in displayNames map", d.Name())
+		}
 	}
 }

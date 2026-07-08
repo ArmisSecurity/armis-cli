@@ -10,7 +10,7 @@ pipelines:
           - armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
         services:
           - docker
-  
+
   branches:
     main:
       - step:

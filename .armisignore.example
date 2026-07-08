@@ -1,5 +1,5 @@
 # .armisignore - Exclude files and directories from Armis security scans
-# 
+#
 # This file uses gitignore syntax and supports:
 # - Glob patterns (*.log, *.tmp)
 # - Directory exclusions (node_modules/, dist/)

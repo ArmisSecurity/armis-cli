@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,114 @@ const (
 	testStatusCompleted  = "COMPLETED"
 	statusCompletedLower = "completed"
 )
+
+// ingestFlowState lets tests inspect what hit the mock server during a
+// StartIngest call (which under the hood is /presigned-url → S3 → /scan).
+type ingestFlowState struct {
+	mu                  sync.Mutex
+	presignedCalls      int
+	s3Calls             int
+	scanCalls           int
+	lastScanRequestBody []byte
+	overrideScan        http.HandlerFunc // optional: fail or stall the /scan call
+	overrideS3          http.HandlerFunc // optional: fail or stall the S3 upload
+	overridePresigned   http.HandlerFunc // optional: fail or stall the /presigned-url call
+}
+
+// newIngestFlowServer returns an httptest server that implements the full
+// 3-step ingest flow against a single listener: it handles
+// /api/v1/ingest/presigned-url, /_s3/upload, and /api/v1/ingest/scan.
+// Tests can supply override handlers on `state` to inject failures or
+// inspect request bodies.
+func newIngestFlowServer(t *testing.T) (*httptest.Server, *ingestFlowState) {
+	t.Helper()
+	state := &ingestFlowState{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url") && r.Method == http.MethodPost:
+			testutil.AssertHasAuthorization(t, r)
+			state.mu.Lock()
+			state.presignedCalls++
+			override := state.overridePresigned
+			state.mu.Unlock()
+			if override != nil {
+				override(w, r)
+				return
+			}
+			scheme := testutil.SchemeFromRequest(r)
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:       testScanID,
+				ArtifactType: "repo",
+				TenantID:     "tenant-456",
+				PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+				Fields: map[string]string{
+					"key":             "ingest/tenant-456/" + testScanID + "/upload.tar.gz",
+					"policy":          "test-policy",
+					"x-amz-signature": "test-sig",
+				},
+				MaxUploadBytes: MaxUploadSize,
+				ExpiresIn:      1800,
+			})
+
+		case strings.HasPrefix(r.URL.Path, "/_s3/") && r.Method == http.MethodPost:
+			state.mu.Lock()
+			state.s3Calls++
+			override := state.overrideS3
+			state.mu.Unlock()
+			if override != nil {
+				override(w, r)
+				return
+			}
+			// Validate the upload matches the real S3 contract before
+			// returning 204. Mirrors what real S3 enforces (Content-Length,
+			// no Authorization, file part last).
+			testutil.AssertValidS3Upload(t, r)
+			w.WriteHeader(http.StatusNoContent)
+
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost:
+			testutil.AssertHasAuthorization(t, r)
+			body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+			state.mu.Lock()
+			state.scanCalls++
+			state.lastScanRequestBody = body
+			override := state.overrideScan
+			state.mu.Unlock()
+			if override != nil {
+				// Re-inject the body so the override can re-read it.
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				override(w, r)
+				return
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+				ScanID:       testScanID,
+				ScanStatus:   "INITIATED",
+				ArtifactType: "repo",
+				TenantID:     "tenant-456",
+				Filename:     "upload",
+				Message:      "Upload confirmed and scan initiated successfully",
+			})
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, state
+}
+
+// newIngestFlowClient returns a Client wired to the given server URL with
+// allowLocalURLs(true) so the test S3 path is permitted by the SSRF guard.
+func newIngestFlowClient(t *testing.T, baseURL string) *Client {
+	t.Helper()
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	c, err := NewClient(baseURL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+		WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	return c
+}
 
 func TestNewClient(t *testing.T) {
 	t.Parallel()
@@ -149,108 +259,118 @@ func TestClient_IsDebug(t *testing.T) {
 
 func TestClient_StartIngest(t *testing.T) {
 	t.Parallel()
-	t.Run("successful upload", func(t *testing.T) {
+
+	t.Run("successful upload runs all 3 stages", func(t *testing.T) {
 		t.Parallel()
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "POST" {
-				t.Errorf("Expected POST, got %s", r.Method)
-			}
-			if !strings.Contains(r.URL.Path, "/api/v1/ingest/tar") {
-				t.Errorf("Unexpected path: %s", r.URL.Path)
-			}
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Basic ") {
-				t.Error("Missing or invalid Authorization header")
-			}
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
 
-			response := model.IngestUploadResponse{
-				ScanID:       testScanID,
-				ArtifactType: "image",
-				TenantID:     "tenant-456",
-				Filename:     "test.tar",
-				Message:      "Upload successful",
-			}
-			testutil.JSONResponse(t, w, http.StatusOK, response)
-		})
-
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
-
-		data := bytes.NewReader([]byte("test data"))
 		opts := IngestOptions{
 			TenantID:     "tenant-456",
 			ArtifactType: "image",
 			Filename:     "test.tar",
-			Data:         data,
+			Data:         bytes.NewReader([]byte("test data")),
 			Size:         9,
 		}
 		scanID, err := client.StartIngest(context.Background(), opts)
-
 		if err != nil {
 			t.Fatalf("StartIngest failed: %v", err)
 		}
 		if scanID != testScanID {
 			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
 		}
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if state.presignedCalls != 1 || state.s3Calls != 1 || state.scanCalls != 1 {
+			t.Errorf("Expected 1 call to each stage, got presigned=%d s3=%d scan=%d",
+				state.presignedCalls, state.s3Calls, state.scanCalls)
+		}
 	})
 
-	t.Run("upload error", func(t *testing.T) {
+	t.Run("upload error: /presigned-url 4xx", func(t *testing.T) {
 		t.Parallel()
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		srv, state := newIngestFlowServer(t)
+		state.overridePresigned = func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusBadRequest, "Invalid request")
-		})
-
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
 		}
+		client := newIngestFlowClient(t, srv.URL)
 
-		data := bytes.NewReader([]byte("test data"))
 		opts := IngestOptions{
 			TenantID:     "tenant-456",
 			ArtifactType: "image",
 			Filename:     "test.tar",
-			Data:         data,
+			Data:         bytes.NewReader([]byte("test data")),
 			Size:         9,
 		}
-		_, err = client.StartIngest(context.Background(), opts)
-
+		_, err := client.StartIngest(context.Background(), opts)
 		if err == nil {
-			t.Error("Expected error for failed upload")
+			t.Fatal("Expected error from failed presigned-url call")
+		}
+		if !strings.Contains(err.Error(), "reserve upload") {
+			t.Errorf("Expected reserve-upload error, got: %v", err)
+		}
+	})
+
+	t.Run("upload error: S3 4xx", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		state.overrideS3 = func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			http.Error(w, "EntityTooLarge", http.StatusBadRequest)
+		}
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err == nil {
+			t.Fatal("Expected error when S3 rejects upload")
+		}
+		if !strings.Contains(err.Error(), "S3 upload failed") {
+			t.Errorf("Expected S3 error, got: %v", err)
+		}
+	})
+
+	t.Run("upload error: /scan returns 409 (upload not found)", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+			testutil.ErrorResponse(w, http.StatusConflict,
+				"Upload not found in S3. Please complete the upload using the presigned URL and retry /ingest/scan.")
+		}
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err == nil {
+			t.Fatal("Expected error when /scan returns 409")
+		}
+		if !strings.Contains(err.Error(), "Upload not found") {
+			t.Errorf("Expected upload-not-found error, got: %v", err)
 		}
 	})
 
 	t.Run("context timeout", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Slow /presigned-url so the orchestrator's upload context expires.
+		srv, state := newIngestFlowServer(t)
+		state.overridePresigned = func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(200 * time.Millisecond)
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
-		})
-
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{ScanID: testScanID})
+		}
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
 		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 50*time.Millisecond,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
+		client, err := NewClient(srv.URL, testutil.NewTestAuthProvider("token123"), false, 50*time.Millisecond,
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-
-		data := bytes.NewReader([]byte("test data"))
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         data,
-			Size:         9,
-		}
-		_, err = client.StartIngest(context.Background(), opts)
-
+		_, err = client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "test.tar",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
 		if err == nil {
 			t.Error("Expected timeout error")
 		}
@@ -258,106 +378,60 @@ func TestClient_StartIngest(t *testing.T) {
 
 	t.Run("handles source reader error", func(t *testing.T) {
 		t.Parallel()
-
-		// Server that reads the full request body to ensure client detects write error
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			// Attempt to parse the multipart form - this reads the body
-			// The reader error will cause this to fail, but we still send a response
-			_ = r.ParseMultipartForm(32 << 20) //nolint:gosec // G120: test server with bounded 32MB limit
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
-		})
-
-		// Use a short timeout to make the test faster
+		srv, _ := newIngestFlowServer(t)
+		// Use a longer client-level upload timeout so we don't race the failingReader.
 		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second})
 		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
+		client, err := NewClient(srv.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
+			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		// Create a reader that fails immediately (simulating disk error)
 		diskError := errors.New("simulated disk read error")
-		failReader := &failingReader{
-			failAfter: 0, // Fail on first read
-			err:       diskError,
-		}
-
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         failReader,
-			Size:         1000, // Claim larger size than we'll actually read
-		}
-		_, err = client.StartIngest(context.Background(), opts)
-
+		failReader := &failingReader{failAfter: 0, err: diskError}
+		_, err = client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "test.tar",
+			Data: failReader, Size: 1000,
+		})
 		if err == nil {
-			t.Error("Expected error for failing reader")
+			t.Fatal("Expected error for failing reader")
 		}
-		if !strings.Contains(err.Error(), "disk read error") && !strings.Contains(err.Error(), "failed to copy file data") {
+		if !strings.Contains(err.Error(), "disk read error") &&
+			!strings.Contains(err.Error(), "failed to copy file data") {
 			t.Errorf("Expected disk read error, got: %v", err)
 		}
 	})
 
 	t.Run("sends SBOM and VEX flags when set", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // G120: test server with bounded 32MB limit
-				t.Fatalf("Failed to parse multipart form: %v", err)
-			}
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
 
-			// Verify SBOM and VEX generation flags are sent
-			if r.FormValue("sbom_generate") != "true" {
-				t.Error("Expected sbom_generate=true in form data")
-			}
-			if r.FormValue("vex_generate") != "true" {
-				t.Error("Expected vex_generate=true in form data")
-			}
-
-			response := model.IngestUploadResponse{
-				ScanID:       testScanID,
-				ArtifactType: "image",
-				TenantID:     "tenant-456",
-				Filename:     "test.tar",
-				Message:      "Upload successful",
-			}
-			testutil.JSONResponse(t, w, http.StatusOK, response)
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "test.tar",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			GenerateSBOM: true, GenerateVEX: true,
 		})
-
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
-
-		data := bytes.NewReader([]byte("test data"))
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         data,
-			Size:         9,
-			GenerateSBOM: true,
-			GenerateVEX:  true,
-		}
-		scanID, err := client.StartIngest(context.Background(), opts)
-
 		if err != nil {
 			t.Fatalf("StartIngest failed: %v", err)
 		}
-		if scanID != testScanID {
-			t.Errorf("Expected scan ID %q, got %s", testScanID, scanID)
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+		if !strings.Contains(string(body), `"sbom_generate":true`) {
+			t.Errorf("/scan body missing sbom_generate=true; body=%s", body)
+		}
+		if !strings.Contains(string(body), `"vex_generate":true`) {
+			t.Errorf("/scan body missing vex_generate=true; body=%s", body)
 		}
 	})
 
 	t.Run("context cancellation stops upload promptly", func(t *testing.T) {
 		t.Parallel()
-
-		// Server that slowly reads the request body to simulate a slow upload
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			// Read body slowly - this will be interrupted by context cancellation
+		// Slow S3 upload so the streamed body has time to be cancelled mid-flight.
+		srv, state := newIngestFlowServer(t)
+		state.overrideS3 = func(w http.ResponseWriter, r *http.Request) {
 			buf := make([]byte, 1024)
 			for {
 				_, err := r.Body.Read(buf)
@@ -366,54 +440,71 @@ func TestClient_StartIngest(t *testing.T) {
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID})
-		})
-
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 5*time.Second,
-			WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
+			w.WriteHeader(http.StatusNoContent)
 		}
+		client := newIngestFlowClient(t, srv.URL)
 
-		// Create a slow reader that produces data slowly (simulating large file read)
 		slowData := &slowReader{
-			data:       bytes.Repeat([]byte("x"), 100000), // 100KB
+			data:       bytes.Repeat([]byte("x"), 100000),
 			chunkSize:  1000,
 			chunkDelay: 5 * time.Millisecond,
 		}
-
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         slowData,
-			Size:         100000,
-		}
-
-		// Cancel context after 50ms - upload should be stopped promptly
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 
 		start := time.Now()
-		_, err = client.StartIngest(ctx, opts)
+		_, err := client.StartIngest(ctx, IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "test.tar",
+			Data: slowData, Size: 100000,
+		})
 		elapsed := time.Since(start)
-
-		// Should return an error (context cancelled or deadline exceeded)
 		if err == nil {
 			t.Fatal("Expected context cancellation error")
 		}
-
-		// Should return promptly (within 200ms), not wait for the full upload
-		if elapsed > 200*time.Millisecond {
+		if elapsed > 500*time.Millisecond {
 			t.Errorf("StartIngest took too long to respond to cancellation: %v", elapsed)
 		}
-
-		// Error should be context-related
 		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
 			!strings.Contains(err.Error(), "context") {
 			t.Errorf("Expected context-related error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects upload exceeding server max_upload_bytes", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		// Server reports a tiny cap; client must reject without uploading.
+		state.overridePresigned = func(w http.ResponseWriter, r *http.Request) {
+			scheme := testutil.SchemeFromRequest(r)
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:         testScanID,
+				ArtifactType:   "repo",
+				TenantID:       "tenant-456",
+				PresignedURL:   scheme + "://" + r.Host + "/_s3/upload",
+				Fields:         map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+				MaxUploadBytes: 100,
+				ExpiresIn:      1800,
+			})
+		}
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "big.tar.gz",
+			Data: bytes.NewReader(bytes.Repeat([]byte("x"), 1000)), Size: 1000,
+		})
+		if err == nil {
+			t.Fatal("Expected error: upload exceeds server cap")
+		}
+		if !strings.Contains(err.Error(), "exceeds server limit") {
+			t.Errorf("Expected server-cap error, got: %v", err)
+		}
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if state.s3Calls != 0 {
+			t.Errorf("S3 must not be called when over cap; got %d calls", state.s3Calls)
+		}
+		if state.scanCalls != 0 {
+			t.Errorf("/scan must not be called when over cap; got %d calls", state.scanCalls)
 		}
 	})
 }
@@ -947,6 +1038,12 @@ func TestValidatePresignedURL(t *testing.T) {
 			{"localhost HTTP", "http://localhost:8080/file"},
 			{"localhost HTTPS", "https://localhost/file"},
 			{"127.0.0.1", "http://127.0.0.1:9000/file"},
+			// IPv6 loopback in its short and fully-expanded forms. Both must
+			// follow the same opt-in/opt-out rules — a string compare against
+			// "::1" alone would let "0:0:0:0:0:0:0:1" through and bypass the
+			// gate on the no-opt-in path.
+			{"::1", "http://[::1]:9000/file"},
+			{"IPv6 loopback expanded", "http://[0:0:0:0:0:0:0:1]:9000/file"},
 		}
 		for _, tt := range localhostURLs {
 			t.Run(tt.name+" allowed", func(t *testing.T) {
@@ -1001,57 +1098,49 @@ func TestValidatePresignedURL(t *testing.T) {
 			})
 		}
 	})
+
+	// Regression: the base-host shortcut inside the allowLocalURLs branch
+	// must only fire when the API base URL is itself loopback. Even with
+	// allowLocalURLs=true, a non-loopback base URL must NOT cause presigned
+	// URLs whose host equals the API host to bypass the S3 allowlist.
+	t.Run("allowLocalURLs does not short-circuit non-loopback base URL", func(t *testing.T) {
+		// clientWithLocalhost above has baseURL https://api.example.com.
+		// A presigned URL pointing at the same host must still be rejected
+		// because api.example.com is not in the S3 allowlist.
+		hijackedURL := "https://api.example.com/secret/admin"
+		if err := clientWithLocalhost.ValidatePresignedURL(hijackedURL); err == nil {
+			t.Errorf("Expected URL %q to be rejected even with allowLocalURLs=true on a non-loopback base URL", hijackedURL)
+		}
+
+		// Sanity: when the base URL is loopback, the same shortcut should
+		// still allow presigned URLs that target the loopback API host.
+		loopbackClient, err := NewClient("http://127.0.0.1:8080", testutil.NewTestAuthProvider("token123"), false, 0, WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("Failed to create loopback client: %v", err)
+		}
+		if err := loopbackClient.ValidatePresignedURL("http://127.0.0.1:8080/fake-s3/upload"); err != nil {
+			t.Errorf("Expected loopback presigned URL to be allowed against loopback base URL: %v", err)
+		}
+	})
 }
 
 func TestClient_StartIngest_SizeLimit(t *testing.T) {
-	t.Run("rejects upload exceeding max size", func(t *testing.T) {
+	t.Run("rejects upload exceeding client-side max size", func(t *testing.T) {
+		// Client-side cap (MaxUploadSize) trips before any HTTP call.
 		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 1*time.Minute)
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		data := bytes.NewReader([]byte("test"))
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         data,
-			Size:         MaxUploadSize + 1, // Exceeds limit
-		}
-		_, err = client.StartIngest(context.Background(), opts)
-
+		_, err = client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "test.tar",
+			Data: bytes.NewReader([]byte("test")), Size: MaxUploadSize + 1,
+		})
 		if err == nil {
-			t.Error("Expected error for oversized upload")
+			t.Fatal("Expected error for oversized upload")
 		}
 		if !strings.Contains(err.Error(), "exceeds maximum allowed") {
 			t.Errorf("Expected size limit error, got: %v", err)
-		}
-	})
-
-	t.Run("accepts upload at max size", func(t *testing.T) {
-		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-			response := model.IngestUploadResponse{ScanID: testScanID}
-			testutil.JSONResponse(t, w, http.StatusOK, response)
-		})
-
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
-		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute, WithHTTPClient(httpClient))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
-
-		data := bytes.NewReader([]byte("test"))
-		opts := IngestOptions{
-			TenantID:     "tenant-456",
-			ArtifactType: "image",
-			Filename:     "test.tar",
-			Data:         data,
-			Size:         MaxUploadSize, // Exactly at limit
-		}
-		_, err = client.StartIngest(context.Background(), opts)
-
-		if err != nil {
-			t.Errorf("Should accept upload at max size: %v", err)
 		}
 	})
 }

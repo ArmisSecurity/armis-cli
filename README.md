@@ -7,7 +7,7 @@
 # Armis CLI
 
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
-[![Go Version](https://img.shields.io/badge/go-1.23+-blue)](https://golang.org/dl/)
+[![Go Version](https://img.shields.io/badge/go-1.25+-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![Coverage](https://img.shields.io/badge/coverage-check%20CI-blue)](https://github.com/ArmisSecurity/armis-cli/actions/workflows/ci.yml)
@@ -22,9 +22,11 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 - [Features](#features)
 - [Installation](#installation)
-- [Verification](#verification)
+- [Shell Completion](#shell-completion)
 - [Quick Start](#quick-start)
+- [Verification](#verification)
 - [Usage](#usage)
+- [Ignoring Files and Suppressing Findings](#ignoring-files-and-suppressing-findings)
 - [Supply Chain Protection](#supply-chain-protection)
 - [Output Formats](#output-formats)
 - [CI/CD Integration](#cicd-integration)
@@ -223,11 +225,130 @@ If you see "command not found" after installation:
    & "$env:LOCALAPPDATA\armis-cli\armis-cli.exe" --help
    ```
 
+### Shell Completion
+
+`armis-cli` ships tab-completion for commands, subcommands, and flag values (e.g.
+`--format <TAB>` offers `human/json/sarif/junit`). Generate the script for your
+shell with `armis-cli completion <shell>`; run `armis-cli completion <shell> --help`
+for the full instructions.
+
+**Bash** (requires the `bash-completion` package):
+
+```bash
+# Current shell session
+source <(armis-cli completion bash)
+
+# Every new session (Linux)
+armis-cli completion bash > /etc/bash_completion.d/armis-cli
+
+# Every new session (macOS)
+armis-cli completion bash > $(brew --prefix)/etc/bash_completion.d/armis-cli
+```
+
+**Zsh** (enable completion once with `echo "autoload -U compinit; compinit" >> ~/.zshrc`):
+
+```zsh
+# Current shell session
+source <(armis-cli completion zsh)
+
+# Every new session (Linux)
+armis-cli completion zsh > "${fpath[1]}/_armis-cli"
+
+# Every new session (macOS)
+armis-cli completion zsh > $(brew --prefix)/share/zsh/site-functions/_armis-cli
+```
+
+**Fish:**
+
+```fish
+# Current shell session
+armis-cli completion fish | source
+
+# Every new session
+armis-cli completion fish > ~/.config/fish/completions/armis-cli.fish
+```
+
+**PowerShell:**
+
+```powershell
+# Current shell session
+armis-cli completion powershell | Out-String | Invoke-Expression
+
+# Every new session: add the output of the above command to your PowerShell profile
+```
+
+Start a new shell for the persistent setup to take effect.
+
+---
+
+## Quick Start
+
+### Try it without credentials
+
+No Armis account needed — audit your project's dependencies for supply-chain risk in one command. Run it from a project directory that contains a supported lockfile (e.g. `package-lock.json`, `poetry.lock`, `pom.xml`):
+
+```bash
+brew install armissecurity/tap/armis-cli
+cd path/to/your/project
+armis-cli supply-chain check
+```
+
+This checks your lockfile against public registries (npm, PyPI, Maven Central) for recently published packages — a common signal of typosquatting or compromised maintainers. If no lockfile is found, the command reports `no lockfile detected` — point it at a project with `armis-cli supply-chain check <path>` or `--lockfile <file>`. See [Supply Chain Protection](#supply-chain-protection) for details. To scan code for vulnerabilities and secrets, set up authentication below.
+
+### Set up authentication
+
+#### JWT Authentication (Recommended)
+
+Obtain client credentials from the VIPR external API screen in the Armis platform.
+
+```bash
+export ARMIS_CLIENT_ID="your-client-id"
+export ARMIS_CLIENT_SECRET="your-client-secret"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_CLIENT_ID = "your-client-id"
+$env:ARMIS_CLIENT_SECRET = "your-client-secret"
+```
+
+The tenant ID is automatically extracted from the JWT token — no need to set it separately.
+
+#### Basic Authentication (Legacy)
+
+```bash
+export ARMIS_API_TOKEN="your-api-token"
+export ARMIS_TENANT_ID="your-tenant-id"
+```
+
+**PowerShell:**
+
+```powershell
+$env:ARMIS_API_TOKEN = "your-api-token"
+$env:ARMIS_TENANT_ID = "your-tenant-id"
+```
+
+### Scan a repository
+
+```bash
+armis-cli scan repo ./my-project
+```
+
+### Scan a container image
+
+```bash
+armis-cli scan image nginx:latest
+```
+
 ---
 
 ## Verification
 
-All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security.
+All releases include cryptographic signatures, SBOMs, and SLSA Level 3 provenance attestations for supply chain security. Verifying them is optional — expand the section below when you need it.
+
+<details>
+<summary>Verify release signatures, SLSA provenance &amp; SBOM</summary>
 
 ### Verify Checksums (Cosign)
 
@@ -321,55 +442,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 - [Sigstore Cosign](https://docs.sigstore.dev/cosign/overview/)
 - [CycloneDX SBOM](https://cyclonedx.org/)
 
----
-
-## Quick Start
-
-### Set up authentication
-
-#### JWT Authentication (Recommended)
-
-Obtain client credentials from the VIPR external API screen in the Armis platform.
-
-```bash
-export ARMIS_CLIENT_ID="your-client-id"
-export ARMIS_CLIENT_SECRET="your-client-secret"
-```
-
-**PowerShell:**
-
-```powershell
-$env:ARMIS_CLIENT_ID = "your-client-id"
-$env:ARMIS_CLIENT_SECRET = "your-client-secret"
-```
-
-The tenant ID is automatically extracted from the JWT token — no need to set it separately.
-
-#### Basic Authentication (Legacy)
-
-```bash
-export ARMIS_API_TOKEN="your-api-token"
-export ARMIS_TENANT_ID="your-tenant-id"
-```
-
-**PowerShell:**
-
-```powershell
-$env:ARMIS_API_TOKEN = "your-api-token"
-$env:ARMIS_TENANT_ID = "your-tenant-id"
-```
-
-### Scan a repository
-
-```bash
-armis-cli scan repo ./my-project
-```
-
-### Scan a container image
-
-```bash
-armis-cli scan image nginx:latest
-```
+</details>
 
 ---
 
@@ -394,13 +467,15 @@ armis-cli scan image nginx:latest
 --no-progress           Disable progress indicators
 --fail-on strings       Fail build on severity levels (default: [CRITICAL])
 --exit-code int         Exit code to use when failing (default: 1)
---sbom                  Generate Software Bill of Materials (CycloneDX format)
---vex                   Generate Vulnerability Exploitability eXchange document
---sbom-output string    Custom output path for SBOM (default: .armis/<artifact>-sbom.json)
---vex-output string     Custom output path for VEX (default: .armis/<artifact>-vex.json)
 --page-limit int        Results page size for pagination (default: 500, range: 1-1000)
+--color string          Control colored output: auto, always, never (default: auto)
+--theme string          Terminal background theme: auto, dark, light (default: auto)
+--no-update-check       Disable automatic update checking
+--dev                   Use development environment instead of production
 --debug                 Enable debug mode for detailed API responses
 ```
+
+> The `--sbom`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository).
 
 ### Scan Repository
 
@@ -419,6 +494,32 @@ armis-cli scan repo ./my-app --format json --fail-on HIGH,CRITICAL
 # Generate SBOM and VEX documents
 armis-cli scan repo ./my-app --sbom --vex
 ```
+
+#### Scan Only Changed Files
+
+Speed up PR and pre-commit feedback by scanning only the files that changed,
+instead of the whole repository. The `--changed` flag has three modes:
+
+```bash
+# All uncommitted changes (staged + unstaged + untracked) vs HEAD
+armis-cli scan repo . --changed
+
+# Staged changes only (what `git commit` would include)
+armis-cli scan repo . --changed=staged
+
+# Changes relative to a branch, tag, or commit (great for PRs)
+armis-cli scan repo . --changed=main
+armis-cli scan repo . --changed=origin/main
+armis-cli scan repo . --changed=HEAD~3
+```
+
+Notes:
+
+- Requires a git repository. If no files changed, the scan exits early with nothing to do.
+- `staged` and `uncommitted` are reserved keywords and cannot be used as ref names.
+- `--changed` is mutually exclusive with `--include-files` (use one or the other).
+
+See [PR Scanning with Changed Files](docs/CI-INTEGRATION.md#pr-scanning-with-changed-files) for CI usage.
 
 ### Scan Container Image
 
@@ -456,6 +557,81 @@ armis-cli scan image nginx:latest --pull=always
 armis-cli scan image nginx:latest --pull=never
 ```
 
+### Other Commands
+
+```bash
+# Detect AI coding agents (Claude Code, Cursor, Copilot, ...) and whether
+# the Armis AppSec MCP is enabled. Run with sudo to scan all user profiles.
+armis-cli agent-detection
+
+# Install a git pre-commit hook that blocks commits unless scanning passed.
+# Use --fail-open to warn instead of block, or --remove to uninstall.
+armis-cli hook init
+
+# Generate a shell completion script (bash, zsh, fish, PowerShell).
+armis-cli completion zsh > "${fpath[1]}/_armis-cli"
+```
+
+Run `armis-cli <command> --help` for the full flag reference of any command.
+
+---
+
+## Ignoring Files and Suppressing Findings
+
+A `.armisignore` file in your repository root controls two things: which files are excluded from the scan upload, and which findings are suppressed from results.
+
+### Path exclusion (gitignore syntax)
+
+Standard gitignore-style patterns exclude files and directories **before** the upload archive is created. Nested `.armisignore` files are supported and apply relative to their directory.
+
+```gitignore
+# Exclude directories
+node_modules/
+vendor/
+**/dist/
+
+# Exclude file patterns
+*.generated.go
+*.log
+
+# Re-include a specific file
+!important.config.json
+```
+
+### Finding suppression directives
+
+Directives in the **root** `.armisignore` suppress matched findings post-scan. They are excluded from `--fail-on` evaluation and from human/JUnit output, and marked as suppressed in SARIF and JSON. Use `--show-suppressed` to include them in output.
+
+Format: `<type>:<value> -- <optional reason>`
+
+| Directive | Accepted values | Example |
+|-----------|-----------------|---------|
+| `rule:` | Any rule ID (free-form string) | `rule:G304 -- path validated upstream` |
+| `category:` | `sast`, `secrets`, `iac`, `sca`, `license` | `category:license` |
+| `severity:` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` | `severity:LOW` |
+| `cwe:` | Any non-negative integer | `cwe:73 -- intentional, sanitized` |
+
+Example `.armisignore`:
+
+```gitignore
+# Path patterns
+node_modules/
+test/fixtures/
+
+# Suppression directives (root .armisignore only)
+severity:LOW
+category:license
+cwe:73 -- file path is sanitized via SanitizePath
+rule:G304 -- false positive, internal path
+```
+
+**Notes:**
+
+- Suppression directives are only honored in the **root** `.armisignore`. In nested files they are treated as path patterns.
+- Lines starting with `#` are comments.
+- Maximum file size: 1 MB. Maximum 1000 lines and 100 directives per type.
+- For in-code suppression of a single finding, use inline `armis:ignore` comments (e.g., `// armis:ignore cwe:73 reason:...`) in the source itself.
+
 ---
 
 ## Supply Chain Protection
@@ -477,6 +653,9 @@ armis-cli supply-chain check --min-age 7d --exclude "@myorg/*" --fail-on medium
 
 # Machine-readable output for CI
 armis-cli supply-chain check --format sarif --fail-on high
+
+# Write results to a file (format auto-detected from the extension)
+armis-cli supply-chain check -o supply-chain.sarif --fail-on high
 ```
 
 By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
@@ -511,13 +690,28 @@ version: 1
 min-age: 72h
 exclusions:
   - "@myorg/*"
-# ecosystems:        # optional: restrict to specific ecosystems (default: all detected)
+# ecosystems:          # optional: restrict to specific ecosystems (default: all detected)
 #   - npm
 #   - pip
+# transitive-policy: warn   # optional: let young TRANSITIVE deps through with a warning
+#                           # (direct deps still blocked); default: block
+# registries:               # optional: route age checks through a private artifactory
+#   npm: https://nexus.corp/repository/npm-group/
+#   pypi: https://nexus.corp/repository/pypi-group/simple/
+# registry-ca-bundle: /etc/armis/nexus-ca.pem   # optional: trust a private CA
 fail-open: false
 ```
 
-Bypass for a single command with `ARMIS_SUPPLY_CHAIN_SKIP=<pkg>`; disable enforcement entirely with `ARMIS_SUPPLY_CHAIN=off`.
+### Unblocking a build (most surgical → most blunt)
+
+When a brand-new release is blocking you, prefer the most reviewable option:
+
+1. **Allow one package** (persists in this env, exempts its future versions): `ARMIS_SUPPLY_CHAIN_SKIP=<pkg> npm install`
+2. **Permanent team exception**: add `<pkg>` to `exclusions:` in `.armis-supply-chain.yaml`
+3. **Relax the window for all packages**: edit `min-age:` in `.armis-supply-chain.yaml`
+4. **Emergency kill switch**: `ARMIS_SUPPLY_CHAIN=off npm install`
+
+Because the age proxy is graph-blind, a withheld young version can make a transitive dependency unsatisfiable and fail an install. On the npm family Armis names the culprit (and who required it); you can also opt into `transitive-policy: warn` to let young *transitive* deps through while still blocking young *direct* ones. Generate an audit trail with `ARMIS_SUPPLY_CHAIN_REPORT=<path>` (wrapped installs) or `--report <path>` (`check`). Route age checks through a private artifactory instead of the public registries with `registries:` (see **[docs/FEATURES.md → Custom approved registry](docs/FEATURES.md#supply-chain-custom-registry)**). See **[docs/FEATURES.md → Supply Chain Enforcement](docs/FEATURES.md#-supply-chain-enforcement)** for the full model, limitations, and residual-risk notes.
 
 ---
 
@@ -784,7 +978,12 @@ pipelines:
 
 ## Environment Variables
 
-**JWT Authentication (Recommended):**
+Pick the authentication method that matches the environment:
+
+- **CI/CD and other non-interactive environments** — use client credentials (`ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`). They authenticate without a browser, which is what automated pipelines need.
+- **Developer machines and other interactive environments** — use SSO (`ARMIS_DEFAULT_AUTH_METHOD=SSO`). The CLI signs in through your company's identity provider in the browser, so no long-lived secret has to be stored on the machine.
+
+**Client Credentials (recommended for CI/CD):**
 
 | Variable | Description |
 |----------|-------------|
@@ -792,14 +991,24 @@ pipelines:
 | `ARMIS_CLIENT_SECRET` | Client secret for JWT authentication |
 | `ARMIS_REGION` | Armis cloud region (equivalent to `--region` flag) |
 
-When using JWT authentication, the tenant ID is automatically extracted from the token.
+When using client credentials, the tenant ID is automatically extracted from the token.
+
+**SSO (recommended for interactive use):**
+
+| Variable | Description |
+|----------|-------------|
+| `ARMIS_DEFAULT_AUTH_METHOD` | Set to `SSO` to sign in through your company's configured identity provider when no other credentials are present (requires `ARMIS_TENANT_ID` or `--tenant-id`) |
+
+You can also sign in explicitly at any time with `armis-cli auth login`; setting `ARMIS_DEFAULT_AUTH_METHOD=SSO` just triggers that sign-in automatically on the first command that needs credentials.
+
+Before users can sign in with SSO, an IT admin registers the tenant's identity provider once with `armis-cli auth setup` (see below).
 
 **Basic Authentication (Legacy):**
 
 | Variable | Description |
 |----------|-------------|
 | `ARMIS_API_TOKEN` | API token for Basic authentication |
-| `ARMIS_TENANT_ID` | Tenant identifier (required only with Basic auth) |
+| `ARMIS_TENANT_ID` | Tenant identifier (required with Basic auth or SSO) |
 
 **General:**
 
@@ -807,6 +1016,44 @@ When using JWT authentication, the tenant ID is automatically extracted from the
 |----------|-------------|
 | `ARMIS_FORMAT` | Default output format |
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
+| `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
+| `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
+
+### Registering an identity provider (IT admins)
+
+Before your users can sign in with SSO, register your tenant's identity provider once with `armis-cli auth setup`. Run it after you register `armis-cli` as an OIDC application in your IdP (Okta, Entra ID, Keycloak, …); it posts the resulting configuration to the Armis admin API. Authentication uses your existing Armis admin credentials (resolved the same way as the scan commands).
+
+```bash
+# Interactive — the CLI walks you through each value
+armis-cli auth setup
+
+# Non-interactive, from a JSON file (for MDM / CI)
+armis-cli auth setup --config idp.json --yes
+
+# Update an existing configuration (rotate the secret, change mappings)
+armis-cli auth setup --config idp.json --update
+```
+
+`--config` accepts a file path, `-` to read stdin, or an inline JSON string:
+
+```json
+{
+  "tenant_id": "acme",
+  "idp_type": "okta",
+  "issuer": "https://acme.okta.com",
+  "oidc_client_id": "0oa1b2c3d4",
+  "oidc_client_secret": "…",
+  "group_claim": "groups",
+  "group_mapping": {
+    "admin": ["eng-admins"],
+    "developer": ["core-developers", "contract-developers"]
+  }
+}
+```
+
+`group_mapping` maps each Armis role to the IdP groups that grant it, so several groups can share a role. Only the two recognized roles — `admin` and `developer` — are accepted, and a group may appear under only one role. In interactive mode the same is entered as a comma-separated list of groups per role. The command shows a review summary (with the client secret masked) and confirms before sending; the secret is transmitted only in the registration request and is never stored or printed.
+
+If a configuration already exists for your tenant, running `armis-cli auth setup` interactively lets you edit it: the form is pre-filled with the current values, and you can update just what you need — for example, change a group mapping without re-entering the client secret. To update from a JSON document non-interactively, use `--config … --update`.
 
 ---
 
@@ -820,6 +1067,7 @@ When using JWT authentication, the tenant ID is automatically extracted from the
   - Use JWT authentication (client ID/secret) for production — it supports automatic token refresh and does not require a separate tenant ID
   - Rotate credentials periodically
   - Credentials are never logged or exposed in output
+  - SSO session tokens (`armis-cli auth login`) are stored per-user in `~/.armis/.sessions` — owner-only (`0600`) on macOS/Linux, protected by the user-profile ACL on Windows
 - **Secure Transport**: All API communication uses HTTPS
 - **Automatic Cleanup**: Temporary files are cleaned up after use
 - **CI Detection**: Progress bars automatically disabled in CI environments

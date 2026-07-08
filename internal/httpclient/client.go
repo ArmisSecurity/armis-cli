@@ -43,6 +43,9 @@ func NewClient(cfg Config) *Client {
 	}
 
 	httpClient := &http.Client{
+		// Resolve proxies from the OS configuration (WinINET/PAC on Windows),
+		// not just environment variables — see ProxyAwareTransport.
+		Transport: ProxyAwareTransport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return fmt.Errorf("redirects are not allowed (attempted redirect to %s)", req.URL.Host)
 		},

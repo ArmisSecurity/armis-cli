@@ -118,6 +118,73 @@ func TestDetectEcosystems(t *testing.T) {
 	})
 }
 
+func TestDetectEcosystemsUpward(t *testing.T) {
+	t.Run("detects a canonical lockfile in the start directory", func(t *testing.T) {
+		dir := t.TempDir()
+		want := filepath.Join(dir, "package-lock.json")
+		os.WriteFile(want, []byte("{}"), 0o644) //nolint:errcheck,gosec
+
+		got := DetectEcosystemsUpward(dir)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 ecosystem, got %d (%v)", len(got), got)
+		}
+		if got[0].Ecosystem != EcosystemNPM {
+			t.Errorf("expected npm, got %s", got[0].Ecosystem)
+		}
+		if got[0].LockfilePath != want {
+			t.Errorf("LockfilePath = %q, want %q", got[0].LockfilePath, want)
+		}
+	})
+
+	t.Run("walks up to find a parent-directory lockfile", func(t *testing.T) {
+		// This is the behavior status was missing: a lockfile at the project/monorepo
+		// root must be reported even when status runs from a nested subdirectory,
+		// because that is the lockfile the wrapper would actually enforce.
+		root := t.TempDir()
+		want := filepath.Join(root, "poetry.lock")
+		os.WriteFile(want, []byte(""), 0o644) //nolint:errcheck,gosec
+		sub := filepath.Join(root, "service", "nested")
+		if err := os.MkdirAll(sub, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+
+		got := DetectEcosystemsUpward(sub)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 ecosystem from subdir, got %d (%v)", len(got), got)
+		}
+		if got[0].Ecosystem != EcosystemPoetry || got[0].LockfilePath != want {
+			t.Errorf("got %+v, want poetry at %q", got[0], want)
+		}
+	})
+
+	t.Run("does not walk up for pip's non-canonical requirements.txt", func(t *testing.T) {
+		// requirements.txt has no fixed name or location and enforcement never walks
+		// up for it, so a parent-directory requirements.txt must not be reported from
+		// a subdirectory — otherwise status would claim enforcement that won't happen.
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "requirements.txt"), []byte(""), 0o644) //nolint:errcheck,gosec
+		sub := filepath.Join(root, "sub")
+		if err := os.MkdirAll(sub, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+
+		if got := DetectEcosystemsUpward(sub); len(got) != 0 {
+			t.Errorf("expected no ecosystems from subdir (pip is not canonical), got %v", got)
+		}
+
+		// But it is detected when present in the start directory itself.
+		if got := DetectEcosystemsUpward(root); len(got) != 1 || got[0].Ecosystem != EcosystemPip {
+			t.Errorf("expected pip detected in its own directory, got %v", got)
+		}
+	})
+
+	t.Run("returns empty (not error) when nothing is enforceable", func(t *testing.T) {
+		if got := DetectEcosystemsUpward(t.TempDir()); len(got) != 0 {
+			t.Errorf("expected empty result, got %v", got)
+		}
+	})
+}
+
 func TestFindEcosystemLockfile(t *testing.T) {
 	t.Run("finds lockfile in the start directory", func(t *testing.T) {
 		dir := t.TempDir()

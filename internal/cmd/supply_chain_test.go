@@ -45,16 +45,22 @@ func TestSupplyChainUnknownSubcommand(t *testing.T) {
 // cmdutil.GetFailOn, which uppercases and validates it. A lowercase "medium"
 // must therefore trip the gate on a MEDIUM finding (ShouldFail matches
 // severities exactly), and an invalid value must be rejected rather than
-// silently ignored. It feeds the failOn global (the bound flag value) through
-// the same call the command makes, end-to-end into output.ShouldFail.
+// silently ignored. It feeds scFailOn (the check-local flag value that
+// runSupplyChainCheck actually reads) through the same call the command makes,
+// end-to-end into output.ShouldFail. Using scFailOn here — not the root failOn
+// global — keeps the test exercising the variable the command depends on.
 func TestSupplyChainCheckFailOnCaseInsensitive(t *testing.T) {
 	medium := &model.ScanResult{
 		Findings: []model.Finding{{Severity: model.SeverityMedium}},
 	}
 
+	// Restore the check-local default so this test can't leak state into others.
+	orig := scFailOn
+	t.Cleanup(func() { scFailOn = orig })
+
 	t.Run("lowercase fail-on still fails the gate", func(t *testing.T) {
-		failOn = []string{"medium"}
-		normalized, err := cmdutil.GetFailOn(failOn)
+		scFailOn = []string{"medium"}
+		normalized, err := cmdutil.GetFailOn(scFailOn)
 		if err != nil {
 			t.Fatalf("GetFailOn rejected a valid lowercase severity: %v", err)
 		}
@@ -64,12 +70,9 @@ func TestSupplyChainCheckFailOnCaseInsensitive(t *testing.T) {
 	})
 
 	t.Run("invalid fail-on is rejected", func(t *testing.T) {
-		failOn = []string{"banana"}
-		if _, err := cmdutil.GetFailOn(failOn); err == nil {
+		scFailOn = []string{"banana"}
+		if _, err := cmdutil.GetFailOn(scFailOn); err == nil {
 			t.Error("GetFailOn should reject an invalid severity, not silently ignore it")
 		}
 	})
-
-	// Reset the shared package global so this test can't leak state into others.
-	failOn = []string{"CRITICAL"}
 }

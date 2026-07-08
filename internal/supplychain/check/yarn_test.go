@@ -1,8 +1,11 @@
 package check
 
 import (
+	"bufio"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +72,37 @@ func TestParseYarnClassicLockfile(t *testing.T) {
 		_, err := ParseYarnLockfile("testdata/nonexistent.lock")
 		if err == nil {
 			t.Fatal("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("parses lines longer than the default scanner token", func(t *testing.T) {
+		// A resolved URL or integrity hash can exceed bufio.Scanner's default
+		// 64KB token limit. Build a line well past that to assert the raised
+		// buffer keeps such a lockfile parseable instead of failing "token too long".
+		var sb strings.Builder
+		sb.WriteString(`  resolved "https://registry.yarnpkg.com/big/-/big-1.0.0.tgz?`)
+		for i := 0; i < 2000; i++ {
+			sb.WriteString("0000000000000000000000000000000000000000000000000000000000000000")
+		}
+		sb.WriteString(`"`)
+		if sb.Len() <= bufio.MaxScanTokenSize {
+			t.Fatalf("test line is %d bytes, expected > %d to exercise the raised buffer", sb.Len(), bufio.MaxScanTokenSize)
+		}
+
+		lockfile := "big@^1.0.0:\n  version \"1.0.0\"\n" + sb.String() + "\n"
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "yarn.lock")
+		if err := os.WriteFile(path, []byte(lockfile), 0o600); err != nil {
+			t.Fatalf("writing fixture: %v", err)
+		}
+
+		entries, err := ParseYarnLockfile(path)
+		if err != nil {
+			t.Fatalf("unexpected error on long line: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Name != "big" || entries[0].Version != "1.0.0" {
+			t.Errorf("expected [big@1.0.0], got %v", entries)
 		}
 	})
 }

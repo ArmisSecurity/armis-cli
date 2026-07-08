@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/install"
@@ -35,6 +37,39 @@ func TestInstallTargetsAdvisoryEditors(t *testing.T) {
 				t.Errorf("installTargets(%q) unexpected error: %v", name, err)
 			}
 		})
+	}
+}
+
+// TestInstallTargetsJetBrainsNoGhostFlag verifies fix #2: the JetBrains advisory
+// must not reference the nonexistent --jetbrains-project flag (which errors with
+// "unknown flag"), and should give accurate manual setup guidance instead.
+func TestInstallTargetsJetBrainsNoGhostFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	installErr := installTargets([]string{"jetbrains"}, false)
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+
+	if installErr != nil {
+		t.Errorf("installTargets(jetbrains) unexpected error: %v", installErr)
+	}
+	output := string(out)
+	if strings.Contains(output, "--jetbrains-project") {
+		t.Errorf("JetBrains guidance must not mention the ghost flag --jetbrains-project, got:\n%s", output)
+	}
+	if !strings.Contains(output, ".jb-mcp.json") {
+		t.Errorf("JetBrains guidance should mention the .jb-mcp.json config file, got:\n%s", output)
 	}
 }
 

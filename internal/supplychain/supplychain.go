@@ -12,15 +12,49 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
+// TransitivePolicy selects what the proxy does with a young *transitive*
+// dependency (one not declared in the root manifest). It is the security knob
+// behind WS5: the default keeps today's hard-block behavior, and the opt-in
+// warn mode trades a sliver of protection on indirect deps for a build that
+// completes. Direct dependencies are ALWAYS blocked regardless of this setting
+// — that is where typosquat/dependency-confusion risk concentrates and where
+// the developer has direct control.
+type TransitivePolicy string
+
+const (
+	// TransitivePolicyBlock strips young transitive versions exactly like young
+	// direct versions. This is the default — no opt-in, no posture change.
+	TransitivePolicyBlock TransitivePolicy = "block"
+	// TransitivePolicyWarn lets a young transitive dependency through with a
+	// warning instead of stripping it, so the parent's version range stays
+	// satisfiable and the install succeeds. Gated behind explicit config/env.
+	TransitivePolicyWarn TransitivePolicy = "warn"
+)
+
+// ParseTransitivePolicy maps a config/env string to a TransitivePolicy. It is
+// fail-safe: an empty or unrecognized value resolves to block, so a typo can
+// never silently weaken the control into warn mode.
+func ParseTransitivePolicy(s string) TransitivePolicy {
+	if strings.EqualFold(strings.TrimSpace(s), string(TransitivePolicyWarn)) {
+		return TransitivePolicyWarn
+	}
+	return TransitivePolicyBlock
+}
+
 type Policy struct {
 	MinReleaseAge time.Duration
 	Exclusions    []string
 	FailOpen      bool
+	// TransitivePolicy is the block/warn knob for young transitive deps. The
+	// zero value ("") is treated as block by the proxy, so an unset policy keeps
+	// the secure default.
+	TransitivePolicy TransitivePolicy
 }
 
 func DefaultPolicy() Policy {
 	return Policy{
-		MinReleaseAge: 72 * time.Hour,
+		MinReleaseAge:    72 * time.Hour,
+		TransitivePolicy: TransitivePolicyBlock,
 	}
 }
 

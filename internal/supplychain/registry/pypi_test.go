@@ -8,19 +8,34 @@ import (
 	"time"
 )
 
+// simplePyPIBody builds a minimal PEP 691 Simple API JSON body from
+// filename→upload-time pairs, the shape a configured custom registry
+// (NewPyPIClientWithHTTP with a non-default baseURL) is queried with.
+func simplePyPIBody(files map[string]string) string {
+	body := `{"files":[`
+	first := true
+	for filename, uploadTime := range files {
+		if !first {
+			body += ","
+		}
+		first = false
+		body += `{"filename":"` + filename + `","upload-time":"` + uploadTime + `"}`
+	}
+	body += `]}`
+	return body
+}
+
 func TestPyPIGetPublishDate(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/pypi/flask/json" {
+			if r.URL.Path != "/flask/" {
 				t.Errorf("unexpected path: %s", r.URL.Path)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{
-				"releases": {
-					"3.0.0": [{"upload_time_iso_8601": "2023-09-30T12:00:00Z"}],
-					"2.3.3": [{"upload_time_iso_8601": "2023-08-15T10:00:00Z"}]
-				}
-			}`))
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-3.0.0-py3-none-any.whl": "2023-09-30T12:00:00Z",
+				"flask-2.3.3-py3-none-any.whl": "2023-08-15T10:00:00Z",
+			})))
 		}))
 		defer server.Close()
 
@@ -51,8 +66,10 @@ func TestPyPIGetPublishDate(t *testing.T) {
 
 	t.Run("version not found", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"1.0.0": [{"upload_time_iso_8601": "2023-01-01T00:00:00Z"}]}}`))
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-1.0.0-py3-none-any.whl": "2023-01-01T00:00:00Z",
+			})))
 		}))
 		defer server.Close()
 
@@ -73,12 +90,14 @@ func TestPyPIGetPublishDate(t *testing.T) {
 
 	t.Run("name normalization", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Normalized: Flask -> flask, my_package -> my-package
-			if r.URL.Path != "/pypi/my-package/json" {
+			// Normalized: My_Package -> my-package
+			if r.URL.Path != "/my-package/" {
 				t.Errorf("unexpected path: %s (expected normalized name)", r.URL.Path)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"1.0.0": [{"upload_time_iso_8601": "2023-01-01T00:00:00Z"}]}}`))
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"my_package-1.0.0-py3-none-any.whl": "2023-01-01T00:00:00Z",
+			})))
 		}))
 		defer server.Close()
 
@@ -90,12 +109,14 @@ func TestPyPIGetPublishDate(t *testing.T) {
 	})
 
 	t.Run("matches version under PEP 440 normalization", func(t *testing.T) {
-		// Lockfile pins "2.0" but PyPI keys the release as "2.0.0" — the lookup
-		// must still resolve via normalized comparison rather than reporting the
+		// Lockfile pins "2.0" but the filename embeds "2.0.0" — the lookup must
+		// still resolve via normalized comparison rather than reporting the
 		// version as missing.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"2.0.0": [{"upload_time_iso_8601": "2023-01-01T00:00:00Z"}]}}`))
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-2.0.0-py3-none-any.whl": "2023-01-01T00:00:00Z",
+			})))
 		}))
 		defer server.Close()
 
@@ -122,14 +143,27 @@ func TestPyPIGetPublishDate(t *testing.T) {
 		if client.baseURL != defaultPyPIURL {
 			t.Errorf("expected baseURL to default to %q, got %q", defaultPyPIURL, client.baseURL)
 		}
+		// Regression guard: the defaulted client must use the same proxy-aware
+		// transport as NewClient(), so this fallback still honors WinINET/PAC on
+		// Windows instead of silently dropping proxy support. A bare
+		// &http.Client{Timeout: ...} (the pre-fix code) leaves Transport nil; the
+		// fix sets it to httpclient.ProxyAwareTransport(), whose .Proxy field is
+		// always non-nil (the OS proxy resolver).
+		transport, ok := client.httpClient.Transport.(*http.Transport)
+		if !ok || transport.Proxy == nil {
+			t.Error("expected the defaulted client to carry ProxyAwareTransport (non-nil *http.Transport with a Proxy func), got a plain/nil transport")
+		}
 	})
 
 	t.Run("caches responses", func(t *testing.T) {
 		calls := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			calls++
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"3.0.0": [{"upload_time_iso_8601": "2023-09-30T12:00:00Z"}], "2.3.3": [{"upload_time_iso_8601": "2023-08-15T10:00:00Z"}]}}`))
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-3.0.0-py3-none-any.whl": "2023-09-30T12:00:00Z",
+				"flask-2.3.3-py3-none-any.whl": "2023-08-15T10:00:00Z",
+			})))
 		}))
 		defer server.Close()
 
@@ -149,6 +183,71 @@ func TestPyPIGetPublishDate(t *testing.T) {
 			t.Errorf("expected 1 HTTP call (cached), got %d", calls)
 		}
 	})
+
+	t.Run("default public URL uses the legacy PyPI JSON API", func(t *testing.T) {
+		// NewPyPIClient() (no injected baseURL) must keep querying PyPI's own
+		// "/pypi/<name>/json" API, not the Simple API — this is the production
+		// path against the real pypi.org and is a regression guard distinguishing
+		// it from the custom-upstream Simple API path exercised by every other
+		// subtest in this file.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/pypi/flask/json" {
+				t.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"releases": {"3.0.0": [{"upload_time_iso_8601": "2023-09-30T12:00:00Z"}]}}`))
+		}))
+		defer server.Close()
+
+		client := &PyPIClient{httpClient: server.Client(), baseURL: server.URL, simpleAPI: false}
+		publishTime, err := client.GetPublishDate(context.Background(), "flask", "3.0.0")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		expected := time.Date(2023, 9, 30, 12, 0, 0, 0, time.UTC)
+		if !publishTime.Equal(expected) {
+			t.Errorf("expected %v, got %v", expected, publishTime)
+		}
+	})
+
+	t.Run("custom upstream keeps its configured /simple suffix", func(t *testing.T) {
+		// registries.pypi is required (config.go) to end in "/simple" (PEP 503),
+		// and fetchReleasesSimple builds "<baseURL>/<name>/" directly with no
+		// separate "/simple" segment of its own — so the configured suffix must
+		// be preserved, not stripped, or the request 404s on
+		// ".../pypi-group/<name>/" instead of ".../pypi-group/simple/<name>/".
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/repository/pypi-group/simple/flask/" {
+				t.Errorf("unexpected path: %s (expected the /simple suffix preserved)", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-3.0.0-py3-none-any.whl": "2023-09-30T12:00:00Z",
+			})))
+		}))
+		defer server.Close()
+
+		client := NewPyPIClientWithHTTP(server.Client(), server.URL+"/repository/pypi-group/simple/")
+		_, err := client.GetPublishDate(context.Background(), "flask", "3.0.0")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// Regression guard: the default public URL with a trailing slash
+	// ("https://pypi.org/") must be treated as the default host (legacy JSON
+	// API), not as a "custom" artifactory — custom-detection used to run BEFORE
+	// trailing-slash normalization, so this equivalent-to-default URL took the
+	// wrong (Simple API) code path purely because of a cosmetic trailing slash.
+	t.Run("default public URL with trailing slash is still treated as default", func(t *testing.T) {
+		client := NewPyPIClientWithHTTP(nil, defaultPyPIURL+"/")
+		if client.simpleAPI {
+			t.Errorf("expected simpleAPI=false for a trailing-slash default URL, got true (treated as custom)")
+		}
+		if client.baseURL != defaultPyPIURL {
+			t.Errorf("baseURL = %q, want %q", client.baseURL, defaultPyPIURL)
+		}
+	})
 }
 
 func TestPyPIGetPublishDates(t *testing.T) {
@@ -156,12 +255,16 @@ func TestPyPIGetPublishDates(t *testing.T) {
 	// else, so one server backs every batch sub-case.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/pypi/flask/json":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"3.0.0": [{"upload_time_iso_8601": "2023-09-30T12:00:00Z"}]}}`))
-		case "/pypi/requests/json":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"releases": {"2.31.0": [{"upload_time_iso_8601": "2023-05-22T15:12:00Z"}]}}`))
+		case "/flask/":
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"flask-3.0.0-py3-none-any.whl": "2023-09-30T12:00:00Z",
+			})))
+		case "/requests/":
+			w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+			_, _ = w.Write([]byte(simplePyPIBody(map[string]string{
+				"requests-2.31.0-py3-none-any.whl": "2023-05-22T15:12:00Z",
+			})))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

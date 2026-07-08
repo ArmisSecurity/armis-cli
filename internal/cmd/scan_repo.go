@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
-	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -33,9 +32,15 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main`,
-	Args: cobra.ExactArgs(1),
+	// MaximumNArgs(1) (not ExactArgs(1)) makes the `[path]` in Use honest: the path
+	// is optional and defaults to the current directory, matching every example and
+	// `scan image`'s arg handling.
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		repoPath := args[0]
+		repoPath := "."
+		if len(args) > 0 {
+			repoPath = args[0]
+		}
 
 		// Validate path exists and is a directory before making network calls
 		// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
@@ -50,9 +55,16 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("path is not a directory: %s", repoPath)
 		}
 
-		authProvider, err := getAuthProvider()
+		authProvider, err := getAuthProvider(cmd.Context())
 		if err != nil {
 			return err
+		}
+		// Defensive nil-check. getAuthProvider returns (nil, err) on
+		// failure and (non-nil, nil) on success — the explicit guard
+		// here exists so a future refactor can't silently slip a nil
+		// past the err check and crash the API client constructor.
+		if authProvider == nil {
+			return fmt.Errorf("internal error: nil auth provider")
 		}
 
 		tid, err := authProvider.GetTenantID(cmd.Context())
@@ -70,22 +82,17 @@ var scanRepoCmd = &cobra.Command{
 			return err
 		}
 
-		baseURL := getAPIBaseURL()
-		clientOpts := clientOptionsForBaseURL(baseURL)
-		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute, clientOpts...)
+		baseURL := resolveDataPlaneURL(cmd.Context(), authProvider)
+		client, err := api.NewClient(baseURL, authProvider, debug, time.Duration(uploadTimeout)*time.Minute,
+			clientOptionsForBaseURL(baseURL)...)
 		if err != nil {
 			return fmt.Errorf("failed to create API client: %w", err)
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		// Warn if output paths are specified without the corresponding generation flags
-		if sbomOutput != "" && !generateSBOM {
-			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
-		}
-		if vexOutput != "" && !generateVEX {
-			cli.PrintWarning("--vex-output is ignored without --vex flag")
-		}
+		// --sbom-output/--vex-output misuse is warned about in scan.PersistentPreRunE
+		// (before auth), so no warning is emitted here.
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {

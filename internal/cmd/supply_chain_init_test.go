@@ -404,6 +404,72 @@ func TestSummarizeDetectedPMs(t *testing.T) {
 	}
 }
 
+// TestPowerShellSkippedDottedPMs verifies the helper that drives the init-time
+// note about pip variants PowerShell can't wrap: it reports dotted PM names only
+// when a PowerShell shell is among those detected, and stays silent on a
+// POSIX/fish-only machine (where dotted variants wrap fine).
+func TestPowerShellSkippedDottedPMs(t *testing.T) {
+	pwsh := []supplychain.Shell{{Name: "pwsh", RCFile: "/p/profile.ps1"}}
+	posix := []supplychain.Shell{{Name: "bash", RCFile: "/h/.bashrc"}}
+	mixed := []supplychain.Shell{
+		{Name: "zsh", RCFile: "/h/.zshrc"},
+		{Name: "powershell", RCFile: "/p/profile.ps1"},
+	}
+
+	tests := []struct {
+		name   string
+		pms    []string
+		shells []supplychain.Shell
+		want   []string
+	}{
+		{
+			name:   "powershell detected with a dotted variant",
+			pms:    []string{"npm", "pip", "pip3", "pip3.12"},
+			shells: pwsh,
+			want:   []string{"pip3.12"},
+		},
+		{
+			name:   "multiple dotted variants are all reported",
+			pms:    []string{"pip3.11", "pip3.12"},
+			shells: pwsh,
+			want:   []string{"pip3.11", "pip3.12"},
+		},
+		{
+			name:   "powershell among mixed shells still reports",
+			pms:    []string{"pip", "pip3.10"},
+			shells: mixed,
+			want:   []string{"pip3.10"},
+		},
+		{
+			name:   "no powershell means no note even with a dotted variant",
+			pms:    []string{"pip", "pip3.12"},
+			shells: posix,
+			want:   nil,
+		},
+		{
+			name:   "powershell but no dotted variant is silent",
+			pms:    []string{"npm", "pip", "pip3"},
+			shells: pwsh,
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := powerShellSkippedDottedPMs(tt.pms, tt.shells)
+			if len(got) != len(tt.want) {
+				t.Fatalf("powerShellSkippedDottedPMs = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("powerShellSkippedDottedPMs = %v, want %v", got, tt.want)
+					break
+				}
+			}
+		})
+	}
+}
+
 func TestExtractScope(t *testing.T) {
 	tests := []struct {
 		name string
@@ -494,6 +560,27 @@ func TestDetectOrgScopes_SkipsYarn(t *testing.T) {
 	}
 }
 
+// TestScInitExampleIncludesModeConfig guards #33: the init Examples block must
+// show the --mode config path (the recommended way to generate a committable
+// policy file), which was previously omitted.
+func TestScInitExampleIncludesModeConfig(t *testing.T) {
+	if !strings.Contains(scInitCmd.Example, "--mode config") {
+		t.Errorf("init Example block must include --mode config:\n%s", scInitCmd.Example)
+	}
+}
+
+// TestScInitReverseClaimScoped guards #14 (part 3): init's Long must no longer
+// promise uninit reverses *all* changes (it cannot remove the committable config
+// file); the claim must be scoped to the shell RC and .npmrc artifacts.
+func TestScInitReverseClaimScoped(t *testing.T) {
+	if strings.Contains(scInitCmd.Long, "reverse changes made by this command") {
+		t.Errorf("init Long still makes the unscoped reverse-changes claim:\n%s", scInitCmd.Long)
+	}
+	if !strings.Contains(scInitCmd.Long, "shell RC and .npmrc") {
+		t.Errorf("init Long should scope the reverse claim to shell RC and .npmrc:\n%s", scInitCmd.Long)
+	}
+}
+
 // chdirTemp switches into a fresh temp dir for the duration of the test and
 // restores the original cwd on cleanup. runInitNpmrc operates on ".npmrc" in
 // the working directory, so each case needs an isolated dir.
@@ -564,6 +651,47 @@ func TestRunInitNpmrc_PrependsNewline(t *testing.T) {
 				t.Errorf("comment must begin on its own line; byte before '#' was %q in %q", content[markerIdx-1], content)
 			}
 		})
+	}
+}
+
+// TestRunInitConfig_RegistryScaffold verifies the generated config carries the
+// PPSC-994 registries scaffold and the DX7/DX8 guidance notes, and that the
+// generated file itself parses cleanly (the commented examples must not break
+// LoadConfig).
+func TestRunInitConfig_RegistryScaffold(t *testing.T) {
+	dir := chdirTemp(t)
+	scInitDryRun = false
+	scInitYes = true
+	t.Cleanup(func() { scInitDryRun = false; scInitYes = false })
+
+	if err := runInitConfig(); err != nil {
+		t.Fatalf("runInitConfig: %v", err)
+	}
+	// runInitConfig writes ConfigFileName into the cwd (chdir'd to dir above);
+	// read the constant leaf directly to avoid a tainted-path lint on a join.
+	data, err := os.ReadFile(supplychain.ConfigFileName)
+	if err != nil {
+		t.Fatalf("reading generated config: %v", err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		"registries:",
+		"registry-enforcement: warn",
+		"_authToken", // DX7: credential note
+		"NOT _auth",  // DX7: explicit "not _auth"
+		"/simple/",   // pypi URL guidance
+		"ignored",    // DX8: ecosystems-scope-suppresses-registries note
+		"registry-ca-bundle",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("generated scaffold missing %q", want)
+		}
+	}
+
+	// The scaffold (with registries commented out) must parse cleanly.
+	if _, err := supplychain.LoadConfig(dir); err != nil {
+		t.Errorf("generated scaffold does not parse: %v", err)
 	}
 }
 
