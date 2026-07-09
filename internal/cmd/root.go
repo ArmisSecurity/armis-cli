@@ -397,24 +397,6 @@ func getAPIBaseURL() string {
 	return productionBaseURL
 }
 
-// clientOptionsForBaseURL returns the api.ClientOptions that vary by the
-// configured base URL. When the operator points the CLI at a localhost API
-// (via ARMIS_API_URL during local dev or in tests), we allow the SSRF guard
-// on the new presigned-URL flow to accept localhost as a valid S3 endpoint
-// — the test harness serves both the API and a fake S3 path on the same
-// listener. Production URLs (HTTPS) get the strict allowlist.
-func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return nil
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || host == "127.0.0.1" {
-		return []api.ClientOption{api.WithAllowLocalURLs(true)}
-	}
-	return nil
-}
-
 // resolveDataPlaneURL returns the base URL for region-pinned data-plane calls
 // (upload, status polling, results fetch).
 //
@@ -551,6 +533,153 @@ func augmentNoCredentialsError(err error) error {
 		"  - run 'armis-cli auth login' to sign in with your company IdP\n" +
 		"  - or set ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET (or --client-id / --client-secret) for JWT auth\n" +
 		"  - or set ARMIS_API_TOKEN (or --token) for legacy auth")
+}
+
+// clientOptionsForBaseURL returns API client options based on the base URL.
+//
+// This function enables optional HTTP access to mock S3 services during local
+// development by reading the ARMIS_LOCAL_S3_ENDPOINT environment variable.
+// The allowlist is ONLY applied when the base URL indicates local development
+// (localhost or RFC 1918 private IPs). For all other environments (production,
+// staging, development cloud environments), HTTPS is strictly enforced.
+//
+// Security model:
+//   - Local development (localhost, 192.168.x, 10.x, 172.16-31.x): HTTP allowed for configured hosts
+//   - Remote/cloud (moose.armis.com, moose-dev.armis.com, etc.): HTTP blocked, HTTPS required
+//   - Unknown/misconfigured: HTTP blocked by default (safe fallback)
+//
+// Environment variable format:
+//
+// ARMIS_LOCAL_S3_ENDPOINT=awsmock-dev:4566,localstack:4566
+//
+// The value is a comma-separated list of host:port entries. Each entry must
+// exactly match the presigned URL's host (including port) for HTTP to be allowed.
+//
+// Example use case:
+//
+//	# Local development with awsmock
+//	export ARMIS_LOCAL_S3_ENDPOINT=awsmock-dev:4566
+//	export ARMIS_API_URL=http://localhost:8080
+//	armis-cli scan repo .
+//
+// If ARMIS_LOCAL_S3_ENDPOINT is set but the base URL is a remote endpoint,
+// a warning is printed and the allowlist is NOT applied (HTTP will be blocked).
+func clientOptionsForBaseURL(baseURL string) []api.ClientOption {
+	var opts []api.ClientOption
+
+	// For localhost base URLs, enable WithAllowLocalURLs for test harness support.
+	// The test harness serves both the API and a fake S3 path on the same localhost listener.
+	parsed, err := url.Parse(baseURL)
+	if err == nil {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "localhost" || host == "127.0.0.1" {
+			opts = append(opts, api.WithAllowLocalURLs(true))
+		}
+	}
+
+	// Check for local S3 endpoint configuration (separate from test harness support above)
+	// SECURITY: This bypass is ONLY enabled for local development environments.
+	// Remote/cloud endpoints always enforce HTTPS regardless of this setting.
+	if raw := os.Getenv("ARMIS_LOCAL_S3_ENDPOINT"); raw != "" {
+		// Determine if this is a local development environment based on the base URL
+		isLocal := isLocalDevelopment(baseURL)
+
+		if !isLocal {
+			// SECURITY: Block HTTP bypass for remote/cloud endpoints
+			// Print warning to alert operator of misconfiguration
+			cli.PrintWarning(fmt.Sprintf(
+				"ARMIS_LOCAL_S3_ENDPOINT is set but connecting to remote endpoint (%s). "+
+					"This feature is only for local development (localhost/private IPs). Ignoring for security.",
+				baseURL))
+		} else {
+			// Local development detected - enable HTTP bypass for configured hosts
+			if debug {
+				fmt.Fprintf(os.Stderr, "DEBUG: Local development detected - Enabling local S3 endpoints: %s\n", raw)
+			}
+			// Split comma-separated list and pass to client as allowlist
+			opts = append(opts, api.WithLocalS3Hosts(strings.Split(raw, ",")...))
+		}
+	}
+
+	return opts
+}
+
+// isLocalDevelopment determines if the CLI is running against a local API server.
+//
+// This function is used to decide whether HTTP access to mock S3 services should
+// be allowed. It returns true ONLY for localhost and RFC 1918 private IP addresses,
+// which are non-routable on the public internet.
+//
+// Returns true for:
+//   - localhost (any case)
+//   - 127.0.0.1 (IPv4 loopback)
+//   - 192.168.0.0/16 (home/office networks)
+//   - 10.0.0.0/8 (corporate networks, Docker, Kubernetes)
+//   - 172.16.0.0/12 (Docker default bridge range: 172.16.0.0 - 172.31.255.255)
+//
+// Returns false for:
+//   - All public domain names (moose.armis.com, moose-dev.armis.com, etc.)
+//   - All public IP addresses
+//   - All other URLs
+//
+// Security rationale:
+// This intentionally does NOT consider cloud development environments (like
+// moose-dev.armis.com) as "local development" because they are accessible over
+// the public internet and must enforce HTTPS for all S3 operations. Only URLs
+// that cannot be reached from outside the local network are considered local.
+//
+// Example inputs and results:
+//
+//	isLocalDevelopment("http://localhost:8080")        → true
+//	isLocalDevelopment("http://192.168.1.100:8080")   → true
+//	isLocalDevelopment("http://10.0.0.1:8080")        → true
+//	isLocalDevelopment("https://moose-dev.armis.com") → false
+//	isLocalDevelopment("https://moose.armis.com")     → false
+//	isLocalDevelopment("https://example.com")         → false
+func isLocalDevelopment(baseURL string) bool {
+	lowerURL := strings.ToLower(baseURL)
+
+	// Check for localhost (case-insensitive)
+	// Matches: http://localhost:8080, https://LOCALHOST, etc.
+	if strings.Contains(lowerURL, "localhost") || strings.Contains(lowerURL, "127.0.0.1") {
+		return true
+	}
+
+	// Check for RFC 1918 private IP ranges (not routable on public internet)
+
+	// 192.168.0.0/16 - Class C private networks (most common for home/office)
+	// Matches: http://192.168.1.100:8080, http://192.168.0.1, etc.
+	if strings.Contains(lowerURL, "192.168.") {
+		return true
+	}
+
+	// 10.0.0.0/8 - Class A private networks (corporate, Docker, Kubernetes)
+	// Matches: http://10.0.0.1:8080, http://10.244.0.1 (k8s pod network), etc.
+	// Pattern: ://10. or .10. to avoid false matches in version numbers
+	if strings.Contains(lowerURL, "://10.") || strings.Contains(lowerURL, ".10.") {
+		return true
+	}
+
+	// 172.16.0.0/12 - Class B private networks (172.16.0.0 - 172.31.255.255)
+	// Used by Docker bridge networks (default: 172.17.0.0/16)
+	// Matches: http://172.16.0.1:8080, http://172.17.0.1 (docker0), etc.
+	// Must check range 172.16 - 172.31 (inclusive)
+	for i := 16; i <= 31; i++ {
+		if strings.Contains(lowerURL, fmt.Sprintf("://172.%d.", i)) ||
+			strings.Contains(lowerURL, fmt.Sprintf(".172.%d.", i)) {
+			return true
+		}
+	}
+
+	// Everything else is considered remote/cloud (NOT local development)
+	// This includes:
+	// - All armis.com subdomains (moose.armis.com, moose-dev.armis.com, etc.)
+	// - All public domain names
+	// - All public IP addresses (non-RFC1918)
+	// - Anything not explicitly matched above
+	//
+	// SECURITY: Default to false (block HTTP) for unknown URLs
+	return false
 }
 
 func getPageLimit() (int, error) {
