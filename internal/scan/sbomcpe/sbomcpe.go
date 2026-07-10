@@ -394,6 +394,14 @@ func validateSbomExtension(path string) error {
 	return fmt.Errorf("SBOM file extension %q not allowed; expected one of %v", ext, AllowedExtensions)
 }
 
+// PackForTest exposes packSingleFile to _test packages so integration tests
+// can produce a valid tar.gz that matches what the driver would upload. Kept
+// separate from the private helper so removing this shim doesn't change the
+// production surface.
+func PackForTest(path string, w io.Writer) error {
+	return packSingleFile(path, w)
+}
+
 // packSingleFile writes a tar.gz containing exactly one file (the SBOM).
 func packSingleFile(path string, w io.Writer) error {
 	// armis:ignore cwe:22 reason:path sanitized by caller (Scanner.Scan)
