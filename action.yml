@@ -448,5 +448,10 @@ runs:
           warn "backend returned HTTP $HTTP_CODE${DETAIL:+ ($DETAIL)}"
         fi
 
+        # armis:ignore cwe:20 reason:COMMENT_URL is only echoed to log (never used in commands/API calls); CR, LF, and '::' stripped to prevent workflow-command injection
         COMMENT_URL=$(jq -r '.comment_url // empty' "$RESPONSE_FILE" 2>/dev/null)
+        # Strip CR, LF, and '::' so a backend-injected newline can't inject workflow commands.
+        COMMENT_URL="${COMMENT_URL//$'\r'/}"
+        COMMENT_URL="${COMMENT_URL//$'\n'/}"
+        COMMENT_URL="${COMMENT_URL//::/%3A%3A}"
         echo "Branded PR comment posted: ${COMMENT_URL:-ok}"

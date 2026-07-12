@@ -144,7 +144,7 @@ jobs:
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
 | `fail-on` | string | `''` | Comma-separated severity levels to fail on (e.g., `HIGH,CRITICAL`). Empty string (default) means informational mode — never fail on findings. |
-| `pr-comment` | boolean | `true` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo; otherwise the comment is silently skipped. |
+| `pr-comment` | boolean | `true` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend on `pull_request` events. Ignored on push/schedule/other triggers. Requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo; otherwise the comment is silently skipped. |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
 | `image-tarball` | string | | Path to image tarball (for image scans) |
