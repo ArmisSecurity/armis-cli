@@ -330,8 +330,10 @@ runs:
         # development — an exception that has no use case in CI.
         # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), HTTPS-enforced; not derived from untrusted request data
         BASE_URL="${INPUT_API_URL:-${ARMIS_API_URL:-}}"
+        # Fall back to ARMIS_REGION env var when inputs.region is empty, matching CLI env var behavior.
+        EFFECTIVE_REGION="${INPUT_REGION:-${ARMIS_REGION:-}}"
         if [ -z "$BASE_URL" ]; then
-          if [ -n "$INPUT_REGION" ]; then
+          if [ -n "$EFFECTIVE_REGION" ]; then
             # Explicit allowlist mirroring internal/auth.RegionalBaseURL.
             # Interpolating the region into the hostname would produce wrong
             # endpoints (e.g. moose.eu1.armis.com instead of eu.moose.armis.com)
@@ -342,7 +344,7 @@ runs:
             # fall through to the primary host rather than failing — matching
             # the CLI's graceful fallback behavior and avoiding silently
             # skipping comments for au1 tenants.
-            case "$INPUT_REGION" in
+            case "$EFFECTIVE_REGION" in
               eu1) BASE_URL="https://eu.moose.armis.com" ;;
               *)   BASE_URL="https://moose.armis.com" ;;
             esac
@@ -392,7 +394,7 @@ runs:
           # armis:ignore cwe:522 reason:chmod-600 temp file; secret via $ENV (not argv); consumed via curl @file (never on cmdline); rm'd immediately after curl
           jq -n \
             --arg id "$INPUT_CLIENT_ID" \
-            --arg region "${INPUT_REGION:-}" \
+            --arg region "${EFFECTIVE_REGION:-}" \
             'if $region != "" then {client_id:$id, client_secret:$ENV.INPUT_CLIENT_SECRET, region:$region} else {client_id:$id, client_secret:$ENV.INPUT_CLIENT_SECRET} end' \
             > "$TOKEN_REQ_FILE"
           TOKEN_RESP_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-resp.XXXXXX")
