@@ -351,10 +351,10 @@ runs:
           fi
         fi
         BASE_URL="${BASE_URL%/}"
-        # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), HTTPS-enforced here; not derived from untrusted request data
         case "$BASE_URL" in
           https://*) ;;
-          *) warn "API base URL must use HTTPS (got '${BASE_URL%%:*}://...')" ;;
+          # armis:ignore cwe:918 reason:BASE_URL is operator config (api-url/ARMIS_API_URL/region), not attacker-reachable; this case IS the HTTPS guard that prevents SSRF — warn and exit 0
+          *) warn "API base URL must use HTTPS (got '${BASE_URL}')" ;;
         esac
 
         # 2. Locate the SARIF file produced by the scan step.

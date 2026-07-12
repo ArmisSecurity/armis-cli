@@ -124,7 +124,6 @@ on:
 permissions:
   contents: read
   security-events: write
-  pull-requests: write
 
 jobs:
   security-scan:
@@ -168,8 +167,9 @@ jobs:
 permissions:
   contents: read          # Read repository content
   security-events: write  # Upload SARIF to Code Scanning
-  pull-requests: write    # Post PR comments
   actions: read           # Access workflow artifacts
+# Note: pull-requests: write is NOT required. PR commenting is handled by
+# the armis-appsec GitHub App backend — no GITHUB_TOKEN PR write needed.
 ```
 
 #### What You Get
@@ -324,7 +324,6 @@ on:
 permissions:
   contents: read
   security-events: write
-  pull-requests: write
 
 jobs:
   get-changed-files:

@@ -67,11 +67,13 @@ on:
 
 # Top-level permissions define the maximum permissions available to this workflow.
 # Job-level permissions further restrict as needed.
+# pull-requests: write was removed in PPSC-556: PR commenting is now handled by
+# the Armis backend GitHub App (armis-appsec[bot]) and no longer requires the
+# workflow's GITHUB_TOKEN to have PR write access.
 permissions:
   contents: read
   security-events: write
   actions: read
-  pull-requests: write
 
 jobs:
   security-scan:
@@ -82,7 +84,6 @@ jobs:
       contents: read
       security-events: write
       actions: read
-      pull-requests: write
 
     steps:
       - name: Checkout repository
