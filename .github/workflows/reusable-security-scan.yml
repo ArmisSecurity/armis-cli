@@ -205,9 +205,10 @@ jobs:
                            total > 0 ? '🟡 Issues found' : '✅ No issues';
 
             // Pinned to main rather than derived from GITHUB_WORKFLOW_REF: on
-            // pull_request-triggered runs that resolves to the ephemeral
-            // refs/pull/<N>/merge pseudo-ref, which raw.githubusercontent.com
-            // can never fetch, breaking the logo image in every PR comment.
+            // pull_request-triggered runs, that variable resolves to the
+            // ephemeral refs/pull/<N>/merge pseudo-ref, which
+            // raw.githubusercontent.com can never fetch, breaking the logo
+            // image in every PR comment.
             const logoLight = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/docs/assets/appsec-logo-light.png`;
             const logoDark = `https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/docs/assets/appsec-logo-dark.png`;
             // GitHub theme-aware images with height constraint (24px to match heading text)
