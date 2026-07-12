@@ -307,6 +307,12 @@ runs:
           exit 0
         }
 
+        # Preflight: jq and curl must be available; missing tools should surface as a
+        # clear prerequisite error rather than a misleading SARIF-parsing warning.
+        for cmd in jq curl; do
+          command -v "$cmd" > /dev/null 2>&1 || warn "$cmd is required but not found on this runner"
+        done
+
         # Keep the request payload (full SARIF) and response private and transient:
         # mktemp + an EXIT trap guarantees cleanup even on an early warn (exit 0), so
         # these never linger in the workspace for later steps to pick up.
@@ -380,19 +386,34 @@ runs:
           TOKEN_REQ_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-req.XXXXXX")
           chmod 600 "$TOKEN_REQ_FILE"
           # armis:ignore cwe:522 reason:credentials written to a chmod-600 temp file (never on argv) and rm'd immediately after use; this IS the secure pattern to avoid process-list exposure
-          if [ -n "$INPUT_REGION" ]; then
-            jq -n --arg id "$INPUT_CLIENT_ID" --arg secret "$INPUT_CLIENT_SECRET" --arg region "$INPUT_REGION" \
-              '{client_id:$id, client_secret:$secret, region:$region}' > "$TOKEN_REQ_FILE"
-          else
-            jq -n --arg id "$INPUT_CLIENT_ID" --arg secret "$INPUT_CLIENT_SECRET" \
-              '{client_id:$id, client_secret:$secret}' > "$TOKEN_REQ_FILE"
-          fi
-          TOKEN_RESP=$(curl -sS --max-time 30 -X POST "${BASE_URL}/api/v1/auth/token" \
+          # armis:ignore cwe:522 reason:jq --arg args are root-only visible in ps and transient; value is written to a chmod-600 temp file, consumed via @file (never on curl argv), and rm'd immediately after use
+          jq -n \
+            --arg id "$INPUT_CLIENT_ID" \
+            --arg secret "$INPUT_CLIENT_SECRET" \
+            --arg region "${INPUT_REGION:-}" \
+            'if $region != "" then {client_id:$id, client_secret:$secret, region:$region} else {client_id:$id, client_secret:$secret} end' \
+            > "$TOKEN_REQ_FILE"
+          TOKEN_RESP_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-resp.XXXXXX")
+          chmod 600 "$TOKEN_RESP_FILE"
+          # armis:ignore cwe:377 reason:explicit XXXXXX template; chmod 600 + rm after use
+          TOKEN_HTTP=$(curl -sS --max-time 30 -o "$TOKEN_RESP_FILE" -w '%{http_code}' \
+            -X POST "${BASE_URL}/api/v1/auth/token" \
             -H 'Content-Type: application/json' --data-binary @"$TOKEN_REQ_FILE")
+          TOKEN_CURL_EXIT=$?
           rm -f "$TOKEN_REQ_FILE"
-          JWT=$(echo "$TOKEN_RESP" | jq -r '.token // empty' 2>/dev/null)
+          if [ "$TOKEN_CURL_EXIT" -ne 0 ]; then
+            rm -f "$TOKEN_RESP_FILE"
+            warn "JWT token exchange network error (curl exit $TOKEN_CURL_EXIT)"
+          fi
+          if [ "$TOKEN_HTTP" -lt 200 ] || [ "$TOKEN_HTTP" -ge 300 ]; then
+            TOKEN_DETAIL=$(jq -r '.detail // empty' "$TOKEN_RESP_FILE" 2>/dev/null)
+            rm -f "$TOKEN_RESP_FILE"
+            warn "JWT token exchange failed HTTP $TOKEN_HTTP${TOKEN_DETAIL:+ ($TOKEN_DETAIL)}"
+          fi
+          JWT=$(jq -r '.token // empty' "$TOKEN_RESP_FILE" 2>/dev/null)
+          rm -f "$TOKEN_RESP_FILE"
           if [ -z "$JWT" ]; then
-            warn "JWT token exchange failed (check client-id/client-secret)"
+            warn "JWT token exchange failed: no token in response (check client-id/client-secret)"
           fi
           AUTH="Bearer ${JWT}"
         elif [ -n "$INPUT_API_TOKEN" ]; then
