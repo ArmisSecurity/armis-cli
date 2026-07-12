@@ -295,9 +295,14 @@ runs:
         # Escape %, CR, and LF before emitting a workflow command so that
         # user-supplied input (region, backend detail text) cannot inject
         # additional workflow commands into the log stream.
+        # bash parameter substitution operates on the full string (unlike sed,
+        # which is line-by-line and can't match embedded newlines portably).
         warn() {
-          local msg
-          msg=$(printf '%s' "$1" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+          local msg="$1"
+          msg="${msg//%/%25}"
+          msg="${msg//$'\r'/%0D}"
+          msg="${msg//$'\n'/%0A}"
+          msg="${msg//::/%3A%3A}"
           echo "::warning::Armis branded PR comment skipped: ${msg}"
           exit 0
         }
