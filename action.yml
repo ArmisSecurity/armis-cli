@@ -421,11 +421,16 @@ runs:
           fi
           AUTH="Bearer ${JWT}"
         elif [ -n "$INPUT_API_TOKEN" ]; then
+          # Strip CR/LF to prevent HTTP header injection before constructing the
+          # Authorization header — a token accidentally containing a newline could
+          # inject additional headers into the curl request.
+          SANITIZED_TOKEN="${INPUT_API_TOKEN//$'\r'/}"
+          SANITIZED_TOKEN="${SANITIZED_TOKEN//$'\n'/}"
           # Backend compares the value after 'Basic ' verbatim (not base64-encoded),
           # matching the CLI's own scheme; base64-encoding would break authentication.
           # Sent over HTTPS only (enforced above); never logged.
           # armis:ignore cwe:522 reason:Basic scheme requires the raw token in the header per the backend contract (verbatim hmac compare); sent over HTTPS, never echoed
-          AUTH="Basic ${INPUT_API_TOKEN}"
+          AUTH="Basic ${SANITIZED_TOKEN}"
         else
           warn "no credentials provided (set client-id/client-secret or api-token)"
         fi
