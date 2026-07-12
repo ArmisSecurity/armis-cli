@@ -310,8 +310,9 @@ runs:
         # Keep the request payload (full SARIF) and response private and transient:
         # mktemp + an EXIT trap guarantees cleanup even on an early warn (exit 0), so
         # these never linger in the workspace for later steps to pick up.
-        PAYLOAD_FILE=$(mktemp)
-        RESPONSE_FILE=$(mktemp)
+        # armis:ignore cwe:377 reason:explicit XXXXXX template prevents name prediction; chmod 600 + EXIT trap ensure no exposure
+        PAYLOAD_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-pr-comment.XXXXXX")
+        RESPONSE_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-pr-response.XXXXXX")
         chmod 600 "$PAYLOAD_FILE" "$RESPONSE_FILE"
         trap 'rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"' EXIT
 
@@ -375,8 +376,10 @@ runs:
         if [ -n "$INPUT_CLIENT_ID" ] && [ -n "$INPUT_CLIENT_SECRET" ]; then
           # Write the credential payload to a private file and send it via @file so the
           # client secret never appears on the curl command line (process list / /proc).
-          TOKEN_REQ_FILE=$(mktemp)
+          # armis:ignore cwe:377 reason:explicit XXXXXX template prevents name prediction; chmod 600 + immediate rm ensure no exposure
+          TOKEN_REQ_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-req.XXXXXX")
           chmod 600 "$TOKEN_REQ_FILE"
+          # armis:ignore cwe:522 reason:credentials written to a chmod-600 temp file (never on argv) and rm'd immediately after use; this IS the secure pattern to avoid process-list exposure
           if [ -n "$INPUT_REGION" ]; then
             jq -n --arg id "$INPUT_CLIENT_ID" --arg secret "$INPUT_CLIENT_SECRET" --arg region "$INPUT_REGION" \
               '{client_id:$id, client_secret:$secret, region:$region}' > "$TOKEN_REQ_FILE"
