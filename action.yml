@@ -381,17 +381,19 @@ runs:
         AUTH=""
         if [ -n "$INPUT_CLIENT_ID" ] && [ -n "$INPUT_CLIENT_SECRET" ]; then
           # Write the credential payload to a private file and send it via @file so the
-          # client secret never appears on the curl command line (process list / /proc).
+          # client secret never appears on the curl command line. Secret is also kept out
+          # of jq's argv by using $ENV.INPUT_CLIENT_SECRET (read from process env, not arg).
           # armis:ignore cwe:377 reason:explicit XXXXXX template prevents name prediction; chmod 600 + immediate rm ensure no exposure
           TOKEN_REQ_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-req.XXXXXX")
           chmod 600 "$TOKEN_REQ_FILE"
-          # armis:ignore cwe:522 reason:credentials written to a chmod-600 temp file (never on argv) and rm'd immediately after use; this IS the secure pattern to avoid process-list exposure
-          # armis:ignore cwe:522 reason:jq --arg args are root-only visible in ps and transient; value is written to a chmod-600 temp file, consumed via @file (never on curl argv), and rm'd immediately after use
+          # Use $ENV.INPUT_CLIENT_SECRET so the secret is read from the process
+          # environment (not placed in jq's argv, which is readable via /proc/*/cmdline).
+          # armis:ignore cwe:522 reason:secret accessed via $ENV (not argv); result written to chmod-600 temp file, consumed via @file, rm'd immediately after use
+          # armis:ignore cwe:522 reason:chmod-600 temp file; secret via $ENV (not argv); consumed via curl @file (never on cmdline); rm'd immediately after curl
           jq -n \
             --arg id "$INPUT_CLIENT_ID" \
-            --arg secret "$INPUT_CLIENT_SECRET" \
             --arg region "${INPUT_REGION:-}" \
-            'if $region != "" then {client_id:$id, client_secret:$secret, region:$region} else {client_id:$id, client_secret:$secret} end' \
+            'if $region != "" then {client_id:$id, client_secret:$ENV.INPUT_CLIENT_SECRET, region:$region} else {client_id:$id, client_secret:$ENV.INPUT_CLIENT_SECRET} end' \
             > "$TOKEN_REQ_FILE"
           TOKEN_RESP_FILE=$(mktemp "${TMPDIR:-/tmp}/armis-token-resp.XXXXXX")
           chmod 600 "$TOKEN_RESP_FILE"
