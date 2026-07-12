@@ -247,7 +247,7 @@ jobs:
 | `api-token` | No* | | Armis API token (legacy) |
 | `tenant-id` | No* | | Tenant identifier (legacy, not needed with JWT) |
 | `format` | No | `sarif` | Output format: `human`, `json`, `sarif`, `junit` |
-| `fail-on` | No | `''` | Severity levels to fail on (empty = informational mode, never fail) |
+| `fail-on` | No | `''` | Severity levels to fail on. Empty string (default) uses the CLI default (`CRITICAL`). Set explicitly (e.g. `HIGH,CRITICAL`) to override. |
 | `exit-code` | No | `1` | Exit code when failing |
 | `no-progress` | No | `true` | Disable progress indicators |
 | `image-tarball` | No | | Path to image tarball (image scans) |

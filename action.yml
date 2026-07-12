@@ -35,7 +35,7 @@ inputs:
     required: false
     default: 'sarif'
   fail-on:
-    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
+    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string (default) uses the CLI default (CRITICAL). Pass a value like HIGH,CRITICAL to override, or use the reusable workflow with fail-on: "" for informational mode.'
     required: false
     default: ''
   exit-code:
