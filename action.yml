@@ -325,10 +325,14 @@ runs:
             # endpoints (e.g. moose.eu1.armis.com instead of eu.moose.armis.com)
             # and would also allow an attacker-controlled region to redirect
             # credentials to an arbitrary host (CWE-918).
+            # Mirroring internal/auth.RegionalBaseURL: only eu1 has a distinct
+            # data plane; all other valid region codes (us1, au1, future ones)
+            # fall through to the primary host rather than failing — matching
+            # the CLI's graceful fallback behavior and avoiding silently
+            # skipping comments for au1 tenants.
             case "$INPUT_REGION" in
               eu1) BASE_URL="https://eu.moose.armis.com" ;;
-              us1|"") BASE_URL="https://moose.armis.com" ;;
-              *) warn "unrecognized region '$INPUT_REGION'; supported values: us1, eu1" ;;
+              *)   BASE_URL="https://moose.armis.com" ;;
             esac
           else
             BASE_URL="https://moose.armis.com"
