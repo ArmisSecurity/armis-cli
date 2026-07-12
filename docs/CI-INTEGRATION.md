@@ -143,7 +143,7 @@ jobs:
 |-------|------|---------|-------------|
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
-| `fail-on` | string | `CRITICAL` | Comma-separated severity levels to fail on (e.g., `HIGH,CRITICAL`). Set to empty string to never fail. |
+| `fail-on` | string | `''` | Comma-separated severity levels to fail on (e.g., `HIGH,CRITICAL`). Empty string (default) means informational mode — never fail on findings. |
 | `pr-comment` | boolean | `true` | Post a branded PR comment (as `armis-appsec[bot]`) via the Armis backend. Requires the [armis-appsec GitHub App](#branded-pr-comments) installed on the repo; otherwise the comment is silently skipped. |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
@@ -247,7 +247,7 @@ jobs:
 | `api-token` | No* | | Armis API token (legacy) |
 | `tenant-id` | No* | | Tenant identifier (legacy, not needed with JWT) |
 | `format` | No | `sarif` | Output format: `human`, `json`, `sarif`, `junit` |
-| `fail-on` | No | `CRITICAL` | Severity levels to fail on |
+| `fail-on` | No | `''` | Severity levels to fail on (empty = informational mode, never fail) |
 | `exit-code` | No | `1` | Exit code when failing |
 | `no-progress` | No | `true` | Disable progress indicators |
 | `image-tarball` | No | | Path to image tarball (image scans) |

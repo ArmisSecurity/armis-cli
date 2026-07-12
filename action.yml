@@ -292,7 +292,15 @@ runs:
         # Commenting must NEVER fail the build: soft-fail everywhere (warn + exit 0).
         set +e
 
-        warn() { echo "::warning::Armis branded PR comment skipped: $1"; exit 0; }
+        # Escape %, CR, and LF before emitting a workflow command so that
+        # user-supplied input (region, backend detail text) cannot inject
+        # additional workflow commands into the log stream.
+        warn() {
+          local msg
+          msg=$(printf '%s' "$1" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+          echo "::warning::Armis branded PR comment skipped: ${msg}"
+          exit 0
+        }
 
         # Keep the request payload (full SARIF) and response private and transient:
         # mktemp + an EXIT trap guarantees cleanup even on an early warn (exit 0), so
@@ -312,11 +320,16 @@ runs:
         BASE_URL="${INPUT_API_URL:-${ARMIS_API_URL:-}}"
         if [ -z "$BASE_URL" ]; then
           if [ -n "$INPUT_REGION" ]; then
-            if echo "$INPUT_REGION" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
-              BASE_URL="https://moose.${INPUT_REGION}.armis.com"
-            else
-              warn "invalid region '$INPUT_REGION'"
-            fi
+            # Explicit allowlist mirroring internal/auth.RegionalBaseURL.
+            # Interpolating the region into the hostname would produce wrong
+            # endpoints (e.g. moose.eu1.armis.com instead of eu.moose.armis.com)
+            # and would also allow an attacker-controlled region to redirect
+            # credentials to an arbitrary host (CWE-918).
+            case "$INPUT_REGION" in
+              eu1) BASE_URL="https://eu.moose.armis.com" ;;
+              us1|"") BASE_URL="https://moose.armis.com" ;;
+              *) warn "unrecognized region '$INPUT_REGION'; supported values: us1, eu1" ;;
+            esac
           else
             BASE_URL="https://moose.armis.com"
           fi
