@@ -4,12 +4,16 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/api"
 )
 
 // ---------------------------------------------------------------------------
@@ -214,33 +218,26 @@ func TestPackDir_SkipsSymlinks(t *testing.T) {
 // Retry classifier
 // ---------------------------------------------------------------------------
 
-type fakeErr struct{ msg string }
-
-func (f *fakeErr) Error() string { return f.msg }
-
 func TestIsRetryableError(t *testing.T) {
 	if isRetryableError(nil) {
 		t.Error("nil error should not be retryable")
 	}
-	for _, msg := range []string{
-		"connection refused",
-		"connection reset by peer",
-		"i/o timeout waiting for headers",
-		"unexpected EOF",
-		"temporary failure in name resolution",
-	} {
-		if !isRetryableError(&fakeErr{msg}) {
-			t.Errorf("expected retryable: %q", msg)
+	// 5xx from the API is transient; 4xx is not.
+	for _, code := range []int{500, 502, 503, 504} {
+		if !isRetryableError(&api.APIError{StatusCode: code, Body: "server hiccup"}) {
+			t.Errorf("expected retryable for status %d", code)
 		}
 	}
-	for _, msg := range []string{
-		"400 Bad Request",
-		"scan not found",
-		"invalid tarball",
-	} {
-		if isRetryableError(&fakeErr{msg}) {
-			t.Errorf("did not expect retryable: %q", msg)
+	for _, code := range []int{400, 401, 403, 404, 409, 422} {
+		if isRetryableError(&api.APIError{StatusCode: code, Body: "nope"}) {
+			t.Errorf("did not expect retryable for status %d", code)
 		}
+	}
+	if !isRetryableError(context.DeadlineExceeded) {
+		t.Error("context.DeadlineExceeded should be retryable")
+	}
+	if isRetryableError(errors.New("scan not found")) {
+		t.Error("plain non-API error should not be retryable")
 	}
 }
 

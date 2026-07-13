@@ -79,14 +79,14 @@ func TestIntegration_SbomCpeScanner_EndToEnd(t *testing.T) {
 		wantScanID   = "sbom-cpe-scan-001"
 	)
 	var (
-		presignedCallCount    atomic.Int32
-		s3UploadCallCount     atomic.Int32
-		startScanCallCount    atomic.Int32
-		statusCallCount       atomic.Int32
-		normalizedCallCount   atomic.Int32
-		artifactResultsCount  atomic.Int32
-		rawDownloadCallCount  atomic.Int32
-		observedArtifactType  atomic.Value // string
+		presignedCallCount   atomic.Int32
+		s3UploadCallCount    atomic.Int32
+		startScanCallCount   atomic.Int32
+		statusCallCount      atomic.Int32
+		normalizedCallCount  atomic.Int32
+		artifactResultsCount atomic.Int32
+		rawDownloadCallCount atomic.Int32
+		observedArtifactType atomic.Value // string
 	)
 
 	finding := model.NormalizedFinding{
@@ -252,7 +252,7 @@ func TestIntegration_SbomCpeScanner_EndToEnd(t *testing.T) {
 
 	rawOut := filepath.Join(tmpDir, "torizon-mini-sbom-cpe.json")
 	scanner := sbomcpe.NewScanner(client, true, wantTenantID, 500, 60*time.Second, false).
-		WithPollInterval(10*time.Millisecond).
+		WithPollInterval(10 * time.Millisecond).
 		WithRawOutput(rawOut)
 
 	// --- Run scan ----------------------------------------------------------
@@ -334,7 +334,7 @@ func TestIntegration_SbomCpeScanner_TarballInput(t *testing.T) {
 		t.Fatalf("api.NewClient: %v", err)
 	}
 	scanner := sbomcpe.NewScanner(client, true, "test-tenant", 500, 60*time.Second, false).
-		WithPollInterval(10*time.Millisecond).
+		WithPollInterval(10 * time.Millisecond).
 		WithoutRawDownload()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

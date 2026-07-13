@@ -51,6 +51,32 @@ const (
 // A pre-packed .tar / .tar.gz / .tgz is also accepted and forwarded as-is.
 var AllowedExtensions = []string{".json", ".xml"}
 
+// prunedDirNames are directory names we skip when walking a directory input:
+// they hold VCS/build/dependency artefacts that (a) inflate the tarball past
+// MaxSbomSize and (b) may contain thousands of .json files that are
+// application manifests, not asset SBOMs.
+var prunedDirNames = map[string]struct{}{
+	".git":         {},
+	".hg":          {},
+	".svn":         {},
+	"node_modules": {},
+	"vendor":       {},
+	"__pycache__":  {},
+	".venv":        {},
+	"venv":         {},
+	"dist":         {},
+	"build":        {},
+	"target":       {},
+	".tox":         {},
+	".idea":        {},
+	".vscode":      {},
+}
+
+func isPrunedDir(name string) bool {
+	_, ok := prunedDirNames[name]
+	return ok
+}
+
 // Scanner drives the sbom-cpe scan flow.
 type Scanner struct {
 	client                *api.Client
@@ -146,7 +172,7 @@ func (s *Scanner) Scan(ctx context.Context, inputPath string) (*model.ScanResult
 	// Prepare a tar.gz on disk. If the user already handed us a tarball,
 	// forward it verbatim.
 	var (
-		tarballPath string
+		tarballPath  string
 		artifactName string
 		cleanupTar   func()
 	)
@@ -452,11 +478,18 @@ func packDir(root string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		// Skip symlinks entirely (defense against zip-slip-style escapes).
-		if info.Mode()&os.ModeSymlink != 0 {
+		// Prune VCS / dependency / build dirs — the extension filter alone
+		// would pull thousands of package.json files out of node_modules and
+		// blow through the 100MB cap (or, worse, ship application manifests
+		// to a scanner that expects asset SBOMs).
+		if info.IsDir() {
+			if path != root && isPrunedDir(info.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		if info.IsDir() {
+		// Skip symlinks entirely (defense against zip-slip-style escapes).
+		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
@@ -692,28 +725,17 @@ func isEmptyFinding(nf model.NormalizedFinding) bool {
 	return !hasDescription && !hasCVEsOrCWEs && !hasCategory
 }
 
-// isRetryableError matches the retry criteria used by scan_image / scan_repo.
-// Kept narrow — we only retry on transient network errors, not on 4xx from
-// the API.
+// isRetryableError mirrors the retry criteria used by scan_image / scan_repo:
+// treat 5xx API responses and timeouts as transient. Substring matching on
+// err.Error() would miss *api.APIError values whose stringified form doesn't
+// happen to contain one of the hard-coded markers.
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	// Match the substrings the image scanner treats as transient. Keeping
-	// this small avoids re-inventing retry policy; if the shared helper
-	// grows, we can move to it.
-	transientMarkers := []string{
-		"connection refused",
-		"connection reset",
-		"i/o timeout",
-		"EOF",
-		"temporary failure",
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
 	}
-	for _, m := range transientMarkers {
-		if strings.Contains(msg, m) {
-			return true
-		}
-	}
-	return false
+	return errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)
 }
