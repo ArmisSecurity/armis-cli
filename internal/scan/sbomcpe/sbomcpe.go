@@ -520,7 +520,10 @@ func packDir(root string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		hdr.Name = rel
+		// Tar entries always use forward slashes; filepath.Rel yields
+		// backslashes on Windows, which the backend extractor would treat
+		// as literal filename characters instead of a directory separator.
+		hdr.Name = filepath.ToSlash(rel)
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
