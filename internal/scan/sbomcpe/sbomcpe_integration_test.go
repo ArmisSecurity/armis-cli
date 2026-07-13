@@ -108,8 +108,7 @@ func TestIntegration_SbomCpeScanner_EndToEnd(t *testing.T) {
 		},
 	}
 
-	var server *http.Server
-	server = testutil.NewMockScanServerWithConfig(t, testutil.MockAPIConfig{
+	server := testutil.NewMockScanServerWithConfig(t, testutil.MockAPIConfig{
 		ScanID:             wantScanID,
 		Findings:           []model.NormalizedFinding{finding},
 		PollsUntilComplete: 1,
@@ -305,7 +304,7 @@ func TestIntegration_SbomCpeScanner_EndToEnd(t *testing.T) {
 	}
 
 	// Raw dump should exist on disk
-	data, err := os.ReadFile(rawOut)
+	data, err := os.ReadFile(rawOut) //nolint:gosec // test-only read of a path we just wrote
 	if err != nil {
 		t.Fatalf("failed to read raw dump: %v", err)
 	}
@@ -484,7 +483,7 @@ func minimalMockHandler(t *testing.T) http.HandlerFunc {
 // on the driver's own packing.
 func writeMinimalTarGz(t *testing.T, path, name string, content []byte) {
 	t.Helper()
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // test-only write to a t.TempDir path
 	if err != nil {
 		t.Fatal(err)
 	}

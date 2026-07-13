@@ -101,7 +101,7 @@ func readTarGz(t *testing.T, buf *bytes.Buffer) []string {
 	if err != nil {
 		t.Fatalf("gzip.NewReader: %v", err)
 	}
-	defer gr.Close()
+	defer gr.Close() //nolint:errcheck
 
 	tr := tar.NewReader(gr)
 	var names []string
