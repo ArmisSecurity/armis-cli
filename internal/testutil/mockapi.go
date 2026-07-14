@@ -25,6 +25,9 @@ type MockAPIConfig struct {
 	FinalStatus string
 	// LastError is set when FinalStatus is "FAILED"
 	LastError string
+	// VEXContent, when non-empty, makes GET /api/v1/ingest/results return a
+	// vex_results presigned URL that serves this content (used by `scan sbom`).
+	VEXContent string
 }
 
 // NewMockScanServer creates a mock Armis API server for integration testing.
@@ -163,6 +166,29 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 					},
 				},
 			})
+			return
+		}
+
+		// GET /api/v1/ingest/results - artifact results (SBOM/VEX presigned URLs).
+		// Returns a vex_results URL pointing back at this same server's /_vex path
+		// when VEXContent is configured (used by `scan sbom`).
+		if strings.Contains(r.URL.Path, "/api/v1/ingest/results") && r.Method == http.MethodGet {
+			AssertHasAuthorization(t, r)
+			results := map[string]string{}
+			if config.VEXContent != "" {
+				results["vex_results"] = SchemeFromRequest(r) + "://" + r.Host + "/_vex/" + config.ScanID
+			}
+			JSONResponse(t, w, http.StatusOK, map[string]interface{}{
+				"scan_status": "COMPLETED",
+				"results":     results,
+			})
+			return
+		}
+
+		// Fake presigned-URL download endpoint for the VEX document.
+		if strings.HasPrefix(r.URL.Path, "/_vex/") && r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(config.VEXContent))
 			return
 		}
 
