@@ -229,6 +229,11 @@ func buildMockServer(t *testing.T, cfg serverConfig) (
 //   - not request or write a VEX doc
 func TestIntegration_CPE_NoVEX(t *testing.T) {
 	tmpDir := t.TempDir()
+	// The driver's default VEX path is .armis/<artifact>-vex.json relative to
+	// the process cwd. Anchor cwd to tmpDir so the "no VEX written" assertion
+	// checks the same location the driver would actually write to.
+	t.Chdir(tmpDir)
+
 	sbomPath := filepath.Join(tmpDir, "torizon.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "openssl", "version": "1.0.2k",
@@ -270,7 +275,8 @@ func TestIntegration_CPE_NoVEX(t *testing.T) {
 	if !bytes.Contains(data, []byte("CVE-2018-0732")) {
 		t.Errorf("raw dump missing expected CVE; got: %s", string(data))
 	}
-	// No VEX was requested and none should have been written.
+	// No VEX was requested and none should have been written to the default
+	// path (now anchored under tmpDir via t.Chdir above).
 	vexPath := filepath.Join(tmpDir, ".armis", "torizon-vex.json")
 	if _, err := os.Stat(vexPath); err == nil {
 		t.Errorf("VEX file unexpectedly written to %s", vexPath)

@@ -111,13 +111,6 @@ func (s *Scanner) WithVEXOutput(path string) *Scanner {
 	return s
 }
 
-// EnableVEX opts into VEX generation without setting a custom path (falls back
-// to .armis/<artifact>-vex.json).
-func (s *Scanner) EnableVEX() *Scanner {
-	s.generateVEX = true
-	return s
-}
-
 // Scan uploads the SBOM at path, waits for the backend scan to complete,
 // downloads normalized findings, and (if requested) the VEX document.
 //
@@ -213,7 +206,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 		if attempt < maxFetchRetries {
 			fetchSpinner.Update(fmt.Sprintf("Retrieving findings (retry %d/%d)...", attempt, maxFetchRetries-1))
-			time.Sleep(s.fetchRetryInterval)
+			select {
+			case <-ctx.Done():
+				fetchSpinner.Stop()
+				return nil, ctx.Err()
+			case <-time.After(s.fetchRetryInterval):
+			}
 		}
 	}
 	fetchSpinner.Stop()
@@ -298,11 +296,11 @@ func (s *Scanner) downloadRawFindings(ctx context.Context, results *api.Artifact
 // pickRawFindingsURL prefers the CPE-path raw blob when both are present
 // (which shouldn't happen — only one scanner runs — but the precedence keeps
 // the CPE tag visible in the "Raw findings (cpe)" message when it does).
-func (s *Scanner) pickRawFindingsURL(results *api.ArtifactScanResultsResponse) (url, source string, ok bool) {
-	if u, ok := results.Results[ResultKeySBOMCPE]; ok && u != "" {
+func (s *Scanner) pickRawFindingsURL(results *api.ArtifactScanResultsResponse) (string, string, bool) {
+	if u, present := results.Results[ResultKeySBOMCPE]; present && u != "" {
 		return u, "cpe", true
 	}
-	if u, ok := results.Results[scan.ResultKeySBOM]; ok && u != "" {
+	if u, present := results.Results[scan.ResultKeySBOM]; present && u != "" {
 		return u, "purl", true
 	}
 	return "", "", false
