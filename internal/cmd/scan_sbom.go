@@ -15,16 +15,34 @@ import (
 
 var scanSBOMCmd = &cobra.Command{
 	Use:   "sbom [path]",
-	Short: "Generate a VEX document from a pre-existing SBOM",
-	Long: `Upload a pre-existing SBOM file and download the OpenVEX document the Armis
-backend generates from it.
+	Short: "Scan a pre-existing SBOM for vulnerabilities",
+	Long: `Upload a pre-existing CycloneDX SBOM (single file, directory of SBOMs, or a
+pre-built .tar/.tar.gz/.tgz) and get back the vulnerabilities it exposes.
 
-The <path> may be a single SBOM file (.json/.xml), a directory of SBOMs, or an
-already-built .tar/.tar.gz/.tgz. An SBOM scan produces no findings — the result
-is the generated VEX document (default: .armis/<artifact>-vex.json).`,
-	Example: `  $ armis-cli scan sbom sbom.json
+The backend picks the right scanner automatically based on the SBOM contents:
+
+  - SBOMs whose components carry an explicit CPE (asset / inventory SBOMs
+    like Torizon) are matched against NVD directly.
+  - SBOMs that identify components only via purl (npm / NuGet / PyPI-style
+    application manifests) are matched via Trivy → deps.dev.
+
+Findings are printed as a table (same shape as ` + "`scan repo` / `scan image`" + `);
+pass ` + "`--vex-output`" + ` to also download the OpenVEX document the backend
+generated alongside them.`,
+	Example: `  # Single SBOM
+  $ armis-cli scan sbom ./sbom.json
+
+  # Directory of SBOMs
   $ armis-cli scan sbom ./sboms/
-  $ armis-cli scan sbom sbom.json --vex-output out/vex.json`,
+
+  # Pre-built tarball
+  $ armis-cli scan sbom ./inventory.tar.gz
+
+  # Also emit a VEX document
+  $ armis-cli scan sbom ./sbom.json --vex-output ./out/vex.json
+
+  # Custom path for the raw-findings JSON dump
+  $ armis-cli scan sbom ./sbom.json --sbom-output ./out/findings.json`,
 	// Path is optional and defaults to the current directory, matching scan repo.
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -33,14 +51,10 @@ is the generated VEX document (default: .armis/<artifact>-vex.json).`,
 			sbomPath = args[0]
 		}
 
-		// --sbom / --sbom-output are meaningless here: you can't generate an SBOM
-		// from an SBOM. Warn (consistent with scan.PersistentPreRunE's style) and
-		// ignore. --vex is always implied by this command.
+		// --sbom is a no-op here (you can't generate an SBOM from an SBOM).
+		// --sbom-output is repurposed as the raw-findings dump path.
 		if generateSBOM {
 			cli.PrintWarning("--sbom is ignored for `scan sbom` (the SBOM is the input, not the output)")
-		}
-		if sbomOutput != "" {
-			cli.PrintWarning("--sbom-output is ignored for `scan sbom`")
 		}
 
 		// Validate path exists before making network calls. A directory, a
@@ -67,6 +81,11 @@ is the generated VEX document (default: .armis/<artifact>-vex.json).`,
 			return err
 		}
 
+		limit, err := getPageLimit()
+		if err != nil {
+			return err
+		}
+
 		failOnSeverities, err := cmdutil.GetFailOn(failOn)
 		if err != nil {
 			return err
@@ -80,8 +99,21 @@ is the generated VEX document (default: .armis/<artifact>-vex.json).`,
 		}
 
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
-		scanner := sbom.NewScanner(client, noProgress, tid, scanTimeoutDuration).
-			WithVEXOutput(vexOutput)
+		scanner := sbom.NewScanner(
+			client,
+			noProgress,
+			tid,
+			limit,
+			scanTimeoutDuration,
+			includeNonExploitable,
+		)
+		if sbomOutput != "" {
+			scanner = scanner.WithRawOutput(sbomOutput)
+		}
+		// --vex opts into VEX generation; --vex-output implies --vex.
+		if generateVEX || vexOutput != "" {
+			scanner = scanner.WithVEXOutput(vexOutput)
+		}
 
 		ctx, cancel := NewSignalContext()
 		defer cancel()
@@ -92,7 +124,6 @@ is the generated VEX document (default: .armis/<artifact>-vex.json).`,
 			return handleScanError(ctx, err)
 		}
 
-		// Resolve output destination and format (handles file creation, format auto-detection, colors)
 		outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)
 		if err != nil {
 			return err
@@ -115,8 +146,6 @@ is the generated VEX document (default: .armis/<artifact>-vex.json).`,
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		// An SBOM scan produces no findings, so CheckExit never trips --fail-on;
-		// call it anyway for symmetry with the other scan subcommands.
 		return output.CheckExit(result, failOnSeverities, exitCode)
 	},
 }

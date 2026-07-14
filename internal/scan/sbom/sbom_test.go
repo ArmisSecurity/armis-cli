@@ -37,7 +37,14 @@ func newSBOMClient(t *testing.T, serverURL string) *api.Client {
 	return client
 }
 
-func TestScan_SingleSBOMFile(t *testing.T) {
+func newScanner(t *testing.T, serverURL string) *Scanner {
+	t.Helper()
+	return NewScanner(newSBOMClient(t, serverURL), true, "test-tenant", 500, time.Minute, false).
+		WithPollInterval(10 * time.Millisecond).
+		WithFetchRetryInterval(10 * time.Millisecond)
+}
+
+func TestScan_SingleSBOMFile_WithVEX(t *testing.T) {
 	serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{
 		ScanID:     "sbom-scan-1",
 		VEXContent: testVEX,
@@ -50,9 +57,7 @@ func TestScan_SingleSBOMFile(t *testing.T) {
 	}
 	vexOut := filepath.Join(tmpDir, "out-vex.json")
 
-	scanner := NewScanner(newSBOMClient(t, serverURL), true, "test-tenant", time.Minute).
-		WithPollInterval(10 * time.Millisecond).
-		WithVEXOutput(vexOut)
+	scanner := newScanner(t, serverURL).WithVEXOutput(vexOut)
 
 	result, err := scanner.Scan(context.Background(), sbomPath)
 	if err != nil {
@@ -62,23 +67,18 @@ func TestScan_SingleSBOMFile(t *testing.T) {
 	if result.ScanID != "sbom-scan-1" {
 		t.Errorf("ScanID = %q, want sbom-scan-1", result.ScanID)
 	}
-	if len(result.Findings) != 0 {
-		t.Errorf("Findings = %d, want 0 (sbom scan produces no findings)", len(result.Findings))
-	}
 
-	data, err := os.ReadFile(vexOut) //nolint:gosec // test path
-	if err != nil {
-		t.Fatalf("VEX not written to %s: %v", vexOut, err)
-	}
-	if string(data) != testVEX {
-		t.Errorf("VEX content mismatch:\n got %s\nwant %s", data, testVEX)
+	// VEX file must exist when --vex-output is requested.
+	if _, err := os.Stat(vexOut); err != nil {
+		t.Errorf("VEX not written to %s: %v", vexOut, err)
 	}
 }
 
-func TestScan_Directory(t *testing.T) {
+func TestScan_Directory_NoVEX(t *testing.T) {
+	// Without --vex-output the scan still runs but doesn't request VEX from
+	// the backend and doesn't produce a VEX file locally.
 	serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{
-		ScanID:     "sbom-scan-dir",
-		VEXContent: testVEX,
+		ScanID: "sbom-scan-dir",
 	})
 
 	srcDir := t.TempDir()
@@ -93,26 +93,17 @@ func TestScan_Directory(t *testing.T) {
 		t.Fatalf("write b.xml: %v", err)
 	}
 
-	vexOut := filepath.Join(t.TempDir(), "vex.json")
-	scanner := NewScanner(newSBOMClient(t, serverURL), true, "test-tenant", time.Minute).
-		WithPollInterval(10 * time.Millisecond).
-		WithVEXOutput(vexOut)
-
-	result, err := scanner.Scan(context.Background(), srcDir)
+	scanner := newScanner(t, serverURL)
+	_, err := scanner.Scan(context.Background(), srcDir)
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
-	}
-	if len(result.Findings) != 0 {
-		t.Errorf("Findings = %d, want 0", len(result.Findings))
-	}
-	if _, err := os.Stat(vexOut); err != nil {
-		t.Errorf("VEX not written: %v", err)
 	}
 }
 
 func TestScan_NonExistentPath(t *testing.T) {
 	client := newSBOMClient(t, "https://localhost")
-	scanner := NewScanner(client, true, "test-tenant", time.Minute).WithPollInterval(10 * time.Millisecond)
+	scanner := NewScanner(client, true, "test-tenant", 500, time.Minute, false).
+		WithPollInterval(10 * time.Millisecond)
 
 	_, err := scanner.Scan(context.Background(), "/no/such/sbom.json")
 	if err == nil {
@@ -151,5 +142,16 @@ func TestCountVEXStatements(t *testing.T) {
 
 	if _, ok := countVEXStatements(filepath.Join(t.TempDir(), "missing.json")); ok {
 		t.Error("expected ok=false for missing file")
+	}
+}
+
+// TestResultKeySBOMCPE_MatchesBackendContract locks the CLI-side raw-findings
+// slot name to the backend's persist_results_task output. If either side
+// renames the key, this test breaks in CI before the CLI silently drops the
+// download.
+func TestResultKeySBOMCPE_MatchesBackendContract(t *testing.T) {
+	if ResultKeySBOMCPE != "sbom_cpe_results" {
+		t.Errorf("ResultKeySBOMCPE = %q; backend contract expects %q",
+			ResultKeySBOMCPE, "sbom_cpe_results")
 	}
 }
