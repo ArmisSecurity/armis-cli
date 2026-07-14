@@ -105,11 +105,16 @@ var scanCmd = &cobra.Command{
 		// flags. These are persistent flags shared by `scan repo` and `scan image`,
 		// so surfacing the misuse here (before auth) keeps both commands consistent
 		// and stops the warning from hiding behind an auth error in CI.
-		if sbomOutput != "" && !generateSBOM {
-			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
-		}
-		if vexOutput != "" && !generateVEX {
-			cli.PrintWarning("--vex-output is ignored without --vex flag")
+		// `scan sbom` (PPSC-1136) repurposes both flags: --sbom-output is the
+		// raw-findings dump path and --vex-output implies --vex, so skip the
+		// warnings for that subcommand.
+		if cmd.Name() != "sbom" {
+			if sbomOutput != "" && !generateSBOM {
+				cli.PrintWarning("--sbom-output is ignored without --sbom flag")
+			}
+			if vexOutput != "" && !generateVEX {
+				cli.PrintWarning("--vex-output is ignored without --vex flag")
+			}
 		}
 
 		return nil
