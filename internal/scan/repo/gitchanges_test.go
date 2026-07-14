@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -342,6 +343,86 @@ func TestGitChangedFiles_SpecialCharacters(t *testing.T) {
 	}
 }
 
+// TestGitChangedFiles_ControlCharFilename is the regression test for the
+// scan-scope bypass: a changed file whose name contains a control character
+// (here a tab) must appear in the changed set. Before the -z switch, git
+// C-quoted such names ("weird\tname.txt") and newline splitting produced a
+// string that no longer matched any on-disk file, so it was silently dropped
+// while other changed files still uploaded.
+func TestGitChangedFiles_ControlCharFilename(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	// Tabs/newlines in filenames are not permitted on Windows.
+	if runtime.GOOS == "windows" {
+		t.Skip("control characters not allowed in filenames on Windows")
+	}
+
+	repoDir := setupGitRepo(t)
+
+	// Filename containing a tab (a control character git would normally quote).
+	weirdName := "weird\tname.txt"
+	if err := os.WriteFile(filepath.Join(repoDir, weirdName), []byte("content"), 0600); err != nil {
+		t.Fatalf("failed to create control-char file: %v", err)
+	}
+	// A normal file alongside it, to prove we don't just detect one or the other.
+	if err := os.WriteFile(filepath.Join(repoDir, "normal.go"), []byte("package main"), 0600); err != nil {
+		t.Fatalf("failed to create normal file: %v", err)
+	}
+
+	fl, err := GitChangedFiles(repoDir, ChangedOptions{Mode: ChangedModeUncommitted})
+	if err != nil {
+		t.Fatalf("GitChangedFiles failed: %v", err)
+	}
+
+	files := fl.Files()
+	fileSet := make(map[string]bool)
+	for _, f := range files {
+		fileSet[f] = true
+	}
+	if !fileSet[weirdName] {
+		t.Errorf("control-char filename %q missing from changed set: %q", weirdName, files)
+	}
+	if !fileSet["normal.go"] {
+		t.Errorf("normal.go missing from changed set: %q", files)
+	}
+}
+
+// TestGitChangedFiles_ControlCharFilename_Newline covers a filename containing
+// a literal newline — the byte that a newline-splitting parser fundamentally
+// cannot represent as a single record.
+func TestGitChangedFiles_ControlCharFilename_Newline(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("newlines not allowed in filenames on Windows")
+	}
+
+	repoDir := setupGitRepo(t)
+
+	weirdName := "line1\nline2.txt"
+	if err := os.WriteFile(filepath.Join(repoDir, weirdName), []byte("content"), 0600); err != nil {
+		t.Fatalf("failed to create newline file: %v", err)
+	}
+
+	fl, err := GitChangedFiles(repoDir, ChangedOptions{Mode: ChangedModeUncommitted})
+	if err != nil {
+		t.Fatalf("GitChangedFiles failed: %v", err)
+	}
+
+	found := false
+	for _, f := range fl.Files() {
+		if f == weirdName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("newline filename %q missing from changed set: %q", weirdName, fl.Files())
+	}
+}
+
 func TestFilterToScanPath(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -499,7 +580,7 @@ func TestValidateRef(t *testing.T) {
 	}
 }
 
-func TestParseLines(t *testing.T) {
+func TestParseNulSeparated(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
@@ -507,13 +588,13 @@ func TestParseLines(t *testing.T) {
 		wantNil bool // expect nil
 	}{
 		{
-			name:  "normal lines",
-			input: "a.go\nb.go\nc.go",
+			name:  "normal records",
+			input: "a.go\x00b.go\x00c.go\x00",
 			want:  []string{"a.go", "b.go", "c.go"},
 		},
 		{
-			name:  "trailing newline",
-			input: "a.go\nb.go\n",
+			name:  "no trailing NUL",
+			input: "a.go\x00b.go",
 			want:  []string{"a.go", "b.go"},
 		},
 		{
@@ -522,33 +603,40 @@ func TestParseLines(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name:  "whitespace-only lines preserved",
-			input: "  \n  \n  ",
-			want:  []string{"  ", "  ", "  "},
+			name:  "preserves spaces in filenames",
+			input: "  a.go  \x00  b.go  \x00",
+			want:  []string{"  a.go  ", "  b.go  "},
 		},
 		{
-			name:  "preserves spaces in filenames",
-			input: "  a.go  \n  b.go  ",
-			want:  []string{"  a.go  ", "  b.go  "},
+			// The core regression: control characters inside a pathname are
+			// payload, not delimiters. Newline, CR, and tab must survive.
+			name:  "control characters in filename preserved",
+			input: "weird\tname.txt\x00has\nnewline.go\x00has\rcr.py\x00",
+			want:  []string{"weird\tname.txt", "has\nnewline.go", "has\rcr.py"},
+		},
+		{
+			name:  "empty records skipped",
+			input: "a.go\x00\x00b.go\x00",
+			want:  []string{"a.go", "b.go"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseLines(tt.input)
+			got := parseNulSeparated(tt.input)
 			if tt.wantNil {
 				if got != nil {
-					t.Errorf("parseLines() = %v, want nil", got)
+					t.Errorf("parseNulSeparated() = %v, want nil", got)
 				}
 				return
 			}
 			if len(got) != len(tt.want) {
-				t.Errorf("parseLines() = %v, want %v", got, tt.want)
+				t.Errorf("parseNulSeparated() = %q, want %q", got, tt.want)
 				return
 			}
 			for i := range got {
 				if got[i] != tt.want[i] {
-					t.Errorf("parseLines()[%d] = %v, want %v", i, got[i], tt.want[i])
+					t.Errorf("parseNulSeparated()[%d] = %q, want %q", i, got[i], tt.want[i])
 				}
 			}
 		})
@@ -557,30 +645,30 @@ func TestParseLines(t *testing.T) {
 
 func TestCombineAndDedupe(t *testing.T) {
 	tests := []struct {
-		name    string
-		outputs []string
-		want    []string
+		name  string
+		lists [][]string
+		want  []string
 	}{
 		{
-			name:    "no duplicates",
-			outputs: []string{"a.go\nb.go", "c.go\nd.go"},
-			want:    []string{"a.go", "b.go", "c.go", "d.go"},
+			name:  "no duplicates",
+			lists: [][]string{{"a.go", "b.go"}, {"c.go", "d.go"}},
+			want:  []string{"a.go", "b.go", "c.go", "d.go"},
 		},
 		{
-			name:    "with duplicates",
-			outputs: []string{"a.go\nb.go", "b.go\nc.go"},
-			want:    []string{"a.go", "b.go", "c.go"},
+			name:  "with duplicates",
+			lists: [][]string{{"a.go", "b.go"}, {"b.go", "c.go"}},
+			want:  []string{"a.go", "b.go", "c.go"},
 		},
 		{
-			name:    "empty inputs",
-			outputs: []string{"", "a.go"},
-			want:    []string{"a.go"},
+			name:  "empty inputs",
+			lists: [][]string{nil, {"a.go"}},
+			want:  []string{"a.go"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := combineAndDedupe(tt.outputs...)
+			got := combineAndDedupe(tt.lists...)
 			if len(got) != len(tt.want) {
 				t.Errorf("combineAndDedupe() = %v, want %v", got, tt.want)
 				return
