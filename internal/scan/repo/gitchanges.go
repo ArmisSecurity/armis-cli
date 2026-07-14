@@ -95,7 +95,17 @@ func GitChangedFiles(scanPath string, opts ChangedOptions) (*FileList, error) {
 		return nil, ErrNoChangedFiles
 	}
 
-	// Use ParseFileList for security validation (path traversal checks, MaxFiles limit)
+	// Use ParseFileList for security validation (path traversal checks, MaxFiles limit).
+	//
+	// Note: we intentionally do NOT fail closed if an individual changed path
+	// later turns out to be unscannable (a symlink, a file that vanished, or a
+	// directory). Those are legitimate, intentional skips — symlinks are a
+	// security skip shared with full-directory scans, and untracked files
+	// surfaced by `ls-files --others` (editor swapfiles, build artifacts) can
+	// vanish between detection and archiving. The scan-scope bypass this
+	// addresses was control-character filenames being silently dropped, and the
+	// -z (NUL-delimited) output above closes that fully: such names now
+	// round-trip verbatim and resolve on disk like any other file.
 	return ParseFileList(absPath, filtered)
 }
 
@@ -126,15 +136,19 @@ func gitRepoRoot(path string) (string, error) {
 
 // changedUncommitted returns files with uncommitted changes (staged + unstaged + untracked).
 func changedUncommitted(repoRoot string) ([]string, error) {
-	// Get staged and unstaged modified files
-	// --diff-filter=ACMRT excludes deleted files (D)
-	diffOutput, err := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", "HEAD")
+	// Get staged and unstaged modified files.
+	// --diff-filter=ACMRT excludes deleted files (D).
+	// -z emits NUL-terminated, unquoted pathnames so filenames containing
+	// newlines, tabs, or other control characters round-trip losslessly
+	// (without -z, git C-quotes such paths and packs them onto one line each,
+	// so newline splitting would silently drop them — a scan-scope bypass).
+	diffOutput, err := runGit(repoRoot, "diff", "--name-only", "-z", "--diff-filter=ACMRT", "HEAD")
 	if err != nil {
 		// If HEAD doesn't exist (fresh repo with no commits), get staged files instead.
 		// Check for specific git error messages indicating missing HEAD revision.
 		if strings.Contains(err.Error(), "unknown revision") ||
 			strings.Contains(err.Error(), "bad revision") {
-			stagedOutput, stagedErr := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", "--cached")
+			stagedOutput, stagedErr := runGit(repoRoot, "diff", "--name-only", "-z", "--diff-filter=ACMRT", "--cached")
 			if stagedErr != nil {
 				return nil, fmt.Errorf("failed to get uncommitted changes (no HEAD and staged diff failed): %w", stagedErr)
 			}
@@ -144,24 +158,24 @@ func changedUncommitted(repoRoot string) ([]string, error) {
 		}
 	}
 
-	// Get untracked files (respects .gitignore)
-	untrackedOutput, err := runGit(repoRoot, "ls-files", "--others", "--exclude-standard")
+	// Get untracked files (respects .gitignore). -z for the same reason as above.
+	untrackedOutput, err := runGit(repoRoot, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get untracked files: %w", err)
 	}
 
-	return combineAndDedupe(diffOutput, untrackedOutput), nil
+	return combineAndDedupe(parseNulSeparated(diffOutput), parseNulSeparated(untrackedOutput)), nil
 }
 
 // changedStaged returns only staged files.
 func changedStaged(repoRoot string) ([]string, error) {
-	// Get staged files only
+	// Get staged files only. -z for NUL-terminated, unquoted pathnames.
 	// --diff-filter=ACMRT excludes deleted files (D)
-	output, err := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", "--cached")
+	output, err := runGit(repoRoot, "diff", "--name-only", "-z", "--diff-filter=ACMRT", "--cached")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get staged changes: %w", err)
 	}
-	return parseLines(output), nil
+	return parseNulSeparated(output), nil
 }
 
 // validateRef checks that a git ref does not contain characters that could
@@ -188,7 +202,8 @@ func changedSinceRef(repoRoot, ref string) ([]string, error) {
 	}
 	// Use three-dot notation to compare ref...HEAD (changes since common ancestor)
 	// --diff-filter=ACMRT excludes deleted files (D)
-	output, err := runGit(repoRoot, "diff", "--name-only", "--diff-filter=ACMRT", ref+"...HEAD")
+	// -z emits NUL-terminated, unquoted pathnames (see changedUncommitted).
+	output, err := runGit(repoRoot, "diff", "--name-only", "-z", "--diff-filter=ACMRT", ref+"...HEAD")
 	if err != nil {
 		// Check if the ref doesn't exist
 		if strings.Contains(err.Error(), "unknown revision") ||
@@ -198,7 +213,7 @@ func changedSinceRef(repoRoot, ref string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("failed to get changes since %q: %w", ref, err)
 	}
-	return parseLines(output), nil
+	return parseNulSeparated(output), nil
 }
 
 // filterToScanPath filters changedPaths (relative to repoRoot) to only include
@@ -280,38 +295,41 @@ func runGit(dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// parseLines splits output by newlines and removes empty entries.
-// It only trims trailing newline/CR characters, preserving any spaces
-// in filenames (git can track files with leading/trailing spaces).
-func parseLines(output string) []string {
-	// Only trim trailing newlines from the output, not all whitespace
-	// (a filename could legitimately start with a space)
-	output = strings.TrimRight(output, "\n\r")
+// parseNulSeparated splits NUL-terminated git output (produced with the -z
+// flag) into individual pathnames and removes empty entries.
+//
+// Unlike newline splitting, this is safe for pathnames containing ANY byte
+// except NUL — including newlines, carriage returns, tabs, and other control
+// characters. With -z git also disables path quoting, so each record is the
+// raw, verbatim pathname; we must NOT trim CR or whitespace, as those bytes
+// may be a legitimate part of the filename.
+func parseNulSeparated(output string) []string {
 	if output == "" {
 		return nil
 	}
-	lines := strings.Split(output, "\n")
-	result := make([]string, 0, len(lines))
-	for _, line := range lines {
-		// Only trim trailing CR (for Windows CRLF compatibility), not spaces
-		line = strings.TrimSuffix(line, "\r")
-		if line != "" {
-			result = append(result, line)
+	// -z terminates each record with a NUL, so the split yields a trailing
+	// empty element after the final NUL; the empty-string check drops it.
+	parts := strings.Split(output, "\x00")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
 		}
 	}
 	return result
 }
 
-// combineAndDedupe combines two newline-separated outputs and removes duplicates.
-func combineAndDedupe(outputs ...string) []string {
+// combineAndDedupe combines multiple pathname lists and removes duplicates,
+// preserving first-seen order.
+func combineAndDedupe(lists ...[]string) []string {
 	seen := make(map[string]bool)
 	var result []string
 
-	for _, output := range outputs {
-		for _, line := range parseLines(output) {
-			if !seen[line] {
-				seen[line] = true
-				result = append(result, line)
+	for _, list := range lists {
+		for _, path := range list {
+			if !seen[path] {
+				seen[path] = true
+				result = append(result, path)
 			}
 		}
 	}

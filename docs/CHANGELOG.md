@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `scan repo --changed`: fixed a scan-scope bypass where a changed file whose name contains control characters (newline, tab, etc.) could be silently omitted from the upload archive while other changed files were still scanned. Git change detection now uses NUL-delimited output (`-z`), so pathnames — including those with control characters that git would otherwise quote onto a single line — round-trip verbatim and resolve on disk like any other changed file.
+
 ---
 
 ## [1.18.0] - 2026-07-07
