@@ -9,11 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Documentation: an SSO Setup Guide for IT admins (`docs/SSO-SETUP.md`) covering the end-to-end workflow — registering `armis-cli` as an OIDC app in IdP, and deploying to developer machines via MDM.
-
 ### Changed
-
-- `auth setup`: now auto-detects your tenant ID and region from your Armis credentials — the detected tenant seeds the interactive prompt, and the region routes the registration request to the correct regional host. On success the command prints the exact environment variables to deploy to developer machines.
 
 ### Deprecated
 
@@ -23,7 +19,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- `scan repo --changed`: fixed a scan-scope bypass where a changed file whose name contains control characters (newline, tab, etc.) could be silently omitted from the upload archive while other changed files were still scanned. Git change detection now uses NUL-delimited output (`-z`), so pathnames — including those with control characters that git would otherwise quote onto a single line — round-trip verbatim and resolve on disk like any other changed file.
+---
+
+## [1.19.0] - 2026-07-15
+
+### Added
+
+- `install knowledge`/`uninstall knowledge`: install the Armis Knowledge plugin for Claude Code, driving the official `claude` CLI (marketplace add + install) instead of hand-writing registry JSON. Two variants via `--variant`: `skills` (default, no Python) and `mcp` (registers the MCP bridge, adds the agentic `/ask` command). Installing one variant automatically swaps out the other, since both register identical slash commands and cannot coexist. (#278)
+- `scan sbom <path>`: uploads a pre-existing SBOM artifact (a single `.json`/`.xml` file, a directory of SBOMs, or a pre-built `.tar`/`.tar.gz`/`.tgz`) and downloads the OpenVEX document the backend generates from it. (#269)
+- Documentation: an SSO Setup Guide for IT admins (`docs/SSO-SETUP.md`) covering the end-to-end workflow — registering `armis-cli` as an OIDC app in IdP, and deploying to developer machines via MDM. (#268)
+
+### Changed
+
+- `auth setup`: now auto-detects your tenant ID and region from your Armis credentials — the detected tenant seeds the interactive prompt, and the region routes the registration request to the correct regional host. On success the command prints the exact environment variables to deploy to developer machines. (#268)
+- Updated dependencies: `github.com/schollz/progressbar/v3` to v3.19.1. (#264)
+
+### Fixed
+
+- `ARMIS_LOCAL_S3_ENDPOINT`: local development against mock S3 services (e.g. LocalStack) can now use plain HTTP, restricted to an explicit allowlist and only when the API URL itself is localhost or an RFC 1918 private address. (#267)
+- CI: the Armis AppSec logo in scan-result PR comments no longer 404s. It was pinned to the ephemeral `refs/pull/N/merge` ref on `pull_request`-triggered runs, which `raw.githubusercontent.com` can't serve; the logo URL now points at `main`. (#270)
+
+### Security
+
+- `scan repo --changed`: fixed a scan-scope bypass where a changed file whose name contains control characters (newline, tab, etc.) could be silently omitted from the upload archive while other changed files were still scanned. Git change detection now uses NUL-delimited output (`-z`), so pathnames — including those with control characters that git would otherwise quote onto a single line — round-trip verbatim and resolve on disk like any other changed file. (#277)
 
 ---
 
@@ -629,7 +647,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.15.0...v1.16.0
