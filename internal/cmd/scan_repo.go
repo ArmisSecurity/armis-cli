@@ -109,11 +109,11 @@ var scanRepoCmd = &cobra.Command{
 		// validates all paths using SafeJoinPath to ensure they don't escape the
 		// repository root. Invalid or traversal paths are rejected with an error.
 		if len(includeFiles) > 0 {
-			absPath, err := filepath.Abs(repoPath) // armis:ignore cwe:770 reason:ParseFileList enforces MaxFiles=1000 below
+			absPath, err := filepath.Abs(repoPath) // armis:ignore cwe:770 reason:no bound needed here, this only resolves a path; scanner flags this line but the actual MaxFiles=1000 bound is enforced by ParseFileList below
 			if err != nil {
 				return fmt.Errorf("failed to resolve path: %w", err)
 			}
-			// armis:ignore cwe:22 cwe:770 reason:absPath resolved via filepath.Abs() on line 104; ParseFileList validates paths via SafeJoinPath and enforces MaxFiles=1000
+			// armis:ignore cwe:22 cwe:770 reason:absPath is derived from filepath.Abs() immediately above; ParseFileList validates paths via SafeJoinPath and enforces MaxFiles=1000
 			fileList, err := repo.ParseFileList(absPath, includeFiles)
 			if err != nil {
 				return fmt.Errorf("invalid --include-files: %w", err)
