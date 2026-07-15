@@ -91,8 +91,7 @@ var scanRepoCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 
-		// --sbom-output/--vex-output misuse is warned about in scan.PersistentPreRunE
-		// (before auth), so no warning is emitted here.
+		warnOnUnusedSBOMVEXFlags()
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {

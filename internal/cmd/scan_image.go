@@ -111,8 +111,7 @@ var scanImageCmd = &cobra.Command{
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable).
 			WithPullPolicy(pullPolicy)
 
-		// --sbom-output/--vex-output misuse is warned about in scan.PersistentPreRunE
-		// (before auth), so no warning is emitted here.
+		warnOnUnusedSBOMVEXFlags()
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {

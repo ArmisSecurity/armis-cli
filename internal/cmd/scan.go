@@ -101,19 +101,21 @@ var scanCmd = &cobra.Command{
 			return err
 		}
 
-		// Warn early if SBOM/VEX output paths are given without their generation
-		// flags. These are persistent flags shared by `scan repo` and `scan image`,
-		// so surfacing the misuse here (before auth) keeps both commands consistent
-		// and stops the warning from hiding behind an auth error in CI.
-		if sbomOutput != "" && !generateSBOM {
-			cli.PrintWarning("--sbom-output is ignored without --sbom flag")
-		}
-		if vexOutput != "" && !generateVEX {
-			cli.PrintWarning("--vex-output is ignored without --vex flag")
-		}
-
 		return nil
 	},
+}
+
+// warnOnUnusedSBOMVEXFlags emits a warning when --sbom-output / --vex-output
+// are set without their corresponding generation flag. Called by the
+// subcommands that treat the flags as "output for a generated artifact"
+// (scan repo, scan image). `scan sbom` repurposes both flags and skips it.
+func warnOnUnusedSBOMVEXFlags() {
+	if sbomOutput != "" && !generateSBOM {
+		cli.PrintWarning("--sbom-output is ignored without --sbom flag")
+	}
+	if vexOutput != "" && !generateVEX {
+		cli.PrintWarning("--vex-output is ignored without --vex flag")
+	}
 }
 
 func init() {
