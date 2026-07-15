@@ -190,6 +190,75 @@ func TestKnowledgeInstall_InstallFails(t *testing.T) {
 	}
 }
 
+// A failing install must preserve the underlying error via %w (errors.Is), and
+// still report the sibling ref that was already swapped out before the failure.
+func TestKnowledgeInstall_FailurePreservesWrapAndReplaced(t *testing.T) {
+	sentinel := errors.New("boom")
+	f := &fakeRunner{
+		outputs: map[string]string{"list": "armis-knowledge@armis-knowledge"}, // mcp sibling present
+		errs:    map[string]error{"install": sentinel},
+	}
+	ki := newInstallerWithRunner(f) // installs skills; swaps mcp first
+
+	replaced, err := ki.Install()
+	if err == nil {
+		t.Fatal("Install() = nil, want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("Install() error does not wrap the install error: %v", err)
+	}
+	if replaced != "armis-knowledge@armis-knowledge" {
+		t.Errorf("replaced = %q, want the swapped-out sibling ref even on failure", replaced)
+	}
+}
+
+// When marketplace add fails but emits no stdout, the diagnostic must fall back
+// to the add error's own message rather than being dropped.
+func TestKnowledgeInstall_AddErrFallbackWhenNoOutput(t *testing.T) {
+	f := &fakeRunner{
+		outputs: map[string]string{"install": "install exploded"}, // addOut empty
+		errs: map[string]error{
+			"marketplace": errors.New("network is unreachable"),
+			"install":     errors.New("exit 1"),
+		},
+	}
+	ki := newInstallerWithRunner(f)
+
+	_, err := ki.Install()
+	if err == nil {
+		t.Fatal("Install() = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "network is unreachable") {
+		t.Errorf("error missing add-error fallback diagnostic: %v", err)
+	}
+}
+
+func TestPluginListed(t *testing.T) {
+	const skills = "armis-knowledge-skills@armis-knowledge"
+	const mcp = "armis-knowledge@armis-knowledge"
+
+	cases := []struct {
+		name string
+		out  string
+		ref  string
+		want bool
+	}{
+		{"exact line", skills, skills, true},
+		{"decorated line", "  ❯ " + skills, skills, true},
+		{"among many", "foo@bar\n  ❯ " + mcp + "\nbaz@qux", mcp, true},
+		{"mcp not matched inside skills line", "  ❯ " + skills, mcp, false},
+		{"absent", "other@thing", skills, false},
+		{"empty", "", skills, false},
+		{"whole token amid prose matches", "Installed " + skills + " successfully", skills, true},
+		{"ref only as glued fragment not matched", "see armis-knowledge@armis-knowledgeX for docs", mcp, false},
+	}
+	for _, tc := range cases {
+		if got := pluginListed(tc.out, tc.ref); got != tc.want {
+			t.Errorf("%s: pluginListed(%q, %q) = %v, want %v", tc.name, tc.out, tc.ref, got, tc.want)
+		}
+	}
+}
+
 func TestIsAlreadyInstalled(t *testing.T) {
 	cases := map[string]bool{
 		"Plugin already installed":      true,

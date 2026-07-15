@@ -43,20 +43,12 @@ func runUninstallKnowledge(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("reading --variant flag: %w", err)
 	}
 
-	var variant install.KnowledgeVariant
-	switch variantStr {
-	case "skills":
-		variant = install.KnowledgeVariantSkills
-	case "mcp":
-		variant = install.KnowledgeVariantMCP
-	default:
-		return fmt.Errorf("unknown --variant %q (want \"skills\" or \"mcp\")", variantStr)
+	variant, err := parseKnowledgeVariant(variantStr)
+	if err != nil {
+		return err
 	}
 
-	env := install.KnowledgeEnvProd
-	if useDev {
-		env = install.KnowledgeEnvDev
-	}
+	env := knowledgeEnvForDev(useDev)
 
 	ki := install.NewKnowledgeInstaller(variant, env)
 	if err := ki.CheckClaudeCLI(); err != nil {

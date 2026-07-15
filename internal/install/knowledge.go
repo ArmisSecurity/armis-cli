@@ -152,16 +152,29 @@ func (ki *KnowledgeInstaller) Install() (replaced string, err error) {
 		if isAlreadyInstalled(installOut) {
 			return replaced, nil
 		}
-		msg := fmt.Sprintf("installing %s: %v", ki.PluginRef(), installErr)
-		if strings.TrimSpace(installOut) != "" {
-			msg += "\n" + strings.TrimSpace(installOut)
+		// Preserve %w so callers can errors.Is/As the underlying failure, and
+		// return replaced even on error: a swap may already have removed the
+		// sibling, and the caller must be able to report that state change.
+		err := fmt.Errorf("installing %s: %w", ki.PluginRef(), installErr)
+		var notes []string
+		if s := strings.TrimSpace(installOut); s != "" {
+			notes = append(notes, s)
 		}
-		// Only surface the marketplace-add failure when the install also failed,
-		// since a healthy "already registered" add is the common benign case.
-		if addErr != nil && strings.TrimSpace(addOut) != "" {
-			msg += "\n(marketplace add: " + strings.TrimSpace(addOut) + ")"
+		// Surface the marketplace-add failure only when the install also failed
+		// (a healthy "already registered" add is the common benign case). Prefer
+		// its stdout, but fall back to the error itself so the diagnostic is
+		// never dropped when addOut happens to be empty.
+		if addErr != nil {
+			note := strings.TrimSpace(addOut)
+			if note == "" {
+				note = addErr.Error()
+			}
+			notes = append(notes, "(marketplace add: "+note+")")
 		}
-		return "", errors.New(msg)
+		if len(notes) > 0 {
+			err = fmt.Errorf("%w\n%s", err, strings.Join(notes, "\n"))
+		}
+		return replaced, err
 	}
 
 	return replaced, nil
@@ -193,10 +206,26 @@ func (ki *KnowledgeInstaller) IsInstalled() (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("listing installed plugins: %w", err)
 	}
-	// The plugin names are distinct enough that a full "name@marketplace" match
-	// cannot false-positive across variants: every skills name carries a "-skills"
-	// segment the mcp names lack, so neither ref is a substring of the other.
-	return strings.Contains(out, ki.PluginRef()), nil
+	return pluginListed(out, ki.PluginRef()), nil
+}
+
+// pluginListed reports whether ref appears as a whole "name@marketplace" token
+// on any line of `claude plugin list` output. It matches the ref as a distinct
+// field rather than a raw substring so extra columns, status glyphs, or prose
+// that merely contains the ref can't false-positive — and, critically, so the
+// mcp ref ("armis-knowledge@…") is never seen inside the skills ref line
+// ("armis-knowledge-skills@…"), which a substring check would get wrong.
+func pluginListed(out, ref string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		for _, tok := range strings.Fields(line) {
+			// Trim list-decoration punctuation (e.g. a leading "❯" is its own
+			// field, but guard against attached glyphs/commas just in case).
+			if strings.Trim(tok, "❯•*-,") == ref {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Uninstall removes the selected knowledge plugin via the Claude Code CLI. It is
