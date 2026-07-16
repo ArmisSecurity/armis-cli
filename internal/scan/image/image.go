@@ -106,10 +106,17 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpFileName := tmpFile.Name()
+	// Close immediately: we only need a unique path. Keeping our own handle
+	// open while the external `docker save`/`podman save` process writes to
+	// the same path is unnecessary and, on Windows, risks a sharing
+	// violation or a save that appears to succeed but writes nothing.
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFileName)
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
 
 	// Ensure cleanup always runs, even on context cancellation
 	defer func() {
-		_ = tmpFile.Close()
 		_ = os.Remove(tmpFileName)
 	}()
 
@@ -254,6 +261,12 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		return err
 	}
 
+	debug := s.client.IsDebug()
+	if debug {
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: exportImage runtime=%s image=%q pull_policy=%q output=%q ===\n",
+			dockerCmd, imageName, s.pullPolicy, outputPath)
+	}
+
 	styles := output.GetStyles()
 
 	// Determine pull behavior based on policy
@@ -261,6 +274,9 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	shouldPull, err := determinePullBehavior(s.pullPolicy, localExists)
 	if err != nil {
 		return fmt.Errorf("image %q: %w", imageName, err)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "=== DEBUG: local_exists=%t should_pull=%t ===\n", localExists, shouldPull)
 	}
 
 	if shouldPull {
@@ -282,6 +298,7 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.Bold.Render(imageName))
 	}
 
+	saveStart := time.Now()
 	// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
 	// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName; outputPath is temp file
 	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
@@ -289,6 +306,27 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	saveCmd.Stderr = os.Stderr
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "=== DEBUG: %s save exited 0 after %s ===\n", dockerCmd, time.Since(saveStart).Round(time.Millisecond))
+	}
+
+	// `docker save`/`podman save` can exit 0 while writing nothing (observed
+	// on Windows). Catch it here with an actionable message instead of
+	// letting the generic tarball-format check fail later with no context
+	// about which command produced the empty file.
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat exported image: %w", err)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "=== DEBUG: exported tarball %q size=%d bytes ===\n", outputPath, info.Size())
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf(
+			"%s save produced an empty tarball for %q; retry, or verify the %s daemon can access the image, or use --tarball with a pre-exported image",
+			dockerCmd, imageName, dockerCmd,
+		)
 	}
 
 	return nil
