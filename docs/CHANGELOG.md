@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.20.0] - 2026-07-16
+
+### Fixed
+
+- `scan image`: on Windows, `docker save`/`podman save` could exit `0` while writing an empty tarball, because the CLI held its own handle open on the temp file for the entire export duration. The handle now closes immediately after the temp path is created, and export failures are caught by an explicit post-export empty-file check with an actionable error. (#281)
+
+### Security
+
+- Updated dependencies: `golang.org/x/net` and `golang.org/x/text` to their latest available versions as hygiene against CVE-2026-46600 and CVE-2026-56852, though neither advisory currently lists a fully patched release. (#280)
+
+---
+
 ## [1.19.0] - 2026-07-15
 
 ### Added
@@ -647,7 +659,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...HEAD
+[1.20.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.16.0...v1.17.0
