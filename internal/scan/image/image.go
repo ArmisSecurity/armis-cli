@@ -298,7 +298,10 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 			styles.Bold.Render(imageName))
 	}
 
-	saveStart := time.Now()
+	var saveStart time.Time
+	if debug {
+		saveStart = time.Now()
+	}
 	// armis:ignore cwe:94 reason:dockerCmd from getDockerCommand (hardcoded docker/podman); imageName validated by validateImageName()
 	// armis:ignore cwe:78 reason:dockerCmd validated by validateDockerCommand allowlist; imageName validated by validateImageName; outputPath is temp file
 	saveCmd := exec.CommandContext(ctx, dockerCmd, "save", "-o", outputPath, imageName) //nolint:gosec // G204: dockerCmd is validated, imageName is validated, outputPath is controlled
@@ -322,12 +325,11 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 	return nil
 }
 
-// validateExportedTarball stats the tarball produced by `docker save`/`podman
-// save` and rejects it if empty. `docker save`/`podman save` can exit 0 while
-// writing nothing (observed on Windows) — this catches that case with an
-// actionable message instead of letting the generic downstream
-// tarball-format check fail with no context about which command produced
-// the empty file.
+// validateExportedTarball stats the tarball produced by the save command and
+// rejects it if empty. `docker save`/`podman save` can exit 0 while writing
+// nothing (observed on Windows) — this catches that case with an actionable
+// message instead of letting the generic downstream tarball-format check
+// fail with no context about which command produced the empty file.
 func validateExportedTarball(outputPath, dockerCmd, imageName string) (int64, error) {
 	info, err := os.Stat(outputPath)
 	if err != nil {
