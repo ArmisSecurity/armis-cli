@@ -2,7 +2,9 @@ package image
 
 import (
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -327,4 +329,52 @@ func TestDeterminePullBehavior(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateExportedTarball(t *testing.T) {
+	t.Run("empty tarball is rejected with an actionable error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.tar")
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatalf("failed to write empty test file: %v", err)
+		}
+
+		_, err := validateExportedTarball(path, "docker", "testapp:1.0")
+		if err == nil {
+			t.Fatal("expected an error for an empty tarball, got nil")
+		}
+		if !strings.Contains(err.Error(), "empty tarball") {
+			t.Errorf("expected error to mention empty tarball, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "testapp:1.0") {
+			t.Errorf("expected error to name the image, got: %v", err)
+		}
+	})
+
+	t.Run("non-empty tarball returns its size", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "nonempty.tar")
+		content := []byte("not a real tar, just needs bytes")
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+
+		size, err := validateExportedTarball(path, "docker", "testapp:1.0")
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if size != int64(len(content)) {
+			t.Errorf("expected size %d, got %d", len(content), size)
+		}
+	})
+
+	t.Run("missing file returns a stat error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "does-not-exist.tar")
+
+		_, err := validateExportedTarball(path, "docker", "testapp:1.0")
+		if err == nil {
+			t.Fatal("expected an error for a missing file, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to stat exported image") {
+			t.Errorf("expected stat error, got: %v", err)
+		}
+	})
 }

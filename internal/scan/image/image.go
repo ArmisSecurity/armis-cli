@@ -112,7 +112,7 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	// violation or a save that appears to succeed but writes nothing.
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(tmpFileName)
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Ensure cleanup always runs, even on context cancellation
@@ -311,25 +311,35 @@ func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string)
 		fmt.Fprintf(os.Stderr, "=== DEBUG: %s save exited 0 after %s ===\n", dockerCmd, time.Since(saveStart).Round(time.Millisecond))
 	}
 
-	// `docker save`/`podman save` can exit 0 while writing nothing (observed
-	// on Windows). Catch it here with an actionable message instead of
-	// letting the generic tarball-format check fail later with no context
-	// about which command produced the empty file.
-	info, err := os.Stat(outputPath)
+	size, err := validateExportedTarball(outputPath, dockerCmd, imageName)
 	if err != nil {
-		return fmt.Errorf("failed to stat exported image: %w", err)
+		return err
 	}
 	if debug {
-		fmt.Fprintf(os.Stderr, "=== DEBUG: exported tarball %q size=%d bytes ===\n", outputPath, info.Size())
-	}
-	if info.Size() == 0 {
-		return fmt.Errorf(
-			"%s save produced an empty tarball for %q; retry, or verify the %s daemon can access the image, or use --tarball with a pre-exported image",
-			dockerCmd, imageName, dockerCmd,
-		)
+		fmt.Fprintf(os.Stderr, "=== DEBUG: exported tarball %q size=%d bytes ===\n", outputPath, size)
 	}
 
 	return nil
+}
+
+// validateExportedTarball stats the tarball produced by `docker save`/`podman
+// save` and rejects it if empty. `docker save`/`podman save` can exit 0 while
+// writing nothing (observed on Windows) — this catches that case with an
+// actionable message instead of letting the generic downstream
+// tarball-format check fail with no context about which command produced
+// the empty file.
+func validateExportedTarball(outputPath, dockerCmd, imageName string) (int64, error) {
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to stat exported image: %w", err)
+	}
+	if info.Size() == 0 {
+		return 0, fmt.Errorf(
+			"%s save produced an empty tarball for %q; retry, or verify the %s runtime can access the image, or use --tarball with a pre-exported image",
+			dockerCmd, imageName, dockerCmd,
+		)
+	}
+	return info.Size(), nil
 }
 
 // IsDockerAvailable reports whether a container runtime (Docker or Podman) is
