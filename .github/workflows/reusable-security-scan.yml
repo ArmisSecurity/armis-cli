@@ -316,7 +316,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4
         continue-on-error: true
         with:
           sarif_file: armis-results.sarif
