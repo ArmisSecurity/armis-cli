@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo`/`scan image`: new `--sbom-format` flag selects the generated SBOM serialization — `cyclonedx` (default) or `spdx` (SPDX 2.3 JSON). Requires `--sbom`; the value is sent to the ingest API's `sbom_format` field and the SPDX document is downloaded from the backend's `sbom_spdx_results` artifact (default path `.armis/<artifact>-sbom.spdx.json`). Omitting the flag preserves the existing CycloneDX behavior.
+
 ### Changed
 
 ### Deprecated

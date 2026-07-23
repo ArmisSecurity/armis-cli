@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -284,6 +285,60 @@ func TestClient_StartIngest(t *testing.T) {
 		if state.presignedCalls != 1 || state.s3Calls != 1 || state.scanCalls != 1 {
 			t.Errorf("Expected 1 call to each stage, got presigned=%d s3=%d scan=%d",
 				state.presignedCalls, state.s3Calls, state.scanCalls)
+		}
+	})
+
+	t.Run("forwards sbom_format to /scan when SPDX requested", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			GenerateSBOM: true, SBOMFormat: "spdx",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if !req.SBOMGenerate {
+			t.Error("expected sbom_generate=true")
+		}
+		if req.SBOMFormat != "spdx" {
+			t.Errorf("sbom_format = %q, want %q", req.SBOMFormat, "spdx")
+		}
+	})
+
+	t.Run("omits sbom_format when unset", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		// omitempty means the key must be absent from the wire payload so that
+		// older backends see exactly the pre-SPDX request shape.
+		if strings.Contains(string(body), "sbom_format") {
+			t.Errorf("expected sbom_format to be omitted, got body: %s", body)
 		}
 	})
 

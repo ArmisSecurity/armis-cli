@@ -125,12 +125,15 @@ type PresignedUploadResponse struct {
 
 // IngestScanStartRequest is the JSON body for POST /api/v1/ingest/scan.
 type IngestScanStartRequest struct {
-	ScanID       string   `json:"scan_id"`
-	TenantID     string   `json:"tenant_id"`
-	ScanType     string   `json:"scan_type"`
-	SBOMGenerate bool     `json:"sbom_generate"`
-	VEXGenerate  bool     `json:"vex_generate"`
-	CustomScans  []string `json:"custom_scans,omitempty"`
+	ScanID       string `json:"scan_id"`
+	TenantID     string `json:"tenant_id"`
+	ScanType     string `json:"scan_type"`
+	SBOMGenerate bool   `json:"sbom_generate"`
+	// SBOMFormat selects the generated SBOM serialization ("cyclonedx" |
+	// "spdx"). Omitted when empty so older backends default to CycloneDX.
+	SBOMFormat  string   `json:"sbom_format,omitempty"`
+	VEXGenerate bool     `json:"vex_generate"`
+	CustomScans []string `json:"custom_scans,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

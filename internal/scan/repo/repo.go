@@ -213,6 +213,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 	if s.sbomVEXOpts != nil {
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
+		ingestOpts.SBOMFormat = s.sbomVEXOpts.SBOMFormat
 		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
 	}
 

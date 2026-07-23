@@ -309,6 +309,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 	// Save original values
 	originalFormat := format
 	originalGroupBy := groupBy
+	originalSBOMFormat := sbomFormat
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -316,6 +317,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 	t.Cleanup(func() {
 		format = originalFormat
 		groupBy = originalGroupBy
+		sbomFormat = originalSBOMFormat
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -430,6 +432,55 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --group-by value") {
 			t.Errorf("error message should contain 'invalid --group-by value', got: %v", err)
 		}
+	})
+
+	t.Run("valid sbom-format cyclonedx", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "cyclonedx"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for valid sbom-format 'cyclonedx', got: %v", err)
+		}
+	})
+
+	t.Run("valid sbom-format spdx", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "spdx"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for valid sbom-format 'spdx', got: %v", err)
+		}
+	})
+
+	t.Run("sbom-format is normalized to lowercase", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "SPDX"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for 'SPDX', got: %v", err)
+		}
+		if sbomFormat != "spdx" {
+			t.Errorf("expected sbomFormat normalized to 'spdx', got: %q", sbomFormat)
+		}
+	})
+
+	t.Run("invalid sbom-format returns error", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = testInvalidValue
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid sbom-format 'invalid'")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --sbom-format value") {
+			t.Errorf("error message should contain 'invalid --sbom-format value', got: %v", err)
+		}
+		// Reset to a valid value so later subtests aren't affected.
+		sbomFormat = "cyclonedx"
 	})
 
 	t.Run("chains to root PreRunE", func(t *testing.T) {
