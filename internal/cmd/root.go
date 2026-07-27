@@ -90,7 +90,10 @@ var rootCmd = &cobra.Command{
   armis-cli scan image nginx:latest
 
   # Scan with specific failure threshold
-  armis-cli scan repo . --fail-on HIGH,CRITICAL`,
+  armis-cli scan repo . --fail-on HIGH,CRITICAL
+
+  # Re-check the last scan's status (or look up a specific scan_id)
+  armis-cli scan status`,
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,

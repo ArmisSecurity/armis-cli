@@ -78,7 +78,7 @@ armis-cli auth setup \
   --client-secret "$ARMIS_CLIENT_SECRET"
 ```
 
-The command auto-detects your region and tenant from your credentials, 
+The command auto-detects your region and tenant from your credentials,
 then walks you through the values from Step 1: IdP type,
 issuer, client ID, client secret, and group claim.
 
@@ -112,8 +112,8 @@ The first Armis command a developer runs then opens the browser for sign-in
 ## Verifying and updating
 
 Re-running `armis-cli auth setup` fetches the existing configuration, shows the
-current values (secrets excluded) and lets you **edit it in place** — for example 
-to rotate the secret or change a group mapping. 
+current values (secrets excluded) and lets you **edit it in place** — for example
+to rotate the secret or change a group mapping.
 This both verifies the registration and is how you update it later.
 
 For an end-to-end check, have a developer run `armis-cli auth login` and confirm
@@ -126,5 +126,3 @@ sign-in completes with the expected role.
 | Setup rejected as unauthorized | Wrong/expired API credentials. Re-copy them from `<base_VIPR_URL>/settings/api-access`. |
 | Developer sign-in fails with "access denied" | The user isn't in any mapped group. Add their IdP group under `admin` or `developer` (Step 2). |
 | Redirect / callback error during sign-in | The redirect URI in your IdP doesn't match your region host (Step 1). |
-
-

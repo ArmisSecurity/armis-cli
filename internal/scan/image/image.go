@@ -179,6 +179,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
+	scan.RecordScanStarted(s.client.BaseURL(), s.tenantID, scanID, "image", filepath.Base(tarballPath))
 
 	uploadSpinner.Stop()
 	styles := output.GetStyles()
