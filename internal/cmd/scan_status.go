@@ -26,9 +26,6 @@ var statusFormat string
 var statusFormats = []string{statusFormatHuman, statusFormatJSON}
 
 const (
-	statusFormatHuman = "human"
-	statusFormatJSON  = "json"
-
 	// Status enum values worth branching on for terminal styling.
 	statusValCompleted = "COMPLETED"
 	statusValFailed    = "FAILED"
@@ -306,8 +303,8 @@ func init() {
 	scanStatusCmd.Flags().StringVar(&statusFormat, "format", "human",
 		"Output format: human, json (default: human)")
 	_ = scanStatusCmd.RegisterFlagCompletionFunc("format", fixedCompletions(statusFormats, map[string]string{
-		"human": "Human-readable status block",
-		"json":  "Machine-readable JSON envelope",
+		statusFormatHuman: "Human-readable status block",
+		statusFormatJSON:  "Machine-readable JSON envelope",
 	}))
 	scanCmd.AddCommand(scanStatusCmd)
 }

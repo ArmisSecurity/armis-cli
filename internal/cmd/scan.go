@@ -25,8 +25,16 @@ var (
 	outputFile            string
 )
 
+// Shared constants for the --format value across scan subcommands. `scan
+// status` reuses these to keep goconst happy across cmd/ and to make the
+// human/json spelling change in exactly one place if it ever needs to.
+const (
+	statusFormatHuman = "human"
+	statusFormatJSON  = "json"
+)
+
 // validFormats contains the valid output format strings.
-var validFormats = []string{"human", "json", "sarif", "junit"}
+var validFormats = []string{statusFormatHuman, statusFormatJSON, "sarif", "junit"}
 
 // validGroupBy contains the valid group-by options.
 var validGroupBy = []string{"none", "cwe", "severity", "file"}

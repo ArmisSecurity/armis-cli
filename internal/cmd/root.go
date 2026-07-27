@@ -283,10 +283,10 @@ func fixedCompletions(values []string, descriptions map[string]string) cobra.Com
 // sites to keep them from drifting apart.
 func formatCompletions() cobra.CompletionFunc {
 	return fixedCompletions(validFormats, map[string]string{
-		"human": "Human-readable terminal output",
-		"json":  "Machine-readable JSON",
-		"sarif": "SARIF for code-scanning tools",
-		"junit": "JUnit XML for CI test reports",
+		statusFormatHuman: "Human-readable terminal output",
+		statusFormatJSON:  "Machine-readable JSON",
+		"sarif":           "SARIF for code-scanning tools",
+		"junit":           "JUnit XML for CI test reports",
 	})
 }
 
