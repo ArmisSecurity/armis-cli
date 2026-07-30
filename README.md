@@ -557,6 +557,31 @@ armis-cli scan image nginx:latest --pull=always
 armis-cli scan image nginx:latest --pull=never
 ```
 
+### Check Scan Status
+
+Fetch the current status of a scan initiated with `scan repo`, `scan image`, or `scan sbom`.
+
+```bash
+armis-cli scan status [scan_id]
+```
+
+When no `scan_id` is supplied, the command reuses the most recent scan initiated on this machine for the current tenant. Every successful scan records its `scan_id` locally in `~/.armis/scan-history.json` (created 0600), so re-checking a scan does not require copying an ID.
+
+**Examples:**
+
+```bash
+# Look up a specific scan
+armis-cli scan status a1b2c3d4-...
+
+# Re-check the most recently initiated scan on this machine
+armis-cli scan status
+
+# Machine-readable output
+armis-cli scan status --format json
+```
+
+`scan status` reports every state the API can return: `PENDING_UPLOAD`, `UPLOADED`, `INITIATED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `STOPPED`.
+
 ### Other Commands
 
 ```bash
@@ -1018,7 +1043,6 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
 | `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
 | `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
-
 
 ---
 

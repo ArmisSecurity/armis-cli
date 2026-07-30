@@ -220,6 +220,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
 	}
+	scan.RecordScanStarted(s.client.BaseURL(), s.tenantID, scanID, "repo", filepath.Base(absPath))
 
 	// Close the tarball explicitly now that StartIngest has finished reading it.
 	// A failure here means buffered writes never reached disk; the upload

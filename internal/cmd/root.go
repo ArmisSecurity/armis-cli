@@ -90,7 +90,10 @@ var rootCmd = &cobra.Command{
   armis-cli scan image nginx:latest
 
   # Scan with specific failure threshold
-  armis-cli scan repo . --fail-on HIGH,CRITICAL`,
+  armis-cli scan repo . --fail-on HIGH,CRITICAL
+
+  # Re-check the last scan's status (or look up a specific scan_id)
+  armis-cli scan status`,
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -280,10 +283,10 @@ func fixedCompletions(values []string, descriptions map[string]string) cobra.Com
 // sites to keep them from drifting apart.
 func formatCompletions() cobra.CompletionFunc {
 	return fixedCompletions(validFormats, map[string]string{
-		"human": "Human-readable terminal output",
-		"json":  "Machine-readable JSON",
-		"sarif": "SARIF for code-scanning tools",
-		"junit": "JUnit XML for CI test reports",
+		statusFormatHuman: "Human-readable terminal output",
+		statusFormatJSON:  "Machine-readable JSON",
+		"sarif":           "SARIF for code-scanning tools",
+		"junit":           "JUnit XML for CI test reports",
 	})
 }
 
