@@ -46,7 +46,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 ## Features
 
-- Scan repositories and container images
+- Scan repositories, container images, and pre-existing SBOMs
 - Multiple output formats: human, JSON, SARIF, JUnit XML
 - **SBOM generation**: Generate CycloneDX Software Bill of Materials
 - **VEX generation**: Generate Vulnerability Exploitability eXchange documents
@@ -475,7 +475,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 --debug                 Enable debug mode for detailed API responses
 ```
 
-> The `--sbom`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository).
+> The `--sbom`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
 
 ### Scan Repository
 
@@ -556,6 +556,48 @@ armis-cli scan image nginx:latest --pull=always
 # Never pull, require local image (for air-gapped environments)
 armis-cli scan image nginx:latest --pull=never
 ```
+
+### Scan SBOM
+
+Scans a **pre-existing** CycloneDX SBOM you already have — instead of generating one from source — and reports the vulnerabilities it exposes. The input may be a single SBOM file (`.json`/`.xml`), a directory of SBOMs, or a pre-built `.tar`/`.tar.gz`/`.tgz`.
+
+```bash
+armis-cli scan sbom [path]
+```
+
+**Size Limit**: 512MB
+**Examples**:
+
+```bash
+# Single SBOM file
+armis-cli scan sbom ./sbom.json
+
+# Directory of SBOMs
+armis-cli scan sbom ./sboms/
+
+# Pre-built tarball
+armis-cli scan sbom ./inventory.tar.gz
+
+# Also download the generated OpenVEX document
+armis-cli scan sbom ./sbom.json --vex-output ./out/vex.json
+
+# Custom path for the raw-findings JSON dump
+armis-cli scan sbom ./sbom.json --sbom-output ./out/findings.json
+```
+
+The backend picks the right scanner automatically based on the SBOM's contents — no flags needed:
+
+- **CPE-based SBOMs** (asset/inventory SBOMs like Torizon, whose components carry explicit CPEs) are matched against NVD directly.
+- **purl-based SBOMs** (npm/NuGet/PyPI-style application manifests) are matched via Trivy → deps.dev.
+
+Either way, findings are printed as a table (same shape as `scan repo` / `scan image`) and gate on `--fail-on`.
+
+> **`--sbom-output` and `--vex-output` mean something different here.** On `scan repo` / `scan image` they name where a *generated* SBOM/VEX is written. On `scan sbom` the SBOM is the *input*, so:
+>
+> - `--sbom-output` sets the path for the raw-findings JSON dump (default: `.armis/<artifact>-sbom.json`).
+> - `--vex-output` opts into OpenVEX generation and sets its path (default: `.armis/<artifact>-vex.json`). Without it, no VEX is requested.
+>
+> `--sbom` is a no-op on `scan sbom` (you can't generate an SBOM from an SBOM) and prints a warning if passed.
 
 ### Other Commands
 
