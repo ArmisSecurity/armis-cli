@@ -15,13 +15,23 @@ import (
 
 // Result key constants for SBOM/VEX API responses.
 const (
-	ResultKeySBOM = "sbom_results"
-	ResultKeyVEX  = "vex_results"
+	ResultKeySBOM     = "sbom_results"      // CycloneDX SBOM (default)
+	ResultKeySBOMSPDX = "sbom_spdx_results" // SPDX 2.3 SBOM (--sbom-format spdx)
+	ResultKeyVEX      = "vex_results"
+)
+
+// SBOM format identifiers accepted by --sbom-format. These mirror the
+// backend SbomFormat enum (Project-Moose); the values are sent verbatim in
+// the ingest request's sbom_format field.
+const (
+	SBOMFormatCycloneDX = "cyclonedx"
+	SBOMFormatSPDX      = "spdx"
 )
 
 // SBOMVEXOptions configures SBOM and VEX generation during scans.
 type SBOMVEXOptions struct {
 	GenerateSBOM bool   // Request SBOM generation
+	SBOMFormat   string // SBOM serialization: "cyclonedx" (default) | "spdx"
 	GenerateVEX  bool   // Request VEX generation
 	SBOMOutput   string // Output path for SBOM file (empty = default)
 	VEXOutput    string // Output path for VEX file (empty = default)
@@ -63,13 +73,21 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		return fmt.Errorf("artifact results not available")
 	}
 
-	// Handle SBOM download
+	// Handle SBOM download. SPDX and CycloneDX land under distinct result
+	// keys (the backend can persist both), so pick the key and the default
+	// filename by the requested format.
 	if d.opts.GenerateSBOM {
-		sbomURL, ok := results.Results[ResultKeySBOM]
+		resultKey := ResultKeySBOM
+		defaultName := sanitizedName + "-sbom.json"
+		if d.opts.SBOMFormat == SBOMFormatSPDX {
+			resultKey = ResultKeySBOMSPDX
+			defaultName = sanitizedName + "-sbom.spdx.json"
+		}
+		sbomURL, ok := results.Results[resultKey]
 		if ok && sbomURL != "" {
 			outputPath := d.opts.SBOMOutput
 			if outputPath == "" {
-				outputPath = filepath.Join(".armis", sanitizedName+"-sbom.json")
+				outputPath = filepath.Join(".armis", defaultName)
 			}
 			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM"); err != nil {
 				cli.PrintWarningf("%v", err)

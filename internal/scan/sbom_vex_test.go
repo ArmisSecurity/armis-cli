@@ -17,8 +17,19 @@ func TestResultKeyConstants(t *testing.T) {
 	if ResultKeySBOM != "sbom_results" {
 		t.Errorf("ResultKeySBOM = %q, want %q", ResultKeySBOM, "sbom_results")
 	}
+	// Locked to the backend Project-Moose contract (PPSC-266): SPDX SBOMs are
+	// persisted under a distinct ref so they can coexist with the CycloneDX one.
+	if ResultKeySBOMSPDX != "sbom_spdx_results" {
+		t.Errorf("ResultKeySBOMSPDX = %q, want %q", ResultKeySBOMSPDX, "sbom_spdx_results")
+	}
 	if ResultKeyVEX != "vex_results" {
 		t.Errorf("ResultKeyVEX = %q, want %q", ResultKeyVEX, "vex_results")
+	}
+	if SBOMFormatCycloneDX != "cyclonedx" {
+		t.Errorf("SBOMFormatCycloneDX = %q, want %q", SBOMFormatCycloneDX, "cyclonedx")
+	}
+	if SBOMFormatSPDX != "spdx" {
+		t.Errorf("SBOMFormatSPDX = %q, want %q", SBOMFormatSPDX, "spdx")
 	}
 }
 
@@ -230,6 +241,111 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		expectedPath := filepath.Join(".armis", "my-artifact-sbom.json")
 		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 			t.Errorf("Expected SBOM file at default path %s", expectedPath)
+		}
+	})
+
+	t.Run("downloads SPDX SBOM from sbom_spdx_results key", func(t *testing.T) {
+		spdxContent := []byte(`{"spdxVersion": "SPDX-2.3"}`)
+
+		tmpDir := t.TempDir()
+		spdxPath := filepath.Join(tmpDir, "test-sbom.spdx.json")
+
+		var serverURL string
+		callCount := 0
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			callCount++
+			if callCount == 1 {
+				// The backend advertises the SPDX document under its own ref and
+				// leaves sbom_results unset. The downloader must read the SPDX key.
+				response := api.ArtifactScanResultsResponse{
+					ScanStatus: "COMPLETED",
+					Results: map[string]string{
+						"sbom_spdx_results": serverURL + "/download/spdx",
+					},
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, response)
+			} else {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(spdxContent)
+			}
+		})
+		serverURL = server.URL
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{
+			GenerateSBOM: true,
+			SBOMFormat:   SBOMFormatSPDX,
+			SBOMOutput:   spdxPath,
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+		if err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+
+		data, err := os.ReadFile(spdxPath) //nolint:gosec // test file path from t.TempDir()
+		if err != nil {
+			t.Fatalf("Failed to read SPDX file: %v", err)
+		}
+		if string(data) != string(spdxContent) {
+			t.Errorf("SPDX content mismatch: got %s, want %s", data, spdxContent)
+		}
+	})
+
+	t.Run("SPDX uses .spdx.json default filename", func(t *testing.T) {
+		spdxContent := []byte(`{"spdxVersion": "SPDX-2.3"}`)
+
+		tmpDir := t.TempDir()
+		oldDir, _ := os.Getwd()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change directory: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldDir) }()
+
+		var serverURL string
+		callCount := 0
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			callCount++
+			if callCount == 1 {
+				response := api.ArtifactScanResultsResponse{
+					ScanStatus: "COMPLETED",
+					Results: map[string]string{
+						"sbom_spdx_results": serverURL + "/download/spdx",
+					},
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, response)
+			} else {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(spdxContent)
+			}
+		})
+		serverURL = server.URL
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{
+			GenerateSBOM: true,
+			SBOMFormat:   SBOMFormatSPDX,
+			SBOMOutput:   "", // Empty = use default
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+		if err := downloader.Download(context.Background(), "scan-456", "my-artifact"); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+
+		expectedPath := filepath.Join(".armis", "my-artifact-sbom.spdx.json")
+		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+			t.Errorf("Expected SPDX file at default path %s", expectedPath)
 		}
 	})
 

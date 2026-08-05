@@ -7,6 +7,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +19,7 @@ var (
 	groupBy               string
 	includeFiles          []string
 	generateSBOM          bool
+	sbomFormat            string
 	generateVEX           bool
 	sbomOutput            string
 	vexOutput             string
@@ -30,6 +32,10 @@ var validFormats = []string{"human", "json", "sarif", "junit"}
 
 // validGroupBy contains the valid group-by options.
 var validGroupBy = []string{"none", "cwe", "severity", "file"}
+
+// validSBOMFormats contains the valid --sbom-format values. These mirror the
+// backend SbomFormat enum and are sent verbatim in the ingest request.
+var validSBOMFormats = []string{scan.SBOMFormatCycloneDX, scan.SBOMFormatSPDX}
 
 // defaultFailOn returns the default --fail-on severity set. It returns a fresh
 // slice on each call so the two flag registrations (scanCmd and scCheckCmd)
@@ -70,6 +76,17 @@ var scanCmd = &cobra.Command{
 		}
 		if !validGroupBySet[strings.ToLower(groupBy)] {
 			return fmt.Errorf("invalid --group-by value %q: must be one of %v", groupBy, validGroupBy)
+		}
+
+		// Validate --sbom-format early (and normalize case) so a typo surfaces
+		// as a flag error before any network calls.
+		sbomFormat = strings.ToLower(sbomFormat)
+		validSBOMFormatSet := make(map[string]bool)
+		for _, f := range validSBOMFormats {
+			validSBOMFormatSet[f] = true
+		}
+		if !validSBOMFormatSet[sbomFormat] {
+			return fmt.Errorf("invalid --sbom-format value %q: must be one of %v", sbomFormat, validSBOMFormats)
 		}
 
 		// Validate exit-code: must be between 1 and 255 (0 defeats --fail-on, >255 is invalid POSIX)
@@ -113,6 +130,12 @@ func warnOnUnusedSBOMVEXFlags() {
 	if sbomOutput != "" && !generateSBOM {
 		cli.PrintWarning("--sbom-output is ignored without --sbom flag")
 	}
+	// --sbom-format only takes effect when an SBOM is generated. sbomFormat is
+	// normalized to lowercase in PersistentPreRunE, so compare against the
+	// canonical default.
+	if sbomFormat != scan.SBOMFormatCycloneDX && !generateSBOM {
+		cli.PrintWarning("--sbom-format is ignored without --sbom flag")
+	}
 	if vexOutput != "" && !generateVEX {
 		cli.PrintWarning("--vex-output is ignored without --vex flag")
 	}
@@ -146,7 +169,12 @@ func init() {
 		"severity": "Group findings by severity level",
 		"file":     "Group findings by file path",
 	}))
-	scanCmd.PersistentFlags().BoolVar(&generateSBOM, "sbom", false, "Generate Software Bill of Materials (SBOM) in CycloneDX format")
+	scanCmd.PersistentFlags().BoolVar(&generateSBOM, "sbom", false, "Generate Software Bill of Materials (SBOM); serialization set by --sbom-format")
+	scanCmd.PersistentFlags().StringVar(&sbomFormat, "sbom-format", scan.SBOMFormatCycloneDX, "SBOM serialization format: cyclonedx, spdx (requires --sbom)")
+	_ = scanCmd.RegisterFlagCompletionFunc("sbom-format", fixedCompletions(validSBOMFormats, map[string]string{
+		scan.SBOMFormatCycloneDX: "CycloneDX JSON (default)",
+		scan.SBOMFormatSPDX:      "SPDX 2.3 JSON",
+	}))
 	scanCmd.PersistentFlags().BoolVar(&generateVEX, "vex", false, "Generate Vulnerability Exploitability eXchange (VEX) document")
 	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")

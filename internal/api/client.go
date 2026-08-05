@@ -306,7 +306,10 @@ type IngestOptions struct {
 	Data         io.Reader
 	Size         int64
 	GenerateSBOM bool
-	GenerateVEX  bool
+	// SBOMFormat selects the SBOM serialization ("cyclonedx" | "spdx"). Empty
+	// defaults to CycloneDX server-side.
+	SBOMFormat  string
+	GenerateVEX bool
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -526,6 +529,7 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		TenantID:     opts.TenantID,
 		ScanType:     "full", // matches the prior /tar behavior; flag-driven scan_type is a future change
 		SBOMGenerate: opts.GenerateSBOM,
+		SBOMFormat:   opts.SBOMFormat,
 		VEXGenerate:  opts.GenerateVEX,
 	}
 	bodyBytes, err := json.Marshal(body)

@@ -26,7 +26,8 @@ var scanImageCmd = &cobra.Command{
 	Example: `  $ armis-cli scan image nginx:latest
   $ armis-cli scan image myapp:v1.0 --format json
   $ armis-cli scan image --tarball ./image.tar
-  $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL`,
+  $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL
+  $ armis-cli scan image alpine:3.18 --sbom --sbom-format spdx`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
@@ -117,6 +118,7 @@ var scanImageCmd = &cobra.Command{
 		if generateSBOM || generateVEX {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
 				GenerateSBOM: generateSBOM,
+				SBOMFormat:   sbomFormat,
 				GenerateVEX:  generateVEX,
 				SBOMOutput:   sbomOutput,
 				VEXOutput:    vexOutput,
