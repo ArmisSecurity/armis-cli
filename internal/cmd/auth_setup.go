@@ -125,7 +125,7 @@ func runAuthSetup(cmd *cobra.Command, _ []string) error {
 	// The --config path is for scripting (MDM, CI): the caller supplies the whole
 	// configuration as one document, so we don't pre-flight or prompt.
 	if setupConfigInput != "" {
-		return runConfigFileSetup(ctx, client)
+		return runConfigFileSetup(ctx, client, detectedTenant)
 	}
 	if !cli.IsInteractive() {
 		return fmt.Errorf("no configuration provided: pass --config (a file, '-' for stdin, or inline JSON), or run in an interactive terminal")
@@ -160,7 +160,7 @@ func withRequestTimeout(ctx context.Context) (context.Context, context.CancelFun
 
 // runConfigFileSetup handles the non-interactive --config path: load the full
 // configuration from JSON and create it (or update it wholesale with --update).
-func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient) error {
+func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient, detectedTenant string) error {
 	reqCfg, err := loadIdpConfigFromJSON(setupConfigInput)
 	if err != nil {
 		return err
@@ -190,9 +190,9 @@ func runConfigFileSetup(ctx context.Context, client *auth.IdpConfigClient) error
 	}
 
 	if setupUpdate {
-		return sendUpdate(ctx, client, reqCfg)
+		return sendUpdate(ctx, client, reqCfg, detectedTenant)
 	}
-	return sendCreate(ctx, client, reqCfg)
+	return sendCreate(ctx, client, reqCfg, detectedTenant)
 }
 
 // runInteractiveSetup guides an admin through setup. It first resolves the tenant
@@ -221,14 +221,14 @@ func runInteractiveSetup(ctx context.Context, client *auth.IdpConfigClient, dete
 	}
 
 	if existing != nil {
-		return runInteractiveUpdate(ctx, client, existing)
+		return runInteractiveUpdate(ctx, client, existing, detectedTenant)
 	}
-	return runInteractiveCreate(ctx, client, tenant)
+	return runInteractiveCreate(ctx, client, tenant, detectedTenant)
 }
 
 // runInteractiveCreate collects a full configuration for a tenant that has none
 // yet and creates it.
-func runInteractiveCreate(ctx context.Context, client *auth.IdpConfigClient, tenant string) error {
+func runInteractiveCreate(ctx context.Context, client *auth.IdpConfigClient, tenant, detectedTenant string) error {
 	reqCfg, err := promptIdpConfig(tenant)
 	if err != nil {
 		return err
@@ -250,12 +250,12 @@ func runInteractiveCreate(ctx context.Context, client *auth.IdpConfigClient, ten
 			return nil
 		}
 	}
-	return sendCreate(ctx, client, reqCfg)
+	return sendCreate(ctx, client, reqCfg, detectedTenant)
 }
 
 // runInteractiveUpdate shows a form pre-filled from the existing configuration and
 // PUTs only the fields the admin changed, relying on the backend to merge them.
-func runInteractiveUpdate(ctx context.Context, client *auth.IdpConfigClient, existing *auth.IdpConfigResponse) error {
+func runInteractiveUpdate(ctx context.Context, client *auth.IdpConfigClient, existing *auth.IdpConfigResponse, detectedTenant string) error {
 	fmt.Fprintf(os.Stderr, "%s Found an existing IdP configuration for tenant %q — editing it.\n",
 		output.IconPointer, existing.TenantID)
 	fmt.Fprintln(os.Stderr, "  Leave a field unchanged to keep its current value; only edits are sent.")
@@ -287,7 +287,7 @@ func runInteractiveUpdate(ctx context.Context, client *auth.IdpConfigClient, exi
 		return describeIdpConfigError(err)
 	}
 	fmt.Fprintf(os.Stderr, "%s IdP configuration updated for tenant %q.\n", output.IconSuccess, existing.TenantID)
-	printPostSetupHint(existing.TenantID)
+	printPostSetupHint(detectedTenant)
 	return nil
 }
 
@@ -311,13 +311,13 @@ func fetchExistingConfig(ctx context.Context, client *auth.IdpConfigClient, tena
 // sendCreate POSTs a new configuration. On 409 it offers to switch to the update
 // (PUT) path interactively; when non-interactive or --yes is set it errors and
 // points at --update, so a scripted create never silently overwrites.
-func sendCreate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.IdpConfigCreateRequest) error {
+func sendCreate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.IdpConfigCreateRequest, detectedTenant string) error {
 	reqCtx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	_, err := client.Create(reqCtx, reqCfg)
 	if err == nil {
 		fmt.Fprintf(os.Stderr, "%s IdP configuration created for tenant %q.\n", output.IconSuccess, reqCfg.TenantID)
-		printPostSetupHint(reqCfg.TenantID)
+		printPostSetupHint(detectedTenant)
 		return nil
 	}
 
@@ -333,7 +333,7 @@ func sendCreate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.
 				return cerr
 			}
 			if ok {
-				return sendUpdate(ctx, client, reqCfg)
+				return sendUpdate(ctx, client, reqCfg, detectedTenant)
 			}
 			fmt.Fprintln(os.Stderr, "  Cancelled — the existing configuration was left unchanged.")
 			return nil
@@ -346,7 +346,7 @@ func sendCreate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.
 
 // sendUpdate PUTs the configuration for the tenant. Every field is sent, so an
 // update fully replaces the stored values (and rotates the secret).
-func sendUpdate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.IdpConfigCreateRequest) error {
+func sendUpdate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.IdpConfigCreateRequest, detectedTenant string) error {
 	upd := &auth.IdpConfigUpdateRequest{
 		IdpType:          setupStrPtr(reqCfg.IdpType),
 		Issuer:           setupStrPtr(reqCfg.Issuer),
@@ -363,7 +363,7 @@ func sendUpdate(ctx context.Context, client *auth.IdpConfigClient, reqCfg *auth.
 		return describeIdpConfigError(err)
 	}
 	fmt.Fprintf(os.Stderr, "%s IdP configuration updated for tenant %q.\n", output.IconSuccess, reqCfg.TenantID)
-	printPostSetupHint(reqCfg.TenantID)
+	printPostSetupHint(detectedTenant)
 	return nil
 }
 
@@ -398,9 +398,13 @@ func detailOr(ce *auth.IdpConfigError, fallback string) string {
 // printPostSetupHint points the admin at the next step once a config exists:
 // the environment variables to deploy to developer machines (via MDM). It prints
 // ARMIS_REGION only for a non-default region, matching the deployment guide.
-func printPostSetupHint(tenantID string) {
+//
+// detectedTenantID must be the credential-derived tenant ID (provider.GetTenantID(),
+// e.g. from the JWT customer_id claim), not the IdP config's tenant slug — the two
+// often differ, and ARMIS_TENANT_ID / `auth login` require the former.
+func printPostSetupHint(detectedTenantID string) {
 	fmt.Fprintln(os.Stderr, "  Deploy these environment variables to developer machines (e.g. via MDM):")
-	fmt.Fprintf(os.Stderr, "    ARMIS_TENANT_ID=%s\n", tenantID)
+	fmt.Fprintf(os.Stderr, "    ARMIS_TENANT_ID=%s\n", detectedTenantID)
 	fmt.Fprintln(os.Stderr, "    ARMIS_DEFAULT_AUTH_METHOD=SSO")
 	if isNonDefaultRegion(setupDetectedRegion) {
 		fmt.Fprintf(os.Stderr, "    ARMIS_REGION=%s\n", setupDetectedRegion)
