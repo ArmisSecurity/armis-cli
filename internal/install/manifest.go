@@ -173,6 +173,8 @@ func ConfigFormat(id EditorID) string {
 		return "vscode-servers"
 	case EditorZed:
 		return "zed-context_servers"
+	case EditorContinue:
+		return "continue-yaml"
 	default:
 		return "mcpServers"
 	}

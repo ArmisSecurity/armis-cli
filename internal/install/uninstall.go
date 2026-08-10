@@ -194,7 +194,7 @@ func deregisterEditor(id EditorID, configFile string) error {
 	case EditorZed:
 		return deregisterZedFormat(configFile)
 	case EditorContinue:
-		return removeContinueFile(configFile)
+		return removeContinueEntry(configFile, []string{mcpServerName})
 	default:
 		return deregisterMCPServersFormat(configFile)
 	}
@@ -255,18 +255,47 @@ func deregisterZedFormat(configFile string) error {
 	return writeJSONAtomic(configFile, data)
 }
 
-func removeContinueFile(configFile string) error {
+// removeContinueEntry drops Armis servers from Continue's config.yaml list.
+//
+// The file must be edited rather than deleted: config.yaml is Continue's whole
+// configuration (models, rules, context providers), not an Armis-only drop-in
+// like the per-server JSON file Continue used to accept.
+func removeContinueEntry(configFile string, names []string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
 	}
-	has, err := hasArmisEntry(EditorContinue, configFile)
-	if err != nil {
-		return fmt.Errorf("checking continue config: %w", err)
-	}
-	if !has {
+
+	data := readYAMLFileAsMap(configFile)
+	existing, ok := data["mcpServers"].([]interface{})
+	if !ok || len(existing) == 0 {
 		return nil
 	}
-	return os.Remove(configFile)
+
+	drop := make(map[string]bool, len(names))
+	for _, n := range names {
+		drop[n] = true
+	}
+
+	kept := make([]interface{}, 0, len(existing))
+	for _, s := range existing {
+		if m, ok := s.(map[string]interface{}); ok {
+			if n, _ := m["name"].(string); drop[n] {
+				continue
+			}
+		}
+		kept = append(kept, s)
+	}
+	if len(kept) == len(existing) {
+		return nil
+	}
+
+	if len(kept) == 0 {
+		delete(data, "mcpServers")
+	} else {
+		data["mcpServers"] = kept
+	}
+
+	return writeYAML(configFile, data)
 }
 
 func removeFromMarketplace(claudeDir string) error {
@@ -465,6 +494,9 @@ func deregisterServerFromFile(configFile, format string, names []string) error {
 		key = "servers"
 	case "zed-context_servers":
 		key = "context_servers"
+	case "continue-yaml":
+		// Continue's servers are a YAML list, not a JSON map.
+		return removeContinueEntry(configFile, names)
 	}
 
 	data, err := readAndParseJSON(configFile)

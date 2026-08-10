@@ -91,34 +91,11 @@ func TestFleetRegistersBothProductsInEveryAgent(t *testing.T) {
 
 	for id, cfg := range paths {
 		t.Run(string(id), func(t *testing.T) {
-			b, err := os.ReadFile(filepath.Clean(cfg))
-			if err != nil {
-				t.Fatalf("reading %s config: %v", id, err)
-			}
-			var data map[string]interface{}
-			if err := json.Unmarshal(b, &data); err != nil {
-				t.Fatalf("%s config is not valid JSON: %v\n%s", id, err, b)
-			}
-
-			// Each editor family nests its servers under a different key.
-			var key string
-			switch ConfigFormat(id) {
-			case "vscode-servers":
-				key = "servers"
-			case "zed-context_servers":
-				key = "context_servers"
-			default:
-				key = "mcpServers"
-			}
-
-			servers, ok := data[key].(map[string]interface{})
-			if !ok {
-				t.Fatalf("%s: %q object missing, got: %s", id, key, b)
-			}
-			if servers[mcpServerName] == nil {
+			names := registeredServerNames(t, id, cfg)
+			if !names[mcpServerName] {
 				t.Errorf("%s: scanner entry %q missing", id, mcpServerName)
 			}
-			if servers[ki.ServerName()] == nil {
+			if !names[ki.ServerName()] {
 				t.Errorf("%s: knowledge entry %q missing", id, ki.ServerName())
 			}
 		})
@@ -163,35 +140,65 @@ func TestFleetUninstallRemovesKnowledgeEverywhere(t *testing.T) {
 
 	for id, cfg := range paths {
 		t.Run(string(id), func(t *testing.T) {
-			b, err := os.ReadFile(filepath.Clean(cfg))
-			if err != nil {
-				t.Fatalf("reading %s config: %v", id, err)
-			}
-			var data map[string]interface{}
-			if err := json.Unmarshal(b, &data); err != nil {
-				t.Fatalf("%s config is not valid JSON after removal: %v", id, err)
-			}
-
-			var key string
-			switch ConfigFormat(id) {
-			case "vscode-servers":
-				key = "servers"
-			case "zed-context_servers":
-				key = "context_servers"
-			default:
-				key = "mcpServers"
-			}
-
-			servers, ok := data[key].(map[string]interface{})
-			if !ok {
-				t.Fatalf("%s: %q object missing after removal, got: %s", id, key, b)
-			}
-			if servers[ki.ServerName()] != nil {
+			names := registeredServerNames(t, id, cfg)
+			if names[ki.ServerName()] {
 				t.Errorf("%s: knowledge entry survived removal", id)
 			}
-			if servers[mcpServerName] == nil {
+			if !names[mcpServerName] {
 				t.Errorf("%s: scanner entry was lost during knowledge removal", id)
 			}
 		})
 	}
+}
+
+// registeredServerNames returns the set of MCP server names present in an
+// editor's config, normalizing across the three shapes the fleet uses: a
+// JSON map keyed by name, Zed's context_servers map, and Continue's YAML list
+// of objects each carrying its own name.
+func registeredServerNames(t *testing.T, id EditorID, configFile string) map[string]bool {
+	t.Helper()
+
+	names := make(map[string]bool)
+
+	if ConfigFormat(id) == "continue-yaml" {
+		data := readYAMLFileAsMap(configFile)
+		servers, ok := data["mcpServers"].([]interface{})
+		if !ok {
+			return names
+		}
+		for _, s := range servers {
+			if m, ok := s.(map[string]interface{}); ok {
+				if n, _ := m["name"].(string); n != "" {
+					names[n] = true
+				}
+			}
+		}
+		return names
+	}
+
+	b, err := os.ReadFile(filepath.Clean(configFile))
+	if err != nil {
+		t.Fatalf("reading %s config: %v", id, err)
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		t.Fatalf("%s config is not valid JSON: %v\n%s", id, err, b)
+	}
+
+	key := "mcpServers"
+	switch ConfigFormat(id) {
+	case "vscode-servers":
+		key = "servers"
+	case "zed-context_servers":
+		key = "context_servers"
+	}
+
+	servers, ok := data[key].(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s: %q object missing, got: %s", id, key, b)
+	}
+	for n := range servers {
+		names[n] = true
+	}
+	return names
 }

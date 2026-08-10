@@ -114,37 +114,92 @@ func TestDeregisterMissingFile(t *testing.T) {
 	}
 }
 
-func TestRemoveContinueFile(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "armis-appsec.json")
-	mustWriteJSON(t, configFile, map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"armis-appsec": map[string]interface{}{"command": "/bin/python"},
+// TestRemoveContinueEntryPreservesOtherSettings pins the reason Continue is
+// edited rather than deleted: config.yaml holds the user's entire Continue
+// configuration, so removing our server must leave everything else intact.
+func TestRemoveContinueEntryPreservesOtherSettings(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeYAML(configFile, map[string]interface{}{
+		"name":   "Main Config",
+		"schema": "v1",
+		"models": []interface{}{map[string]interface{}{"name": "gpt"}},
+		"mcpServers": []interface{}{
+			map[string]interface{}{"name": "other-server", "command": "/bin/other"},
+			map[string]interface{}{"name": mcpServerName, "command": "/bin/python"},
 		},
-	})
-
-	if err := removeContinueFile(configFile); err != nil {
-		t.Fatalf("removeContinueFile() error: %v", err)
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
-		t.Error("file should be deleted")
+
+	if err := removeContinueEntry(configFile, []string{mcpServerName}); err != nil {
+		t.Fatalf("removeContinueEntry() error: %v", err)
+	}
+
+	if _, err := os.Stat(configFile); err != nil {
+		t.Fatal("config.yaml must be edited, never deleted — it holds all Continue settings")
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	if got["models"] == nil {
+		t.Error("unrelated Continue settings (models) were lost")
+	}
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok || len(servers) != 1 {
+		t.Fatalf("expected exactly one surviving server, got: %v", got["mcpServers"])
+	}
+	m, _ := servers[0].(map[string]interface{})
+	if n, _ := m["name"].(string); n != "other-server" {
+		t.Errorf("surviving server = %q, want other-server", n)
 	}
 }
 
-func TestRemoveContinueFileNoArmisEntry(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "other.json")
-	mustWriteJSON(t, configFile, map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"other-server": map[string]interface{}{"command": "/bin/other"},
+func TestRemoveContinueEntryNoArmisEntry(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeYAML(configFile, map[string]interface{}{
+		"mcpServers": []interface{}{
+			map[string]interface{}{"name": "other-server", "command": "/bin/other"},
 		},
-	})
-
-	if err := removeContinueFile(configFile); err != nil {
-		t.Fatalf("removeContinueFile() error: %v", err)
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		t.Error("file without armis entry should NOT be deleted")
+
+	if err := removeContinueEntry(configFile, []string{mcpServerName}); err != nil {
+		t.Fatalf("removeContinueEntry() error: %v", err)
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok || len(servers) != 1 {
+		t.Errorf("a config without an Armis entry must be left alone, got: %v", got["mcpServers"])
+	}
+}
+
+// TestRegisterContinueFormatIsIdempotent guards against duplicate list entries:
+// Continue's servers are a list, so a naive append would register Armis twice on
+// a second install.
+func TestRegisterContinueFormatIsIdempotent(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	pluginDir := t.TempDir()
+
+	for i := 0; i < 2; i++ {
+		if err := registerContinueFormat(configFile, scannerEntry(pluginDir)); err != nil {
+			t.Fatalf("registerContinueFormat() run %d error: %v", i+1, err)
+		}
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok {
+		t.Fatalf("mcpServers missing: %v", got)
+	}
+	if len(servers) != 1 {
+		t.Errorf("registering twice produced %d entries, want 1", len(servers))
+	}
+	// Continue requires these top-level keys; a config we create must be valid.
+	for _, k := range []string{"name", "version", "schema"} {
+		if got[k] == nil {
+			t.Errorf("required Continue key %q missing from generated config", k)
+		}
 	}
 }
 

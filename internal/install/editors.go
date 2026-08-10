@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -221,15 +223,20 @@ func defaultConfigPath(id EditorID) string {
 	case EditorWindsurf:
 		return homeDir(".codeium", "windsurf", "mcp_config.json")
 	case EditorContinue:
-		return homeDir(".continue", "mcpServers", "armis-appsec.json")
+		// Continue keeps MCP servers inline in its YAML config, not as separate
+		// JSON files under a mcpServers/ directory (which it never creates).
+		return homeDir(".continue", "config.yaml")
 	case EditorZed:
 		if runtime.GOOS == osWindows {
 			return ""
 		}
 		return appSupportPath("Zed", "settings.json")
 	case EditorCline:
-		return appSupportPath("Code", "User", "globalStorage",
-			"saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
+		// Cline moved its settings out of VS Code's globalStorage into a
+		// standalone ~/.cline data directory, so it is no longer VS-Code-scoped.
+		// The old globalStorage file still exists on upgraded installs but Cline
+		// does not read it — writing there registered nothing.
+		return homeDir(".cline", "data", "settings", "cline_mcp_settings.json")
 	case EditorAmazonQ:
 		return homeDir(".aws", "amazonq", "mcp.json")
 	case EditorAntigravity:
@@ -240,7 +247,12 @@ func defaultConfigPath(id EditorID) string {
 		// installs, so registering there silently reached no agent.
 		return homeDir(".gemini", "config", "mcp_config.json")
 	case EditorRooCode:
-		return homeDir(".roo-cline", "mcp_settings.json")
+		// Roo Code stores MCP settings in VS Code's globalStorage, the same way
+		// Cline does — not in a ~/.roo-cline home directory, which it never
+		// creates. Detection keys on this directory, so the old path meant Roo
+		// Code was never detected even when installed.
+		return appSupportPath("Code", "User", "globalStorage",
+			"rooveterinaryinc.roo-cline", "settings", "mcp_settings.json")
 	case EditorJunie:
 		return homeDir(".junie", "mcp", "mcp.json")
 	case EditorClaudeDesktop:
@@ -327,6 +339,8 @@ func registerEditorEntry(id EditorID, configFile string, entry mcpEntry) error {
 		return registerVSCodeFormat(configFile, entry)
 	case EditorZed:
 		return registerZedFormat(configFile, entry)
+	case EditorContinue:
+		return registerContinueFormat(configFile, entry)
 	default:
 		// Shared by the standard mcpServers editors.
 		return registerMCPServersFormat(configFile, entry)
@@ -391,6 +405,98 @@ func registerZedFormat(configFile string, entry mcpEntry) error {
 	data["context_servers"] = servers
 
 	return writeJSON(configFile, data)
+}
+
+// registerContinueFormat writes entry into Continue's config.yaml.
+//
+// Continue is the one supported editor whose MCP servers are a YAML *list* of
+// objects each carrying its own `name`, rather than a map keyed by server name:
+//
+//	mcpServers:
+//	  - name: armis-appsec
+//	    command: /path/to/python
+//	    args: [/path/to/server.py]
+//
+// The whole file is round-tripped so unrelated Continue settings (models, rules,
+// context providers) survive, and an existing entry with the same name is
+// replaced in place rather than duplicated.
+func registerContinueFormat(configFile string, entry mcpEntry) error {
+	data := readYAMLFileAsMap(configFile)
+
+	// Continue rejects a config without these, so seed them when creating one.
+	if data["name"] == nil {
+		data["name"] = "Main Config"
+	}
+	if data["version"] == nil {
+		data["version"] = "1.0.0"
+	}
+	if data["schema"] == nil {
+		data["schema"] = "v1"
+	}
+
+	server := map[string]interface{}{
+		"name":         entry.name,
+		jsonKeyCommand: entry.command,
+	}
+	if len(entry.args) > 0 {
+		server[jsonKeyArgs] = entry.args
+	}
+
+	existing, _ := data["mcpServers"].([]interface{})
+	servers := make([]interface{}, 0, len(existing)+1)
+	replaced := false
+	for _, s := range existing {
+		if m, ok := s.(map[string]interface{}); ok {
+			if n, _ := m["name"].(string); n == entry.name {
+				servers = append(servers, server)
+				replaced = true
+				continue
+			}
+		}
+		servers = append(servers, s)
+	}
+	if !replaced {
+		servers = append(servers, server)
+	}
+	data["mcpServers"] = servers
+
+	return writeYAML(configFile, data)
+}
+
+// readYAMLFileAsMap parses a YAML config into a map, returning an empty map when
+// the file is absent, oversized, or unparseable — mirroring readJSONFileAsMap so
+// a corrupt config cannot abort an install.
+func readYAMLFileAsMap(path string) map[string]interface{} {
+	data := make(map[string]interface{})
+	clean := filepath.Clean(path)
+	// Reject non-regular files (devices, FIFOs) and oversized configs, matching
+	// the JSON reader's bounds (CWE-770).
+	// armis:ignore cwe:22 reason:path from homeDir with hardcoded segments; filepath.Clean applied
+	if info, err := os.Stat(clean); err != nil || !info.Mode().IsRegular() || info.Size() > maxEditorConfigSize {
+		return data
+	}
+	// armis:ignore cwe:22 cwe:253 cwe:770 reason:path from homeDir with hardcoded segments; size-bounded by the guard above; parse error handled below
+	b, err := os.ReadFile(clean) //nolint:gosec // path from homeDir with hardcoded segments, size-checked above
+	if err != nil {
+		return data
+	}
+	// armis:ignore cwe:502 reason:yaml.Unmarshal into map[string]interface{} performs no type resolution; input is the user's own local editor config, size-bounded above
+	if err := yaml.Unmarshal(b, &data); err != nil || data == nil {
+		return make(map[string]interface{})
+	}
+	return data
+}
+
+func writeYAML(path string, data interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	b, err := yaml.Marshal(data)
+	if err != nil {
+		return err
+	}
+	// armis:ignore cwe:22 cwe:73 reason:path from homeDir with hardcoded segments; filepath.Clean applied
+	return os.WriteFile(filepath.Clean(path), b, 0o600)
 }
 
 func readJSONFileAsMap(path string) map[string]interface{} {

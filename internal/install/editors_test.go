@@ -110,7 +110,8 @@ func TestDetectedEditors(t *testing.T) {
 }
 
 func TestRegisterMCPServersFormat(t *testing.T) {
-	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ, EditorAntigravity, EditorContinue, EditorClaudeDesktop, EditorCopilotCLI}
+	// Continue is intentionally absent: it uses a YAML list, not this map format.
+	editors := []EditorID{EditorCursor, EditorWindsurf, EditorCline, EditorAmazonQ, EditorAntigravity, EditorClaudeDesktop, EditorCopilotCLI}
 	for _, id := range editors {
 		t.Run(string(id), func(t *testing.T) {
 			dir := t.TempDir()
@@ -217,13 +218,9 @@ func TestRegisterZedFormat(t *testing.T) {
 	}
 }
 
-func TestRegisterContinueCreatesDirectoryFile(t *testing.T) {
+func TestRegisterContinueWritesYAMLList(t *testing.T) {
 	dir := t.TempDir()
-	mcpServersDir := filepath.Join(dir, "mcpServers")
-	if err := os.MkdirAll(mcpServersDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	configFile := filepath.Join(mcpServersDir, "armis-appsec.json")
+	configFile := filepath.Join(dir, "config.yaml")
 	pluginDir := filepath.Join(dir, "plugin")
 
 	configPathOverrides = map[EditorID]string{EditorContinue: configFile}
@@ -234,25 +231,27 @@ func TestRegisterContinueCreatesDirectoryFile(t *testing.T) {
 		t.Fatalf("Register() error: %v", err)
 	}
 
-	var data map[string]interface{}
-	b, _ := os.ReadFile(filepath.Clean(configFile))
-	if err := json.Unmarshal(b, &data); err != nil {
-		t.Fatal(err)
-	}
-
-	servers, ok := data["mcpServers"].(map[string]interface{})
+	// Continue's mcpServers is a LIST of objects each carrying its own name —
+	// not a map keyed by name like every other supported editor.
+	data := readYAMLFileAsMap(configFile)
+	servers, ok := data["mcpServers"].([]interface{})
 	if !ok {
-		t.Fatal("mcpServers key missing")
+		t.Fatalf("mcpServers list missing, got: %v", data)
 	}
-	server, ok := servers[mcpServerName].(map[string]interface{})
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(servers))
+	}
+	server, ok := servers[0].(map[string]interface{})
 	if !ok {
-		t.Fatal("armis-appsec server not registered")
+		t.Fatalf("server entry is not a mapping: %v", servers[0])
 	}
-	if server["command"] != venvPython(pluginDir) {
-		t.Errorf("command = %q, want %q", server["command"], venvPython(pluginDir))
+	if got, _ := server["name"].(string); got != mcpServerName {
+		t.Errorf("name = %q, want %q", got, mcpServerName)
+	}
+	if got, _ := server["command"].(string); got != venvPython(pluginDir) {
+		t.Errorf("command = %q, want %q", got, venvPython(pluginDir))
 	}
 }
-
 func TestRegisterPreservesExistingConfig(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "mcp.json")
