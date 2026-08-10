@@ -344,6 +344,48 @@ func TestAuthSetupConfigFromFile(t *testing.T) {
 	}
 }
 
+// Regression test for PPSC-1230: the post-setup hint must print the
+// credential-derived tenant ID (from the admin's own credentials), not the IdP
+// config's tenant slug — the two can differ (e.g. a human-readable slug like
+// "acme-slug" typed into the form vs. the real tenant ID tied to the admin's
+// credentials).
+func TestAuthSetupPostSetupHintUsesDetectedTenant(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tenant_id": "acme-slug", "idp_type": "okta", "issuer": "https://acme.okta.com",
+			"oidc_client_id": "client-abc", "group_claim": "groups",
+			"group_mapping": map[string]string{}, "ema_enabled": false, "enabled": true,
+			"created_at": "t", "updated_at": "t",
+		})
+	}))
+	defer srv.Close()
+
+	setupSetupTest(t, srv.URL)                      // credential tenant (Basic auth) is "acme"
+	setupConfigInput = validConfigJSON("acme-slug") // IdP config's tenant slug differs
+	setupYes = true
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := runAuthSetup(newCmdWithCtx(), nil)
+	_ = w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	out := buf.String()
+
+	if err != nil {
+		t.Fatalf("runAuthSetup: %v", err)
+	}
+	if !strings.Contains(out, "ARMIS_TENANT_ID=acme\n") {
+		t.Errorf("hint should print the credential-derived tenant ID: %q", out)
+	}
+	if strings.Contains(out, "ARMIS_TENANT_ID=acme-slug") {
+		t.Errorf("hint must not print the IdP config's tenant slug: %q", out)
+	}
+}
+
 // detectIdentity should pull the tenant (customer_id) and region claim straight
 // from the client-credentials JWT, so `auth setup` can seed the tenant prompt
 // and the post-setup hint without the admin supplying either.
