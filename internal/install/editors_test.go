@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 func TestEditorByID(t *testing.T) {
@@ -359,6 +361,84 @@ func TestRegisterJetBrains(t *testing.T) {
 	}
 	if _, ok := servers[mcpServerName]; !ok {
 		t.Fatal("armis-appsec server not registered")
+	}
+}
+
+func TestRegisterEditorEntryCoexistsWithScanner(t *testing.T) {
+	// Registering knowledge must never disturb an existing scanner entry —
+	// both products share one config file per editor.
+	tests := []struct {
+		name       string
+		id         EditorID
+		serversKey string
+	}{
+		{"mcpServers format", EditorCursor, "mcpServers"},
+		{"vscode servers format", EditorVSCode, "servers"},
+		{"zed context_servers format", EditorZed, "context_servers"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "mcp.json")
+			scannerDir := filepath.Join(t.TempDir(), "scanner")
+			knowledgeDir := filepath.Join(t.TempDir(), "knowledge")
+
+			if err := registerEditorEntry(tt.id, configFile, scannerEntry(scannerDir)); err != nil {
+				t.Fatalf("registering scanner: %v", err)
+			}
+
+			knowledge := mcpEntry{
+				name:    "armis-knowledge",
+				command: venvPython(knowledgeDir),
+				args:    []string{filepath.Join(knowledgeDir, "bridge.py")},
+				envFile: filepath.Join(knowledgeDir, ".env"),
+			}
+			if err := registerEditorEntry(tt.id, configFile, knowledge); err != nil {
+				t.Fatalf("registering knowledge: %v", err)
+			}
+
+			b, err := os.ReadFile(filepath.Clean(configFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var data map[string]interface{}
+			if err := json.Unmarshal(b, &data); err != nil {
+				t.Fatalf("config is not valid JSON: %v", err)
+			}
+
+			servers, ok := data[tt.serversKey].(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected %q object in config, got: %s", tt.serversKey, b)
+			}
+			if servers["armis-appsec"] == nil {
+				t.Error("scanner entry was lost when knowledge was registered")
+			}
+			if servers["armis-knowledge"] == nil {
+				t.Error("knowledge entry was not written")
+			}
+		})
+	}
+}
+
+func TestRegisterEditorEntryKnowledgeUsesBridge(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "mcp.json")
+	knowledgeDir := filepath.Join(t.TempDir(), "knowledge")
+
+	entry := mcpEntry{
+		name:    "armis-knowledge",
+		command: venvPython(knowledgeDir),
+		args:    []string{filepath.Join(knowledgeDir, "bridge.py")},
+	}
+	if err := registerEditorEntry(EditorCursor, configFile, entry); err != nil {
+		t.Fatalf("registerEditorEntry() error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Clean(configFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !testutil.ContainsSubstring(string(b), "bridge.py") {
+		t.Errorf("expected bridge.py in config, got: %s", b)
 	}
 }
 

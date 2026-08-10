@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint lint-clean scan help tools coverage release
+.PHONY: build install clean test lint lint-clean scan help tools coverage release try-fleet
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
@@ -18,6 +18,7 @@ help:
 	@echo "  lint       - Run linters"
 	@echo "  lint-clean - Clear the golangci-lint cache, then run linters"
 	@echo "  scan       - Run security scan on this repository"
+	@echo "  try-fleet  - Install into a sandboxed HOME faking every supported agent"
 	@echo "  release    - Build for multiple platforms"
 	@echo "  tools      - Install dev tools (gotestsum)"
 
@@ -82,6 +83,14 @@ scan:
 	@echo "Running security scan..."
 	@test -f $(BUILD_DIR)/$(BINARY_NAME) || (echo "Binary not found. Run 'make build' first." && exit 1)
 	$(BUILD_DIR)/$(BINARY_NAME) scan repo . --fail-on CRITICAL,HIGH
+
+# Drives the real binary against a sandboxed HOME that fakes a config directory
+# for every supported agent, so detection and registration can be exercised
+# end-to-end on a machine where only a couple of editors are installed. Never
+# touches the developer's own editor configs. Pass ARGS to forward flags, e.g.
+# `make try-fleet ARGS="--uninstall --keep"`.
+try-fleet: build
+	@scripts/try-install-fleet.sh $(ARGS)
 
 release:
 	@echo "Building for multiple platforms..."

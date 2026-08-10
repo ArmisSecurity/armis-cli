@@ -49,6 +49,9 @@ Not auto-configurable (manual setup required):
   # Non-interactive install (for CI/scripts, reads credentials from env)
   armis-cli install --non-interactive
 
+  # Non-interactive install including Armis Knowledge
+  armis-cli install --non-interactive --with-knowledge
+
   # Install to specific editors
   armis-cli install vscode cursor
 
@@ -66,6 +69,7 @@ func init() {
 	installCmd.Flags().Bool("force", false, "Force reinstall even if already up to date")
 	installCmd.Flags().Bool("interactive", false, "Force interactive setup wizard (even without TTY)")
 	installCmd.Flags().Bool("non-interactive", false, "Disable interactive prompts (for CI/scripts)")
+	installCmd.Flags().Bool("with-knowledge", false, "Also install the Armis Knowledge plugin for the selected editors")
 	installCmd.MarkFlagsMutuallyExclusive("interactive", "non-interactive")
 }
 
@@ -93,16 +97,21 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading --non-interactive flag: %w", err)
 	}
 
+	withKnowledge, err := cmd.Flags().GetBool("with-knowledge")
+	if err != nil {
+		return fmt.Errorf("reading --with-knowledge flag: %w", err)
+	}
+
 	// Interactive mode: explicit flag, or (no args + TTY + not --non-interactive)
 	if interactive || (len(args) == 0 && !nonInteractive && cli.IsInteractive()) {
 		return runInteractiveInstall(force)
 	}
 
 	if len(args) == 0 {
-		return installAll(force)
+		return installAll(force, withKnowledge)
 	}
 
-	return installTargets(args, force)
+	return installTargets(args, force, withKnowledge)
 }
 
 func showInstalledVersions() error {
@@ -125,10 +134,15 @@ func showInstalledVersions() error {
 	if v != "" {
 		fmt.Fprintf(os.Stderr, "MCP server: v%s\n", v)
 	}
+
+	ki := install.NewKnowledgeMCPInstaller(knowledgeEnvForDev(useDev))
+	if sha := ki.ShortSHA(); sha != "" {
+		fmt.Fprintf(os.Stderr, "Knowledge bridge: %s (commit)\n", sha)
+	}
 	return nil
 }
 
-func installAll(force bool) error {
+func installAll(force, withKnowledge bool) error {
 	if err := install.CheckPython(); err != nil {
 		return err
 	}
@@ -156,6 +170,7 @@ func installAll(force bool) error {
 	detected := install.DetectedEditors()
 	var registered []string
 	var failed []string
+	var kt knowledgeTargets
 
 	for _, e := range detected {
 		if err := e.Register(ei.PluginDir()); err != nil {
@@ -165,6 +180,7 @@ func installAll(force bool) error {
 			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 			registered = append(registered, e.Name)
 			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+			kt.editors = append(kt.editors, e)
 		}
 
 		if hc, ok := install.HookClientByID(install.HookClientID(e.ID)); ok {
@@ -185,6 +201,7 @@ func installAll(force bool) error {
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code\n")
 		registered = append(registered, "Claude Code")
 		manifest.SetClaude(ci.PluginCacheDir())
+		kt.claude = true
 	}
 
 	if install.IsCodexDetected() {
@@ -195,6 +212,7 @@ func installAll(force bool) error {
 			fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 			registered = append(registered, "Codex CLI")
 			manifest.SetCodex(install.CodexConfigPath())
+			kt.codex = true
 		}
 		if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
 			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
@@ -203,6 +221,13 @@ func installAll(force bool) error {
 				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
 			}
 		}
+	}
+
+	var kres knowledgeResult
+	if withKnowledge {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Installing Armis Knowledge...")
+		kres = installKnowledgeFor(kt, force, manifest)
 	}
 
 	if err := install.WriteManifest(manifest); err != nil {
@@ -220,14 +245,18 @@ func installAll(force bool) error {
 	if len(detected) == 0 && len(registered) <= 1 {
 		fmt.Fprintln(os.Stderr, "No additional editors detected. Use 'armis-cli install <editor>' to target a specific tool.")
 	}
+	if withKnowledge {
+		printKnowledgeResult(kres)
+	}
 
 	printCredentialStatus(ei)
 	return nil
 }
 
-func installTargets(targets []string, force bool) error {
+func installTargets(targets []string, force, withKnowledge bool) error {
 	hasClaude := false
 	var editorIDs []install.EditorID
+	var kt knowledgeTargets
 
 	hasCodex := false
 
@@ -308,6 +337,7 @@ func installTargets(targets []string, force bool) error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+				kt.editors = append(kt.editors, e)
 			}
 
 			if hc, ok := install.HookClientByID(install.HookClientID(id)); ok {
@@ -323,6 +353,7 @@ func installTargets(targets []string, force bool) error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 				manifest.SetCodex(install.CodexConfigPath())
+				kt.codex = true
 			}
 			if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
 				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
@@ -351,6 +382,7 @@ func installTargets(targets []string, force bool) error {
 		}
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
 		fmt.Fprintln(os.Stderr, "")
+		kt.claude = true
 
 		pluginDir := install.NewEditorInstaller().PluginDir()
 		manifest := install.ReadManifest(pluginDir)
@@ -373,6 +405,21 @@ func installTargets(targets []string, force bool) error {
 		}
 	}
 
+	if withKnowledge {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Installing Armis Knowledge...")
+
+		pluginDir := install.NewEditorInstaller().PluginDir()
+		manifest := install.ReadManifest(pluginDir)
+		kres := installKnowledgeFor(kt, force, manifest)
+		if manifest != nil {
+			if err := install.WriteManifest(manifest); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
+			}
+		}
+		printKnowledgeResult(kres)
+	}
+
 	return nil
 }
 
@@ -385,5 +432,31 @@ func printCredentialStatus(ei *install.EditorInstaller) {
 		fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_ID=<your-client-id>")
 		fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_SECRET=<your-client-secret>")
 		fmt.Fprintln(os.Stderr, "  2. Restart your editors")
+	}
+}
+
+// printKnowledgeResult renders the knowledge install outcome. Failures print as
+// warnings, never errors — knowledge must not fail a working scanner install.
+func printKnowledgeResult(res knowledgeResult) {
+	for _, w := range res.warnings {
+		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", w)
+	}
+	if len(res.registered) > 0 {
+		if res.shortSHA != "" {
+			fmt.Fprintf(os.Stderr, "  ✓ Knowledge bridge (%s)\n", res.shortSHA)
+		}
+		fmt.Fprintf(os.Stderr, "  ✓ Knowledge registered in: %s\n", strings.Join(res.registered, ", "))
+		fmt.Fprintln(os.Stderr, "")
+		// The bridge reads these at startup and fails without them, so say so
+		// whether or not credentials were configured during this run.
+		if install.CredentialsPresent() {
+			fmt.Fprintln(os.Stderr, "Knowledge reads ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET at runtime.")
+		} else {
+			fmt.Fprintln(os.Stderr, "Knowledge needs credentials exported before it can answer queries:")
+			fmt.Fprintln(os.Stderr, "  export ARMIS_CLIENT_ID=<your-client-id>")
+			fmt.Fprintln(os.Stderr, "  export ARMIS_CLIENT_SECRET=<your-client-secret>")
+		}
+	} else if !res.skipped {
+		fmt.Fprintln(os.Stderr, "  ⚠ Knowledge was not registered in any editor.")
 	}
 }

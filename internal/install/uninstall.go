@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Uninstaller removes the Armis AppSec MCP plugin from editors and the filesystem.
@@ -379,5 +380,170 @@ func writeJSONAtomic(path string, data interface{}) error {
 		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
 		return err
 	}
+	return nil
+}
+
+// HasKnowledge reports whether the manifest records a knowledge install.
+func (u *Uninstaller) HasKnowledge() bool {
+	return u.manifest != nil && u.manifest.Knowledge != nil
+}
+
+// RemoveKnowledge deregisters the knowledge MCP server from every config the
+// manifest recorded, unregisters it from Claude Code, and deletes its plugin
+// directory. Leaving a config entry pointing at a removed plugin dir would break
+// the user's agents, so this runs as part of a full uninstall rather than behind
+// a flag.
+//
+// Other MCP servers in those files — notably the scanner — are left untouched.
+func (u *Uninstaller) RemoveKnowledge(keepCredentials bool) (removed []string, warnings []string) {
+	if !u.HasKnowledge() {
+		return nil, nil
+	}
+	k := u.manifest.Knowledge
+
+	for id, entry := range k.Editors {
+		if entry.ConfigFile == "" {
+			continue
+		}
+		if _, err := os.Stat(entry.ConfigFile); os.IsNotExist(err) {
+			continue
+		}
+		if err := deregisterServerFromFile(entry.ConfigFile, entry.Format, knowledgeServerNames()); err != nil {
+			warnings = append(warnings, fmt.Sprintf("knowledge %s: %v", id, err))
+			continue
+		}
+		removed = append(removed, string(id))
+	}
+
+	if k.Codex != nil && k.Codex.ConfigFile != "" {
+		codexOK := true
+		codexChanged := false
+		for _, name := range knowledgeServerNames() {
+			codexName := strings.ReplaceAll(name, "-", "_")
+			gone, err := removeCodexSection(k.Codex.ConfigFile, codexName)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("knowledge Codex CLI: %v", err))
+				codexOK = false
+				break
+			}
+			codexChanged = codexChanged || gone
+		}
+		if codexOK && codexChanged {
+			removed = append(removed, "codex")
+		}
+	}
+
+	if k.Claude != nil {
+		if err := u.deregisterKnowledgeClaude(); err != nil {
+			warnings = append(warnings, fmt.Sprintf("knowledge Claude Code: %v", err))
+		} else {
+			removed = append(removed, "claude")
+		}
+	}
+
+	if k.PluginDir != "" {
+		if err := removeKnowledgeFiles(k.PluginDir, keepCredentials); err != nil {
+			warnings = append(warnings, fmt.Sprintf("knowledge files: %v", err))
+		}
+	}
+
+	return removed, warnings
+}
+
+// knowledgeServerNames lists every environment's knowledge server key, so a
+// single uninstall clears prod, stage, and dev registrations.
+func knowledgeServerNames() []string {
+	return []string{"armis-knowledge", "armis-knowledge-stage", "armis-knowledge-dev"}
+}
+
+// deregisterServerFromFile removes the named servers from a JSON MCP config,
+// dispatching on the format string recorded in the manifest.
+func deregisterServerFromFile(configFile, format string, names []string) error {
+	key := "mcpServers"
+	switch format {
+	case "vscode-servers":
+		key = "servers"
+	case "zed-context_servers":
+		key = "context_servers"
+	}
+
+	data, err := readAndParseJSON(configFile)
+	if err != nil {
+		return err
+	}
+
+	servers, ok := data[key].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	changed := false
+	for _, n := range names {
+		if servers[n] != nil {
+			delete(servers, n)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	data[key] = servers
+
+	return writeJSONAtomic(configFile, data)
+}
+
+// deregisterKnowledgeClaude removes the knowledge plugin from Claude Code's
+// marketplace registry, installed plugins, and enabled plugins.
+func (u *Uninstaller) deregisterKnowledgeClaude() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	claudeDir := filepath.Join(home, ".claude")
+
+	if err := removeJSONKey(filepath.Join(claudeDir, "plugins", "known_marketplaces.json"), knowledgeClaudeMarketplace); err != nil {
+		return err
+	}
+	for _, name := range knowledgeServerNames() {
+		key := name + "@" + knowledgeClaudeMarketplace
+		if err := removeNestedJSONKey(filepath.Join(claudeDir, "plugins", "installed_plugins.json"), "plugins", key); err != nil {
+			return err
+		}
+		if err := removeNestedJSONKey(filepath.Join(claudeDir, "settings.json"), "enabledPlugins", key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeKnowledgeFiles deletes the knowledge plugin directory, optionally
+// preserving its .env credentials for an easy reinstall.
+func removeKnowledgeFiles(pluginDir string, keepCredentials bool) error {
+	if pluginDir == "" || !filepath.IsAbs(pluginDir) {
+		return fmt.Errorf("refusing to remove non-absolute plugin directory %q", pluginDir)
+	}
+
+	var saved []byte
+	envPath := filepath.Join(pluginDir, ".env")
+	if keepCredentials {
+		// armis:ignore cwe:522 cwe:770 reason:reads the user's own bounded .env from a known plugin dir to restore it after removal
+		if b, err := os.ReadFile(filepath.Clean(envPath)); err == nil {
+			saved = b
+		}
+	}
+
+	if err := os.RemoveAll(filepath.Clean(pluginDir)); err != nil {
+		return fmt.Errorf("removing %s: %w", pluginDir, err)
+	}
+
+	if len(saved) > 0 {
+		if err := os.MkdirAll(pluginDir, 0o750); err != nil {
+			return fmt.Errorf("restoring credentials directory: %w", err)
+		}
+		// armis:ignore cwe:522 cwe:22 reason:envPath is filepath.Join(pluginDir, ".env") where pluginDir was validated absolute above; restores the user's own credentials to a 0600 file
+		if err := os.WriteFile(filepath.Clean(envPath), saved, 0o600); err != nil { // #nosec G703 -- envPath derives from the absolute-validated pluginDir + hardcoded ".env"
+			return fmt.Errorf("restoring credentials: %w", err)
+		}
+	}
+
 	return nil
 }

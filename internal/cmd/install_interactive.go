@@ -43,6 +43,12 @@ func runInteractiveInstall(force bool) error {
 		return nil
 	}
 
+	wantKnowledge, knowledgeAborted := confirmKnowledge(theme, accessible)
+	if knowledgeAborted {
+		fmt.Fprintln(os.Stderr, "\n  Setup cancelled.")
+		return nil
+	}
+
 	editorResult := selectEditorsWithCodex(theme, accessible)
 	if editorResult.cancelled {
 		fmt.Fprintln(os.Stderr, "\n  Setup cancelled.")
@@ -69,6 +75,10 @@ func runInteractiveInstall(force bool) error {
 
 	ei := install.NewEditorInstaller()
 	needsSharedPlugin := len(selectedEditors) > 0 || installCodex
+
+	// Knowledge follows the scanner: only agents the scanner configured
+	// successfully are registered below.
+	var kt knowledgeTargets
 
 	if needsSharedPlugin {
 		spinner := progress.NewSpinner("Downloading MCP server...", !cli.ColorsEnabled())
@@ -100,6 +110,7 @@ func runInteractiveInstall(force bool) error {
 			} else {
 				registered = append(registered, e.Name)
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+				kt.editors = append(kt.editors, e)
 			}
 		}
 
@@ -109,6 +120,7 @@ func runInteractiveInstall(force bool) error {
 			} else {
 				registered = append(registered, "Codex CLI")
 				manifest.SetCodex(install.CodexConfigPath())
+				kt.codex = true
 			}
 		}
 
@@ -146,6 +158,7 @@ func runInteractiveInstall(force bool) error {
 			if err := install.WriteManifest(manifest); err != nil {
 				fmt.Fprintf(os.Stderr, "  %s Could not write install manifest: %v\n", warnMark, err)
 			}
+			kt.claude = true
 		}
 	}
 
@@ -166,6 +179,39 @@ func runInteractiveInstall(force bool) error {
 					fmt.Fprintf(os.Stderr, "  %s Failed to write Claude credentials: %v\n", warnMark, err)
 				}
 			}
+		}
+	}
+
+	// --- Armis Knowledge ---
+	// Runs after the scanner so it registers for exactly the agents the scanner
+	// configured. Failures here are warnings, never errors: knowledge is
+	// additive and must not take down a working scanner install.
+	if wantKnowledge {
+		fmt.Fprintln(os.Stderr, "")
+		spinner := progress.NewSpinner("Installing Armis Knowledge...", !cli.ColorsEnabled())
+		spinner.Start()
+
+		manifest := install.ReadManifest(ei.PluginDir())
+		kres := installKnowledgeFor(kt, force, manifest)
+		if manifest != nil {
+			if err := install.WriteManifest(manifest); err != nil {
+				kres.warnings = append(kres.warnings,
+					fmt.Sprintf("Could not write install manifest: %v", err))
+			}
+		}
+		spinner.Stop()
+
+		for _, w := range kres.warnings {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", warnMark, w)
+		}
+		if len(kres.registered) > 0 {
+			if kres.shortSHA != "" {
+				fmt.Fprintf(os.Stderr, "  %s Knowledge bridge (%s)\n", successMark, kres.shortSHA)
+			}
+			fmt.Fprintf(os.Stderr, "  %s Knowledge registered: %s\n",
+				successMark, strings.Join(kres.registered, ", "))
+		} else if !kres.skipped {
+			fmt.Fprintf(os.Stderr, "  %s Knowledge was not registered in any editor.\n", warnMark)
 		}
 	}
 
@@ -236,6 +282,26 @@ func runInteractiveInstall(force bool) error {
 	}
 	fmt.Fprintln(os.Stderr, "")
 	return nil
+}
+
+// confirmKnowledge asks whether to also install Armis Knowledge. Defaults to No
+// so the flow's behavior is unchanged for anyone who just hits Enter.
+func confirmKnowledge(theme *huh.Theme, accessible bool) (wantKnowledge, aborted bool) {
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Install Armis Knowledge?").
+				Description("Adds org standards, CWE remediation, and framework/tech\nguidance to the editors you select next.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&wantKnowledge),
+		),
+	).WithTheme(theme).WithAccessible(accessible)
+
+	if err := form.Run(); err != nil {
+		return false, errors.Is(err, huh.ErrUserAborted)
+	}
+	return wantKnowledge, false
 }
 
 func collectCredentials(theme *huh.Theme, accessible bool) (clientID, clientSecret string, skip, aborted bool) {

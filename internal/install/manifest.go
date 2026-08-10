@@ -20,6 +20,7 @@ type Manifest struct {
 	Editors       map[EditorID]ManifestEntry `json:"editors,omitempty"`
 	Claude        *ManifestClaude            `json:"claude,omitempty"`
 	Codex         *ManifestCodex             `json:"codex,omitempty"`
+	Knowledge     *ManifestKnowledge         `json:"knowledge,omitempty"`
 }
 
 // ManifestEntry records where an editor was registered.
@@ -36,6 +37,18 @@ type ManifestClaude struct {
 // ManifestCodex records Codex CLI MCP registration details.
 type ManifestCodex struct {
 	ConfigFile string `json:"configFile"`
+}
+
+// ManifestKnowledge records where the Armis Knowledge MCP bridge was installed
+// and registered. Reuses the scanner's entry types so uninstall walks the same
+// shapes. Kept omitempty and additive: manifests written before knowledge
+// support parse unchanged at schema version 1, so no migration is needed.
+type ManifestKnowledge struct {
+	PluginDir string                     `json:"pluginDir"`
+	SHA       string                     `json:"sha"`
+	Editors   map[EditorID]ManifestEntry `json:"editors,omitempty"`
+	Claude    *ManifestClaude            `json:"claude,omitempty"`
+	Codex     *ManifestCodex             `json:"codex,omitempty"`
 }
 
 // ManifestPath returns the path to the manifest file for the given plugin directory.
@@ -119,6 +132,38 @@ func (m *Manifest) SetClaude(cacheDir string) {
 // SetCodex records Codex CLI MCP registration in the manifest.
 func (m *Manifest) SetCodex(configFile string) {
 	m.Codex = &ManifestCodex{ConfigFile: configFile}
+}
+
+// EnsureKnowledge returns the manifest's knowledge section, creating it if
+// absent, and refreshes its plugin dir and SHA.
+func (m *Manifest) EnsureKnowledge(pluginDir, sha string) *ManifestKnowledge {
+	if m.Knowledge == nil {
+		m.Knowledge = &ManifestKnowledge{}
+	}
+	m.Knowledge.PluginDir = pluginDir
+	m.Knowledge.SHA = sha
+	if m.Knowledge.Editors == nil {
+		m.Knowledge.Editors = make(map[EditorID]ManifestEntry)
+	}
+	return m.Knowledge
+}
+
+// AddEditor records a knowledge registration for an editor.
+func (k *ManifestKnowledge) AddEditor(id EditorID, configFile, format string) {
+	if k.Editors == nil {
+		k.Editors = make(map[EditorID]ManifestEntry)
+	}
+	k.Editors[id] = ManifestEntry{ConfigFile: configFile, Format: format}
+}
+
+// SetClaude records the knowledge plugin's Claude Code cache directory.
+func (k *ManifestKnowledge) SetClaude(cacheDir string) {
+	k.Claude = &ManifestClaude{CacheDir: cacheDir}
+}
+
+// SetCodex records the knowledge registration in Codex CLI's config.
+func (k *ManifestKnowledge) SetCodex(configFile string) {
+	k.Codex = &ManifestCodex{ConfigFile: configFile}
 }
 
 // ConfigFormat returns the JSON format identifier for a given editor.

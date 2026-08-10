@@ -16,13 +16,16 @@ const (
 
 // JSON key constants shared across MCP/hook config builders.
 const (
-	jsonKeyType    = "type"
-	jsonKeyCommand = "command"
-	jsonKeyArgs    = "args"
-	jsonKeyMatcher = "matcher"
-	jsonKeyHooks   = "hooks"
-	jsonKeyTimeout = "timeout"
-	jsonKeyVersion = "version"
+	jsonKeyType        = "type"
+	jsonKeyCommand     = "command"
+	jsonKeyArgs        = "args"
+	jsonKeyMatcher     = "matcher"
+	jsonKeyHooks       = "hooks"
+	jsonKeyTimeout     = "timeout"
+	jsonKeyVersion     = "version"
+	jsonKeyPath        = "path"
+	jsonKeyLastUpdated = "lastUpdated"
+	jsonKeySource      = "source"
 
 	jsonTypeCommand = "command"
 )
@@ -110,6 +113,15 @@ func (e Editor) Register(pluginDir string) error {
 	return registerEditor(e.ID, pluginDir, configFile)
 }
 
+// RegisterEntry adds the given MCP server to this editor's configuration.
+func (e Editor) RegisterEntry(entry mcpEntry) error {
+	configFile := e.ConfigPath()
+	if configFile == "" {
+		return fmt.Errorf("%s is not supported on this platform", e.Name)
+	}
+	return registerEditorEntry(e.ID, configFile, entry)
+}
+
 // DetectedEditors returns editors that appear to be installed on this system.
 func DetectedEditors() []Editor {
 	var detected []Editor
@@ -195,7 +207,7 @@ func (ei *EditorInstaller) GetInstalledVersion() string {
 
 // RegisterJetBrains writes a .jb-mcp.json file at the given path.
 func RegisterJetBrains(pluginDir, configFile string) error {
-	return registerMCPServersFormat(pluginDir, configFile)
+	return registerMCPServersFormat(configFile, scannerEntry(pluginDir))
 }
 
 // --- Config path resolution ---
@@ -283,77 +295,102 @@ func appSupportPath(parts ...string) string {
 
 // --- Registration ---
 
+// mcpEntry describes one MCP server registration. Both products (scanner and
+// knowledge) register through the same four config-format writers below; only
+// these fields differ between them.
+type mcpEntry struct {
+	name    string
+	command string
+	args    []string
+	envFile string
+}
+
+// scannerEntry builds the registration for the Armis AppSec MCP server.
+func scannerEntry(pluginDir string) mcpEntry {
+	return mcpEntry{
+		name:    mcpServerName,
+		command: venvPython(pluginDir),
+		args:    []string{filepath.Join(pluginDir, "server.py")},
+		envFile: filepath.Join(pluginDir, ".env"),
+	}
+}
+
 func registerEditor(id EditorID, pluginDir, configFile string) error {
+	return registerEditorEntry(id, configFile, scannerEntry(pluginDir))
+}
+
+// registerEditorEntry writes entry into configFile using the format the given
+// editor expects, preserving any other servers already present.
+func registerEditorEntry(id EditorID, configFile string, entry mcpEntry) error {
 	switch id {
 	case EditorVSCode:
-		return registerVSCodeFormat(pluginDir, configFile)
+		return registerVSCodeFormat(configFile, entry)
 	case EditorZed:
-		return registerZedFormat(pluginDir, configFile)
+		return registerZedFormat(configFile, entry)
 	default:
 		// Shared by the standard mcpServers editors.
-		return registerMCPServersFormat(pluginDir, configFile)
+		return registerMCPServersFormat(configFile, entry)
 	}
 }
 
 // registerMCPServersFormat handles {"mcpServers": {"name": {command, args}}}.
 // Shared by the standard mcpServers editors (and JetBrains via RegisterJetBrains).
-func registerMCPServersFormat(pluginDir, configFile string) error {
+func registerMCPServersFormat(configFile string, entry mcpEntry) error {
 	data := readJSONFileAsMap(configFile)
 
 	servers, ok := data["mcpServers"].(map[string]interface{})
 	if !ok {
 		servers = make(map[string]interface{})
 	}
-	servers[mcpServerName] = stdServerEntry(pluginDir)
+	servers[entry.name] = map[string]interface{}{
+		jsonKeyCommand: entry.command,
+		jsonKeyArgs:    entry.args,
+	}
 	data["mcpServers"] = servers
 
 	return writeJSON(configFile, data)
 }
 
 // registerVSCodeFormat handles {"servers": {"name": {type, command, args, envFile}}}.
-func registerVSCodeFormat(pluginDir, configFile string) error {
+func registerVSCodeFormat(configFile string, entry mcpEntry) error {
 	data := readJSONFileAsMap(configFile)
 
 	servers, ok := data["servers"].(map[string]interface{})
 	if !ok {
 		servers = make(map[string]interface{})
 	}
-	servers[mcpServerName] = map[string]interface{}{
+	server := map[string]interface{}{
 		jsonKeyType:    "stdio",
-		jsonKeyCommand: venvPython(pluginDir),
-		jsonKeyArgs:    []string{filepath.Join(pluginDir, "server.py")},
-		"envFile":      filepath.Join(pluginDir, ".env"),
+		jsonKeyCommand: entry.command,
+		jsonKeyArgs:    entry.args,
 	}
+	if entry.envFile != "" {
+		server["envFile"] = entry.envFile
+	}
+	servers[entry.name] = server
 	data["servers"] = servers
 
 	return writeJSON(configFile, data)
 }
 
 // registerZedFormat handles {"context_servers": {"name": {command: {path, args}}}}.
-func registerZedFormat(pluginDir, configFile string) error {
+func registerZedFormat(configFile string, entry mcpEntry) error {
 	data := readJSONFileAsMap(configFile)
 
 	servers, ok := data["context_servers"].(map[string]interface{})
 	if !ok {
 		servers = make(map[string]interface{})
 	}
-	servers[mcpServerName] = map[string]interface{}{
+	servers[entry.name] = map[string]interface{}{
 		jsonKeyCommand: map[string]interface{}{
-			"path":      venvPython(pluginDir),
-			jsonKeyArgs: []string{filepath.Join(pluginDir, "server.py")},
+			jsonKeyPath: entry.command,
+			jsonKeyArgs: entry.args,
 		},
 		"settings": map[string]interface{}{},
 	}
 	data["context_servers"] = servers
 
 	return writeJSON(configFile, data)
-}
-
-func stdServerEntry(pluginDir string) map[string]interface{} {
-	return map[string]interface{}{
-		jsonKeyCommand: venvPython(pluginDir),
-		jsonKeyArgs:    []string{filepath.Join(pluginDir, "server.py")},
-	}
 }
 
 func readJSONFileAsMap(path string) map[string]interface{} {

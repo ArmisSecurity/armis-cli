@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 func TestRegisterCodexMCP_MissingFile(t *testing.T) {
@@ -372,6 +374,45 @@ func TestRegisterCodexMCP_NoTrailingNewline(t *testing.T) {
 	}
 	if !strings.Contains(got, "[mcp_servers.armis_scanner]") {
 		t.Errorf("missing armis_scanner section:\n%s", got)
+	}
+}
+
+func TestRegisterCodexEntryCoexistsWithScanner(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	codexConfigPathOverride = configPath
+	t.Cleanup(func() { codexConfigPathOverride = "" })
+
+	scannerDir := t.TempDir()
+	knowledgeDir := t.TempDir()
+
+	if err := RegisterCodexMCP(scannerDir); err != nil {
+		t.Fatalf("RegisterCodexMCP() error: %v", err)
+	}
+
+	knowledge := mcpEntry{
+		name:    "armis_knowledge",
+		command: venvPython(knowledgeDir),
+		args:    []string{filepath.Join(knowledgeDir, "bridge.py")},
+	}
+	if err := RegisterCodexEntry(knowledge); err != nil {
+		t.Fatalf("RegisterCodexEntry() error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Clean(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+
+	for _, want := range []string{
+		"[mcp_servers.armis_scanner]",
+		"[mcp_servers.armis_knowledge]",
+		"bridge.py",
+		"server.py",
+	} {
+		if !testutil.ContainsSubstring(got, want) {
+			t.Errorf("expected %q in config, got:\n%s", want, got)
+		}
 	}
 }
 

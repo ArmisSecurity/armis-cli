@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 const (
@@ -122,67 +121,15 @@ func (ci *ClaudeInstaller) HasExistingEnv() bool {
 }
 
 func (ci *ClaudeInstaller) registerMarketplace(pluginDir string) error {
-	mktsFile := filepath.Join(ci.claudeDir, "plugins", "known_marketplaces.json")
-	data := make(map[string]interface{})
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(mktsFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
-	}
-
-	data[marketplaceName] = map[string]interface{}{
-		"source":          map[string]interface{}{"source": "directory", "path": pluginDir},
-		"installLocation": pluginDir,
-		"lastUpdated":     time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-	}
-
-	return writeJSON(mktsFile, data)
+	return registerDirectoryMarketplace(ci.claudeDir, marketplaceName, pluginDir)
 }
 
 func (ci *ClaudeInstaller) registerPlugin(pluginDir string) error {
-	instFile := filepath.Join(ci.claudeDir, "plugins", "installed_plugins.json")
-	data := map[string]interface{}{jsonKeyVersion: 2, "plugins": map[string]interface{}{}}
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
-	}
-
-	plugins, ok := data["plugins"].(map[string]interface{})
-	if !ok {
-		plugins = make(map[string]interface{})
-		data["plugins"] = plugins
-	}
-
 	key := pluginName + "@" + marketplaceName
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	plugins[key] = []interface{}{
-		map[string]interface{}{
-			"scope":       "user",
-			"installPath": pluginDir,
-			"version":     ci.plugin.InstalledVersion(),
-			"installedAt": now,
-			"lastUpdated": now,
-		},
-	}
-
-	return writeJSON(instFile, data)
+	return registerInstalledPlugin(ci.claudeDir, key, pluginDir, ci.plugin.InstalledVersion())
 }
 
 func (ci *ClaudeInstaller) enablePlugin() error {
-	settingsFile := filepath.Join(ci.claudeDir, "settings.json")
-	data := make(map[string]interface{})
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
-	}
-
-	enabled, ok := data["enabledPlugins"].(map[string]interface{})
-	if !ok {
-		enabled = make(map[string]interface{})
-		data["enabledPlugins"] = enabled
-	}
-
 	key := pluginName + "@" + marketplaceName
-	enabled[key] = true
-
-	return writeJSON(settingsFile, data)
+	return enableInstalledPlugin(ci.claudeDir, key)
 }

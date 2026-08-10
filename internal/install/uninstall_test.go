@@ -599,3 +599,79 @@ func mustReadJSON(t *testing.T, path string) map[string]interface{} {
 	}
 	return data
 }
+
+func TestRemoveKnowledgeLeavesScannerEntry(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "mcp.json")
+	scannerDir := t.TempDir()
+	knowledgeDir := filepath.Join(t.TempDir(), "knowledge")
+	if err := os.MkdirAll(knowledgeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both products registered in one config file.
+	if err := registerEditorEntry(EditorCursor, configFile, scannerEntry(scannerDir)); err != nil {
+		t.Fatal(err)
+	}
+	knowledge := mcpEntry{
+		name:    "armis-knowledge",
+		command: venvPython(knowledgeDir),
+		args:    []string{filepath.Join(knowledgeDir, "bridge.py")},
+	}
+	if err := registerEditorEntry(EditorCursor, configFile, knowledge); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManifest(scannerDir, "1.0.0")
+	k := m.EnsureKnowledge(knowledgeDir, "abc1234")
+	k.AddEditor(EditorCursor, configFile, "mcpServers")
+
+	u := &Uninstaller{pluginDir: scannerDir, manifest: m}
+	if !u.HasKnowledge() {
+		t.Fatal("HasKnowledge() = false, want true when the manifest records knowledge")
+	}
+
+	removed, warnings := u.RemoveKnowledge(false)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if len(removed) == 0 {
+		t.Error("expected at least one removal to be reported")
+	}
+
+	b, err := os.ReadFile(filepath.Clean(configFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		t.Fatal(err)
+	}
+	servers, ok := data["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers missing after knowledge removal: %s", b)
+	}
+	if servers["armis-knowledge"] != nil {
+		t.Error("knowledge entry should be removed")
+	}
+	if servers["armis-appsec"] == nil {
+		t.Error("scanner entry must survive knowledge removal")
+	}
+
+	if _, err := os.Stat(knowledgeDir); !os.IsNotExist(err) {
+		t.Error("knowledge plugin directory should be deleted")
+	}
+}
+
+func TestRemoveKnowledgeNoopWithoutManifestEntry(t *testing.T) {
+	dir := t.TempDir()
+	u := &Uninstaller{pluginDir: dir, manifest: NewManifest(dir, "1.0.0")}
+
+	if u.HasKnowledge() {
+		t.Error("HasKnowledge() = true, want false when the manifest has no knowledge section")
+	}
+
+	removed, warnings := u.RemoveKnowledge(false)
+	if len(removed) != 0 || len(warnings) != 0 {
+		t.Errorf("expected a no-op, got removed=%v warnings=%v", removed, warnings)
+	}
+}

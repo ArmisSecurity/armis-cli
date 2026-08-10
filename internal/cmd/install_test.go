@@ -15,7 +15,7 @@ func TestInstallTargetsUnknownEditor(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	err := installTargets([]string{"nonexistent-editor"}, false)
+	err := installTargets([]string{"nonexistent-editor"}, false, false)
 	if err == nil {
 		t.Fatal("expected error for unknown editor")
 	}
@@ -32,7 +32,7 @@ func TestInstallTargetsAdvisoryEditors(t *testing.T) {
 	advisoryEditors := []string{"jetbrains", "devin", "openhands", "aider"}
 	for _, name := range advisoryEditors {
 		t.Run(name, func(t *testing.T) {
-			err := installTargets([]string{name}, false)
+			err := installTargets([]string{name}, false, false)
 			if err != nil {
 				t.Errorf("installTargets(%q) unexpected error: %v", name, err)
 			}
@@ -56,7 +56,7 @@ func TestInstallTargetsJetBrainsNoGhostFlag(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = oldStderr })
 
-	installErr := installTargets([]string{"jetbrains"}, false)
+	installErr := installTargets([]string{"jetbrains"}, false, false)
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	_ = r.Close()
@@ -145,4 +145,58 @@ func TestPrintCredentialStatusWithoutEnv(t *testing.T) {
 
 	ei := install.NewEditorInstaller()
 	printCredentialStatus(ei)
+}
+
+func TestInstallHasWithKnowledgeFlag(t *testing.T) {
+	f := installCmd.Flags().Lookup("with-knowledge")
+	if f == nil {
+		t.Fatal("install command is missing the --with-knowledge flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--with-knowledge default = %q, want false (knowledge is opt-in)", f.DefValue)
+	}
+}
+
+// TestInstallTargetsWithKnowledgeAdvisoryOnlyExitsZero pins the never-fail
+// contract at the command layer: --with-knowledge must not turn a knowledge
+// no-op into a non-zero exit. Advisory-only targets register no agents, so
+// knowledgeTargets stays empty and installKnowledgeFor short-circuits before
+// any network call — which is what makes this assertion safe to run in CI.
+func TestInstallTargetsWithKnowledgeAdvisoryOnlyExitsZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if err := installTargets([]string{"jetbrains"}, false, true); err != nil {
+		t.Errorf("installTargets with --with-knowledge returned error: %v", err)
+	}
+}
+
+// TestManifestKnowledgeSurvivesWriteRead pins the persistence half of Task 9's
+// contract: whatever installKnowledgeFor records in the manifest must reach disk,
+// or `armis-cli uninstall` cannot find the entries to remove.
+func TestManifestKnowledgeSurvivesWriteRead(t *testing.T) {
+	pluginDir := t.TempDir()
+
+	m := install.NewManifest(pluginDir, "1.0.0")
+	k := m.EnsureKnowledge(filepath.Join(pluginDir, "knowledge"), "abc1234")
+	k.AddEditor(install.EditorCursor, filepath.Join(pluginDir, "cursor.json"), "mcpServers")
+
+	if err := install.WriteManifest(m); err != nil {
+		t.Fatalf("WriteManifest() error: %v", err)
+	}
+
+	got := install.ReadManifest(pluginDir)
+	if got == nil {
+		t.Fatal("ReadManifest() returned nil after a successful write")
+	}
+	if got.Knowledge == nil {
+		t.Fatal("knowledge section did not survive the write/read round-trip")
+	}
+	if got.Knowledge.SHA != "abc1234" {
+		t.Errorf("knowledge SHA = %q, want abc1234", got.Knowledge.SHA)
+	}
+	if _, ok := got.Knowledge.Editors[install.EditorCursor]; !ok {
+		t.Errorf("cursor entry missing from persisted knowledge section: %+v", got.Knowledge.Editors)
+	}
 }

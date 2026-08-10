@@ -162,6 +162,27 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	// Remove Armis Knowledge whenever the manifest records it — no flag. Leaving
+	// an MCP entry pointing at a deleted plugin dir would break the user's agents.
+	if u.HasKnowledge() {
+		kremoved, kwarnings := u.RemoveKnowledge(keepCreds)
+		if len(kremoved) > 0 {
+			if styled {
+				fmt.Fprintf(os.Stderr, "  %s Removed Armis Knowledge (%s)\n",
+					successMark.Render("✓"), strings.Join(kremoved, ", "))
+			} else {
+				fmt.Fprintf(os.Stderr, "  ✓ Removed Armis Knowledge (%s)\n", strings.Join(kremoved, ", "))
+			}
+		}
+		for _, w := range kwarnings {
+			if styled {
+				fmt.Fprintf(os.Stderr, "  %s %s\n", warnMark.Render("⚠"), w)
+			} else {
+				fmt.Fprintf(os.Stderr, "  ⚠ %s\n", w)
+			}
+		}
+	}
+
 	// Remove the git pre-commit hook from the current repo BEFORE deleting plugin
 	// files. The hook execs <pluginDir>/git-hooks/pre-commit; once RemovePluginFiles
 	// deletes that path, an orphaned hook would break every future commit with
