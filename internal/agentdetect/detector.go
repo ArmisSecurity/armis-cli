@@ -460,4 +460,3 @@ func (d *continueDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bo
 func (d *continueDetector) DetectVersion(_, _ string, _ Platform) string {
 	return ""
 }
-
