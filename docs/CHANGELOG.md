@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `supply-chain init`/wrap: a present-but-broken `.armis-supply-chain.yml` (YAML syntax error, invalid `min-age`, bad registry URL) silently fell back to the default 72h policy on the install-gating path, relaxing a stricter configured min-age without any warning — while `check`/`status` rejected the identical file outright. Wrap now hard-fails on a broken config (naming the file and the `ARMIS_SUPPLY_CHAIN=off` escape hatch); `init` and dry-run report it without failing.
+
 ### Security
 
 ---
