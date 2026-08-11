@@ -59,7 +59,7 @@ type fdWriter interface {
 // isTerminalWriter reports whether the given writer is connected to a terminal.
 func isTerminalWriter(w io.Writer) bool {
 	if f, ok := w.(fdWriter); ok {
-		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
+		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms armis:ignore cwe:190 cwe:191 reason:only linux/darwin/windows amd64/arm64 are built (Makefile); int is 64-bit on all of them
 	}
 	return false
 }
