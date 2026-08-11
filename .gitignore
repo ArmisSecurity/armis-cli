@@ -14,3 +14,7 @@ coverage_output.out
 *.test
 *.prof
 .scan-pass
+# Default output dir for scan --sbom/--vex, so a stray relative-path write (from
+# `make scan` or a test that forgets to t.Chdir) is never committed by accident.
+# Trailing slash: matches the directory only, not the tracked .armisignore files.
+.armis/
