@@ -52,10 +52,13 @@ func resolveRegistrySettings(canonicalPMName string) (registrySettings, error) {
 
 	cfg, configDir, err := loadConfigUpward(".")
 	if err != nil || cfg == nil {
-		// A load error here is non-fatal for routing: resolveWrapPolicy already
-		// fails safe to the default policy, and an absent/unreadable config simply
-		// means "no custom registry." Surface nothing; stay on the public path.
-		return registrySettings{}, nil //nolint:nilerr // absent/invalid config → public path, by design
+		// A load error is not diagnosed here because it is not this function's to
+		// report: both enforcement callers (runProxyWrap, runPreInstallBlock) call
+		// resolveWrapPolicy FIRST, which hard-fails on a present-but-broken config
+		// before routing is ever resolved — so an error reaching this branch means
+		// the caller is the dry-run, which reports it itself (runWrapDryRun). An
+		// absent config simply means "no custom registry": stay on the public path.
+		return registrySettings{}, nil //nolint:nilerr // absent config → public path; a broken one is reported by the caller
 	}
 
 	approved := cfg.RegistryURLFor(eco)
@@ -168,9 +171,18 @@ func resolveCABundlePath(cfg *supplychain.Config) string {
 // returns without running the package manager (DX6). It is the platform
 // engineer's fastest "did I configure this right?" check.
 func runWrapDryRun(pmName string) error {
+	// Report an unreadable config first and stop. Without this, a config with a
+	// YAML error renders as "no approved registry configured" — the same output as
+	// a correct public-registry setup — which is precisely the wrong answer for a
+	// "did I configure this right?" check. Dry-run runs no package manager, so it
+	// reports rather than fails, but it must not report a clean configuration.
+	if _, err := resolveWrapPolicy(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s supply-chain (dry-run): %v\n", scPrefix, err)
+		return nil
+	}
 	rs, err := resolveRegistrySettings(canonicalPM(pmName))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[armis] supply-chain (dry-run): credential error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s supply-chain (dry-run): credential error: %v\n", scPrefix, err)
 		return nil
 	}
 	printWrapDryRun(pmName, rs)

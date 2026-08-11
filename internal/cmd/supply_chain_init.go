@@ -577,8 +577,24 @@ func runInitRC(pms []string) error {
 	for _, sh := range shells {
 		fmt.Fprintf(os.Stderr, "  %s\n", s.Bold.Render(supplychain.ShellReloadCommand(sh.Name, sh.RCFile)))
 	}
-	policy := resolveWrapPolicy()
-	fmt.Fprintf(os.Stderr, "\n%s block packages published less than %s ago\n", s.MutedText.Render("Policy:"), policy.MinReleaseAge)
+	// The shell integration is already written at this point, so a broken config
+	// must not fail the command — but the Policy line must not state a min-age
+	// that will never be enforced either. Report the unreadable config instead:
+	// wrapped installs will now hard-fail until it is fixed.
+	//
+	// A warning, not cli.PrintError: this command still succeeds (return nil
+	// below), and the red "Error:" label is reserved for the top-level failure in
+	// main.go. The two lines do not say the same thing — wrapConfigError is
+	// deliberately silent about whether a package manager ran (three callers share
+	// it), so the install consequence is stated here and only here.
+	policy, err := resolveWrapPolicy()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n%s %s\n", s.MutedText.Render("Policy:"),
+			s.WarningText.Render("could not be read — wrapped installs will fail until the config is fixed"))
+		cli.PrintWarningf("%v", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "\n%s block packages published less than %s ago\n", s.MutedText.Render("Policy:"), policy.MinReleaseAge)
+	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", s.MutedText.Render("Undo:  "), s.Bold.Render("armis-cli supply-chain uninit"))
 
 	return nil

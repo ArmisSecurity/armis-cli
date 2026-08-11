@@ -158,7 +158,12 @@ func canonicalPM(pm string) string {
 }
 
 func runProxyWrap(cmd *cobra.Command, pmName string, pmArgs []string) error {
-	policy := resolveWrapPolicy()
+	// A broken (but present) config is fatal: the install must not proceed under
+	// a policy nobody configured. See resolveWrapPolicy.
+	policy, err := resolveWrapPolicy()
+	if err != nil {
+		return err
+	}
 
 	// Apply the env-var override for the transitive policy. ARMIS_SUPPLY_CHAIN_TRANSITIVE
 	// mirrors the config's transitive-policy key for the wrap path (which can't take
@@ -1247,18 +1252,64 @@ func parseSkipPackages(raw string) []string {
 	return result
 }
 
-func resolveWrapPolicy() supplychain.Policy {
+// resolveWrapPolicy resolves the age policy for the wrap (install) path.
+//
+// The distinction that matters is ABSENT vs. BROKEN:
+//
+//   - No config anywhere up the tree → DefaultPolicy(), no error. There is no
+//     operator intent to honor, so the built-in baseline applies.
+//   - A config that exists but fails to load or convert → an error. Returning
+//     the default here would silently DOWNGRADE a stricter configured min-age
+//     (an org's `min-age: 30d` reverting to 72h) on the one path that actually
+//     gates installs, while `check` and `status` reject the very same file
+//     outright (resolvePolicy, runStatus). The fallback is only fail-safe when
+//     the configured policy was weaker than the default; when it was stricter
+//     it is a silent relaxation of the primary control, with nothing printed
+//     anywhere. A present-and-broken policy file is an operator error, and the
+//     install path must not be the one place it reads as "no policy".
+//
+// LoadConfig errors on realistic inputs: any YAML syntax error, an oversize
+// file, `registry-enforcement: block` (rejected by validate), or an invalid
+// registries.<eco> URL. ToPolicy errors on any min-age ParseDuration rejects,
+// e.g. "30 days" or "-72h".
+func resolveWrapPolicy() (supplychain.Policy, error) {
 	dir := supplychain.FindConfigDir(".")
 	if dir == "" {
-		return supplychain.DefaultPolicy()
+		return supplychain.DefaultPolicy(), nil
 	}
 	cfg, err := supplychain.LoadConfig(dir)
-	if err == nil && cfg != nil {
-		if p, err := cfg.ToPolicy(); err == nil {
-			return p
-		}
+	if err != nil {
+		return supplychain.Policy{}, wrapConfigError(dir, err)
 	}
-	return supplychain.DefaultPolicy()
+	// LoadConfig returns (nil, nil) only if the file disappeared between
+	// FindConfigDir's stat and the open — genuinely absent, so use the default.
+	if cfg == nil {
+		return supplychain.DefaultPolicy(), nil
+	}
+	policy, err := cfg.ToPolicy()
+	if err != nil {
+		return supplychain.Policy{}, wrapConfigError(dir, err)
+	}
+	return policy, nil
+}
+
+// wrapConfigError annotates a config load/convert failure with the context the
+// enforcement path needs: which of possibly several configs up the tree is
+// broken, that the default policy was NOT quietly substituted (the whole point
+// of the fix — the reader must not go looking for a downgrade that did not
+// happen), and the escape hatch. Deliberately silent about whether the package
+// manager ran, since both callers use this: the install paths abort, while
+// dry-run never runs one anyway.
+//
+// The kill switch is named here and only here. The routing warning must never
+// train developers toward it, but this is already a hard stop — someone blocked
+// by a config they do not own needs a documented way forward.
+func wrapConfigError(dir string, err error) error {
+	return fmt.Errorf("supply-chain: %w\n\n  Config: %s\n  Enforcement was NOT relaxed to the built-in default (%s).\n  Fix the config, or set %s=off to run without supply-chain enforcement",
+		err,
+		filepath.Join(dir, supplychain.ConfigFileName),
+		formatDurationShort(supplychain.DefaultPolicy().MinReleaseAge),
+		envSCOff)
 }
 
 // wrapEcosystemEnforced reports whether the config (searched upward from the
@@ -1332,7 +1383,12 @@ func uvProxySafe(pmArgs []string) bool {
 
 func runPreInstallBlock(cmd *cobra.Command, pmName string, pmArgs []string) error {
 	skipPkgs := parseSkipPackages(os.Getenv(envSCSkip))
-	policy := resolveWrapPolicy()
+	// Fatal on a present-but-broken config, matching runProxyWrap: the audit path
+	// gates the build, so it must not run under a silently substituted default.
+	policy, err := resolveWrapPolicy()
+	if err != nil {
+		return err
+	}
 
 	// Walk up from the current directory to find the lockfile. poetry/pdm/pipenv
 	// are commonly run from a subdirectory while the lockfile lives at the project
