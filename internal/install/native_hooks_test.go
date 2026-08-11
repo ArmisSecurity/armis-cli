@@ -43,31 +43,6 @@ func TestInstallNativeHook(t *testing.T) {
 		}
 	})
 
-	t.Run("gemini hook creates correct format", func(t *testing.T) {
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "settings.json")
-		pluginDir := setupFakePluginDir(t, "gemini_pre_tool.py")
-
-		hookConfigPathOverrides = map[HookClientID]string{
-			HookClientGemini: configPath,
-		}
-		defer func() { hookConfigPathOverrides = nil }()
-
-		client, _ := HookClientByID(HookClientGemini)
-		if err := InstallNativeHook(client, pluginDir); err != nil {
-			t.Fatalf("InstallNativeHook() error = %v", err)
-		}
-
-		data := readTestJSON(t, configPath)
-		hooks, ok := data["hooks"].(map[string]interface{})
-		if !ok {
-			t.Fatal("expected hooks key")
-		}
-		if _, ok := hooks["BeforeTool"]; !ok {
-			t.Error("expected BeforeTool key")
-		}
-	})
-
 	t.Run("codex hook creates correct format", func(t *testing.T) {
 		dir := t.TempDir()
 		configPath := filepath.Join(dir, "hooks.json")
@@ -253,13 +228,13 @@ func TestInstallNativeHook(t *testing.T) {
 
 	t.Run("merges with existing config", func(t *testing.T) {
 		dir := t.TempDir()
-		configPath := filepath.Join(dir, "settings.json")
-		pluginDir := setupFakePluginDir(t, "gemini_pre_tool.py")
+		configPath := filepath.Join(dir, "hooks.json")
+		pluginDir := setupFakePluginDir(t, "codex_pre_tool.py")
 
 		existing := map[string]interface{}{
-			"model": "gemini-pro",
+			"model": "some-model",
 			"hooks": map[string]interface{}{
-				"BeforeTool": []interface{}{
+				"PreToolUse": []interface{}{
 					map[string]interface{}{
 						"matcher": "some_tool",
 						"hooks": []interface{}{
@@ -275,23 +250,24 @@ func TestInstallNativeHook(t *testing.T) {
 		writeTestJSON(t, configPath, existing)
 
 		hookConfigPathOverrides = map[HookClientID]string{
-			HookClientGemini: configPath,
+			HookClientCodex: configPath,
 		}
 		defer func() { hookConfigPathOverrides = nil }()
 
-		client, _ := HookClientByID(HookClientGemini)
+		client, _ := HookClientByID(HookClientCodex)
 		if err := InstallNativeHook(client, pluginDir); err != nil {
 			t.Fatalf("InstallNativeHook() error = %v", err)
 		}
 
 		data := readTestJSON(t, configPath)
-		if data["model"] != "gemini-pro" {
+		if data["model"] != "some-model" {
 			t.Error("existing settings were lost")
 		}
 		hooks := data["hooks"].(map[string]interface{})
-		beforeTool := hooks["BeforeTool"].([]interface{})
-		if len(beforeTool) != 2 {
-			t.Errorf("expected 2 BeforeTool entries (existing + armis), got %d", len(beforeTool))
+		preToolUse := hooks["PreToolUse"].([]interface{})
+		// The unrelated entry plus the two Codex writes (shell, write/patch).
+		if len(preToolUse) != 3 {
+			t.Errorf("expected 3 PreToolUse entries (existing + 2 armis), got %d", len(preToolUse))
 		}
 	})
 
@@ -359,7 +335,6 @@ func TestDetectHookClients(t *testing.T) {
 	t.Run("returns empty when no clients installed", func(t *testing.T) {
 		hookConfigPathOverrides = map[HookClientID]string{
 			HookClientCursor:  "/nonexistent/cursor",
-			HookClientGemini:  "/nonexistent/gemini",
 			HookClientCodex:   "/nonexistent/codex",
 			HookClientCopilot: "/nonexistent/copilot",
 			HookClientCline:   "/nonexistent/cline",
@@ -376,7 +351,6 @@ func TestDetectHookClients(t *testing.T) {
 		dir := t.TempDir()
 		hookConfigPathOverrides = map[HookClientID]string{
 			HookClientCursor:  filepath.Join(dir, "hooks.json"),
-			HookClientGemini:  "/nonexistent/gemini/settings.json",
 			HookClientCodex:   "/nonexistent/codex/hooks.json",
 			HookClientCopilot: "/nonexistent/copilot/hooks.json",
 			HookClientCline:   "/nonexistent/cline/hooks.json",
@@ -401,7 +375,7 @@ func TestIsArmisHookJSON(t *testing.T) {
 	}{
 		{"armis command", `{"command": "python3 /path/armis-appsec/hooks/cursor_pre_tool.py"}`, true},
 		{"armis-cli ref", `{"command": "armis-cli scan repo ."}`, true},
-		{"pre_tool.py ref", `{"command": "python3 /path/hooks/gemini_pre_tool.py"}`, true},
+		{"pre_tool.py ref", `{"command": "python3 /path/hooks/codex_pre_tool.py"}`, true},
 		{"unrelated command", `{"command": "echo hello"}`, false},
 	}
 	for _, tt := range tests {

@@ -322,7 +322,7 @@ func TestRegisteredAgentDisplayNames(t *testing.T) {
 
 	// Spot-check that identifiers are mapped to friendly names, not passed through raw.
 	joined := strings.Join(names, ", ")
-	for _, want := range []string{"Claude Code", "GitHub Copilot", "Gemini CLI", "Roo Code", "Amazon Q"} {
+	for _, want := range []string{"Claude Code", "GitHub Copilot", "Google Antigravity", "Roo Code", "Amazon Q"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("display names missing %q; got: %s", want, joined)
 		}

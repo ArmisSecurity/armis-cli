@@ -186,10 +186,10 @@ func TestAntigravityDetector_Detect(t *testing.T) {
 
 	t.Run("directory exists", func(t *testing.T) {
 		home := resolvedTempDir(t)
-		mustMkdirAll(t, filepath.Join(home, ".gemini", "antigravity"))
+		mustMkdirAll(t, filepath.Join(home, ".gemini", "config"))
 		p := newMockPlatform(home)
 		if !d.Detect(home, home, p) {
-			t.Error("Detect() should return true when .gemini/antigravity exists")
+			t.Error("Detect() should return true when .gemini/config exists")
 		}
 	})
 
@@ -197,7 +197,7 @@ func TestAntigravityDetector_Detect(t *testing.T) {
 		home := resolvedTempDir(t)
 		p := newMockPlatform(home)
 		if d.Detect(home, home, p) {
-			t.Error("Detect() should return false when .gemini/antigravity is missing")
+			t.Error("Detect() should return false when .gemini/config is missing")
 		}
 	})
 }
@@ -205,7 +205,7 @@ func TestAntigravityDetector_Detect(t *testing.T) {
 func TestAntigravityDetector_CheckMCP(t *testing.T) {
 	d := &antigravityDetector{}
 	home := resolvedTempDir(t)
-	mcpDir := filepath.Join(home, ".gemini", "antigravity")
+	mcpDir := filepath.Join(home, ".gemini", "config")
 	mustMkdirAll(t, mcpDir)
 	mustWriteFile(t, filepath.Join(mcpDir, "mcp_config.json"),
 		`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
@@ -926,61 +926,6 @@ func TestContinueDetector_CheckMCP(t *testing.T) {
 	})
 }
 
-// --- Gemini CLI Detector ---
-
-func TestGeminiCLIDetector_Detect(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(t *testing.T, home string)
-		expected bool
-	}{
-		{
-			name: "gemini settings.json exists",
-			setup: func(t *testing.T, home string) {
-				mustMkdirAll(t, filepath.Join(home, ".gemini"))
-				mustWriteFile(t, filepath.Join(home, ".gemini", "settings.json"), "{}")
-			},
-			expected: true,
-		},
-		{
-			name: "gemini dir exists but no settings.json",
-			setup: func(t *testing.T, home string) {
-				mustMkdirAll(t, filepath.Join(home, ".gemini"))
-			},
-			expected: false,
-		},
-		{
-			name:     "nothing exists",
-			setup:    func(_ *testing.T, _ string) {},
-			expected: false,
-		},
-	}
-
-	d := &geminiCLIDetector{}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := resolvedTempDir(t)
-			tt.setup(t, home)
-			p := newMockPlatform(home)
-			if got := d.Detect(home, home, p); got != tt.expected {
-				t.Errorf("Detect() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestGeminiCLIDetector_CheckMCP(t *testing.T) {
-	d := &geminiCLIDetector{}
-	home := resolvedTempDir(t)
-	mustMkdirAll(t, filepath.Join(home, ".gemini"))
-	mustWriteFile(t, filepath.Join(home, ".gemini", "settings.json"),
-		`{"mcpServers":{"armis-appsec-mcp":{"command":"npx"}}}`)
-	p := newMockPlatform(home)
-	if !d.CheckMCP(home, home, p) {
-		t.Error("CheckMCP() should return true when armis MCP is configured")
-	}
-}
-
 func TestRegistryReturnsAllAgents(t *testing.T) {
 	registry := Registry()
 	expected := map[AgentName]bool{
@@ -998,7 +943,6 @@ func TestRegistryReturnsAllAgents(t *testing.T) {
 		AgentJunie:             false,
 		AgentZed:               false,
 		AgentContinue:          false,
-		AgentGeminiCLI:         false,
 	}
 	for _, d := range registry {
 		expected[d.Name()] = true

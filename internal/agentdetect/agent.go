@@ -18,7 +18,6 @@ const (
 	AgentJunie             AgentName = "Junie"
 	AgentZed               AgentName = "Zed"
 	AgentContinue          AgentName = "Continue"
-	AgentGeminiCLI         AgentName = "GeminiCLI"
 )
 
 // AgentDetector detects the presence of a coding agent for a given user home directory.
@@ -30,7 +29,7 @@ const (
 // binary: the scanner can run as root over every user's home directory, where
 // executing another user's binary would be unsafe and would not report that
 // user's version anyway. Agents detected via dotfiles or app bundles (Claude
-// Code, Cursor, Gemini CLI, Zed, Continue, Aider, Devin, OpenHands, Junie,
+// Code, Cursor, Zed, Continue, Aider, Devin, OpenHands, Junie,
 // Google Antigravity) carry no consistent version file, so their DetectVersion
 // is an intentional "" stub rather than an oversight.
 type AgentDetector interface {
@@ -57,7 +56,6 @@ func Registry() []AgentDetector {
 		&junieDetector{},
 		&zedDetector{},
 		&continueDetector{},
-		&geminiCLIDetector{},
 	}
 }
 
@@ -77,7 +75,6 @@ var displayNames = map[AgentName]string{
 	AgentJunie:             "Junie",
 	AgentZed:               "Zed",
 	AgentContinue:          "Continue",
-	AgentGeminiCLI:         "Gemini CLI",
 }
 
 // RegisteredAgentDisplayNames returns the human-readable names of all registered

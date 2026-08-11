@@ -12,7 +12,7 @@ var hookCmd = &cobra.Command{
 Armis hooks enforce security scanning at two levels:
 
   Native hooks — block tool calls before they execute (per-client config)
-    Supported: Claude Code, Cursor, Gemini CLI, Codex CLI, Copilot CLI, Cline
+    Supported: Claude Code, Cursor, Codex CLI, Copilot CLI, Cline
 
   Git pre-commit — block commits unless scanning passed (per-repo)
     Works with any tool, catches manual commits too.

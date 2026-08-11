@@ -369,7 +369,6 @@ func TestConfigFormat(t *testing.T) {
 		{EditorVSCode, "vscode-servers"},
 		{EditorZed, "zed-context_servers"},
 		{EditorCursor, "mcpServers"},
-		{EditorGemini, "mcpServers"},
 	}
 	for _, tt := range tests {
 		if got := ConfigFormat(tt.id); got != tt.want {
