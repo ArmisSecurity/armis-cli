@@ -58,9 +58,9 @@ var scanCmd = &cobra.Command{
   # Scan with SBOM generation
   armis-cli scan repo . --sbom --sbom-output sbom.json
 
-  # Check the status of the last scan (or a specific scan_id)
+  # Check the status of the last scan (or a specific 24-character scan_id)
   armis-cli scan status
-  armis-cli scan status a1b2c3d4-...`,
+  armis-cli scan status 507f1f77bcf86cd799439011`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Call root command's PersistentPreRunE to initialize colors and update checking
 		// We reference rootCmd directly since cmd.Parent() would return scanCmd for subcommands

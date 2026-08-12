@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -261,6 +262,79 @@ func TestSaveEncodesJSONArray(t *testing.T) {
 	var out []Entry
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("history file must be a JSON array of entries: %v (%s)", err, raw)
+	}
+}
+
+// TestSaveIsAtomic verifies the temp-file+rename write path: after a Save,
+// the directory holds exactly the history file (no leftover *.tmp), the file
+// is valid JSON, and it carries owner-only perms — i.e. a reader never sees a
+// half-written file.
+func TestSaveIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStoreWithDir(dir)
+
+	if err := store.Save(newEntry(sampleScan, tenantA, envProd, time.Now())); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	names, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, n := range names {
+		if n.Name() != storeFileName {
+			t.Errorf("unexpected leftover file in store dir: %q (temp file not cleaned up?)", n.Name())
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, storeFileName)) //nolint:gosec // test file under t.TempDir
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	var out []Entry
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("history file is not valid JSON after atomic write: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(filepath.Join(dir, storeFileName))
+		if statErr != nil {
+			t.Fatalf("stat: %v", statErr)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("history file perm = %o after atomic write, want 600", perm)
+		}
+	}
+}
+
+// TestConcurrentSavesKeepFileValid hammers Save from several goroutines. The
+// store is last-writer-wins under concurrency (documented), but the atomic
+// rename guarantees the file on disk is always complete, parseable JSON —
+// never a torn write.
+func TestConcurrentSavesKeepFileValid(t *testing.T) {
+	dir := t.TempDir()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// Each goroutine gets its own Store handle (as real callers do
+			// via NewStore), all pointing at the same dir.
+			_ = NewStoreWithDir(dir).Save(newEntry("scan-"+padIndex(i), tenantA, envProd, time.Now()))
+		}(i)
+	}
+	wg.Wait()
+
+	raw, err := os.ReadFile(filepath.Join(dir, storeFileName)) //nolint:gosec // test file under t.TempDir
+	if err != nil {
+		t.Fatalf("read history after concurrent writes: %v", err)
+	}
+	var out []Entry
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("history file corrupt after concurrent writes: %v\n%s", err, raw)
+	}
+	if len(out) == 0 {
+		t.Error("expected at least one entry to survive concurrent writes")
 	}
 }
 

@@ -601,8 +601,11 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
+		// Return a typed APIError (like FetchNormalizedResults) so callers can
+		// classify the failure by status code with errors.As rather than by
+		// substring-matching the message text.
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
-		return nil, fmt.Errorf("get status failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))

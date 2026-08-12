@@ -1,28 +1,28 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/history"
 	"github.com/spf13/cobra"
 )
 
-// statusFormat is the output format for `scan status`. Defaults to "human"
-// but may be flipped to "json" to feed downstream tooling.
-var statusFormat string
-
 // statusFormats enumerates the accepted values for --format on the status
 // subcommand. We keep the surface narrower than the sibling scan commands
-// on purpose: SARIF/JUnit make no sense for a single status record.
+// on purpose: SARIF/JUnit make no sense for a single status record. The
+// flag itself is the shared persistent `-f, --format` inherited from the
+// parent `scan` command (bound to the package-level `format`), so this is a
+// runtime allowlist rather than a separate flag.
 var statusFormats = []string{statusFormatHuman, statusFormatJSON}
 
 const (
@@ -44,13 +44,16 @@ var scanStatusCmd = &cobra.Command{
 	Short: "Fetch the status of a scan",
 	Long: `Fetch the current status of a scan initiated via 'armis-cli scan'.
 
+The scan_id is the 24-character identifier printed when a scan starts
+(e.g. 507f1f77bcf86cd799439011).
+
 When invoked without a scan_id, the command uses the most recent scan_id
 recorded locally for the current (base URL, tenant) pair. Every successful
 'scan repo', 'scan image', and 'scan sbom' automatically records its
 scan_id in ~/.armis/scan-history.json (created 0600) so that this fallback
 works out of the box.`,
-	Example: `  # Look up a specific scan
-  $ armis-cli scan status a1b2c3d4-...
+	Example: `  # Look up a specific scan by its 24-character scan_id
+  $ armis-cli scan status 507f1f77bcf86cd799439011
 
   # Re-check the most recently initiated scan on this machine
   $ armis-cli scan status
@@ -64,9 +67,12 @@ works out of the box.`,
 // runScanStatus is factored out of the cobra.Command struct so it can be
 // exercised directly from tests without going through Execute().
 func runScanStatus(cmd *cobra.Command, args []string) error {
-	format := strings.ToLower(strings.TrimSpace(statusFormat))
-	if !isValidStatusFormat(format) {
-		return fmt.Errorf("invalid --format value %q: must be one of %v", statusFormat, statusFormats)
+	// `format` is the shared persistent flag inherited from `scan` (so
+	// `-f`/`--format` and $ARMIS_FORMAT work identically to the other scan
+	// subcommands). Only human/json make sense for a single status record.
+	statusFmt := strings.ToLower(strings.TrimSpace(format))
+	if !isValidStatusFormat(statusFmt) {
+		return fmt.Errorf("invalid --format value %q: must be one of %v", format, statusFormats)
 	}
 
 	authProvider, err := getAuthProvider(cmd.Context())
@@ -107,7 +113,7 @@ func runScanStatus(cmd *cobra.Command, args []string) error {
 
 	data := statusResp.Data[0]
 
-	return renderStatus(cmd.OutOrStdout(), format, data, historyEntry)
+	return renderStatus(cmd.OutOrStdout(), statusFmt, data, historyEntry)
 }
 
 // resolveScanID returns the scan_id the user wants status for. When one is
@@ -135,24 +141,25 @@ func resolveScanID(args []string, baseURL, tenantID string) (string, *history.En
 }
 
 // translateStatusError wraps API errors from GetIngestStatus with more
-// actionable text. The upstream error already carries the raw HTTP body,
-// but a "check the scan_id" hint on 404 is worth a lot more than the body
-// alone.
+// actionable text. It classifies by the typed *api.APIError status code
+// (via errors.As) rather than substring-matching the message, so a reworded
+// upstream error can't silently break the 404/403/422 hints.
 func translateStatusError(err error, scanID string) error {
 	if err == nil {
 		return nil
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "status 404"):
-		return fmt.Errorf("scan %s not found (check the scan_id and that the tenant matches)", scanID)
-	case strings.Contains(msg, "status 403"):
-		return fmt.Errorf("access denied for scan %s: your role is not permitted for this endpoint", scanID)
-	case strings.Contains(msg, "status 422"):
-		return fmt.Errorf("invalid scan_id %q: %w", scanID, err)
-	default:
-		return fmt.Errorf("failed to fetch scan status: %w", err)
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusNotFound:
+			return fmt.Errorf("scan %s not found (check the scan_id and that the tenant matches)", scanID)
+		case http.StatusForbidden:
+			return fmt.Errorf("access denied for scan %s: your role is not permitted for this endpoint", scanID)
+		case http.StatusUnprocessableEntity:
+			return fmt.Errorf("invalid scan_id %q: %w", scanID, err)
+		}
 	}
+	return fmt.Errorf("failed to fetch scan status: %w", err)
 }
 
 // isValidStatusFormat reports whether f is one of the values accepted by
@@ -192,9 +199,16 @@ func renderStatus(w io.Writer, format string, data model.IngestStatusData, histo
 	return nil
 }
 
+// statusLabelWidth is the gutter width for the human key/value block. It is
+// applied to the *plain* label before styling — padding a
+// lipgloss-rendered string would count ANSI escape bytes in the width and
+// break alignment when color is enabled. The longest label
+// ("Artifact Type:") is 14 chars, so 15 leaves at least one space.
+const statusLabelWidth = 15
+
 // renderHumanStatus prints the record as a small, labeled key/value block.
-// The keys align to a fixed 18-column gutter so the values line up under
-// each other in every terminal.
+// Labels are left-padded to statusLabelWidth so the values line up under
+// each other whether or not color is enabled.
 func renderHumanStatus(w io.Writer, d model.IngestStatusData, historyEntry *history.Entry) {
 	styles := output.GetStyles()
 
@@ -210,7 +224,10 @@ func renderHumanStatus(w io.Writer, d model.IngestStatusData, historyEntry *hist
 	}
 
 	writeLine := func(label, value string) {
-		_, _ = fmt.Fprintf(w, "  %-18s %s\n", styles.MutedText.Render(label), value)
+		// Pad the plain label first, THEN style, so the visible width is
+		// exactly statusLabelWidth regardless of ANSI coloring.
+		padded := fmt.Sprintf("%-*s", statusLabelWidth, label)
+		_, _ = fmt.Fprintf(w, "  %s %s\n", styles.MutedText.Render(padded), value)
 	}
 
 	_, _ = fmt.Fprintln(w, styles.Bold.Render("Scan Status"))
@@ -227,7 +244,7 @@ func renderHumanStatus(w io.Writer, d model.IngestStatusData, historyEntry *hist
 		writeLine("File:", d.FileName)
 	}
 	if d.FileBytes > 0 {
-		writeLine("File Size:", formatBytes(d.FileBytes))
+		writeLine("File Size:", scan.FormatBytes(d.FileBytes))
 	}
 	if d.StartedAt != "" {
 		writeLine("Started:", d.StartedAt)
@@ -276,35 +293,9 @@ func scanStatusHint(status string) string {
 	}
 }
 
-// formatBytes renders a byte count as a human-friendly size (KiB/MiB/...).
-// Duplicated from internal/api rather than exported to keep the api
-// package's surface small — this is a leaf-level presentation helper.
-func formatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for n/div >= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
-// ensure the context.Context and time imports don't get pruned when the
-// linter checks a stripped-down build. (Cobra pulls both indirectly, but
-// keeping the reference explicit here documents that the RunE relies on
-// cmd.Context()'s cancellation.)
-var _ = context.TODO
-var _ = time.Second
-
 func init() {
-	scanStatusCmd.Flags().StringVar(&statusFormat, "format", "human",
-		"Output format: human, json (default: human)")
-	_ = scanStatusCmd.RegisterFlagCompletionFunc("format", fixedCompletions(statusFormats, map[string]string{
-		statusFormatHuman: "Human-readable status block",
-		statusFormatJSON:  "Machine-readable JSON envelope",
-	}))
+	// No local --format flag: `scan status` reuses the persistent
+	// `-f, --format` flag from the parent `scan` command (see scan.go) and
+	// narrows the accepted values to human/json at runtime in runScanStatus.
 	scanCmd.AddCommand(scanStatusCmd)
 }

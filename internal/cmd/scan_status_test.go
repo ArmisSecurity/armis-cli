@@ -28,7 +28,7 @@ func setupStatusEnv(t *testing.T, serverURL string) func() {
 	origColor := colorFlag
 	origTheme := themeFlag
 	origNoUpdate := noUpdateCheck
-	origStatusFormat := statusFormat
+	origFormat := format
 
 	// Route auth away from the real environment.
 	t.Setenv("ARMIS_CLIENT_ID", "")
@@ -45,7 +45,7 @@ func setupStatusEnv(t *testing.T, serverURL string) func() {
 	colorFlag = testColorNever
 	themeFlag = themeAuto
 	noUpdateCheck = true
-	statusFormat = testFormatHuman
+	format = testFormatHuman
 
 	return func() {
 		token = origToken
@@ -55,7 +55,7 @@ func setupStatusEnv(t *testing.T, serverURL string) func() {
 		colorFlag = origColor
 		themeFlag = origTheme
 		noUpdateCheck = origNoUpdate
-		statusFormat = origStatusFormat
+		format = origFormat
 		_ = os.Unsetenv("ARMIS_API_URL")
 	}
 }
@@ -167,7 +167,7 @@ func TestScanStatus_JSONFormat(t *testing.T) {
 	cleanup := setupStatusEnv(t, url)
 	defer cleanup()
 
-	statusFormat = statusFormatJSON
+	format = statusFormatJSON
 	out, err := runStatus(t, []string{"scan-xyz"})
 	if err != nil {
 		t.Fatalf("runStatus json: %v", err)
@@ -325,13 +325,44 @@ func TestScanStatus_InvalidFormat(t *testing.T) {
 	cleanup := setupStatusEnv(t, "https://example.invalid")
 	defer cleanup()
 
-	statusFormat = "sarif"
+	format = "sarif"
 	_, err := runStatus(t, []string{"scan-x"})
 	if err == nil {
 		t.Fatal("expected error for invalid --format value")
 	}
 	if !strings.Contains(err.Error(), "invalid --format") {
 		t.Errorf("error = %q, expected format-validation message", err.Error())
+	}
+}
+
+// TestScanStatus_FormatShorthandParses is a regression test for the
+// flag-shadowing bug: `scan status <id> -f json` must parse against the
+// persistent `-f, --format` flag inherited from `scan`. Previously a local
+// --format (no shorthand) shadowed the persistent one, so Cobra rejected
+// `-f` with "unknown shorthand flag: 'f'" and ignored $ARMIS_FORMAT.
+func TestScanStatus_FormatShorthandParses(t *testing.T) {
+	origFormat := format
+	t.Cleanup(func() {
+		format = origFormat
+		// Reset the flag back to its default so parsing here doesn't leak
+		// into other tests that execute through the command tree.
+		if f := scanStatusCmd.Flags().Lookup("format"); f != nil {
+			_ = f.Value.Set(origFormat)
+		}
+	})
+
+	// The status subcommand must not own a *local* --format flag; it should
+	// resolve to the inherited persistent one.
+	if local := scanStatusCmd.LocalFlags().Lookup("format"); local != nil {
+		t.Error("scan status declares a local --format flag; it must inherit the persistent -f/--format from `scan`")
+	}
+
+	// Parsing -f must succeed and populate the shared `format` var.
+	if err := scanStatusCmd.ParseFlags([]string{"-f", "json"}); err != nil {
+		t.Fatalf("parsing `-f json` failed (shorthand shadowed?): %v", err)
+	}
+	if format != statusFormatJSON {
+		t.Errorf("format = %q after `-f json`, want %q", format, statusFormatJSON)
 	}
 }
 

@@ -191,6 +191,15 @@ func (s *Store) read() ([]Entry, error) {
 // write persists entries to the 0600 file, creating ~/.armis (0700) if
 // needed. An empty slice deletes the file so the on-disk footprint is
 // nothing when the user has no scan history.
+//
+// The write is atomic: entries are marshaled to a temp file in the same
+// directory and then renamed over the target. os.Rename is atomic within a
+// filesystem, so a crash mid-write (or a concurrent scan writing at the same
+// time) can never leave a half-written / corrupt history file — a reader
+// always sees either the old file or the fully-written new one. Under true
+// concurrency the semantics are last-writer-wins, which is acceptable for a
+// best-effort convenience cache (a lost entry just means one scan won't show
+// up in the no-arg `scan status` fallback).
 func (s *Store) write(entries []Entry) error {
 	path, err := s.filePath()
 	if err != nil {
@@ -206,12 +215,35 @@ func (s *Store) write(entries []Entry) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal history: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create history directory: %w", err)
 	}
-	// armis:ignore cwe:22 reason:path derived from os.UserHomeDir + hardcoded segments
-	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // path derived from os.UserHomeDir + hardcoded segments
+	// Write to a temp file in the same directory (so the rename stays within
+	// one filesystem) then atomically swap it into place.
+	// armis:ignore cwe:22 reason:dir derived from os.UserHomeDir + hardcoded segments
+	tmp, err := os.CreateTemp(dir, ".scan-history-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp history file: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if we bail before the rename succeeds.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to set history file mode: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("failed to write history file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to flush history file: %w", err)
+	}
+	// armis:ignore cwe:22 reason:paths derived from os.UserHomeDir + hardcoded segments
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("failed to finalize history file: %w", err)
 	}
 	return nil
 }
