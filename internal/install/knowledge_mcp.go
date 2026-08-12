@@ -285,10 +285,14 @@ func (ki *KnowledgeMCPInstaller) RegisterCodex() error {
 //
 // We deliberately do not shell out to `claude plugin install` here: driving the
 // CLI would make Claude Code a hard dependency of a flow that otherwise has
-// none, and would fetch a second copy of the plugin. Because the extracted
-// subtree contains .claude-plugin/plugin.json, .mcp.json, and skills/, pointing
-// a "directory" marketplace at it gives Claude Code the full plugin — MCP server
-// plus the knowledge slash commands.
+// none, and would fetch a second copy of the plugin.
+//
+// The marketplace points at the extracted repo root, which is why Fetch takes the
+// whole archive instead of narrowing to one environment directory: Claude Code
+// resolves a "directory" marketplace by reading .claude-plugin/marketplace.json,
+// and that file exists only at the root. The plugin entry then points at the
+// environment subdirectory, matching the "./prod/"-style sources the manifest
+// declares — giving Claude Code the MCP server plus the knowledge slash commands.
 func (ki *KnowledgeMCPInstaller) RegisterClaude() error {
 	if _, err := os.Stat(ki.claudeDir); os.IsNotExist(err) {
 		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ki.claudeDir) //nolint:staticcheck // proper noun

@@ -349,6 +349,12 @@ func removeNestedJSONKey(path, parentKey, childKey string) error {
 }
 
 func hasArmisEntry(id EditorID, configFile string) (bool, error) {
+	// Continue stores MCP servers as a YAML list of objects that each carry
+	// their own name, so it cannot go through the JSON reader below.
+	if id == EditorContinue {
+		return continueHasEntry(configFile, mcpServerName), nil
+	}
+
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -367,6 +373,24 @@ func hasArmisEntry(id EditorID, configFile string) (bool, error) {
 		servers, ok := data["mcpServers"].(map[string]interface{})
 		return ok && servers[mcpServerName] != nil, nil
 	}
+}
+
+// continueHasEntry reports whether Continue's config.yaml lists a server with
+// the given name. Returns false for a missing or unparseable file, matching the
+// JSON path's "nothing to remove" behavior.
+func continueHasEntry(configFile, name string) bool {
+	servers, ok := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, s := range servers {
+		if m, ok := s.(map[string]interface{}); ok {
+			if n, _ := m["name"].(string); n == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // armis:ignore cwe:770 reason:reads bounded local config files from known editor paths (e.g. ~/.cursor/mcp.json); not unbounded input

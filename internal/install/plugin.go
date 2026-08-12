@@ -146,9 +146,14 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 // subtree, when non-empty, selects a slash-terminated path within the archive
 // (evaluated after the top-level dir is stripped) and extracts only that
 // subtree's contents to destDir — so subtree "prod/" places "prod/bridge.py" at
-// "<destDir>/bridge.py". The knowledge plugin needs this because it ships one
-// plugin per environment directory, whereas the scanner's plugin is at its repo
-// root. A subtree matching no entries is an error, not a silent empty install.
+// "<destDir>/bridge.py". A subtree matching no entries is an error, not a silent
+// empty install.
+//
+// Both current callers pass "" and extract the whole archive: the scanner's
+// plugin lives at its repo root, and the knowledge installer needs the repo root
+// too so Claude Code can resolve .claude-plugin/marketplace.json (see
+// KnowledgeMCPInstaller.EnvDir). Narrowing is retained for a caller that wants
+// one directory out of a multi-plugin archive without the surrounding tree.
 func downloadAndExtractTarball(client *http.Client, tarballURL, destDir, subtree string, skipURLValidation bool) error {
 	// armis:ignore cwe:918 reason:skipURLValidation parameter allows test-only bypass of URL validation; production usage always validates
 	if !skipURLValidation {

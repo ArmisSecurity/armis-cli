@@ -174,6 +174,59 @@ func TestRemoveContinueEntryNoArmisEntry(t *testing.T) {
 	}
 }
 
+// TestDeregisterAllEditorsRemovesContinueYAML covers the gate in front of
+// removal, not just removal itself: DeregisterAllEditors only calls the
+// deregister dispatcher when hasArmisEntry says an entry exists. hasArmisEntry
+// used to parse every config as JSON, so Continue's YAML raised a parse error,
+// the editor was skipped, and the entry survived an uninstall while the user was
+// shown a confusing "cannot read config" warning.
+//
+// Both discovery paths are exercised: the manifest path and the AllEditors scan
+// that catches installs predating manifest tracking.
+func TestDeregisterAllEditorsRemovesContinueYAML(t *testing.T) {
+	for _, withManifest := range []bool{false, true} {
+		name := "scan path"
+		if withManifest {
+			name = "manifest path"
+		}
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			configFile := filepath.Join(home, ".continue", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(configFile), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			configPathOverrides = map[EditorID]string{EditorContinue: configFile}
+			t.Cleanup(func() { configPathOverrides = nil })
+
+			pluginDir := filepath.Join(t.TempDir(), "armis-appsec-mcp")
+			e, _ := EditorByID(EditorContinue)
+			if err := e.Register(pluginDir); err != nil {
+				t.Fatalf("Register() error: %v", err)
+			}
+
+			u := &Uninstaller{pluginDir: pluginDir}
+			if withManifest {
+				m := NewManifest(pluginDir, "1.0.0")
+				m.AddEditor(EditorContinue, configFile, ConfigFormat(EditorContinue))
+				u.manifest = m
+			}
+
+			deregistered, warnings := u.DeregisterAllEditors()
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if len(deregistered) != 1 || deregistered[0] != e.Name {
+				t.Errorf("deregistered = %v, want [%s]", deregistered, e.Name)
+			}
+
+			servers, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+			if len(servers) != 0 {
+				t.Errorf("Armis entry survived uninstall: %v", servers)
+			}
+		})
+	}
+}
+
 // TestRegisterContinueFormatIsIdempotent guards against duplicate list entries:
 // Continue's servers are a list, so a naive append would register Armis twice on
 // a second install.

@@ -63,12 +63,12 @@ AGENT_CONFIGS=(
     "cursor|$SANDBOX/.cursor/mcp.json"
     "windsurf|$SANDBOX/.codeium/windsurf/mcp_config.json"
     "zed|$APP_SUPPORT/Zed/settings.json"
-    "cline|$APP_SUPPORT/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+    "cline|$SANDBOX/.cline/data/settings/cline_mcp_settings.json"
     "amazonq|$SANDBOX/.aws/amazonq/mcp.json"
-    "continue|$SANDBOX/.continue/mcpServers/armis-appsec.json"
+    "continue|$SANDBOX/.continue/config.yaml"
     "antigravity|$SANDBOX/.gemini/antigravity/mcp_config.json"
     "gemini|$SANDBOX/.gemini/settings.json"
-    "roocode|$SANDBOX/.roo-cline/mcp_settings.json"
+    "roocode|$APP_SUPPORT/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"
     "junie|$SANDBOX/.junie/mcp/mcp.json"
     "claude-desktop|$APP_SUPPORT/Claude/claude_desktop_config.json"
     "copilot|$SANDBOX/.copilot/mcp-config.json"
@@ -105,16 +105,26 @@ summarize() {
         local scanner="-" knowledge="-" state="(no file)"
         if [ -f "$cfg" ]; then
             state="ok"
-            # Codex uses TOML section headers; the rest are JSON server keys.
-            if [ "$id" = "codex" ]; then
+            # Three config dialects: Codex uses TOML section headers, Continue a
+            # YAML list of unquoted names, everything else quoted JSON keys.
+            case "$id" in
+            codex)
                 grep -q 'mcp_servers.armis_scanner' "$cfg" && scanner="yes"
                 grep -q 'mcp_servers.armis_knowledge' "$cfg" && knowledge="yes"
-            else
+                ;;
+            continue)
+                grep -qE 'name: *armis-appsec' "$cfg" && scanner="yes"
+                grep -qE 'name: *armis-knowledge' "$cfg" && knowledge="yes"
+                python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$cfg" 2>/dev/null \
+                    || state="INVALID YAML"
+                ;;
+            *)
                 grep -q '"armis-appsec"' "$cfg" && scanner="yes"
                 grep -q '"armis-knowledge"' "$cfg" && knowledge="yes"
                 python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$cfg" 2>/dev/null \
                     || state="INVALID JSON"
-            fi
+                ;;
+            esac
         fi
         printf '%-16s %-10s %-10s %s\n' "$id" "$scanner" "$knowledge" "$state"
     done
