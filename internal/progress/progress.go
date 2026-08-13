@@ -122,8 +122,8 @@ func NewSpinner(message string, disabled bool) *Spinner {
 // The timeout acts as a safety net - if Stop() is not called within this duration,
 // the spinner will automatically stop to prevent goroutine leaks.
 // A timeout of 0 means no automatic timeout (use with caution).
+// armis:ignore cwe:401 reason:Spinner goroutine has proper lifecycle via stopChan/doneChan and timeout safety net
 func NewSpinnerWithTimeout(message string, disabled bool, timeout time.Duration) *Spinner {
-	// armis:ignore cwe:401 reason:Spinner goroutine has proper lifecycle via stopChan/doneChan and timeout safety net
 	return &Spinner{
 		message:   message,
 		disabled:  disabled,

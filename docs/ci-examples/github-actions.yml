@@ -35,6 +35,7 @@ jobs:
         # Pin to @v1 for non-breaking updates, or @v1.10.2 / a commit SHA to
         # freeze the action definition. The action installs the latest released
         # CLI binary, so pinning the ref alone does not pin the CLI version.
+        # armis:ignore cwe:1357 reason:our own published action; @v1 is the documented, recommended customer pattern for non-breaking updates (see comment above), not reliance on an untrusted third party
         uses: ArmisSecurity/armis-cli@v1
         with:
           scan-type: repo

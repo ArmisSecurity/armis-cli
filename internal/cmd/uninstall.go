@@ -345,6 +345,7 @@ var confirmOut io.Writer = os.Stderr
 func confirm(prompt string) bool {
 	_, _ = fmt.Fprintf(confirmOut, "%s [y/N] ", prompt)
 	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))
+	// armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 	if !scanner.Scan() {
 		return false
 	}
