@@ -269,6 +269,14 @@ func (c *Client) IsDebug() bool {
 	return c.debug
 }
 
+// BaseURL returns the API base URL the client was configured with. Callers
+// use it as the scoping key for per-environment on-disk state (e.g. the
+// scan-history store) so a token issued for one Armis environment can never
+// look up scans from another.
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
 // setAuthHeader sets the Authorization header on a request, but only if the
 // request URL uses HTTPS (or localhost for testing). This prevents credential
 // exposure over insecure channels.
@@ -597,8 +605,11 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
+		// Return a typed APIError (like FetchNormalizedResults) so callers can
+		// classify the failure by status code with errors.As rather than by
+		// substring-matching the message text.
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))
-		return nil, fmt.Errorf("get status failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxAPIResponseSize))

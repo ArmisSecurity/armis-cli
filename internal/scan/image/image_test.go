@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/history"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -807,6 +809,106 @@ func TestScanTarball(t *testing.T) {
 		_, err = scanner.ScanTarball(ctx, tarballPath)
 		if err == nil {
 			t.Error("expected error when context is cancelled")
+		}
+	})
+}
+
+// newSuccessfulIngestServer returns a mock server that drives a full
+// presigned-url → S3 → scan → status(completed) → results flow, so a
+// ScanTarball call succeeds end-to-end. Used to assert side effects such as
+// the scan-history label.
+func newSuccessfulIngestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+			scheme := testhelpers.SchemeFromRequest(r)
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+				Fields:         map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+				MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
+			})
+		case strings.HasPrefix(r.URL.Path, "/_s3/"):
+			testutil.AssertValidS3Upload(t, r)
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123", ScanStatus: "INITIATED"})
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+				Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "completed"}},
+			})
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
+			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
+				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
+			})
+		default:
+			t.Errorf("Unexpected request path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+// TestScanTarball_RecordsHistoryLabel verifies which artifact label lands in
+// the scan-history store. The direct --tarball path records the tarball
+// filename; the by-name path (ScanImage sets displayName) must record the
+// image reference, not the throwaway temp-tarball name.
+func TestScanTarball_RecordsHistoryLabel(t *testing.T) {
+	newClient := func(t *testing.T, serverURL string) *api.Client {
+		t.Helper()
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		c, err := api.NewClient(serverURL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		return c
+	}
+
+	t.Run("tarball path records the filename", func(t *testing.T) {
+		t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+		tarballPath := filepath.Join(t.TempDir(), "myimage.tar")
+		testhelpers.WriteMinimalTar(t, tarballPath)
+
+		server := newSuccessfulIngestServer(t)
+		scanner := NewScanner(newClient(t, server.URL), true, "tenant-456", 100, false, time.Minute, false).
+			WithPollInterval(10 * time.Millisecond)
+
+		if _, err := scanner.ScanTarball(context.Background(), tarballPath); err != nil {
+			t.Fatalf("ScanTarball: %v", err)
+		}
+
+		entry, err := history.NewStore().Latest(server.URL, "tenant-456")
+		if err != nil || entry == nil {
+			t.Fatalf("history.Latest returned (%v, %v)", entry, err)
+		}
+		if entry.Artifact != "myimage.tar" {
+			t.Errorf("history artifact = %q, want myimage.tar", entry.Artifact)
+		}
+	})
+
+	t.Run("image-name path records the image reference", func(t *testing.T) {
+		t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+		tarballPath := filepath.Join(t.TempDir(), "armis-image-9999.tar")
+		testhelpers.WriteMinimalTar(t, tarballPath)
+
+		server := newSuccessfulIngestServer(t)
+		scanner := NewScanner(newClient(t, server.URL), true, "tenant-456", 100, false, time.Minute, false).
+			WithPollInterval(10 * time.Millisecond)
+		// Simulate ScanImage having resolved the image reference before it
+		// delegates to ScanTarball with a throwaway temp path.
+		scanner.displayName = "nginx:latest"
+
+		if _, err := scanner.ScanTarball(context.Background(), tarballPath); err != nil {
+			t.Fatalf("ScanTarball: %v", err)
+		}
+
+		entry, err := history.NewStore().Latest(server.URL, "tenant-456")
+		if err != nil || entry == nil {
+			t.Fatalf("history.Latest returned (%v, %v)", entry, err)
+		}
+		if entry.Artifact != "nginx:latest" {
+			t.Errorf("history artifact = %q, want nginx:latest (temp tarball name leaked?)", entry.Artifact)
 		}
 	})
 }

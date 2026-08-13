@@ -162,6 +162,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload SBOM: %w", err)
 	}
+	scan.RecordScanStarted(s.client.BaseURL(), s.tenantID, scanID, "sbom", filename)
 
 	spinner.Stop()
 	styles := output.GetStyles()

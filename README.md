@@ -622,6 +622,33 @@ Either way, findings are printed as a table (same shape as `scan repo` / `scan i
 >
 > `--sbom` is a no-op on `scan sbom` (you can't generate an SBOM from an SBOM) and prints a warning if passed.
 
+### Check Scan Status
+
+Fetch the current status of a scan initiated with `scan repo`, `scan image`, or `scan sbom`.
+
+```bash
+armis-cli scan status [scan_id]
+```
+
+The `scan_id` is the 24-character identifier printed when a scan starts (e.g. `507f1f77bcf86cd799439011`).
+
+When no `scan_id` is supplied, the command reuses the most recent scan initiated on this machine for the current tenant. Every successful scan records its `scan_id` locally in `~/.armis/scan-history.json` (created 0600), so re-checking a scan does not require copying an ID.
+
+**Examples:**
+
+```bash
+# Look up a specific scan by its 24-character scan_id
+armis-cli scan status 507f1f77bcf86cd799439011
+
+# Re-check the most recently initiated scan on this machine
+armis-cli scan status
+
+# Machine-readable output
+armis-cli scan status --format json
+```
+
+`scan status` reports every state the API can return: `PENDING_UPLOAD`, `UPLOADED`, `INITIATED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `STOPPED`.
+
 ### Other Commands
 
 ```bash

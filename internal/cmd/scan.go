@@ -27,8 +27,16 @@ var (
 	outputFile            string
 )
 
+// Shared constants for the --format value across scan subcommands. `scan
+// status` reuses these to keep goconst happy across cmd/ and to make the
+// human/json spelling change in exactly one place if it ever needs to.
+const (
+	statusFormatHuman = "human"
+	statusFormatJSON  = "json"
+)
+
 // validFormats contains the valid output format strings.
-var validFormats = []string{"human", "json", "sarif", "junit"}
+var validFormats = []string{statusFormatHuman, statusFormatJSON, "sarif", "junit"}
 
 // validGroupBy contains the valid group-by options.
 var validGroupBy = []string{"none", "cwe", "severity", "file"}
@@ -54,7 +62,11 @@ var scanCmd = &cobra.Command{
   armis-cli scan image myapp:latest
 
   # Scan with SBOM generation
-  armis-cli scan repo . --sbom --sbom-output sbom.json`,
+  armis-cli scan repo . --sbom --sbom-output sbom.json
+
+  # Check the status of the last scan (or a specific 24-character scan_id)
+  armis-cli scan status
+  armis-cli scan status 507f1f77bcf86cd799439011`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Call root command's PersistentPreRunE to initialize colors and update checking
 		// We reference rootCmd directly since cmd.Parent() would return scanCmd for subcommands
