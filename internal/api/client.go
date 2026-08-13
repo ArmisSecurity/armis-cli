@@ -955,6 +955,7 @@ func (c *Client) ValidatePresignedURL(presignedURL string) error {
 	// silently relaxing the SSRF allowlist if anyone ever flipped
 	// allowLocalURLs against a non-local base — production builds never set
 	// allowLocalURLs, so behavior is unchanged today.
+	// armis:ignore cwe:918 reason:this IS the SSRF validation function; allowLocalURLs is never set in production, and even when set both the presigned URL and the API base URL must be loopback (see TestValidatePresignedURL_Regression)
 	if c.allowLocalURLs {
 		if base, perr := url.Parse(c.baseURL); perr == nil && isLoopbackHost(base.Hostname()) &&
 			strings.EqualFold(base.Host, parsed.Host) {

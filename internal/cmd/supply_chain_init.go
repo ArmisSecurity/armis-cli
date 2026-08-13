@@ -176,6 +176,7 @@ func detectWrappablePMs() (pms []string, installed []string) {
 	// everything, matching the check/wrap gates.
 	var cfg *supplychain.Config
 	if dir := supplychain.FindConfigDir("."); dir != "" {
+		// armis:ignore cwe:253 reason:a load error is intentionally treated the same as "no config" (cfg stays nil, enforcing everything) per the comment above; matches the identical pattern in resolveWrapPolicy
 		cfg, _ = supplychain.LoadConfig(dir)
 	}
 

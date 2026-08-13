@@ -172,6 +172,7 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	var prefix string
 
 	for {
+		// codeql[go/zipslip] -- every entry is Clean'd, rejected if absolute/../, then Abs-validated to stay under destDir before any write (see below)
 		header, err := tr.Next()
 		if err == io.EOF {
 			break

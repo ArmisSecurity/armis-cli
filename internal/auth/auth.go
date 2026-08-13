@@ -283,7 +283,9 @@ func (p *AuthProvider) IsLegacy() bool {
 //
 // #nosec G101 -- Intentional credential exposure for CLI output
 func (p *AuthProvider) GetRawToken(ctx context.Context) (string, error) {
+	// armis:ignore cwe:522 reason:returning token to caller is the API contract; token is used for authenticated API calls
 	if p.isLegacy {
+		// armis:ignore cwe:522 reason:returning token to caller is the API contract; token is used for authenticated API calls
 		return p.config.Token, nil
 	}
 
@@ -511,6 +513,7 @@ func parseJWTClaims(token string) (*jwtClaims, error) {
 	}
 
 	// Decode payload (second part) - JWT uses base64url encoding without padding
+	// armis:ignore cwe:287 cwe:327 reason:JWT signature verification delegated to server; this call only base64-decodes claims for local caching, no crypto/auth performed here
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)

@@ -50,6 +50,7 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 
 	// Report whether anything was actually stored, so logout is informative
 	// rather than silently succeeding when not logged in.
+	// armis:ignore cwe:253 reason:TokenStore.Load never returns a non-nil error (tokenstore.go treats an unreadable/corrupted file as "absent" and returns nil, nil); the return value has nothing to check
 	existing, _ := store.Load(env)
 	if err := store.Clear(env); err != nil {
 		return fmt.Errorf("failed to remove stored credentials: %w", err)

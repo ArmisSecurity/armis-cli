@@ -58,6 +58,7 @@ func resolveRegistrySettings(canonicalPMName string) (registrySettings, error) {
 		// before routing is ever resolved — so an error reaching this branch means
 		// the caller is the dry-run, which reports it itself (runWrapDryRun). An
 		// absent config simply means "no custom registry": stay on the public path.
+		// armis:ignore cwe:253 reason:a load error is intentionally treated the same as "no config" (public path, by design); the caller resolveWrapPolicy already hard-fails on a present-but-broken config before routing is resolved
 		return registrySettings{}, nil //nolint:nilerr // absent config → public path; a broken one is reported by the caller
 	}
 
