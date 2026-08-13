@@ -47,7 +47,7 @@ Create a **confidential OIDC / OAuth2 web application** in your IdP and configur
 - **Redirect URI:** `<your-region-host>/oauth2/device/callback`
   (e.g. `https://moose.armis.com/oauth2/device/callback`, or the `eu.` host for EU).
 - **Grant type:** Authorization Code.
-- **Scopes:** `openid`, `email`, `profile`, `groups`.
+- **Scopes:** `openid`, `email`, `profile`.
 - **Groups claim:** include the user's group memberships in the token under a
   claim (commonly `groups`). Armis uses this to assign each user's role.
 
@@ -59,7 +59,7 @@ Provider-specific notes (follow your IdP's own docs for the current UI):
 
 - **Okta** — Applications → Create App Integration → OIDC / Web Application. Issuer
   is your org URL (`https://<org>.okta.com`). Add a `groups` claim to the ID token
-  and assign the relevant groups to the app.
+  set to emit **Always**, and assign the relevant groups to the app.
 - **Microsoft Entra ID** — App registrations → New registration (platform: Web).
   Issuer is `https://login.microsoftonline.com/<tenant-guid>/v2.0`. Add a groups
   claim under Token configuration — Entra emits **group object IDs**, so use those

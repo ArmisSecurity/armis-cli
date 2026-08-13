@@ -851,6 +851,17 @@ func TestFlagErrorFunc_AppendsHelpHint(t *testing.T) {
 
 // TestGetAuthProvider_NoCredentials tests auth provider creation with no credentials.
 func TestGetAuthProvider_NoCredentials(t *testing.T) {
+	// The credential globals are not getAuthProvider's only input: it first
+	// consults the stored SSO session (storedAuthProvider → TokenStore, which
+	// resolves ~/.armis/.sessions from the home directory). Without redirecting
+	// home, this test reads the DEVELOPER'S REAL SESSION and fails for anyone who
+	// has run `armis-cli auth login` — while passing in CI, where home is fresh.
+	// That is the wrong polarity for a regression test: it breaks precisely on the
+	// machines where the code is being changed. Redirect home so "no credentials"
+	// is actually established. os.UserHomeDir reads USERPROFILE on Windows and
+	// HOME elsewhere, so both are set.
+	isolateHomeDir(t)
+
 	// Save original values
 	originalClientID := clientID
 	originalClientSecret := clientSecret
@@ -870,10 +881,29 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	token = ""
 	tenantID = ""
 
+	// ARMIS_DEFAULT_AUTH_METHOD=SSO in the developer's environment would send
+	// getAuthProvider into an interactive device login instead of returning the
+	// no-credentials error (shouldAutoLoginSSO), so pin it off.
+	t.Setenv("ARMIS_DEFAULT_AUTH_METHOD", "")
+
 	_, err := getAuthProvider(context.Background())
 	if err == nil {
 		t.Error("expected error when no credentials are provided")
 	}
+}
+
+// isolateHomeDir points the OS home-directory lookup at a per-test temp dir, so
+// code that resolves a path under the user's home (the SSO token store's
+// ~/.armis/.sessions, the update checker's cache) reads and writes there rather
+// than touching the developer's real files. os.UserHomeDir consults USERPROFILE
+// on Windows and HOME everywhere else; both are set unconditionally so the
+// isolation holds on every platform without a runtime.GOOS switch.
+func isolateHomeDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
 }
 
 // TestClientOptionsForBaseURL guards a production-config invariant: the new

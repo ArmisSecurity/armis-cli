@@ -181,6 +181,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 	if s.sbomVEXOpts != nil {
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
+		ingestOpts.SBOMFormat = s.sbomVEXOpts.SBOMFormat
 		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
 	}
 

@@ -29,6 +29,7 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --format json
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
   $ armis-cli scan repo . --sbom --sbom-output sbom.json
+  $ armis-cli scan repo . --sbom --sbom-format spdx
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main`,
@@ -97,6 +98,7 @@ var scanRepoCmd = &cobra.Command{
 		if generateSBOM || generateVEX {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
 				GenerateSBOM: generateSBOM,
+				SBOMFormat:   sbomFormat,
 				GenerateVEX:  generateVEX,
 				SBOMOutput:   sbomOutput,
 				VEXOutput:    vexOutput,

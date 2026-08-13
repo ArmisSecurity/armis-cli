@@ -82,13 +82,21 @@ func TestScanCmd(t *testing.T) {
 }
 
 func TestScanRepoCmd(t *testing.T) {
-	// The "fails without base URL" subtest falls through to a real scan attempt,
-	// which starts the upload spinner. Its ANSI/carriage-return frames corrupt
+	// Progress stays suppressed: the spinner's ANSI/carriage-return frames corrupt
 	// gotestsum's go-test-json PASS-line parser, producing false "failures" under
-	// `make test` even though `go test` passes. Suppress progress for all subtests.
+	// `make test` even when `go test` passes. The subtest that reached a real scan
+	// (and drove most of that output) is gone, but the negative-path subtests below
+	// still construct a scanner, so keep the guard.
 	originalNoProgress := noProgress
 	noProgress = true
 	t.Cleanup(func() { noProgress = originalNoProgress })
+
+	// The credential globals these subtests clear are not the only auth input:
+	// getAuthProvider first consults the stored SSO session, which the token store
+	// resolves from the home directory keyed by the resolved base URL. A developer
+	// with a session for the environment under test would otherwise authenticate
+	// successfully and defeat every "fails without <credential>" assertion.
+	isolateHomeDir(t)
 
 	t.Run("repo command exists", func(t *testing.T) {
 		if scanRepoCmd == nil {
@@ -168,24 +176,65 @@ func TestScanRepoCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("repo command fails without base URL", func(t *testing.T) {
-		token = testToken
-		tenantID = testTenantID
-		useDev = false
-		defer func() {
-			token = ""
-			tenantID = ""
-			useDev = false
-		}()
+	// NOTE: a "repo command fails without base URL" subtest was removed here (and
+	// the equivalent one in TestScanImageCmd). It asserted an unreachable state:
+	// getAPIBaseURL has no unconfigured case — with useDev=false and no
+	// ARMIS_API_URL it falls through to the hardcoded productionBaseURL. So the
+	// subtest set VALID credentials and ran a real scan against
+	// https://moose.armis.com, uploading a tarball and polling it for ~20s. It
+	// "passed" in CI only because the mock token is rejected there, coincidentally
+	// producing the error it demanded; on a developer machine with a stored
+	// session the scan SUCCEEDS and the assertion fires. The invariant actually
+	// worth pinning is that the base URL always resolves, which
+	// TestGetAPIBaseURL_AlwaysResolves covers without touching the network.
+}
 
-		err := scanRepoCmd.RunE(scanRepoCmd, []string{t.TempDir()})
-		if err == nil {
-			t.Error("Expected error when base URL not configured")
-		}
-	})
+// TestGetAPIBaseURL_AlwaysResolves pins the invariant that replaced the removed
+// "fails without base URL" subtests: every resolution path yields a non-empty
+// URL, so there is no "base URL not configured" state for a command to fail on.
+// A regression that let this return "" would send requests to a relative/empty
+// host instead of erroring, which is exactly why it is worth a test — but it is
+// a pure function check, not a scan.
+func TestGetAPIBaseURL_AlwaysResolves(t *testing.T) {
+	origDev, origRegion := useDev, region
+	t.Cleanup(func() { useDev, region = origDev, origRegion })
+
+	cases := []struct {
+		name     string
+		envURL   string
+		dev      bool
+		region   string
+		wantHost string // exact expected value, "" = only assert non-empty
+	}{
+		{name: "explicit ARMIS_API_URL wins", envURL: "http://localhost:8080", wantHost: "http://localhost:8080"},
+		{name: "dev flag", dev: true, wantHost: devBaseURL},
+		{name: "region pinned", region: "eu1"},
+		{name: "unknown region falls back to a real host", region: "not-a-region"},
+		{name: "nothing configured falls back to production", wantHost: productionBaseURL},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ARMIS_API_URL", tc.envURL)
+			useDev, region = tc.dev, tc.region
+
+			got := getAPIBaseURL()
+			if got == "" {
+				t.Fatal("getAPIBaseURL returned an empty URL; commands would target an empty host")
+			}
+			if tc.wantHost != "" && got != tc.wantHost {
+				t.Errorf("getAPIBaseURL() = %q, want %q", got, tc.wantHost)
+			}
+		})
+	}
 }
 
 func TestScanImageCmd(t *testing.T) {
+	// Isolate the home directory for the same reason as TestScanRepoCmd: a stored
+	// SSO session would satisfy getAuthProvider and defeat the "fails without
+	// <credential>" subtests below.
+	isolateHomeDir(t)
+
 	t.Run("image command exists", func(t *testing.T) {
 		if scanImageCmd == nil {
 			t.Fatal("scanImageCmd should not be nil")
@@ -269,21 +318,10 @@ func TestScanImageCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("image command fails without base URL", func(t *testing.T) {
-		token = testToken
-		tenantID = testTenantID
-		useDev = false
-		defer func() {
-			token = ""
-			tenantID = ""
-			useDev = false
-		}()
-
-		err := scanImageCmd.RunE(scanImageCmd, []string{"alpine:latest"})
-		if err == nil {
-			t.Error("Expected error when base URL not configured")
-		}
-	})
+	// NOTE: an "image command fails without base URL" subtest was removed here.
+	// See the note in TestScanRepoCmd: it asserted an unreachable state and ran a
+	// real scan against production. TestGetAPIBaseURL_AlwaysResolves pins the
+	// invariant instead.
 
 	t.Run("image command fails with invalid page limit", func(t *testing.T) {
 		token = testToken
@@ -309,6 +347,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 	// Save original values
 	originalFormat := format
 	originalGroupBy := groupBy
+	originalSBOMFormat := sbomFormat
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
@@ -316,6 +355,7 @@ func TestScanPersistentPreRunE(t *testing.T) {
 	t.Cleanup(func() {
 		format = originalFormat
 		groupBy = originalGroupBy
+		sbomFormat = originalSBOMFormat
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -430,6 +470,55 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --group-by value") {
 			t.Errorf("error message should contain 'invalid --group-by value', got: %v", err)
 		}
+	})
+
+	t.Run("valid sbom-format cyclonedx", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "cyclonedx"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for valid sbom-format 'cyclonedx', got: %v", err)
+		}
+	})
+
+	t.Run("valid sbom-format spdx", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "spdx"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for valid sbom-format 'spdx', got: %v", err)
+		}
+	})
+
+	t.Run("sbom-format is normalized to lowercase", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = "SPDX"
+
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Errorf("expected no error for 'SPDX', got: %v", err)
+		}
+		if sbomFormat != "spdx" {
+			t.Errorf("expected sbomFormat normalized to 'spdx', got: %q", sbomFormat)
+		}
+	})
+
+	t.Run("invalid sbom-format returns error", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		sbomFormat = testInvalidValue
+
+		err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+		if err == nil {
+			t.Error("expected error for invalid sbom-format 'invalid'")
+		}
+		if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --sbom-format value") {
+			t.Errorf("error message should contain 'invalid --sbom-format value', got: %v", err)
+		}
+		// Reset to a valid value so later subtests aren't affected.
+		sbomFormat = "cyclonedx"
 	})
 
 	t.Run("chains to root PreRunE", func(t *testing.T) {

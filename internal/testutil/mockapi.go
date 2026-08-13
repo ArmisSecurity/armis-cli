@@ -28,6 +28,13 @@ type MockAPIConfig struct {
 	// VEXContent, when non-empty, makes GET /api/v1/ingest/results return a
 	// vex_results presigned URL that serves this content (used by `scan sbom`).
 	VEXContent string
+	// SBOMContent, when non-empty, makes GET /api/v1/ingest/results return a
+	// sbom_results presigned URL serving this CycloneDX document.
+	SBOMContent string
+	// SBOMSPDXContent, when non-empty, makes GET /api/v1/ingest/results return
+	// a sbom_spdx_results presigned URL serving this SPDX document. Mirrors the
+	// backend contract where SPDX lands under its own ref (PPSC-266).
+	SBOMSPDXContent string
 }
 
 // NewMockScanServer creates a mock Armis API server for integration testing.
@@ -178,6 +185,12 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			if config.VEXContent != "" {
 				results["vex_results"] = SchemeFromRequest(r) + "://" + r.Host + "/_vex/" + config.ScanID
 			}
+			if config.SBOMContent != "" {
+				results["sbom_results"] = SchemeFromRequest(r) + "://" + r.Host + "/_sbom/" + config.ScanID
+			}
+			if config.SBOMSPDXContent != "" {
+				results["sbom_spdx_results"] = SchemeFromRequest(r) + "://" + r.Host + "/_sbom_spdx/" + config.ScanID
+			}
 			JSONResponse(t, w, http.StatusOK, map[string]interface{}{
 				"scan_status": "COMPLETED",
 				"results":     results,
@@ -189,6 +202,18 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		if strings.HasPrefix(r.URL.Path, "/_vex/") && r.Method == http.MethodGet {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(config.VEXContent))
+			return
+		}
+
+		// Fake presigned-URL download endpoints for the SBOM documents.
+		if strings.HasPrefix(r.URL.Path, "/_sbom_spdx/") && r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(config.SBOMSPDXContent))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/_sbom/") && r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(config.SBOMContent))
 			return
 		}
 
