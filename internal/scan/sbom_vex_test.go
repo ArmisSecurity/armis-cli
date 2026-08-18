@@ -377,7 +377,10 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 			testutil.ErrorResponse(w, http.StatusInternalServerError, "Server error")
 		})
 
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		// DisableRetry: this subtest only checks that a persistent 500 surfaces as
+		// an error, not retry behavior — without it, the client's default 3-retry
+		// exponential backoff (up to 30s MaxElapsedTime) makes this test slow.
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
@@ -396,7 +399,11 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 	})
 
 	t.Run("rejects path traversal in artifact name", func(t *testing.T) {
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		// DisableRetry: some inputs below (e.g. "../../../etc/passwd") survive
+		// filepath.Base unscathed and fall through to a real FetchArtifactScanResults
+		// call against this fake, unreachable host — without it, each one burns
+		// the client's default 3-retry exponential backoff on the connection failure.
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := api.NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)

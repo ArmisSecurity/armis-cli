@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -35,6 +36,7 @@ func TestScanSBOMRunE_SuccessfulScan(t *testing.T) {
 	originalNoUpdateCheck := noUpdateCheck
 	originalNoProgress := noProgress
 	originalVEXOutput := vexOutput
+	originalPollInterval := pollInterval
 
 	t.Cleanup(func() {
 		token = originalToken
@@ -47,6 +49,7 @@ func TestScanSBOMRunE_SuccessfulScan(t *testing.T) {
 		noUpdateCheck = originalNoUpdateCheck
 		noProgress = originalNoProgress
 		vexOutput = originalVEXOutput
+		pollInterval = originalPollInterval
 		_ = os.Unsetenv("ARMIS_API_URL")
 	})
 
@@ -63,6 +66,10 @@ func TestScanSBOMRunE_SuccessfulScan(t *testing.T) {
 	noUpdateCheck = true
 	noProgress = true
 	vexOutput = vexOut
+	// Override the production Scanner's default 5s poll interval so this test
+	// doesn't pay for a real poll tick (RunE has no cobra-flag seam exercised
+	// here, so we set the bound package var directly, same as vexOutput above).
+	pollInterval = 10 * time.Millisecond
 
 	if err := scanSBOMCmd.RunE(scanSBOMCmd, []string{sbomPath}); err != nil {
 		t.Fatalf("expected successful sbom scan, got error: %v", err)

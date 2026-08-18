@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -373,5 +374,18 @@ func TestMain(m *testing.M) {
 		_ = os.Unsetenv(k)
 	}
 
-	os.Exit(m.Run())
+	// Also isolate HOME for the whole binary: storedAuthProvider() reads
+	// ~/.armis directly (not through an env var above), so a developer who has
+	// actually run `armis-cli auth login` on this machine would otherwise leak
+	// a real stored SSO session into any test that doesn't override HOME itself.
+	tmpHome, err := os.MkdirTemp("", "armis-cli-test-home")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: failed to create isolated HOME:", err)
+		os.Exit(1)
+	}
+	_ = os.Setenv("HOME", tmpHome)
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpHome)
+	os.Exit(code)
 }

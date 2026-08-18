@@ -867,12 +867,14 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	originalClientSecret := clientSecret
 	originalToken := token
 	originalTenantID := tenantID
+	originalCredFlagsExplicit := credFlagsExplicit
 
 	t.Cleanup(func() {
 		clientID = originalClientID
 		clientSecret = originalClientSecret
 		token = originalToken
 		tenantID = originalTenantID
+		credFlagsExplicit = originalCredFlagsExplicit
 	})
 
 	// Clear all auth credentials
@@ -880,6 +882,7 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	clientSecret = ""
 	token = ""
 	tenantID = ""
+	credFlagsExplicit = true
 
 	// ARMIS_DEFAULT_AUTH_METHOD=SSO in the developer's environment would send
 	// getAuthProvider into an interactive device login instead of returning the
