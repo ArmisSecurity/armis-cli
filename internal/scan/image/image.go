@@ -47,6 +47,11 @@ type Scanner struct {
 	fetchRetryInterval    time.Duration
 	sbomVEXOpts           *scan.SBOMVEXOptions
 	pullPolicy            string // "always", "missing", "never"
+	// displayName is the human-facing artifact label recorded in scan
+	// history. ScanImage sets it to the image reference (e.g. nginx:latest)
+	// so history doesn't show the throwaway temp-tarball name; empty on the
+	// direct --tarball path, where the tarball's own filename is meaningful.
+	displayName string
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -100,6 +105,10 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	if !IsDockerAvailable() {
 		return nil, ErrRuntimeNotFound
 	}
+
+	// Record the image reference (not the throwaway temp-tarball path that
+	// ScanTarball would otherwise derive) as the scan-history label.
+	s.displayName = imageName
 
 	tmpFile, err := os.CreateTemp("", "armis-image-*.tar")
 	if err != nil {
@@ -180,6 +189,13 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %w", err)
 	}
+	// Prefer the image reference set by ScanImage; fall back to the tarball
+	// filename for the direct `scan image --tarball` path.
+	artifactLabel := s.displayName
+	if artifactLabel == "" {
+		artifactLabel = filepath.Base(tarballPath)
+	}
+	scan.RecordScanStarted(s.client.BaseURL(), s.tenantID, scanID, "image", artifactLabel)
 
 	uploadSpinner.Stop()
 	styles := output.GetStyles()

@@ -48,7 +48,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 
 - Scan repositories, container images, and pre-existing SBOMs
 - Multiple output formats: human, JSON, SARIF, JUnit XML
-- **SBOM generation**: Generate CycloneDX Software Bill of Materials
+- **SBOM generation**: Generate a Software Bill of Materials in CycloneDX (default) or SPDX 2.3 format
 - **VEX generation**: Generate Vulnerability Exploitability eXchange documents
 - **Supply chain protection**: Block packages published too recently (typosquatting, compromised maintainers, dependency confusion) across npm, Python, and Java — no Armis Cloud auth required
 - CI/CD ready: GitHub Actions, Jenkins, GitLab, Azure, Bitbucket, CircleCI
@@ -475,7 +475,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 --debug                 Enable debug mode for detailed API responses
 ```
 
-> The `--sbom`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
+> The `--sbom`, `--sbom-format`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
 
 ### Scan Repository
 
@@ -493,7 +493,30 @@ armis-cli scan repo ./my-app --format json --fail-on HIGH,CRITICAL
 
 # Generate SBOM and VEX documents
 armis-cli scan repo ./my-app --sbom --vex
+
+# Generate an SPDX 2.3 SBOM instead of the default CycloneDX
+armis-cli scan repo ./my-app --sbom --sbom-format spdx
 ```
+
+#### SBOM Format
+
+`--sbom` generates a CycloneDX JSON SBOM by default. Pass `--sbom-format spdx`
+to request an SPDX 2.3 JSON document instead:
+
+```bash
+# CycloneDX (default) → .armis/<artifact>-sbom.json
+armis-cli scan repo ./my-app --sbom
+
+# SPDX 2.3 → .armis/<artifact>-sbom.spdx.json
+armis-cli scan repo ./my-app --sbom --sbom-format spdx
+```
+
+Notes:
+
+- `--sbom-format` accepts `cyclonedx` (default) or `spdx`; any other value is rejected.
+- It only takes effect together with `--sbom`. Passing it on its own prints a warning and is ignored.
+- The same flag is available on `scan image`.
+- Use `--sbom-output` to override the default output path.
 
 #### Scan Only Changed Files
 
@@ -598,6 +621,33 @@ Either way, findings are printed as a table (same shape as `scan repo` / `scan i
 > - `--vex-output` opts into OpenVEX generation and sets its path (default: `.armis/<artifact>-vex.json`). Without it, no VEX is requested.
 >
 > `--sbom` is a no-op on `scan sbom` (you can't generate an SBOM from an SBOM) and prints a warning if passed.
+
+### Check Scan Status
+
+Fetch the current status of a scan initiated with `scan repo`, `scan image`, or `scan sbom`.
+
+```bash
+armis-cli scan status [scan_id]
+```
+
+The `scan_id` is the 24-character identifier printed when a scan starts (e.g. `507f1f77bcf86cd799439011`).
+
+When no `scan_id` is supplied, the command reuses the most recent scan initiated on this machine for the current tenant. Every successful scan records its `scan_id` locally in `~/.armis/scan-history.json` (created 0600), so re-checking a scan does not require copying an ID.
+
+**Examples:**
+
+```bash
+# Look up a specific scan by its 24-character scan_id
+armis-cli scan status 507f1f77bcf86cd799439011
+
+# Re-check the most recently initiated scan on this machine
+armis-cli scan status
+
+# Machine-readable output
+armis-cli scan status --format json
+```
+
+`scan status` reports every state the API can return: `PENDING_UPLOAD`, `UPLOADED`, `INITIATED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `STOPPED`.
 
 ### Other Commands
 
@@ -1060,7 +1110,6 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
 | `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
 | `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
-
 
 ---
 

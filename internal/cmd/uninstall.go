@@ -341,10 +341,13 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 // go-test-json parser and produces false failures under `make test`.
 var confirmOut io.Writer = os.Stderr
 
-// armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 func confirm(prompt string) bool {
 	_, _ = fmt.Fprintf(confirmOut, "%s [y/N] ", prompt)
 	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, 256))
+	// The scanner's attribution of this finding drifts between this line and the
+	// func signature above across runs; the directive lives here, at the actual
+	// sink, so the upward scan finds it regardless of which line gets flagged.
+	// armis:ignore cwe:253 reason:Scan() returns false on EOF/error which is correct default-deny behavior (returns false = no confirmation)
 	if !scanner.Scan() {
 		return false
 	}

@@ -287,6 +287,12 @@ func TestIntegration_CPE_NoVEX(t *testing.T) {
 // sbom_results (purl path). The CLI must fall back to that key.
 func TestIntegration_Purl_NoVEX(t *testing.T) {
 	tmpDir := t.TempDir()
+	// The driver's default SBOM/VEX outputs are .armis/<artifact>-{sbom,vex}.json
+	// RELATIVE to the process cwd, so without this the raw dump lands in the
+	// package source directory (internal/scan/sbom/.armis/) and shows up as an
+	// untracked file a plain `go test ./...` created.
+	t.Chdir(tmpDir)
+
 	sbomPath := filepath.Join(tmpDir, "purl.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "requests", "version": "2.19.0",
@@ -332,6 +338,8 @@ func TestIntegration_Purl_NoVEX(t *testing.T) {
 // top of the findings + raw JSON.
 func TestIntegration_CPE_WithVEX(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir) // keep the driver's relative .armis/ defaults out of the source tree
+
 	sbomPath := filepath.Join(tmpDir, "torizon.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "openssl", "version": "1.0.2k",
@@ -372,6 +380,8 @@ func TestIntegration_CPE_WithVEX(t *testing.T) {
 // when opted in.
 func TestIntegration_Purl_WithVEX(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir) // keep the driver's relative .armis/ defaults out of the source tree
+
 	sbomPath := filepath.Join(tmpDir, "purl.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "requests", "version": "2.19.0",
@@ -406,6 +416,8 @@ func TestIntegration_Purl_WithVEX(t *testing.T) {
 // missing VEX must not crash the pipeline.
 func TestIntegration_VEXRequestedButBackendMissingIt(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir) // keep the driver's relative .armis/ defaults out of the source tree
+
 	sbomPath := filepath.Join(tmpDir, "purl.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "requests", "version": "2.19.0",
@@ -445,6 +457,8 @@ func TestIntegration_VEXRequestedButBackendMissingIt(t *testing.T) {
 // implementations (or scan states) may not populate any raw dumps.
 func TestIntegration_NoResultsRefs(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir) // keep the driver's relative .armis/ defaults out of the source tree
+
 	sbomPath := filepath.Join(tmpDir, "purl.cdx.json")
 	writeSBOM(t, sbomPath, []map[string]any{{
 		"type": "library", "name": "leftpad", "version": "1.3.0",

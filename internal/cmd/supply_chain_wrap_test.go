@@ -442,6 +442,14 @@ func TestRunPreInstallBlock_QueriesConfiguredRegistry(t *testing.T) {
 	origBaseTransport := supplychain.BaseUpstreamTransport
 	supplychain.BaseUpstreamTransport = func() *http.Transport {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
+		// Clone() carries http.DefaultTransport's Proxy, which reads HTTPS_PROXY
+		// from the ambient environment. With a proxy set (corporate laptops,
+		// Zscaler) the transport dials the proxy instead of honoring the
+		// DialContext override below, the seam never fires, and this test fails
+		// with "the configured registry was never queried" — a message that reads
+		// like a product bug but is purely environmental. Nil it out so the
+		// redirect is the only thing deciding where the connection goes.
+		transport.Proxy = nil
 		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, portStr, splitErr := net.SplitHostPort(addr)
 			// armis:ignore cwe:918 reason:test-only code (this file has no _test.go build exclusion but is never compiled into the shipped binary); the redirected host is a hardcoded string literal ("nexus.registry.example", this test's own fixture hostname), not derived from any request URL or other runtime input, so there is nothing here for an attacker to control
@@ -578,6 +586,126 @@ func TestRunSupplyChainWrap_EcosystemScopeIncludesPM(t *testing.T) {
 	}
 	if _, ok := envValue(cap.extraEnv, "PIP_INDEX_URL"); !ok {
 		t.Errorf("in-scope pip should be routed through the proxy; extraEnv=%v", cap.extraEnv)
+	}
+}
+
+// brokenConfigs are configs that EXIST but cannot be turned into a policy. Each
+// one previously resolved to DefaultPolicy() (72h), silently relaxing a stricter
+// configured min-age on the only path that gates installs — while `check` and
+// `status` rejected the identical file. Every case here carries `min-age: 30d`
+// (or an equivalent stricter intent) so a regression shows up as exactly that
+// downgrade rather than as an unrelated failure.
+var brokenConfigs = []struct {
+	name string
+	body string
+}{
+	{"yaml syntax error", "version: 1\nmin-age: 30d\n  exclusions:\n - oops\n"},
+	{"min-age ParseDuration rejects", "version: 1\nmin-age: 30 days\n"},
+	{"negative min-age", "version: 1\nmin-age: -72h\n"},
+	{"registry-enforcement block is rejected", "version: 1\nmin-age: 30d\nregistry-enforcement: block\n"},
+	{"invalid registry URL", "version: 1\nmin-age: 30d\nregistries:\n  npm: http://127.0.0.1:8080/\n"},
+}
+
+// TestResolveWrapPolicy_BrokenConfigIsError pins the ABSENT-vs-BROKEN
+// distinction at its source: no config is not an error (the default baseline
+// applies), but a config that is present and unparseable is.
+func TestResolveWrapPolicy_BrokenConfigIsError(t *testing.T) {
+	t.Run("absent config uses the default", func(t *testing.T) {
+		chdirTemp(t)
+		policy, err := resolveWrapPolicy()
+		if err != nil {
+			t.Fatalf("absent config must not error: %v", err)
+		}
+		if policy.MinReleaseAge != supplychain.DefaultPolicy().MinReleaseAge {
+			t.Errorf("MinReleaseAge = %s, want the default %s", policy.MinReleaseAge, supplychain.DefaultPolicy().MinReleaseAge)
+		}
+	})
+
+	t.Run("valid config is honored", func(t *testing.T) {
+		dir := chdirTemp(t)
+		writeConfig(t, dir, "version: 1\nmin-age: 30d\n")
+		policy, err := resolveWrapPolicy()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := policy.MinReleaseAge; got != 30*24*time.Hour {
+			t.Errorf("MinReleaseAge = %s, want 720h", got)
+		}
+	})
+
+	for _, tc := range brokenConfigs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			writeConfig(t, dir, tc.body)
+			policy, err := resolveWrapPolicy()
+			if err == nil {
+				t.Fatalf("broken config resolved to min-age %s instead of erroring (silent downgrade)", policy.MinReleaseAge)
+			}
+			// The error must name the offending file and state that enforcement
+			// was not quietly relaxed, so the operator knows which of possibly
+			// several configs up the tree to fix.
+			if !strings.Contains(err.Error(), supplychain.ConfigFileName) {
+				t.Errorf("error does not name the config file: %v", err)
+			}
+			if !strings.Contains(err.Error(), "NOT relaxed") {
+				t.Errorf("error does not state enforcement was not relaxed: %v", err)
+			}
+		})
+	}
+}
+
+// TestRunSupplyChainWrap_BrokenConfigDoesNotInstall is the end-to-end guard: the
+// package manager must not run at all under a config that exists but cannot be
+// read. Covers both enforcement paths — the transparent proxy (npm) and the
+// pre-install lockfile audit (poetry) — since each resolves the policy itself.
+func TestRunSupplyChainWrap_BrokenConfigDoesNotInstall(t *testing.T) {
+	for _, tc := range brokenConfigs {
+		for _, pm := range []struct {
+			name string
+			args []string
+		}{
+			{"proxy path", []string{pmNPM, "install", "lodash"}},
+			{"audit path", []string{pmPoetry, "install"}},
+		} {
+			t.Run(tc.name+"/"+pm.name, func(t *testing.T) {
+				dir := chdirTemp(t)
+				writeConfig(t, dir, tc.body)
+				t.Setenv(envSCActive, "")
+				t.Setenv(envSCOff, "")
+				t.Setenv(envSCSkip, "")
+				cap := stubExecPM(t, 0)
+
+				err := runSupplyChainWrap(newWrapTestCmd(), pm.args)
+				if err == nil {
+					t.Fatal("expected a hard error for a present-but-broken config")
+				}
+				if cap.called {
+					t.Errorf("package manager ran under an unreadable config (args=%v)", cap.args)
+				}
+			})
+		}
+	}
+}
+
+// TestRunSupplyChainWrap_BrokenConfigStillHonorsKillSwitch pins the escape hatch
+// the error message advertises: ARMIS_SUPPLY_CHAIN=off must short-circuit before
+// the policy is resolved, so a developer who does not own the broken config is
+// never left with no way to install.
+func TestRunSupplyChainWrap_BrokenConfigStillHonorsKillSwitch(t *testing.T) {
+	dir := chdirTemp(t)
+	writeConfig(t, dir, brokenConfigs[0].body)
+	t.Setenv(envSCActive, "")
+	t.Setenv(envSCOff, "off")
+	cap := stubExecPM(t, 0)
+
+	if err := runSupplyChainWrap(newWrapTestCmd(), []string{pmNPM, "install"}); err != nil {
+		t.Fatalf("unexpected error with the kill switch set: %v", err)
+	}
+	if !cap.called {
+		t.Error("ARMIS_SUPPLY_CHAIN=off must pass through to the package manager")
+	}
+	if _, ok := envValue(cap.extraEnv, "npm_config_registry"); ok {
+		t.Error("kill-switch passthrough must not route through the proxy")
 	}
 }
 

@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scan repo`/`scan image`: new `--sbom-format` flag selects the generated SBOM serialization — `cyclonedx` (default) or `spdx` (SPDX 2.3 JSON). Requires `--sbom`; the value is sent to the ingest API's `sbom_format` field and the SPDX document is downloaded from the backend's `sbom_spdx_results` artifact (default path `.armis/<artifact>-sbom.spdx.json`). Omitting the flag preserves the existing CycloneDX behavior.
-
 ### Changed
 
 ### Deprecated
@@ -20,6 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+---
+
+## [1.21.0] - 2026-08-12
+
+### Added
+
+- `scan repo`/`scan image`: new `--sbom-format` flag selects the generated SBOM serialization — `cyclonedx` (default) or `spdx` (SPDX 2.3 JSON). Requires `--sbom`; the value is sent to the ingest API's `sbom_format` field and the SPDX document is downloaded from the backend's `sbom_spdx_results` artifact (default path `.armis/<artifact>-sbom.spdx.json`). Omitting the flag preserves the existing CycloneDX behavior. (#285)
+
+### Changed
+
+- Documentation: the SSO Setup Guide (`docs/SSO-SETUP.md`) no longer lists the non-standard `groups` OIDC scope — requesting it causes Okta to reject the authorization with `invalid_scope`. Group membership arrives as an ID-token claim configured on the IdP, and the Okta note now clarifies that the claim must be set to emit "Always" rather than being gated on a scope. (#290)
+- Documentation: the README now covers scanning pre-existing SBOM artifacts with `scan sbom`. (#291)
+- Updated dependencies: `github.com/go-git/go-git/v5` to v5.19.2 (#292), `github.com/mattn/go-runewidth` to v0.0.27 (#287), and `tj-actions/changed-files` to v47.0.6 (#275).
+
+### Fixed
+
+- `supply-chain init`/wrap: a present-but-broken `.armis-supply-chain.yml` (YAML syntax error, invalid `min-age`, bad registry URL) silently fell back to the default 72h policy on the install-gating path, relaxing a stricter configured min-age without any warning — while `check`/`status` rejected the identical file outright. Wrap now hard-fails on a broken config (naming the file and the `ARMIS_SUPPLY_CHAIN=off` escape hatch); `init` and dry-run report it without failing. (#298)
+- `auth setup`: the post-setup hint printed the IdP configuration slug as `ARMIS_TENANT_ID` instead of the actual tenant ID, so admins copying the suggested environment variables onto developer machines deployed a value that could not authenticate. The hint now prints the tenant ID detected from your Armis credentials across all setup paths (interactive create/update and `--config`). (#294)
 
 ---
 
@@ -661,7 +678,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...HEAD
+[1.21.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.17.0...v1.18.0
