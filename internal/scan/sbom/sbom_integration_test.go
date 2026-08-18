@@ -387,7 +387,8 @@ func TestIntegration_Purl_WithVEX(t *testing.T) {
 	})
 
 	vexOut := filepath.Join(tmpDir, "out.vex.json")
-	scanner := buildScanner(t, serverURL).WithVEXOutput(vexOut)
+	rawOut := filepath.Join(tmpDir, "raw.json")
+	scanner := buildScanner(t, serverURL).WithVEXOutput(vexOut).WithRawOutput(rawOut)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -422,7 +423,8 @@ func TestIntegration_VEXRequestedButBackendMissingIt(t *testing.T) {
 	})
 
 	vexOut := filepath.Join(tmpDir, "out.vex.json")
-	scanner := buildScanner(t, serverURL).WithVEXOutput(vexOut)
+	rawOut := filepath.Join(tmpDir, "raw.json")
+	scanner := buildScanner(t, serverURL).WithVEXOutput(vexOut).WithRawOutput(rawOut)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -91,6 +91,9 @@ var scanRepoCmd = &cobra.Command{
 		}
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
+		if pollInterval > 0 {
+			scanner = scanner.WithPollInterval(pollInterval)
+		}
 
 		warnOnUnusedSBOMVEXFlags()
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
@@ -25,6 +26,7 @@ var (
 	vexOutput             string
 	summaryTop            bool
 	outputFile            string
+	pollInterval          time.Duration
 )
 
 // validFormats contains the valid output format strings.
@@ -180,6 +182,13 @@ func init() {
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
+	// poll-interval overrides the Scanner's default status-poll interval (5s in
+	// repo/image/sbom Scanners). Hidden: it exists solely so RunE-level tests can
+	// avoid burning a real poll tick, the same way package-level tests already do
+	// via each Scanner's WithPollInterval builder, without going through cobra
+	// flag parsing (RunE tests call scanXCmd.RunE directly, not cmd.Execute()).
+	scanCmd.PersistentFlags().DurationVar(&pollInterval, "poll-interval", 0, "Override the scan status poll interval (0 = use default)")
+	_ = scanCmd.PersistentFlags().MarkHidden("poll-interval")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}

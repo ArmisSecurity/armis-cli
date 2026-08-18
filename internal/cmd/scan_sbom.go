@@ -107,6 +107,9 @@ generated alongside them.`,
 			scanTimeoutDuration,
 			includeNonExploitable,
 		)
+		if pollInterval > 0 {
+			scanner = scanner.WithPollInterval(pollInterval)
+		}
 		if sbomOutput != "" {
 			scanner = scanner.WithRawOutput(sbomOutput)
 		}

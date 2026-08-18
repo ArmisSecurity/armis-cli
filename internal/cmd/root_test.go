@@ -851,17 +851,26 @@ func TestFlagErrorFunc_AppendsHelpHint(t *testing.T) {
 
 // TestGetAuthProvider_NoCredentials tests auth provider creation with no credentials.
 func TestGetAuthProvider_NoCredentials(t *testing.T) {
+	// Isolate HOME so a real ~/.armis stored session on the developer's machine
+	// can't make storedAuthProvider() succeed here, and force credFlagsExplicit
+	// so an ARMIS_DEFAULT_AUTH_METHOD=sso in the real environment can't trigger
+	// the auto-login branch either — both would otherwise let getAuthProvider
+	// succeed despite the credentials being cleared below.
+	t.Setenv("HOME", t.TempDir())
+
 	// Save original values
 	originalClientID := clientID
 	originalClientSecret := clientSecret
 	originalToken := token
 	originalTenantID := tenantID
+	originalCredFlagsExplicit := credFlagsExplicit
 
 	t.Cleanup(func() {
 		clientID = originalClientID
 		clientSecret = originalClientSecret
 		token = originalToken
 		tenantID = originalTenantID
+		credFlagsExplicit = originalCredFlagsExplicit
 	})
 
 	// Clear all auth credentials
@@ -869,6 +878,7 @@ func TestGetAuthProvider_NoCredentials(t *testing.T) {
 	clientSecret = ""
 	token = ""
 	tenantID = ""
+	credFlagsExplicit = true
 
 	_, err := getAuthProvider(context.Background())
 	if err == nil {

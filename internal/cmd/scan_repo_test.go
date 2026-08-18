@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
@@ -20,8 +21,7 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 		testhelpers.CreateNormalizedFinding("repo-finding-1", "HIGH", "sql_injection", []string{"CVE-2024-1111"}, []string{"CWE-89"}),
 	}
 
-	// Setup mock server
-	serverURL := testutil.GetMockServerURL(t, findings)
+	serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{Findings: findings})
 
 	// Create test repo
 	tmpDir := t.TempDir()
@@ -39,6 +39,7 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
 	originalNoProgress := noProgress
+	originalPollInterval := pollInterval
 
 	t.Cleanup(func() {
 		token = originalToken
@@ -50,6 +51,7 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
 		noProgress = originalNoProgress
+		pollInterval = originalPollInterval
 		_ = os.Unsetenv("ARMIS_API_URL")
 	})
 
@@ -66,6 +68,10 @@ func TestScanRepoRunE_SuccessfulScan(t *testing.T) {
 	themeFlag = themeAuto
 	noUpdateCheck = true
 	noProgress = true
+	// Override the production Scanner's default 5s poll interval so this test
+	// doesn't pay for a real poll tick (RunE has no cobra-flag seam exercised
+	// here, so we set the bound package var directly).
+	pollInterval = 10 * time.Millisecond
 
 	// Run the command
 	// Note: The formatter writes directly to os.Stdout, so we verify success by checking for no error.
@@ -83,7 +89,7 @@ func TestScanRepoRunE_DefaultsToCurrentDir(t *testing.T) {
 	findings := []model.NormalizedFinding{
 		testhelpers.CreateNormalizedFinding("repo-finding-1", "HIGH", "sql_injection", []string{"CVE-2024-1111"}, []string{"CWE-89"}),
 	}
-	serverURL := testutil.GetMockServerURL(t, findings)
+	serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{Findings: findings})
 
 	dir := chdirTemp(t)
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}"), 0600); err != nil {
@@ -99,6 +105,7 @@ func TestScanRepoRunE_DefaultsToCurrentDir(t *testing.T) {
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
 	originalNoProgress := noProgress
+	originalPollInterval := pollInterval
 
 	t.Cleanup(func() {
 		token = originalToken
@@ -110,6 +117,7 @@ func TestScanRepoRunE_DefaultsToCurrentDir(t *testing.T) {
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
 		noProgress = originalNoProgress
+		pollInterval = originalPollInterval
 		_ = os.Unsetenv("ARMIS_API_URL")
 	})
 
@@ -125,6 +133,7 @@ func TestScanRepoRunE_DefaultsToCurrentDir(t *testing.T) {
 	themeFlag = themeAuto
 	noUpdateCheck = true
 	noProgress = true
+	pollInterval = 10 * time.Millisecond
 
 	// No path argument: RunE must default repoPath to "." (the temp dir).
 	if err := scanRepoCmd.RunE(scanRepoCmd, []string{}); err != nil {

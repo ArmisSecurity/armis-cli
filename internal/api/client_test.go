@@ -948,7 +948,10 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 			testutil.ErrorResponse(w, http.StatusInternalServerError, "Internal error")
 		})
 
-		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		// DisableRetry: this subtest only checks that a persistent 500 surfaces as
+		// an error, not retry behavior — without it, the client's default 3-retry
+		// exponential backoff (up to 30s MaxElapsedTime) makes this test slow.
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
 		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)

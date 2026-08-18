@@ -111,6 +111,9 @@ var scanImageCmd = &cobra.Command{
 		scanTimeoutDuration := time.Duration(scanTimeout) * time.Minute
 		scanner := image.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable).
 			WithPullPolicy(pullPolicy)
+		if pollInterval > 0 {
+			scanner = scanner.WithPollInterval(pollInterval)
+		}
 
 		warnOnUnusedSBOMVEXFlags()
 
