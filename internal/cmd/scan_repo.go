@@ -109,6 +109,16 @@ var scanRepoCmd = &cobra.Command{
 			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 		}
 
+		// Enable best-effort git-hint detection (repo_name / git_sha / origin_sha)
+		// for incremental-scan baseline resolution — but only for a full-repo-root
+		// upload. A --changed or --include-files partial upload is not a faithful
+		// whole-repo snapshot, so a full-repo baseline diff against it would be
+		// meaningless; skip detection entirely in those modes. DetectGitHints
+		// additionally verifies the target is the repository root.
+		if len(includeFiles) == 0 && !cmd.Flags().Changed("changed") {
+			scanner = scanner.WithGitHints()
+		}
+
 		// Handle --include-files flag for targeted file scanning
 		// Security: Path traversal protection is enforced by ParseFileList which
 		// validates all paths using SafeJoinPath to ensure they don't escape the

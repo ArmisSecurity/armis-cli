@@ -318,6 +318,11 @@ type IngestOptions struct {
 	// defaults to CycloneDX server-side.
 	SBOMFormat  string
 	GenerateVEX bool
+	// Optional git hints for incremental-scan baseline resolution (PPSC-1215).
+	// Empty strings are omitted from the /scan request body.
+	RepoName  string
+	GitSHA    string
+	OriginSHA string
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -539,6 +544,9 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		SBOMGenerate: opts.GenerateSBOM,
 		SBOMFormat:   opts.SBOMFormat,
 		VEXGenerate:  opts.GenerateVEX,
+		RepoName:     opts.RepoName,
+		GitSHA:       opts.GitSHA,
+		OriginSHA:    opts.OriginSHA,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

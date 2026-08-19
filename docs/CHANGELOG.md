@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo`: automatically detects git context from the local checkout and sends `repo_name`, `git_sha`, and `origin_sha` with the upload so the backend can resolve an incremental-scan baseline. Detection is best-effort — no new required flags — and only runs for a full repository-root scan (not `--changed` or `--include-files` partial uploads). `git_sha` is sent only when the working tree is clean, so the uploaded archive faithfully matches the commit; `repo_name` comes from the `origin` remote URL, and `origin_sha` from the merge-base with the detected default branch. Any value that can't be determined (no `.git`, no `origin`, shallow clone, dirty tree) is omitted, and the upload proceeds unchanged. (PPSC-1215)
+
 ### Changed
 
 ### Deprecated
