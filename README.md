@@ -544,6 +544,36 @@ Notes:
 
 See [PR Scanning with Changed Files](docs/CI-INTEGRATION.md#pr-scanning-with-changed-files) for CI usage.
 
+#### Incremental Scan Git Hints
+
+When you scan a repository root that is a git checkout, the CLI automatically
+detects a small amount of git context and sends it with the upload so the
+backend can reuse a previously computed baseline and re-scan only what changed:
+
+- `repo_name` — the canonical `owner/repo` identity, parsed from the `origin`
+  remote URL.
+- `git_sha` — the current commit (`HEAD`), sent **only when the working tree is
+  clean** (no staged, unstaged, or untracked changes) so the uploaded archive
+  faithfully matches that commit.
+- `origin_sha` — the merge-base of `HEAD` with the origin default branch, used
+  as a read-only fallback when the exact commit isn't in the baseline yet.
+
+This is fully automatic — no new flags are required:
+
+```bash
+armis-cli scan repo .
+```
+
+Notes:
+
+- Detection is best-effort. If any value can't be determined (no `.git`
+  directory, no `origin` remote, a shallow clone with no common ancestor, or a
+  dirty working tree), that field is simply omitted and the scan proceeds
+  exactly as before.
+- Hints are only sent for a full repository-root scan. They are intentionally
+  skipped for `--changed` and `--include-files` partial uploads, and for
+  subdirectory scans, since those are not faithful whole-repo snapshots.
+
 ### Scan Container Image
 
 Scans a container image (local or remote) or a tarball.

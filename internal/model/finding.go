@@ -134,6 +134,12 @@ type IngestScanStartRequest struct {
 	SBOMFormat  string   `json:"sbom_format,omitempty"`
 	VEXGenerate bool     `json:"vex_generate"`
 	CustomScans []string `json:"custom_scans,omitempty"`
+	// Optional git hints for incremental-scan baseline resolution (PPSC-1215).
+	// Omitted when empty so the wire shape is unchanged for uploads without a
+	// detectable git context (old CLI behavior, non-git artifacts).
+	RepoName  string `json:"repo_name,omitempty"`
+	GitSHA    string `json:"git_sha,omitempty"`
+	OriginSHA string `json:"origin_sha,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

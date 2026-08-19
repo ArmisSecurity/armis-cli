@@ -342,6 +342,64 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("forwards git hints to /scan when set", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			RepoName: "org/repo", GitSHA: "abc123", OriginSHA: "def456",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if req.RepoName != "org/repo" {
+			t.Errorf("repo_name = %q, want %q", req.RepoName, "org/repo")
+		}
+		if req.GitSHA != "abc123" {
+			t.Errorf("git_sha = %q, want %q", req.GitSHA, "abc123")
+		}
+		if req.OriginSHA != "def456" {
+			t.Errorf("origin_sha = %q, want %q", req.OriginSHA, "def456")
+		}
+	})
+
+	t.Run("omits git hints when unset", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		// omitempty keeps the wire shape unchanged for uploads with no git context.
+		for _, key := range []string{"repo_name", "git_sha", "origin_sha"} {
+			if strings.Contains(string(body), key) {
+				t.Errorf("expected %s to be omitted, got body: %s", key, body)
+			}
+		}
+	})
+
 	t.Run("upload error: /presigned-url 4xx", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)

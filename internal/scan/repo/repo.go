@@ -40,6 +40,7 @@ type Scanner struct {
 	fetchRetryInterval    time.Duration
 	includeFiles          *FileList
 	sbomVEXOpts           *scan.SBOMVEXOptions
+	detectGitHints        bool
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -78,6 +79,15 @@ func (s *Scanner) WithIncludeFiles(fl *FileList) *Scanner {
 // WithSBOMVEXOptions sets SBOM and VEX generation options.
 func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 	s.sbomVEXOpts = opts
+	return s
+}
+
+// WithGitHints enables best-effort git-hint detection (repo_name, git_sha,
+// origin_sha) for incremental-scan baseline resolution (PPSC-1215). Callers
+// should only enable this for full-repo-root scans — not for --changed or
+// --include-files partial uploads, which are not faithful whole-repo snapshots.
+func (s *Scanner) WithGitHints() *Scanner {
+	s.detectGitHints = true
 	return s
 }
 
@@ -215,6 +225,17 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
 		ingestOpts.SBOMFormat = s.sbomVEXOpts.SBOMFormat
 		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
+	}
+
+	// Best-effort git hints for incremental-scan baseline resolution. Detection
+	// never fails the upload — undetected fields are simply omitted. Only runs
+	// for full-repo-root scans (enabled via WithGitHints by the command layer
+	// when neither --changed nor --include-files is set).
+	if s.detectGitHints {
+		hints := DetectGitHints(absPath)
+		ingestOpts.RepoName = hints.RepoName
+		ingestOpts.GitSHA = hints.GitSHA
+		ingestOpts.OriginSHA = hints.OriginSHA
 	}
 
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
