@@ -318,6 +318,8 @@ func TestNormalizeRepoName(t *testing.T) {
 		{"trailing slash", "https://github.com/org/repo/", "org/repo"},
 		{"deeper path reduces to last two", "https://gitlab.com/group/subgroup/repo.git", "subgroup/repo"},
 		{"azure devops https", "https://dev.azure.com/org/project/_git/repo", "_git/repo"},
+		{"windows local clone path", `C:\Users\runner\src\owner\upstream`, "owner/upstream"},
+		{"windows unc-ish path", `\\server\share\owner\repo`, "owner/repo"},
 		{"empty", "", ""},
 		{"whitespace only", "   ", ""},
 		{"host only no path", "https://github.com", ""},

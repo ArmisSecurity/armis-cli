@@ -132,6 +132,12 @@ func normalizeRepoName(rawURL string) string {
 		return ""
 	}
 
+	// Normalize backslashes to forward slashes. Real git remote URLs never use
+	// backslashes, but a local-filesystem clone on Windows yields an origin URL
+	// like `C:\path\to\repo`; without this the path segments can't be split and
+	// detection silently drops repo_name. Harmless for genuine URLs.
+	s = strings.ReplaceAll(s, "\\", "/")
+
 	// Strip a scheme prefix ("https://", "ssh://", "git://", ...).
 	if i := strings.Index(s, "://"); i != -1 {
 		s = s[i+3:]
