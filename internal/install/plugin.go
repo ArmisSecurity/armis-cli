@@ -89,7 +89,7 @@ func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 		return fmt.Errorf("failed to download plugin: %w", err)
 	}
 
-	if err := pi.createVenv(destDir); err != nil {
+	if err := createPluginVenv(destDir); err != nil {
 		return fmt.Errorf("failed to set up Python environment: %w", err)
 	}
 
@@ -137,7 +137,26 @@ func (pi *PluginInstaller) fetchLatestRelease() (*githubRelease, error) {
 }
 
 func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error {
-	if !pi.skipURLValidation {
+	return downloadAndExtractTarball(pi.httpClient, tarballURL, destDir, "", pi.skipURLValidation)
+}
+
+// downloadAndExtractTarball downloads a gzipped tar archive and extracts it to
+// destDir, stripping the archive's top-level directory.
+//
+// subtree, when non-empty, selects a slash-terminated path within the archive
+// (evaluated after the top-level dir is stripped) and extracts only that
+// subtree's contents to destDir — so subtree "prod/" places "prod/bridge.py" at
+// "<destDir>/bridge.py". A subtree matching no entries is an error, not a silent
+// empty install.
+//
+// Both current callers pass "" and extract the whole archive: the scanner's
+// plugin lives at its repo root, and the knowledge installer needs the repo root
+// too so Claude Code can resolve .claude-plugin/marketplace.json (see
+// KnowledgeMCPInstaller.EnvDir). Narrowing is retained for a caller that wants
+// one directory out of a multi-plugin archive without the surrounding tree.
+func downloadAndExtractTarball(client *http.Client, tarballURL, destDir, subtree string, skipURLValidation bool) error {
+	// armis:ignore cwe:918 reason:skipURLValidation parameter allows test-only bypass of URL validation; production usage always validates
+	if !skipURLValidation {
 		if err := validateGitHubURL(tarballURL); err != nil {
 			return fmt.Errorf("invalid tarball URL: %w", err)
 		}
@@ -149,7 +168,7 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := pi.httpClient.Do(req) //nolint:gosec // URL validated by validateGitHubURL above
+	resp, err := client.Do(req) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
@@ -170,6 +189,7 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	var totalExtracted int64
 	var entryCount int
 	var prefix string
+	var matchedSubtree bool
 
 	for {
 		// codeql[go/zipslip] -- every entry is Clean'd, rejected if absolute/../, then Abs-validated to stay under destDir before any write (see below)
@@ -200,6 +220,19 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 		name := strings.TrimPrefix(header.Name, prefix)
 		if name == "" || name == "." {
 			continue
+		}
+
+		// Narrow to the requested subtree before any path validation, so
+		// out-of-subtree entries are skipped cheaply and cannot escape.
+		if subtree != "" {
+			if !strings.HasPrefix(name, subtree) {
+				continue
+			}
+			name = strings.TrimPrefix(name, subtree)
+			if name == "" || name == "." {
+				continue
+			}
+			matchedSubtree = true
 		}
 
 		clean := filepath.Clean(filepath.FromSlash(name))
@@ -249,11 +282,14 @@ func (pi *PluginInstaller) downloadAndExtract(tarballURL, destDir string) error 
 	if prefix == "" {
 		return fmt.Errorf("archive appears to be empty")
 	}
+	if subtree != "" && !matchedSubtree {
+		return fmt.Errorf("archive contains no entries under %q", subtree)
+	}
 
 	return nil
 }
 
-func (pi *PluginInstaller) createVenv(pluginDir string) error {
+func createPluginVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
 		return pythonNotFoundError()
@@ -333,6 +369,88 @@ func writeJSON(path string, data interface{}) error {
 	return os.WriteFile(filepath.Clean(path), append(b, '\n'), 0o600)
 }
 
+// registerDirectoryMarketplace writes (or updates) a "source": "directory"
+// marketplace entry in claudeDir's known_marketplaces.json, pointing
+// marketplaceName at pluginDir. Both ClaudeInstaller (the scanner) and
+// KnowledgeMCPInstaller share this: each points a differently-named
+// marketplace at its own already-extracted plugin directory rather than
+// having Claude Code fetch or copy a second one.
+//
+// Reads the existing file first so unrelated marketplaces registered by the
+// other installer are preserved — never overwrite the whole file.
+func registerDirectoryMarketplace(claudeDir, marketplaceName, pluginDir string) error {
+	mktsFile := filepath.Join(claudeDir, "plugins", "known_marketplaces.json")
+	data := make(map[string]interface{})
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
+	if b, err := os.ReadFile(filepath.Clean(mktsFile)); err == nil {
+		_ = json.Unmarshal(b, &data)
+	}
+
+	data[marketplaceName] = map[string]interface{}{
+		jsonKeySource:      map[string]interface{}{jsonKeySource: "directory", jsonKeyPath: pluginDir},
+		"installLocation":  pluginDir,
+		jsonKeyLastUpdated: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+
+	return writeJSON(mktsFile, data)
+}
+
+// registerInstalledPlugin records pluginKey's ("<plugin>@<marketplace>")
+// install metadata in claudeDir's installed_plugins.json. version carries
+// whatever identity the caller versions by — a semver string for the
+// scanner, a commit SHA for knowledge — this helper treats it opaquely.
+//
+// Reads the existing file first so other plugins already recorded there
+// (by this or the other installer) are preserved.
+func registerInstalledPlugin(claudeDir, pluginKey, pluginDir, version string) error {
+	instFile := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
+	data := map[string]interface{}{jsonKeyVersion: 2, "plugins": map[string]interface{}{}}
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
+	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
+		_ = json.Unmarshal(b, &data)
+	}
+
+	plugins, ok := data["plugins"].(map[string]interface{})
+	if !ok {
+		plugins = make(map[string]interface{})
+		data["plugins"] = plugins
+	}
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	plugins[pluginKey] = []interface{}{
+		map[string]interface{}{
+			"scope":            "user",
+			"installPath":      pluginDir,
+			jsonKeyVersion:     version,
+			"installedAt":      now,
+			jsonKeyLastUpdated: now,
+		},
+	}
+
+	return writeJSON(instFile, data)
+}
+
+// enableInstalledPlugin flips pluginKey on in claudeDir's settings.json
+// enabledPlugins map, preserving every other setting and every other
+// enabled plugin already recorded there.
+func enableInstalledPlugin(claudeDir, pluginKey string) error {
+	settingsFile := filepath.Join(claudeDir, "settings.json")
+	data := make(map[string]interface{})
+	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
+	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
+		_ = json.Unmarshal(b, &data)
+	}
+
+	enabled, ok := data["enabledPlugins"].(map[string]interface{})
+	if !ok {
+		enabled = make(map[string]interface{})
+		data["enabledPlugins"] = enabled
+	}
+	enabled[pluginKey] = true
+
+	return writeJSON(settingsFile, data)
+}
+
 // CheckPython verifies that a Python 3.11+ interpreter is available on PATH.
 // It is a fast, side-effect-free preflight used by the install commands to fail
 // early — before any multi-MB plugin download — when the MCP server's runtime
@@ -347,7 +465,7 @@ func CheckPython() error {
 
 // pythonNotFoundError builds the shared "Python not found" error with the list
 // of interpreter names tried and an OS-specific install hint. Centralized so the
-// preflight (CheckPython) and the venv setup (createVenv) emit identical guidance.
+// preflight (CheckPython) and the venv setup (createPluginVenv) emit identical guidance.
 func pythonNotFoundError() error {
 	var hint string
 	switch runtime.GOOS {

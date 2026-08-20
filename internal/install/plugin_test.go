@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 func TestFetchLatestRelease(t *testing.T) {
@@ -220,6 +222,20 @@ func TestFindPython(t *testing.T) {
 	_ = findPython()
 }
 
+func TestCreatePluginVenvRequiresPython(t *testing.T) {
+	// Empty PATH means findPython finds nothing, so the venv build must fail
+	// with the shared actionable "no suitable Python" guidance.
+	t.Setenv("PATH", t.TempDir())
+
+	err := createPluginVenv(t.TempDir())
+	if err == nil {
+		t.Fatal("expected error when no Python interpreter is available")
+	}
+	if !testutil.ContainsSubstring(err.Error(), "Python") {
+		t.Errorf("error should mention Python, got: %v", err)
+	}
+}
+
 func TestValidateGitHubURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -398,6 +414,123 @@ func TestWriteEnvFromValues(t *testing.T) {
 			t.Errorf("file not created: %v", err)
 		}
 	})
+}
+
+func createSubtreeTarball(t *testing.T) []byte {
+	t.Helper()
+
+	tmpFile := filepath.Join(t.TempDir(), "subtree.tar.gz")
+	f, err := os.Create(filepath.Clean(tmpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	writeEntry := func(name string, data []byte) {
+		t.Helper()
+		hdr := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(data))}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const root = "ArmisSecurity-armis-knowledge-mcp-abc1234/"
+	writeEntry(root+"prod/bridge.py", []byte("print('bridge')\n"))
+	writeEntry(root+"prod/requirements.txt", []byte("mcp>=1.8,<2\n"))
+	writeEntry(root+"dev/bridge.py", []byte("print('dev bridge')\n"))
+	writeEntry(root+"README.md", []byte("# readme\n"))
+
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(filepath.Clean(tmpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestDownloadAndExtractTarballSelectsSubtree(t *testing.T) {
+	tarball := createSubtreeTarball(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(tarball)
+	}))
+	defer server.Close()
+
+	destDir := filepath.Join(t.TempDir(), "extract")
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := downloadAndExtractTarball(server.Client(), server.URL, destDir, "prod/", true); err != nil {
+		t.Fatalf("downloadAndExtractTarball() error: %v", err)
+	}
+
+	// Subtree contents land at the destination root, without the "prod/" prefix.
+	for _, want := range []string{"bridge.py", "requirements.txt"} {
+		if _, err := os.Stat(filepath.Join(destDir, want)); err != nil {
+			t.Errorf("expected %q extracted to dest root", want)
+		}
+	}
+	// Everything outside the subtree is excluded.
+	for _, unwanted := range []string{"README.md", "dev", "prod"} {
+		if _, err := os.Stat(filepath.Join(destDir, unwanted)); err == nil {
+			t.Errorf("%q should not be extracted when subtree is %q", unwanted, "prod/")
+		}
+	}
+}
+
+func TestDownloadAndExtractTarballEmptySubtreeExtractsAll(t *testing.T) {
+	tarball := createTestTarball(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(tarball)
+	}))
+	defer server.Close()
+
+	destDir := filepath.Join(t.TempDir(), "extract")
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := downloadAndExtractTarball(server.Client(), server.URL, destDir, "", true); err != nil {
+		t.Fatalf("downloadAndExtractTarball() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(destDir, "server.py")); err != nil {
+		t.Error("server.py not extracted with empty subtree")
+	}
+}
+
+func TestDownloadAndExtractTarballMissingSubtreeErrors(t *testing.T) {
+	tarball := createSubtreeTarball(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(tarball)
+	}))
+	defer server.Close()
+
+	destDir := filepath.Join(t.TempDir(), "extract")
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	err := downloadAndExtractTarball(server.Client(), server.URL, destDir, "nonexistent/", true)
+	if err == nil {
+		t.Fatal("expected error when subtree matches no archive entries")
+	}
 }
 
 // createTestTarball creates a gzipped tarball matching GitHub's format.

@@ -114,37 +114,152 @@ func TestDeregisterMissingFile(t *testing.T) {
 	}
 }
 
-func TestRemoveContinueFile(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "armis-appsec.json")
-	mustWriteJSON(t, configFile, map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"armis-appsec": map[string]interface{}{"command": "/bin/python"},
+// TestRemoveContinueEntryPreservesOtherSettings pins the reason Continue is
+// edited rather than deleted: config.yaml holds the user's entire Continue
+// configuration, so removing our server must leave everything else intact.
+func TestRemoveContinueEntryPreservesOtherSettings(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeYAML(configFile, map[string]interface{}{
+		"name":   "Main Config",
+		"schema": "v1",
+		"models": []interface{}{map[string]interface{}{"name": "gpt"}},
+		"mcpServers": []interface{}{
+			map[string]interface{}{"name": "other-server", "command": "/bin/other"},
+			map[string]interface{}{"name": mcpServerName, "command": "/bin/python"},
 		},
-	})
-
-	if err := removeContinueFile(configFile); err != nil {
-		t.Fatalf("removeContinueFile() error: %v", err)
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
-		t.Error("file should be deleted")
+
+	if err := removeContinueEntry(configFile, []string{mcpServerName}); err != nil {
+		t.Fatalf("removeContinueEntry() error: %v", err)
+	}
+
+	if _, err := os.Stat(configFile); err != nil {
+		t.Fatal("config.yaml must be edited, never deleted — it holds all Continue settings")
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	if got["models"] == nil {
+		t.Error("unrelated Continue settings (models) were lost")
+	}
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok || len(servers) != 1 {
+		t.Fatalf("expected exactly one surviving server, got: %v", got["mcpServers"])
+	}
+	m, _ := servers[0].(map[string]interface{})
+	if n, _ := m["name"].(string); n != "other-server" {
+		t.Errorf("surviving server = %q, want other-server", n)
 	}
 }
 
-func TestRemoveContinueFileNoArmisEntry(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "other.json")
-	mustWriteJSON(t, configFile, map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"other-server": map[string]interface{}{"command": "/bin/other"},
+func TestRemoveContinueEntryNoArmisEntry(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeYAML(configFile, map[string]interface{}{
+		"mcpServers": []interface{}{
+			map[string]interface{}{"name": "other-server", "command": "/bin/other"},
 		},
-	})
-
-	if err := removeContinueFile(configFile); err != nil {
-		t.Fatalf("removeContinueFile() error: %v", err)
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		t.Error("file without armis entry should NOT be deleted")
+
+	if err := removeContinueEntry(configFile, []string{mcpServerName}); err != nil {
+		t.Fatalf("removeContinueEntry() error: %v", err)
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok || len(servers) != 1 {
+		t.Errorf("a config without an Armis entry must be left alone, got: %v", got["mcpServers"])
+	}
+}
+
+// TestDeregisterAllEditorsRemovesContinueYAML covers the gate in front of
+// removal, not just removal itself: DeregisterAllEditors only calls the
+// deregister dispatcher when hasArmisEntry says an entry exists. hasArmisEntry
+// used to parse every config as JSON, so Continue's YAML raised a parse error,
+// the editor was skipped, and the entry survived an uninstall while the user was
+// shown a confusing "cannot read config" warning.
+//
+// Both discovery paths are exercised: the manifest path and the AllEditors scan
+// that catches installs predating manifest tracking.
+func TestDeregisterAllEditorsRemovesContinueYAML(t *testing.T) {
+	for _, withManifest := range []bool{false, true} {
+		name := "scan path"
+		if withManifest {
+			name = "manifest path"
+		}
+		t.Run(name, func(t *testing.T) {
+			// DeregisterAllEditors walks every editor, so HOME must be isolated.
+			// Overriding only Continue's path lets the scan reach, and edit, the
+			// real configs of whatever editors the developer has installed.
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+			configFile := filepath.Join(home, ".continue", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(configFile), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			configPathOverrides = map[EditorID]string{EditorContinue: configFile}
+			t.Cleanup(func() { configPathOverrides = nil })
+
+			pluginDir := filepath.Join(t.TempDir(), "armis-appsec-mcp")
+			e, _ := EditorByID(EditorContinue)
+			if err := e.Register(pluginDir); err != nil {
+				t.Fatalf("Register() error: %v", err)
+			}
+
+			u := &Uninstaller{pluginDir: pluginDir}
+			if withManifest {
+				m := NewManifest(pluginDir, "1.0.0")
+				m.AddEditor(EditorContinue, configFile, ConfigFormat(EditorContinue))
+				u.manifest = m
+			}
+
+			deregistered, warnings := u.DeregisterAllEditors()
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if len(deregistered) != 1 || deregistered[0] != e.Name {
+				t.Errorf("deregistered = %v, want [%s]", deregistered, e.Name)
+			}
+
+			servers, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+			if len(servers) != 0 {
+				t.Errorf("Armis entry survived uninstall: %v", servers)
+			}
+		})
+	}
+}
+
+// TestRegisterContinueFormatIsIdempotent guards against duplicate list entries:
+// Continue's servers are a list, so a naive append would register Armis twice on
+// a second install.
+func TestRegisterContinueFormatIsIdempotent(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	pluginDir := t.TempDir()
+
+	for i := 0; i < 2; i++ {
+		if err := registerContinueFormat(configFile, scannerEntry(pluginDir)); err != nil {
+			t.Fatalf("registerContinueFormat() run %d error: %v", i+1, err)
+		}
+	}
+
+	got := readYAMLFileAsMap(configFile)
+	servers, ok := got["mcpServers"].([]interface{})
+	if !ok {
+		t.Fatalf("mcpServers missing: %v", got)
+	}
+	if len(servers) != 1 {
+		t.Errorf("registering twice produced %d entries, want 1", len(servers))
+	}
+	// Continue requires these top-level keys; a config we create must be valid.
+	for _, k := range []string{"name", "version", "schema"} {
+		if got[k] == nil {
+			t.Errorf("required Continue key %q missing from generated config", k)
+		}
 	}
 }
 
@@ -598,4 +713,80 @@ func mustReadJSON(t *testing.T, path string) map[string]interface{} {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestRemoveKnowledgeLeavesScannerEntry(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "mcp.json")
+	scannerDir := t.TempDir()
+	knowledgeDir := filepath.Join(t.TempDir(), "knowledge")
+	if err := os.MkdirAll(knowledgeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both products registered in one config file.
+	if err := registerEditorEntry(EditorCursor, configFile, scannerEntry(scannerDir)); err != nil {
+		t.Fatal(err)
+	}
+	knowledge := mcpEntry{
+		name:    "armis-knowledge",
+		command: venvPython(knowledgeDir),
+		args:    []string{filepath.Join(knowledgeDir, "bridge.py")},
+	}
+	if err := registerEditorEntry(EditorCursor, configFile, knowledge); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManifest(scannerDir, "1.0.0")
+	k := m.EnsureKnowledge(knowledgeDir, "abc1234")
+	k.AddEditor(EditorCursor, configFile, "mcpServers")
+
+	u := &Uninstaller{pluginDir: scannerDir, manifest: m}
+	if !u.HasKnowledge() {
+		t.Fatal("HasKnowledge() = false, want true when the manifest records knowledge")
+	}
+
+	removed, warnings := u.RemoveKnowledge(false)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if len(removed) == 0 {
+		t.Error("expected at least one removal to be reported")
+	}
+
+	b, err := os.ReadFile(filepath.Clean(configFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		t.Fatal(err)
+	}
+	servers, ok := data["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers missing after knowledge removal: %s", b)
+	}
+	if servers["armis-knowledge"] != nil {
+		t.Error("knowledge entry should be removed")
+	}
+	if servers["armis-appsec"] == nil {
+		t.Error("scanner entry must survive knowledge removal")
+	}
+
+	if _, err := os.Stat(knowledgeDir); !os.IsNotExist(err) {
+		t.Error("knowledge plugin directory should be deleted")
+	}
+}
+
+func TestRemoveKnowledgeNoopWithoutManifestEntry(t *testing.T) {
+	dir := t.TempDir()
+	u := &Uninstaller{pluginDir: dir, manifest: NewManifest(dir, "1.0.0")}
+
+	if u.HasKnowledge() {
+		t.Error("HasKnowledge() = true, want false when the manifest has no knowledge section")
+	}
+
+	removed, warnings := u.RemoveKnowledge(false)
+	if len(removed) != 0 || len(warnings) != 0 {
+		t.Errorf("expected a no-op, got removed=%v warnings=%v", removed, warnings)
+	}
 }

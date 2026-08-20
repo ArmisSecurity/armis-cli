@@ -9,7 +9,12 @@ import (
 
 const codexMCPServerName = "armis_scanner"
 
-var codexSectionHeader = "[mcp_servers." + codexMCPServerName + "]"
+var codexSectionHeader = codexSectionHeaderFor(codexMCPServerName)
+
+// codexSectionHeaderFor returns the TOML table header for an MCP server.
+func codexSectionHeaderFor(serverName string) string {
+	return "[mcp_servers." + serverName + "]"
+}
 
 // codexConfigPathOverride allows tests to inject a custom path.
 var codexConfigPathOverride string
@@ -42,8 +47,30 @@ func RegisterCodexMCP(pluginDir string) error {
 
 	// Sanitize: resolve symlink-like components (e.g. "..") to prevent
 	// path traversal when the stored path is later used by Codex CLI.
-	// armis:ignore cwe:22 cwe:23 cwe:73 reason:pluginDir validated absolute above; filepath.Clean here only normalizes; configPath is ~/.codex/config.toml from os.UserHomeDir (hardcoded segments)
+	// Cleaning here — before scannerEntry derives the interpreter and script
+	// paths from it — is what keeps ".." out of the written config.
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:pluginDir validated absolute above; filepath.Clean here only normalizes
 	pluginDir = filepath.Clean(pluginDir)
+
+	entry := scannerEntry(pluginDir)
+	// scannerEntry returns the JSON editors' hyphenated mcpServerName
+	// ("armis-appsec"); Codex's config uses the underscored codexMCPServerName
+	// ("armis_scanner"), so it must be substituted before registering.
+	entry.name = codexMCPServerName
+	return RegisterCodexEntry(entry)
+}
+
+// RegisterCodexEntry adds or updates one [mcp_servers.<name>] section in Codex
+// CLI's config.toml, leaving other sections untouched.
+//
+// entry.command must be absolute: Codex launches it directly, and this function
+// is also called straight from the knowledge installer, so it cannot rely on a
+// caller having validated the path.
+func RegisterCodexEntry(entry mcpEntry) error {
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:entry.command validated absolute here; callers derive it from a cleaned plugin dir; configPath is ~/.codex/config.toml from os.UserHomeDir (hardcoded segments)
+	if !filepath.IsAbs(entry.command) {
+		return fmt.Errorf("server command must be an absolute path: %s", entry.command)
+	}
 
 	configPath := CodexConfigPath()
 	if configPath == "" {
@@ -59,9 +86,10 @@ func RegisterCodexMCP(pluginDir string) error {
 		return err
 	}
 
-	// armis:ignore cwe:78 cwe:94 reason:buildCodexSection does not execute commands — it builds a TOML config string with tomlQuote-escaped values; pluginDir was validated absolute and cleaned above
-	newSection := buildCodexSection(pluginDir)
-	updated := replaceTOMLSection(content, codexSectionHeader, newSection)
+	header := codexSectionHeaderFor(entry.name)
+	// armis:ignore cwe:78 cwe:94 reason:buildCodexSectionFor does not execute commands — it builds a TOML config string with tomlQuote-escaped values
+	newSection := buildCodexSectionFor(entry.name, entry.command, entry.args)
+	updated := replaceTOMLSection(content, header, newSection)
 
 	return writeFileAtomic(configPath, updated)
 }
@@ -91,15 +119,16 @@ func DeregisterCodexMCP() (bool, error) {
 	return true, writeFileAtomic(configPath, updated)
 }
 
-func buildCodexSection(pluginDir string) string {
-	// armis:ignore cwe:78 cwe:94 cwe:22 cwe:23 cwe:73 reason:builds a TOML config string only (no command execution); pluginDir validated absolute by RegisterCodexMCP; venvPython/filepath.Join produce paths under the validated pluginDir
-	command := venvPython(pluginDir)
-	// armis:ignore cwe:78 cwe:94 cwe:22 cwe:23 cwe:73 reason:filepath.Join of validated pluginDir + hardcoded "server.py"; used only inside a tomlQuote-escaped config string, never executed
-	serverPy := filepath.Join(pluginDir, "server.py")
+func buildCodexSectionFor(serverName, command string, args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, a := range args {
+		// armis:ignore cwe:78 cwe:94 reason:values are only embedded in a TOML config string, never executed; tomlQuote escapes them
+		quoted = append(quoted, tomlQuote(a))
+	}
 	return fmt.Sprintf("%s\ncommand = %s\nargs = [%s]\n",
-		codexSectionHeader,
+		codexSectionHeaderFor(serverName),
 		tomlQuote(command),
-		tomlQuote(serverPy),
+		strings.Join(quoted, ", "),
 	)
 }
 
@@ -246,4 +275,29 @@ func writeFileAtomic(path, content string) error {
 		return fmt.Errorf("renaming config: %w", err)
 	}
 	return nil
+}
+
+// removeCodexSection removes one [mcp_servers.<name>] section from a Codex
+// config file. Returns whether a section was actually removed.
+func removeCodexSection(configPath, serverName string) (bool, error) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return false, nil
+	}
+
+	content, err := readFileOrEmpty(configPath)
+	if err != nil {
+		return false, err
+	}
+
+	header := codexSectionHeaderFor(serverName)
+	start, end := findTOMLSectionBounds(content, header)
+	if start == -1 {
+		return false, nil
+	}
+
+	updated := content[:start] + content[end:]
+	if err := writeFileAtomic(configPath, updated); err != nil {
+		return false, err
+	}
+	return true, nil
 }
