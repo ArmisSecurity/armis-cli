@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `install`/`uninstall`: dropped support for Gemini CLI, which Google has deprecated in favor of Antigravity. This removes the `gemini` install target, its MCP registration in `~/.gemini/settings.json`, its native pre-tool-use hook (`gemini_pre_tool.py`), and its agent detector. Existing `~/.gemini/settings.json` entries are left untouched — remove them manually if you no longer use Gemini CLI. Note that Antigravity exposes no hook API, so it registers an MCP server only; users relying on Gemini CLI's pre-tool-use hook lose scan-on-edit enforcement for that agent.
+
 ### Fixed
+
+- `install`/`uninstall`: Antigravity is now configured at `~/.gemini/config/mcp_config.json` instead of `~/.gemini/antigravity/mcp_config.json`, which current versions never create. Because agent detection and registration share one path, the stale location meant Antigravity went undetected and — when selected explicitly — the MCP server was written to a file no agent reads. The one config is shared by Antigravity 2.0, the CLI (`agy`), and the IDE, so a single registration covers all three.
 
 ### Security
 

@@ -14,7 +14,6 @@ type HookClientID string
 
 const (
 	HookClientCursor  HookClientID = "cursor"
-	HookClientGemini  HookClientID = "gemini"
 	HookClientCodex   HookClientID = "codex"
 	HookClientCopilot HookClientID = "copilot"
 	HookClientCline   HookClientID = "cline"
@@ -38,13 +37,6 @@ var AllHookClients = []HookClient{
 		AdapterPy:  "cursor_pre_tool.py",
 		configPath: cursorHooksPath,
 		buildHooks: buildCursorHooks,
-	},
-	{
-		ID:         HookClientGemini,
-		Name:       "Gemini CLI",
-		AdapterPy:  "gemini_pre_tool.py",
-		configPath: geminiHooksPath,
-		buildHooks: buildGeminiHooks,
 	},
 	{
 		ID:         HookClientCodex,
@@ -166,8 +158,6 @@ func installClientHook(client HookClient, pluginDir, configPath string) error {
 	switch client.ID {
 	case HookClientCursor:
 		return installCursorHook(pluginDir, configPath)
-	case HookClientGemini:
-		return installMergedHook(pluginDir, configPath, client)
 	case HookClientCodex:
 		return installMergedHook(pluginDir, configPath, client)
 	case HookClientCopilot:
@@ -193,12 +183,6 @@ func removeClientHook(client HookClient, configPath string) error {
 func cursorHooksPath() string {
 	return hookConfigPath(HookClientCursor, func() string {
 		return homeDir(".cursor", "hooks.json")
-	})
-}
-
-func geminiHooksPath() string {
-	return hookConfigPath(HookClientGemini, func() string {
-		return homeDir(".gemini", "settings.json")
 	})
 }
 
@@ -258,7 +242,7 @@ func readJSONFileAsMapSafe(path string) (map[string]interface{}, error) {
 }
 
 // installMergedHook handles clients that use a merged JSON settings file
-// with a hooks section (Gemini, Codex, Cline).
+// with a hooks section (Codex, Copilot, Cline).
 func installMergedHook(pluginDir, configPath string, client HookClient) error {
 	data, err := readJSONFileAsMapSafe(configPath)
 	if err != nil {
@@ -418,27 +402,6 @@ func buildCursorHooks(pluginDir string) map[string]interface{} {
 }
 
 // armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
-func buildGeminiHooks(pluginDir string) map[string]interface{} {
-	py := venvPython(pluginDir)
-	adapter := filepath.Join(pluginDir, "hooks", "gemini_pre_tool.py")
-	cmd := quotedCommand(py, adapter)
-	return map[string]interface{}{
-		"BeforeTool": []interface{}{
-			map[string]interface{}{
-				jsonKeyMatcher: "shell|bash|run_shell_command|write_file|edit_file|patch_file",
-				jsonKeyHooks: []interface{}{
-					map[string]interface{}{
-						jsonKeyType:    jsonTypeCommand,
-						jsonKeyCommand: cmd,
-						jsonKeyTimeout: 10000,
-					},
-				},
-			},
-		},
-	}
-}
-
-// armis:ignore cwe:78 reason:pluginDir from known install location; quotedCommand uses posixQuote to escape shell metacharacters
 func buildCodexHooks(pluginDir string) map[string]interface{} {
 	py := venvPython(pluginDir)
 	adapter := filepath.Join(pluginDir, "hooks", "codex_pre_tool.py")
@@ -534,7 +497,6 @@ func isArmisHookJSON(entry interface{}) bool {
 		strings.Contains(s, "armis-appsec") ||
 		strings.Contains(s, "armis-cli scan repo") ||
 		strings.Contains(s, "cursor_pre_tool.py") ||
-		strings.Contains(s, "gemini_pre_tool.py") ||
 		strings.Contains(s, "codex_pre_tool.py") ||
 		strings.Contains(s, "copilot_pre_tool.py") ||
 		strings.Contains(s, "cline_pre_tool.py")

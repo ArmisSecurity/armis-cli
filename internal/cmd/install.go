@@ -33,8 +33,7 @@ Supported editors:
   cline           Cline (VS Code extension)
   amazonq         Amazon Q Developer
   continue        Continue
-  antigravity     Antigravity
-  gemini          Gemini CLI
+  antigravity     Antigravity (2.0, CLI, and IDE)
   roocode         Roo Code
   junie           Junie
 

@@ -183,11 +183,11 @@ type antigravityDetector struct{}
 func (d *antigravityDetector) Name() AgentName { return AgentGoogleAntigravity }
 
 func (d *antigravityDetector) Detect(resolvedHome, homeDir string, _ Platform) bool {
-	return dirExists(resolvedHome, filepath.Join(homeDir, ".gemini", "antigravity"))
+	return dirExists(resolvedHome, filepath.Join(homeDir, ".gemini", "config"))
 }
 
 func (d *antigravityDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
-	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".gemini", "antigravity", "mcp_config.json"))
+	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"))
 }
 
 func (d *antigravityDetector) DetectVersion(_, _ string, _ Platform) string {
@@ -458,23 +458,5 @@ func (d *continueDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bo
 }
 
 func (d *continueDetector) DetectVersion(_, _ string, _ Platform) string {
-	return ""
-}
-
-// --- Gemini CLI ---
-
-type geminiCLIDetector struct{}
-
-func (d *geminiCLIDetector) Name() AgentName { return AgentGeminiCLI }
-
-func (d *geminiCLIDetector) Detect(resolvedHome, homeDir string, _ Platform) bool {
-	return fileExists(resolvedHome, filepath.Join(homeDir, ".gemini", "settings.json"))
-}
-
-func (d *geminiCLIDetector) CheckMCP(resolvedHome, homeDir string, _ Platform) bool {
-	return HasArmisMCP(resolvedHome, filepath.Join(homeDir, ".gemini", "settings.json"))
-}
-
-func (d *geminiCLIDetector) DetectVersion(_, _ string, _ Platform) string {
 	return ""
 }

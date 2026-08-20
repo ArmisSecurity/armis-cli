@@ -39,7 +39,6 @@ const (
 	EditorAmazonQ       EditorID = "amazonq"
 	EditorContinue      EditorID = "continue"
 	EditorAntigravity   EditorID = "antigravity"
-	EditorGemini        EditorID = "gemini"
 	EditorRooCode       EditorID = "roocode"
 	EditorJunie         EditorID = "junie"
 	EditorClaudeDesktop EditorID = "claude-desktop"
@@ -62,7 +61,6 @@ var AllEditors = []Editor{
 	{EditorAmazonQ, "Amazon Q"},
 	{EditorContinue, "Continue"},
 	{EditorAntigravity, "Antigravity"},
-	{EditorGemini, "Gemini CLI"},
 	{EditorRooCode, "Roo Code"},
 	{EditorJunie, "Junie"},
 	{EditorClaudeDesktop, "Claude Desktop"},
@@ -223,9 +221,12 @@ func defaultConfigPath(id EditorID) string {
 	case EditorAmazonQ:
 		return homeDir(".aws", "amazonq", "mcp.json")
 	case EditorAntigravity:
-		return homeDir(".gemini", "antigravity", "mcp_config.json")
-	case EditorGemini:
-		return homeDir(".gemini", "settings.json")
+		// Antigravity 2.0, the CLI (agy), and the IDE all share this one global
+		// MCP config, so a single registration covers whichever is installed.
+		// Antigravity migrated here from ~/.gemini/antigravity/, leaving a
+		// .migrated marker behind; the old path is never created on current
+		// installs, so registering there silently reached no agent.
+		return homeDir(".gemini", "config", "mcp_config.json")
 	case EditorRooCode:
 		return homeDir(".roo-cline", "mcp_settings.json")
 	case EditorJunie:
