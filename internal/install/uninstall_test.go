@@ -190,7 +190,14 @@ func TestDeregisterAllEditorsRemovesContinueYAML(t *testing.T) {
 			name = "manifest path"
 		}
 		t.Run(name, func(t *testing.T) {
+			// DeregisterAllEditors walks every editor, so HOME must be isolated.
+			// Overriding only Continue's path lets the scan reach, and edit, the
+			// real configs of whatever editors the developer has installed.
 			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
 			configFile := filepath.Join(home, ".continue", "config.yaml")
 			if err := os.MkdirAll(filepath.Dir(configFile), 0o750); err != nil {
 				t.Fatal(err)
