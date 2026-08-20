@@ -9,22 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scan repo`: automatically detects git context from the local checkout and sends `repo_name`, `git_sha`, and `origin_sha` with the upload so the backend can resolve an incremental-scan baseline. Detection is best-effort — no new required flags — and only runs for a full repository-root scan (not `--changed` or `--include-files` partial uploads). `git_sha` is sent only when the working tree is clean, so the uploaded archive faithfully matches the commit; `repo_name` comes from the `origin` remote URL, and `origin_sha` from the merge-base with the detected default branch. Any value that can't be determined (no `.git`, no `origin`, shallow clone, dirty tree) is omitted, and the upload proceeds unchanged. (PPSC-1215)
-- `install`: Armis Knowledge can now be installed alongside the security scanner for every supported editor, not just Claude Code. The interactive wizard asks before you pick editors; non-interactive runs opt in with `--with-knowledge`. Knowledge registers the plugin's local stdio bridge, which exchanges `ARMIS_CLIENT_ID`/`ARMIS_CLIENT_SECRET` for a short-lived JWT and refreshes it itself — so there is no static token to keep fresh. Knowledge installs only for editors where the scanner registration succeeded, and a knowledge failure never fails the install. `uninstall` removes knowledge along with the scanner. The standalone `install knowledge` subcommand remains, including `--variant skills` for Claude-Code-only setups without Python. (PPSC-1224)
-
 ### Changed
 
 ### Deprecated
 
 ### Removed
 
-- `install`/`uninstall`: dropped support for Gemini CLI, which Google has deprecated in favor of Antigravity. This removes the `gemini` install target, its MCP registration in `~/.gemini/settings.json`, its native pre-tool-use hook (`gemini_pre_tool.py`), and its agent detector. Existing `~/.gemini/settings.json` entries are left untouched — remove them manually if you no longer use Gemini CLI. Note that Antigravity exposes no hook API, so it registers an MCP server only; users relying on Gemini CLI's pre-tool-use hook lose scan-on-edit enforcement for that agent.
+### Fixed
+
+### Security
+
+---
+
+## [1.22.0] - 2026-08-20
+
+### Added
+
+- `scan status [scan_id]`: new subcommand reporting the current state of an initiated scan via `GET /api/v1/ingest/status/`, covering every `ArtifactScanStatus` value (PENDING_UPLOAD, UPLOADED, INITIATED, IN_PROGRESS, COMPLETED, FAILED, STOPPED) with a state-specific hint line. Called without a `scan_id` it falls back to the most recent scan initiated locally for the current API URL + tenant pair — every `scan repo`/`scan image`/`scan sbom` now records its scan ID in `~/.armis/scan-history.json` (mode 0600, atomic writes, capped at 20 entries, scoped per tenant so one environment's history never leaks into another). `--format` is restricted to `human`/`json`. (#286)
+- `scan repo`: automatically detects git context from the local checkout and sends `repo_name`, `git_sha`, and `origin_sha` with the upload so the backend can resolve an incremental-scan baseline. Detection is best-effort — no new required flags — and only runs for a full repository-root scan (not `--changed` or `--include-files` partial uploads). `git_sha` is sent only when the working tree is clean, so the uploaded archive faithfully matches the commit; `repo_name` comes from the `origin` remote URL, and `origin_sha` from the merge-base with the detected default branch. Any value that can't be determined (no `.git`, no `origin`, shallow clone, dirty tree) is omitted, and the upload proceeds unchanged. (PPSC-1215)
+- `install`: Armis Knowledge can now be installed alongside the security scanner for every supported editor, not just Claude Code. The interactive wizard asks before you pick editors; non-interactive runs opt in with `--with-knowledge`. Knowledge registers the plugin's local stdio bridge, which exchanges `ARMIS_CLIENT_ID`/`ARMIS_CLIENT_SECRET` for a short-lived JWT and refreshes it itself — so there is no static token to keep fresh. Knowledge installs only for editors where the scanner registration succeeded, and a knowledge failure never fails the install. `uninstall` removes knowledge along with the scanner. The standalone `install knowledge` subcommand remains, including `--variant skills` for Claude-Code-only setups without Python. (PPSC-1224)
+
+### Changed
+
+- Documentation: the README now documents the `--sbom-format` flag (`cyclonedx`|`spdx`) on `scan repo`/`scan image`, including the SPDX default output path. The flag shipped in v1.21.0 but was only mentioned in the changelog. (#301)
+
+### Removed
+
+- `install`/`uninstall`: dropped support for Gemini CLI, which Google has deprecated in favor of Antigravity. This removes the `gemini` install target, its MCP registration in `~/.gemini/settings.json`, its native pre-tool-use hook (`gemini_pre_tool.py`), and its agent detector. Existing `~/.gemini/settings.json` entries are left untouched — remove them manually if you no longer use Gemini CLI. Note that Antigravity exposes no hook API, so it registers an MCP server only; users relying on Gemini CLI's pre-tool-use hook lose scan-on-edit enforcement for that agent. (#296)
 
 ### Fixed
 
-- `install`/`uninstall`: Antigravity is now configured at `~/.gemini/config/mcp_config.json` instead of `~/.gemini/antigravity/mcp_config.json`, which current versions never create. Because agent detection and registration share one path, the stale location meant Antigravity went undetected and — when selected explicitly — the MCP server was written to a file no agent reads. The one config is shared by Antigravity 2.0, the CLI (`agy`), and the IDE, so a single registration covers all three.
+- `install`/`uninstall`: corrected the MCP config paths for three editors that were being written to locations the editors never read, so registration silently reached no agent and — because detection keys on the same path — the editor went undetected even when installed. Continue now uses its inline `~/.continue/config.yaml` instead of a `mcpServers/` JSON directory it never creates; Cline moved to its standalone `~/.cline/data/settings/` (out of VS Code's `globalStorage`); and Roo Code is registered in VS Code's `globalStorage` rather than a `~/.roo-cline` home directory. (PPSC-1263)
+- `install`/`uninstall`: Antigravity is now configured at `~/.gemini/config/mcp_config.json` instead of `~/.gemini/antigravity/mcp_config.json`, which current versions never create. Because agent detection and registration share one path, the stale location meant Antigravity went undetected and — when selected explicitly — the MCP server was written to a file no agent reads. The one config is shared by Antigravity 2.0, the CLI (`agy`), and the IDE, so a single registration covers all three. (#296)
 
 ### Security
+
+- Supply chain: pinned every previously floating GitHub Action to a commit SHA — in the shipped composite `action.yml`, the documented CI examples, and the repo's own workflows — and moved `reusable-security-scan.yml` from the floating `@main` ref to the documented `@v1` policy (CWE-1357). The build-from-source path in `action.yml` now reads its Go toolchain from `go.mod` instead of a pinned 1.23 that no longer satisfied the module requirement, so `--build-from-source` no longer fails. (#300)
 
 ---
 
@@ -685,7 +705,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.18.0...v1.19.0
