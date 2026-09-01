@@ -15,11 +15,15 @@ func TestDeriveFindingType(t *testing.T) {
 		want            model.FindingType
 	}{
 		{
-			name:            "secret overrides everything",
+			// hasSecret is set whenever the captured blob contains a secret, so it
+			// must not override an explicit code-vulnerability category: an
+			// injection finding whose snippet happens to include a hard-coded
+			// token is still an injection finding.
+			name:            "code vulnerability category beats a secret in the blob",
 			hasCVEs:         true,
 			hasSecret:       true,
 			findingCategory: "CODE_VULNERABILITY",
-			want:            model.FindingTypeSecret,
+			want:            model.FindingTypeVulnerability,
 		},
 		{
 			name:            "secret overrides CVEs",
@@ -29,10 +33,25 @@ func TestDeriveFindingType(t *testing.T) {
 			want:            model.FindingTypeSecret,
 		},
 		{
-			name:            "secret overrides category",
+			name:            "lowercase vulnerability category beats a secret in the blob",
 			hasCVEs:         false,
 			hasSecret:       true,
-			findingCategory: "CODE_VULNERABILITY",
+			findingCategory: "vulnerability",
+			want:            model.FindingTypeVulnerability,
+		},
+		{
+			name:            "secret overrides an unrelated category",
+			hasCVEs:         false,
+			hasSecret:       true,
+			findingCategory: "CODE_PACKAGE_VULNERABILITY",
+			want:            model.FindingTypeSecret,
+		},
+		{
+			// What the repository scanner actually emits for an exposed secret.
+			name:            "SECRET_EXPOSURE category results in secret",
+			hasCVEs:         false,
+			hasSecret:       false,
+			findingCategory: "SECRET_EXPOSURE",
 			want:            model.FindingTypeSecret,
 		},
 		{
