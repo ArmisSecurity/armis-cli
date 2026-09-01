@@ -478,7 +478,14 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			continue
 		}
 
-		if !includeNonExploitable && scan.ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
+		// An exposed secret is already disclosed to everyone who can read the
+		// repository, so reachability grading does not apply to it. Without this
+		// exemption two hard-coded credentials in a repository with no web entry
+		// point are graded low exploitability, dropped here, and the scan reports a
+		// clean repository.
+		if !includeNonExploitable &&
+			!scan.IsSecretExposure(nf) &&
+			scan.ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
 			filteredCount++
 			continue
 		}
