@@ -441,6 +441,9 @@ func isRetryableError(err error) bool {
 
 func buildScanResult(scanID string, normalizedFindings []model.NormalizedFinding, debug bool, includeNonExploitable bool) *model.ScanResult {
 	findings, filteredCount := convertNormalizedFindings(normalizedFindings, debug, includeNonExploitable)
+	// Collapse backend duplicates before the summary is built, so the counts the
+	// user sees match the findings the user sees.
+	findings = scan.DeduplicateFindings(findings)
 
 	summary := model.Summary{
 		Total:                  len(findings),
