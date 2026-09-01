@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -387,4 +389,170 @@ func runTestGitCmd(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	return cmd.Run()
+}
+
+// --- trailing file arguments ---------------------------------------------------
+//
+// `scan repo` accepts file paths after the repository path so that a caller which
+// appends selected filenames to a fixed command line -- pre-commit with
+// `pass_filenames: true` above all -- can drive it without knowing about
+// --include-files. The tests below pin the four behaviours that makes possible.
+
+func TestScanRepoArgs_AcceptsTrailingFiles(t *testing.T) {
+	// Before this was ArbitraryArgs the command was MaximumNArgs(1), so
+	// `scan repo . a.py b.py` failed argument validation before RunE ever ran.
+	if err := scanRepoCmd.Args(scanRepoCmd, []string{".", "a.py", "b.py"}); err != nil {
+		t.Errorf("expected trailing file arguments to be accepted, got %v", err)
+	}
+}
+
+func TestScanRepoRunE_TrailingFilesRejectedWithChanged(t *testing.T) {
+	t.Cleanup(func() {
+		_ = scanRepoCmd.Flags().Set("changed", "")
+		scanRepoCmd.Flags().Lookup("changed").Changed = false
+		changedRef = ""
+	})
+	if err := scanRepoCmd.Flags().Set("changed", "staged"); err != nil {
+		t.Fatalf("failed to set --changed: %v", err)
+	}
+
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{t.TempDir(), "a.py"})
+	if err == nil {
+		t.Fatal("expected --changed with trailing file arguments to be rejected")
+	}
+	if !strings.Contains(err.Error(), "--changed") {
+		t.Errorf("error should name the conflicting flag, got %v", err)
+	}
+}
+
+func TestScanRepoRunE_TrailingFilesGetPathValidation(t *testing.T) {
+	// The point of this test is that a trailing argument really does reach
+	// ParseFileList: a traversal path has to be rejected exactly as it is when it
+	// arrives through --include-files.
+	originalToken := token
+	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:8080")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
+	token = testToken
+	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{tmpDir, "../../etc/passwd"})
+	if err == nil {
+		t.Fatal("expected traversal in a trailing file argument to be rejected")
+	}
+	if !strings.Contains(err.Error(), "--include-files") {
+		t.Errorf("expected the include-files validation error, got %v", err)
+	}
+}
+
+func TestScanRepoRunE_FileAsFirstArgumentExplainsItself(t *testing.T) {
+	tmpDir := t.TempDir()
+	file := filepath.Join(tmpDir, "a.py")
+	if err := os.WriteFile(file, []byte("x = 1\n"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{file, "b.py"})
+	if err == nil {
+		t.Fatal("expected a file as the first argument to be rejected")
+	}
+	if !strings.Contains(err.Error(), "repository path") {
+		t.Errorf("error should say the first argument is the repository path, got %v", err)
+	}
+}
+
+func TestScanRepoRunE_TooManyTrailingFilesFallsBackToWholeRepo(t *testing.T) {
+	// `pre-commit run --all-files` on a large repository can select more files than
+	// the transport bound allows. Scanning the whole repository is a superset, so
+	// nothing goes unexamined; erroring out would leave a large repo unscanned.
+	findings := []model.NormalizedFinding{
+		testhelpers.CreateNormalizedFinding("repo-finding-1", "HIGH", "sql_injection", []string{"CVE-2024-1111"}, []string{"CWE-89"}),
+	}
+	serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{Findings: findings})
+
+	originalToken := token
+	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalFormat := format
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalNoProgress := noProgress
+	originalPollInterval := pollInterval
+	originalExitCode := exitCode
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		format = originalFormat
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		noProgress = originalNoProgress
+		pollInterval = originalPollInterval
+		exitCode = originalExitCode
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", serverURL)
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
+	token = testToken
+	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
+	format = agentFormatJSON
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+	noProgress = true
+	pollInterval = 10 * time.Millisecond
+	exitCode = 0
+
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nfunc main() {}"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Names that do not exist: if the fallback did not happen, ParseFileList would
+	// reject the list with "too many files" before any of them was resolved.
+	args := []string{tmpDir}
+	for i := 0; i <= repo.MaxFiles; i++ {
+		args = append(args, fmt.Sprintf("f%d.py", i))
+	}
+
+	if err := scanRepoCmd.RunE(scanRepoCmd, args); err != nil {
+		t.Errorf("expected a fallback to a whole-repository scan, got %v", err)
+	}
 }

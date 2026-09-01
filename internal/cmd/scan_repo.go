@@ -22,7 +22,7 @@ var changedRef string
 var showSuppressed bool
 
 var scanRepoCmd = &cobra.Command{
-	Use:   "repo [path]",
+	Use:   "repo [path] [file...]",
 	Short: "Scan a local repository",
 	Long:  `Scan a local repository for security vulnerabilities, secrets, and license risks.`,
 	Example: `  $ armis-cli scan repo .
@@ -32,15 +32,46 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --sbom --sbom-format spdx
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
-  $ armis-cli scan repo . --changed=main`,
-	// MaximumNArgs(1) (not ExactArgs(1)) makes the `[path]` in Use honest: the path
-	// is optional and defaults to the current directory, matching every example and
-	// `scan image`'s arg handling.
-	Args: cobra.MaximumNArgs(1),
+  $ armis-cli scan repo . --changed=main
+  $ armis-cli scan repo . src/app.py src/db.py`,
+	// ArbitraryArgs, validated in RunE: the first argument is the optional repository
+	// path (defaults to the current directory, matching every example and `scan
+	// image`'s arg handling), and any argument after it is a file to scan. The
+	// trailing form exists so a tool that appends selected filenames to a fixed
+	// command line -- pre-commit with `pass_filenames: true`, xargs, a git hook --
+	// can drive `scan repo` without knowing about --include-files.
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := "."
 		if len(args) > 0 {
 			repoPath = args[0]
+		}
+
+		// Trailing arguments are files, merged with --include-files rather than
+		// conflicting with it: both name the same thing, a subset of the repository
+		// to analyse.
+		selectedFiles := make([]string, 0, len(includeFiles)+len(args))
+		selectedFiles = append(selectedFiles, includeFiles...)
+		if len(args) > 1 {
+			selectedFiles = append(selectedFiles, args[1:]...)
+		}
+
+		// MarkFlagsMutuallyExclusive covers --include-files vs --changed; positional
+		// files need the same guard for the same reason: --changed derives its own
+		// file list, so a second, contradictory one would be silently discarded.
+		if len(args) > 1 && cmd.Flags().Changed("changed") {
+			return fmt.Errorf("cannot use --changed together with positional file arguments")
+		}
+
+		// A selection larger than the transport bound would otherwise abort the scan.
+		// Falling back to the whole repository analyses a superset, so nothing the
+		// caller asked about goes unexamined -- the alternative turns a large
+		// `pre-commit run --all-files` into no scan at all.
+		if len(selectedFiles) > repo.MaxFiles {
+			fmt.Fprintf(os.Stderr,
+				"armis-cli: %d files selected exceeds the %d-file limit; scanning the whole repository instead\n",
+				len(selectedFiles), repo.MaxFiles)
+			selectedFiles = nil
 		}
 
 		// Validate path exists and is a directory before making network calls
@@ -53,6 +84,11 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("cannot access path %s: %w", repoPath, err)
 		}
 		if !info.IsDir() {
+			if len(args) > 1 {
+				return fmt.Errorf("path is not a directory: %s "+
+					"(when passing files, the first argument must be the repository path, "+
+					"e.g. `scan repo . %s`)", repoPath, repoPath)
+			}
 			return fmt.Errorf("path is not a directory: %s", repoPath)
 		}
 
@@ -115,21 +151,21 @@ var scanRepoCmd = &cobra.Command{
 		// whole-repo snapshot, so a full-repo baseline diff against it would be
 		// meaningless; skip detection entirely in those modes. DetectGitHints
 		// additionally verifies the target is the repository root.
-		if len(includeFiles) == 0 && !cmd.Flags().Changed("changed") {
+		if len(selectedFiles) == 0 && !cmd.Flags().Changed("changed") {
 			scanner = scanner.WithGitHints()
 		}
 
-		// Handle --include-files flag for targeted file scanning
+		// Handle targeted file scanning (--include-files and/or trailing file arguments)
 		// Security: Path traversal protection is enforced by ParseFileList which
 		// validates all paths using SafeJoinPath to ensure they don't escape the
 		// repository root. Invalid or traversal paths are rejected with an error.
-		if len(includeFiles) > 0 {
+		if len(selectedFiles) > 0 {
 			absPath, err := filepath.Abs(repoPath) // armis:ignore cwe:770 reason:no bound needed here, this only resolves a path; scanner flags this line but the actual MaxFiles=1000 bound is enforced by ParseFileList below
 			if err != nil {
 				return fmt.Errorf("failed to resolve path: %w", err)
 			}
 			// armis:ignore cwe:22 cwe:770 reason:absPath is derived from filepath.Abs() immediately above; ParseFileList validates paths via SafeJoinPath and enforces MaxFiles=1000
-			fileList, err := repo.ParseFileList(absPath, includeFiles)
+			fileList, err := repo.ParseFileList(absPath, selectedFiles)
 			if err != nil {
 				return fmt.Errorf("invalid --include-files: %w", err)
 			}
