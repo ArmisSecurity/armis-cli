@@ -2,9 +2,12 @@
 package testutil
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -43,4 +46,32 @@ func ContainsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// CaptureStderr redirects os.Stderr for the duration of f and returns
+// whatever was written to it.
+func CaptureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	f()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to copy stderr output: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("failed to close pipe reader: %v", err)
+	}
+	return buf.String()
 }

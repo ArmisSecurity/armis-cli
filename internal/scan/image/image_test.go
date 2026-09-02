@@ -597,6 +597,9 @@ func TestScanTarball(t *testing.T) {
 					},
 				})
 
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
+				w.WriteHeader(http.StatusNotFound)
+
 			default:
 				t.Errorf("Unexpected request path: %s", r.URL.Path)
 				w.WriteHeader(http.StatusNotFound)
@@ -634,6 +637,73 @@ func TestScanTarball(t *testing.T) {
 		}
 		if result.Findings[0].ID != testFindingID {
 			t.Errorf("Finding ID = %s, want testFindingID", result.Findings[0].ID)
+		}
+	})
+
+	t.Run("surfaces skip warning without SBOM/VEX flags", func(t *testing.T) {
+		// Regression test: the scanner-skip warning must reach the user even
+		// when the scan doesn't request SBOM/VEX generation, since that's the
+		// common case and the whole reason skip_reason exists.
+		tmpDir := t.TempDir()
+		tarballPath := filepath.Join(tmpDir, "test-image.tar")
+		testhelpers.WriteMinimalTar(t, tarballPath)
+
+		const skipMsg = "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+					ScanID: "scan-123", PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields:         map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+					MaxUploadBytes: 2 << 30, ExpiresIn: 1800,
+				})
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				testutil.AssertValidS3Upload(t, r)
+				w.WriteHeader(http.StatusNoContent)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: "scan-123", ScanStatus: "INITIATED"})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "completed"}},
+				})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
+					Data: model.NormalizedResultsData{TenantID: "tenant-456"},
+				})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
+				testutil.JSONResponse(t, w, http.StatusOK, map[string]any{
+					"scan_status": "SKIPPED",
+					"results":     map[string]string{},
+					"skip_reason": skipMsg,
+				})
+			default:
+				t.Errorf("Unexpected request path: %s", r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		// No WithSBOMVEXOptions call — mirrors a plain `scan image --tarball`
+		// with no --generate-sbom/--generate-vex flags.
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
+
+		stderrOut := testutil.CaptureStderr(t, func() {
+			if _, err := scanner.ScanTarball(context.Background(), tarballPath); err != nil {
+				t.Fatalf("ScanTarball failed: %v", err)
+			}
+		})
+
+		if !strings.Contains(stderrOut, "Scanner skipped:") || !strings.Contains(stderrOut, skipMsg) {
+			t.Errorf("expected stderr to surface the skip warning, got: %q", stderrOut)
 		}
 	})
 
@@ -841,6 +911,8 @@ func newSuccessfulIngestServer(t *testing.T) *httptest.Server {
 			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
 				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
 			})
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("Unexpected request path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

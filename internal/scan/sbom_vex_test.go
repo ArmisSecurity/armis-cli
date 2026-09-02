@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -476,6 +477,41 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		// Verify the malicious file was NOT created
 		if _, err := os.Stat("../../../tmp/evil.json"); err == nil {
 			t.Error("Path traversal should have been blocked - file should not exist")
+		}
+	})
+
+	t.Run("prints skip reason when scanner was skipped", func(t *testing.T) {
+		skipMsg := "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := api.ArtifactScanResultsResponse{
+				ScanStatus: "SKIPPED",
+				Results:    map[string]string{},
+				SkipReason: &skipMsg,
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{GenerateSBOM: true, GenerateVEX: true}
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+
+		stderrOut := testutil.CaptureStderr(t, func() {
+			if err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+				t.Fatalf("Download failed: %v", err)
+			}
+		})
+
+		if !strings.Contains(stderrOut, skipMsg) {
+			t.Errorf("expected stderr to contain skip reason %q, got: %q", skipMsg, stderrOut)
+		}
+		if !strings.Contains(stderrOut, "Scanner skipped:") {
+			t.Errorf("expected stderr to contain 'Scanner skipped:' prefix, got: %q", stderrOut)
 		}
 	})
 }

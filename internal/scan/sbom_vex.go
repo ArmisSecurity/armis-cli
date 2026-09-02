@@ -73,6 +73,19 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		return fmt.Errorf("artifact results not available")
 	}
 
+	if d.client.IsDebug() && results.Error != nil {
+		fmt.Fprintf(os.Stderr, "=== DEBUG: artifact scan error=%q ===\n", *results.Error)
+	}
+
+	if msg, skipped := results.SkipMessage(); skipped {
+		cli.PrintWarningf("Scanner skipped: %s", msg)
+		return nil
+	}
+
+	if d.opts == nil {
+		return nil
+	}
+
 	// Handle SBOM download. SPDX and CycloneDX land under distinct result
 	// keys (the backend can persist both), so pick the key and the default
 	// filename by the requested format.

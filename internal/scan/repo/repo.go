@@ -307,13 +307,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 
 	fetchSpinner.Stop()
 
-	// Handle SBOM/VEX downloads if requested
-	if s.sbomVEXOpts != nil && (s.sbomVEXOpts.GenerateSBOM || s.sbomVEXOpts.GenerateVEX) {
-		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
-		if err := downloader.Download(ctx, scanID, filepath.Base(absPath)); err != nil {
-			// Log warning but don't fail the scan
-			cli.PrintWarningf("%v", err)
-		}
+	// Always check artifact scan results: this surfaces scanner-skip warnings
+	// (e.g. appsec-v2 skipped for exceeding a file-count limit) even when the
+	// user didn't request SBOM/VEX generation. Download() no-ops the SBOM/VEX
+	// download steps when s.sbomVEXOpts is nil.
+	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
+	if err := downloader.Download(ctx, scanID, filepath.Base(absPath)); err != nil {
+		// Log warning but don't fail the scan
+		cli.PrintWarningf("%v", err)
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)

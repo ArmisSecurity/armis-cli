@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,6 +116,7 @@ type serverConfig struct {
 	includeVEX     bool // if true, advertise vex_results too
 	scanIDOverride string
 	findings       []model.NormalizedFinding
+	skipReason     string // if set, advertised as "skip_reason" on /ingest/results
 }
 
 // buildMockServer wraps the shared MockScanServer with a handler that
@@ -186,10 +188,14 @@ func buildMockServer(t *testing.T, cfg serverConfig) (
 		if cfg.includeVEX {
 			results["vex_results"] = scheme + "://" + host + "/_download/vex"
 		}
-		testutil.JSONResponse(t, w, http.StatusOK, map[string]any{
+		resp := map[string]any{
 			"scan_status": "COMPLETED",
 			"results":     results,
-		})
+		}
+		if cfg.skipReason != "" {
+			resp["skip_reason"] = cfg.skipReason
+		}
+		testutil.JSONResponse(t, w, http.StatusOK, resp)
 	})
 
 	// Fake presigned-URL download endpoints — CLI's raw-findings + VEX pull.
@@ -483,5 +489,51 @@ func TestIntegration_NoResultsRefs(t *testing.T) {
 	}
 	if len(result.Findings) != 1 {
 		t.Errorf("want 1 finding, got %d", len(result.Findings))
+	}
+}
+
+// TestIntegration_SkipReasonDisplayed asserts that when the backend reports
+// a scanner was skipped (e.g. appsec-v2 skipped for exceeding a file-count
+// threshold), the human-readable skip_reason is surfaced to the user via a
+// warning, even though no raw-findings/VEX refs are advertised.
+func TestIntegration_SkipReasonDisplayed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir) // keep the driver's relative .armis/ defaults out of the source tree
+
+	sbomPath := filepath.Join(tmpDir, "purl.cdx.json")
+	writeSBOM(t, sbomPath, []map[string]any{{
+		"type": "library", "name": "leftpad", "version": "1.3.0",
+		"purl": "pkg:npm/leftpad@1.3.0",
+	}})
+
+	const skipMsg = "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
+	serverURL, _, _ := buildMockServer(t, serverConfig{
+		name:       "skipped",
+		rawKey:     "", // scanner was skipped: no raw refs advertised
+		findings:   []model.NormalizedFinding{buildFinding("f-skip-1", "GHSA-999", "leftpad")},
+		skipReason: skipMsg,
+	})
+
+	scanner := buildScanner(t, serverURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	var result *model.ScanResult
+	var err error
+	stderrOut := testutil.CaptureStderr(t, func() {
+		result, err = scanner.Scan(ctx, sbomPath)
+	})
+	if err != nil {
+		t.Fatalf("Scan should succeed even when the scanner was skipped: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Errorf("want 1 finding, got %d", len(result.Findings))
+	}
+	if !strings.Contains(stderrOut, skipMsg) {
+		t.Errorf("expected stderr to contain skip reason %q, got: %q", skipMsg, stderrOut)
+	}
+	if !strings.Contains(stderrOut, "Scanner skipped:") {
+		t.Errorf("expected stderr to contain 'Scanner skipped:' prefix, got: %q", stderrOut)
 	}
 }

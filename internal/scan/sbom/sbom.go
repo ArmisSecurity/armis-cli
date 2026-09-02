@@ -231,13 +231,20 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	}
 
 	if results != nil {
-		if err := s.downloadRawFindings(ctx, results, art); err != nil {
-			// Non-fatal — the normalized findings are already retrieved.
-			cli.PrintWarningf("%v", err)
+		if s.client.IsDebug() && results.Error != nil {
+			fmt.Fprintf(os.Stderr, "=== DEBUG: artifact scan error=%q ===\n", *results.Error)
 		}
-		if s.generateVEX {
-			if err := s.downloadVEX(ctx, results, art); err != nil {
+		if msg, skipped := results.SkipMessage(); skipped {
+			cli.PrintWarningf("Scanner skipped: %s", msg)
+		} else {
+			if err := s.downloadRawFindings(ctx, results, art); err != nil {
+				// Non-fatal — the normalized findings are already retrieved.
 				cli.PrintWarningf("%v", err)
+			}
+			if s.generateVEX {
+				if err := s.downloadVEX(ctx, results, art); err != nil {
+					cli.PrintWarningf("%v", err)
+				}
 			}
 		}
 	}
