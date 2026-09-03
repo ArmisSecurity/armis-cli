@@ -373,6 +373,23 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 	})
 
+	t.Run("silently no-ops when results not available and SBOM/VEX not requested", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", nil)
+		if err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+			t.Errorf("expected no error when SBOM/VEX wasn't requested, got: %v", err)
+		}
+	})
+
 	t.Run("returns error on API failure", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			testutil.ErrorResponse(w, http.StatusInternalServerError, "Server error")

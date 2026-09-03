@@ -49,7 +49,8 @@ func ContainsSubstring(s, substr string) bool {
 }
 
 // CaptureStderr redirects os.Stderr for the duration of f and returns
-// whatever was written to it.
+// whatever was written to it. Not safe to use alongside t.Parallel, since
+// os.Stderr is a shared global.
 func CaptureStderr(t *testing.T, f func()) string {
 	t.Helper()
 	oldStderr := os.Stderr
@@ -58,20 +59,26 @@ func CaptureStderr(t *testing.T, f func()) string {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
 	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	// Drain the pipe concurrently so f() can't deadlock by filling the
+	// pipe buffer before we get around to reading it, and so os.Stderr is
+	// restored via defer even if f() calls t.Fatal (runtime.Goexit).
+	outCh := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		outCh <- buf.String()
+	}()
 
 	f()
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
 	}
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("failed to copy stderr output: %v", err)
-	}
+	out := <-outCh
 	if err := r.Close(); err != nil {
 		t.Fatalf("failed to close pipe reader: %v", err)
 	}
-	return buf.String()
+	return out
 }

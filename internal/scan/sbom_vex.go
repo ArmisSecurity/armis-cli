@@ -70,7 +70,14 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	}
 
 	if results == nil {
-		return fmt.Errorf("artifact results not available")
+		// Results not yet populated (404) is only an error if the caller
+		// actually asked for SBOM/VEX output; otherwise this call exists
+		// solely to surface scanner-skip warnings, and staying silent avoids
+		// spurious "artifact results not available" noise on every scan.
+		if d.opts != nil && (d.opts.GenerateSBOM || d.opts.GenerateVEX) {
+			return fmt.Errorf("artifact results not available")
+		}
+		return nil
 	}
 
 	if d.client.IsDebug() && results.Error != nil {
