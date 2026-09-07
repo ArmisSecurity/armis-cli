@@ -49,10 +49,10 @@ func ContainsSubstring(s, substr string) bool {
 }
 
 // CaptureStderr redirects os.Stderr for the duration of f and returns
-// whatever was written to it. os.Stderr is a shared global, so this is
-// unsafe whenever any other test in the process can write to stderr at the
-// same time — including other packages' tests, which `go test` runs
-// concurrently by default even without t.Parallel.
+// whatever was written to it. os.Stderr is process-global, so this is
+// unsafe if any other goroutine in this process — e.g. a parallel subtest
+// (t.Parallel) — writes to stderr while f runs. Different packages run in
+// separate test binaries/processes, so they're unaffected.
 func CaptureStderr(t *testing.T, f func()) string {
 	t.Helper()
 	oldStderr := os.Stderr
@@ -79,6 +79,9 @@ func CaptureStderr(t *testing.T, f func()) string {
 
 	f()
 
+	// Restore os.Stderr before closing w, so it never points at a closed
+	// file for other goroutines that might write to it concurrently.
+	os.Stderr = oldStderr
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
 	}
