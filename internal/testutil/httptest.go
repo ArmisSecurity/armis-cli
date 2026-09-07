@@ -60,10 +60,12 @@ func CaptureStderr(t *testing.T, f func()) string {
 	}
 	os.Stderr = w
 	defer func() { os.Stderr = oldStderr }()
+	// Close the writer via defer too, so the reader goroutine below always
+	// gets EOF and exits even if f() calls t.Fatal (runtime.Goexit) or panics.
+	defer func() { _ = w.Close() }()
 
 	// Drain the pipe concurrently so f() can't deadlock by filling the
-	// pipe buffer before we get around to reading it, and so os.Stderr is
-	// restored via defer even if f() calls t.Fatal (runtime.Goexit).
+	// pipe buffer before we get around to reading it.
 	outCh := make(chan string, 1)
 	go func() {
 		var buf bytes.Buffer

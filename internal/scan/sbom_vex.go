@@ -54,7 +54,10 @@ func NewSBOMVEXDownloader(client *api.Client, tenantID string, opts *SBOMVEXOpti
 }
 
 // Download fetches SBOM and/or VEX files from pre-signed URLs.
-// API errors (fetch failures, missing results) are returned to the caller.
+// API errors (fetch failures) are returned to the caller. Missing results
+// (404) are only returned as an error when SBOM/VEX generation was actually
+// requested; otherwise this no-ops so callers can still surface scanner-skip
+// warnings without spurious "artifact results not available" noise.
 // Individual file download errors are logged as warnings but don't fail the overall operation,
 // as SBOM/VEX download failures should not fail the overall scan.
 // The returned string is the backend's scanner-skip reason (empty if no scanner was skipped),
