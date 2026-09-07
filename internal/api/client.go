@@ -853,10 +853,14 @@ type ArtifactScanResultsResponse struct {
 // SkipMessage returns the human-readable skip reason and true if the backend
 // reported that a scanner was skipped for this scan.
 func (r *ArtifactScanResultsResponse) SkipMessage() (string, bool) {
-	if r == nil || r.SkipReason == nil || *r.SkipReason == "" {
+	if r == nil || r.SkipReason == nil {
 		return "", false
 	}
-	return *r.SkipReason, true
+	msg := strings.TrimSpace(*r.SkipReason)
+	if msg == "" {
+		return "", false
+	}
+	return msg, true
 }
 
 // FetchArtifactScanResults retrieves the scan results including pre-signed URLs for SBOM and VEX documents.
