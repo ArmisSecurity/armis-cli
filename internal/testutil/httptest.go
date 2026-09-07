@@ -49,8 +49,10 @@ func ContainsSubstring(s, substr string) bool {
 }
 
 // CaptureStderr redirects os.Stderr for the duration of f and returns
-// whatever was written to it. Not safe to use alongside t.Parallel, since
-// os.Stderr is a shared global.
+// whatever was written to it. os.Stderr is a shared global, so this is
+// unsafe whenever any other test in the process can write to stderr at the
+// same time — including other packages' tests, which `go test` runs
+// concurrently by default even without t.Parallel.
 func CaptureStderr(t *testing.T, f func()) string {
 	t.Helper()
 	oldStderr := os.Stderr
@@ -58,10 +60,12 @@ func CaptureStderr(t *testing.T, f func()) string {
 	if err != nil {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
+	// Close both ends via defer too, so the reader goroutine below always
+	// gets EOF and every fd is released even if f() calls t.Fatal
+	// (runtime.Goexit) or panics.
+	defer func() { _ = r.Close() }()
 	os.Stderr = w
 	defer func() { os.Stderr = oldStderr }()
-	// Close the writer via defer too, so the reader goroutine below always
-	// gets EOF and exits even if f() calls t.Fatal (runtime.Goexit) or panics.
 	defer func() { _ = w.Close() }()
 
 	// Drain the pipe concurrently so f() can't deadlock by filling the
