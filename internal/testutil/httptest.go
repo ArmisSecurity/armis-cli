@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -48,13 +49,21 @@ func ContainsSubstring(s, substr string) bool {
 	return false
 }
 
+// captureStderrMu serializes CaptureStderr calls so concurrent uses (e.g.
+// from parallel subtests in the same process) can't clobber each other's
+// swap of the process-global os.Stderr.
+var captureStderrMu sync.Mutex
+
 // CaptureStderr redirects os.Stderr for the duration of f and returns
-// whatever was written to it. os.Stderr is process-global, so this is
-// unsafe if any other goroutine in this process — e.g. a parallel subtest
-// (t.Parallel) — writes to stderr while f runs. Different packages run in
-// separate test binaries/processes, so they're unaffected.
+// whatever was written to it. Concurrent CaptureStderr calls are
+// serialized, but os.Stderr is still process-global, so this remains
+// unsafe if some other goroutine writes to stderr directly (bypassing
+// CaptureStderr) while f runs. Different packages run in separate test
+// binaries/processes, so they're unaffected either way.
 func CaptureStderr(t *testing.T, f func()) string {
 	t.Helper()
+	captureStderrMu.Lock()
+	defer captureStderrMu.Unlock()
 	oldStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
