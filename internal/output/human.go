@@ -828,6 +828,14 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 		content.WriteString(suppressed + "\n")
 	}
 
+	// Scanner-skip warning if the backend skipped a scanner (e.g. a file-count
+	// limit for AI-based scanning), so it stays visible even after the
+	// transient stderr warning has scrolled out of view.
+	if result.Summary.ScannerSkipReason != "" {
+		skipLine := s.WarningText.Render(fmt.Sprintf("⚠ Scanner skipped: %s", result.Summary.ScannerSkipReason))
+		content.WriteString(skipLine + "\n")
+	}
+
 	// Severity breakdown - minimal inline format with colored dots
 	severities := []model.Severity{
 		model.SeverityCritical,

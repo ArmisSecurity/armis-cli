@@ -230,12 +230,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		cli.PrintWarningf("failed to fetch scan result refs: %v", refsErr)
 	}
 
+	var skipReason string
 	if results != nil {
 		if s.client.IsDebug() && results.Error != nil {
 			fmt.Fprintf(os.Stderr, "=== DEBUG: artifact scan error=%q ===\n", *results.Error)
 		}
 		if msg, skipped := results.SkipMessage(); skipped {
 			cli.PrintWarningf("Scanner skipped: %s", msg)
+			fmt.Fprintln(os.Stderr)
+			skipReason = msg
 		} else {
 			if err := s.downloadRawFindings(ctx, results, art); err != nil {
 				// Non-fatal — the normalized findings are already retrieved.
@@ -249,7 +252,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 	}
 
-	return scan.BuildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable), nil
+	result := scan.BuildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+	result.Summary.ScannerSkipReason = skipReason
+	return result, nil
 }
 
 // downloadRawFindings pulls the raw-findings JSON dump the backend wrote for

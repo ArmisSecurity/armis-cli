@@ -255,12 +255,14 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		artifactName = artifactName[:len(artifactName)-len(ext)]
 	}
 	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
-	if err := downloader.Download(ctx, scanID, artifactName); err != nil {
+	skipReason, err := downloader.Download(ctx, scanID, artifactName)
+	if err != nil {
 		// Log warning but don't fail the scan
 		cli.PrintWarningf("%v", err)
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+	result.Summary.ScannerSkipReason = skipReason
 	return result, nil
 }
 
