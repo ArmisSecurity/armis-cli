@@ -2,9 +2,13 @@
 package testutil
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync"
 	"testing"
 )
 
@@ -43,4 +47,56 @@ func ContainsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// captureStderrMu serializes CaptureStderr calls so concurrent uses (e.g.
+// from parallel subtests in the same process) can't clobber each other's
+// swap of the process-global os.Stderr.
+var captureStderrMu sync.Mutex
+
+// CaptureStderr redirects os.Stderr for the duration of f and returns
+// whatever was written to it. Concurrent CaptureStderr calls are
+// serialized, but os.Stderr is still process-global, so this remains
+// unsafe if some other goroutine writes to stderr directly (bypassing
+// CaptureStderr) while f runs. Different packages run in separate test
+// binaries/processes, so they're unaffected either way.
+func CaptureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	captureStderrMu.Lock()
+	defer captureStderrMu.Unlock()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	// Close both ends via defer too, so the reader goroutine below always
+	// gets EOF and every fd is released even if f() calls t.Fatal
+	// (runtime.Goexit) or panics.
+	defer func() { _ = r.Close() }()
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+	defer func() { _ = w.Close() }()
+
+	// Drain the pipe concurrently so f() can't deadlock by filling the
+	// pipe buffer before we get around to reading it.
+	outCh := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		outCh <- buf.String()
+	}()
+
+	f()
+
+	// Restore os.Stderr before closing w, so it never points at a closed
+	// file for other goroutines that might write to it concurrently.
+	os.Stderr = oldStderr
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	out := <-outCh
+	if err := r.Close(); err != nil {
+		t.Fatalf("failed to close pipe reader: %v", err)
+	}
+	return out
 }

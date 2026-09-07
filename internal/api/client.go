@@ -841,6 +841,26 @@ type ArtifactScanResultsResponse struct {
 	Results         map[string]string `json:"results"` // key -> presigned URL (e.g., "sbom_results", "vex_results")
 	ScanCompletedAt *string           `json:"scan_completed_at"`
 	StatusUpdatedAt *string           `json:"status_updated_at"`
+	// Error carries a technical detail (e.g. a threshold that was exceeded) for
+	// logs/debugging. Not meant for prominent display to CLI users.
+	Error *string `json:"error"`
+	// SkipReason is a human-readable, user-safe explanation for why a scanner
+	// (e.g. appsec-v2) was skipped, such as a repository exceeding a file-count
+	// limit for AI-based scanning.
+	SkipReason *string `json:"skip_reason"`
+}
+
+// SkipMessage returns the human-readable skip reason and true if the backend
+// reported that a scanner was skipped for this scan.
+func (r *ArtifactScanResultsResponse) SkipMessage() (string, bool) {
+	if r == nil || r.SkipReason == nil {
+		return "", false
+	}
+	msg := strings.TrimSpace(*r.SkipReason)
+	if msg == "" {
+		return "", false
+	}
+	return msg, true
 }
 
 // FetchArtifactScanResults retrieves the scan results including pre-signed URLs for SBOM and VEX documents.

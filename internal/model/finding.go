@@ -88,6 +88,7 @@ type Summary struct {
 	ByCategory             map[string]int      `json:"by_category"`
 	FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
 	Suppressed             int                 `json:"suppressed,omitempty"`
+	ScannerSkipReason      string              `json:"scanner_skip_reason,omitempty"`
 }
 
 // IngestUploadResponse represents the response from uploading a scan artifact

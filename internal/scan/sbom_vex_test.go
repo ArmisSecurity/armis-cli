@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,7 +121,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		err = downloader.Download(context.Background(), "scan-456", "test-artifact")
+		_, err = downloader.Download(context.Background(), "scan-456", "test-artifact")
 
 		if err != nil {
 			t.Fatalf("Download failed: %v", err)
@@ -174,7 +175,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		err = downloader.Download(context.Background(), "scan-456", "test-artifact")
+		_, err = downloader.Download(context.Background(), "scan-456", "test-artifact")
 
 		if err != nil {
 			t.Fatalf("Download failed: %v", err)
@@ -231,7 +232,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		err = downloader.Download(context.Background(), "scan-456", "my-artifact")
+		_, err = downloader.Download(context.Background(), "scan-456", "my-artifact")
 
 		if err != nil {
 			t.Fatalf("Download failed: %v", err)
@@ -284,7 +285,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		if err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+		if _, err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
 			t.Fatalf("Download failed: %v", err)
 		}
 
@@ -339,7 +340,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		if err := downloader.Download(context.Background(), "scan-456", "my-artifact"); err != nil {
+		if _, err := downloader.Download(context.Background(), "scan-456", "my-artifact"); err != nil {
 			t.Fatalf("Download failed: %v", err)
 		}
 
@@ -365,10 +366,27 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		err = downloader.Download(context.Background(), "scan-456", "test-artifact")
+		_, err = downloader.Download(context.Background(), "scan-456", "test-artifact")
 
 		if err == nil {
 			t.Error("Expected error when results not available")
+		}
+	})
+
+	t.Run("silently no-ops when results not available and SBOM/VEX not requested", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", nil)
+		if _, err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+			t.Errorf("expected no error when SBOM/VEX wasn't requested, got: %v", err)
 		}
 	})
 
@@ -391,7 +409,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
-		err = downloader.Download(context.Background(), "scan-456", "test-artifact")
+		_, err = downloader.Download(context.Background(), "scan-456", "test-artifact")
 
 		if err == nil {
 			t.Error("Expected error on API failure")
@@ -425,7 +443,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 
 		for _, tc := range testCases {
-			err := downloader.Download(context.Background(), "scan-456", tc)
+			_, err := downloader.Download(context.Background(), "scan-456", tc)
 			if err == nil {
 				t.Errorf("Expected error for artifact name %q", tc)
 			}
@@ -471,11 +489,46 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
 		// Download doesn't return error for SBOM/VEX failures (they're warnings)
 		// but the path traversal IS detected and the file is NOT written
-		_ = downloader.Download(context.Background(), "scan-456", "test-artifact")
+		_, _ = downloader.Download(context.Background(), "scan-456", "test-artifact")
 
 		// Verify the malicious file was NOT created
 		if _, err := os.Stat("../../../tmp/evil.json"); err == nil {
 			t.Error("Path traversal should have been blocked - file should not exist")
+		}
+	})
+
+	t.Run("prints skip reason when scanner was skipped", func(t *testing.T) {
+		skipMsg := "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := api.ArtifactScanResultsResponse{
+				ScanStatus: "SKIPPED",
+				Results:    map[string]string{},
+				SkipReason: &skipMsg,
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := &SBOMVEXOptions{GenerateSBOM: true, GenerateVEX: true}
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", opts)
+
+		stderrOut := testutil.CaptureStderr(t, func() {
+			if _, err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+				t.Fatalf("Download failed: %v", err)
+			}
+		})
+
+		if !strings.Contains(stderrOut, skipMsg) {
+			t.Errorf("expected stderr to contain skip reason %q, got: %q", skipMsg, stderrOut)
+		}
+		if !strings.Contains(stderrOut, "Scanner skipped:") {
+			t.Errorf("expected stderr to contain 'Scanner skipped:' prefix, got: %q", stderrOut)
 		}
 	})
 }

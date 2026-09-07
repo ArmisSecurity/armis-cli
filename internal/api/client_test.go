@@ -980,6 +980,64 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 		}
 	})
 
+	t.Run("parses error and skip_reason fields", func(t *testing.T) {
+		const wantError = "appsec-v2: Post-prune file count (6203) exceeds threshold (5000)"
+		const wantSkipReason = "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.JSONResponse(t, w, http.StatusOK, map[string]any{
+				"scan_status": "SKIPPED",
+				"results":     map[string]string{},
+				"error":       wantError,
+				"skip_reason": wantSkipReason,
+			})
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+		if err != nil {
+			t.Fatalf("FetchArtifactScanResults failed: %v", err)
+		}
+		if result == nil {
+			t.Fatal("Expected result, got nil")
+		}
+		if result.Error == nil || *result.Error != wantError {
+			t.Errorf("Error = %v, want %q", result.Error, wantError)
+		}
+		if result.SkipReason == nil || *result.SkipReason != wantSkipReason {
+			t.Errorf("SkipReason = %v, want %q", result.SkipReason, wantSkipReason)
+		}
+	})
+
+	t.Run("error and skip_reason are nil when absent", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := ArtifactScanResultsResponse{ScanStatus: testStatusCompleted}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+		if err != nil {
+			t.Fatalf("FetchArtifactScanResults failed: %v", err)
+		}
+		if result.Error != nil {
+			t.Errorf("Error = %v, want nil", *result.Error)
+		}
+		if result.SkipReason != nil {
+			t.Errorf("SkipReason = %v, want nil", *result.SkipReason)
+		}
+	})
+
 	t.Run("returns nil for 404", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)

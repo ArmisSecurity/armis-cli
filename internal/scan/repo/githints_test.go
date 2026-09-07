@@ -209,6 +209,8 @@ func scanBodyCapturingServer(t *testing.T, lastScanBody *[]byte, mu *sync.Mutex)
 			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
 				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
 			})
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected request path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

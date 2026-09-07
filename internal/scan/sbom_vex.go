@@ -54,23 +54,49 @@ func NewSBOMVEXDownloader(client *api.Client, tenantID string, opts *SBOMVEXOpti
 }
 
 // Download fetches SBOM and/or VEX files from pre-signed URLs.
-// API errors (fetch failures, missing results) are returned to the caller.
+// API errors (fetch failures) are returned to the caller. Missing results
+// (404) are only returned as an error when SBOM/VEX generation was actually
+// requested; otherwise this no-ops so callers can still surface scanner-skip
+// warnings without spurious "artifact results not available" noise.
 // Individual file download errors are logged as warnings but don't fail the overall operation,
 // as SBOM/VEX download failures should not fail the overall scan.
-func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName string) error {
+// The returned string is the backend's scanner-skip reason (empty if no scanner was skipped),
+// so callers can surface it in the final scan summary in addition to the warning printed here.
+func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName string) (string, error) {
 	// Sanitize artifact name to prevent path traversal
 	sanitizedName := filepath.Base(artifactName)
 	if sanitizedName == "." || sanitizedName == ".." || sanitizedName == string(filepath.Separator) || sanitizedName == "" {
-		return fmt.Errorf("invalid artifact name")
+		return "", fmt.Errorf("invalid artifact name")
 	}
 
 	results, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
 	if err != nil {
-		return fmt.Errorf("failed to fetch artifact results: %w", err)
+		return "", fmt.Errorf("failed to fetch artifact results: %w", err)
 	}
 
 	if results == nil {
-		return fmt.Errorf("artifact results not available")
+		// Results not yet populated (404) is only an error if the caller
+		// actually asked for SBOM/VEX output; otherwise this call exists
+		// solely to surface scanner-skip warnings, and staying silent avoids
+		// spurious "artifact results not available" noise on every scan.
+		if d.opts != nil && (d.opts.GenerateSBOM || d.opts.GenerateVEX) {
+			return "", fmt.Errorf("artifact results not available")
+		}
+		return "", nil
+	}
+
+	if d.client.IsDebug() && results.Error != nil {
+		fmt.Fprintf(os.Stderr, "=== DEBUG: artifact scan error=%q ===\n", *results.Error)
+	}
+
+	if msg, skipped := results.SkipMessage(); skipped {
+		cli.PrintWarningf("Scanner skipped: %s", msg)
+		fmt.Fprintln(os.Stderr)
+		return msg, nil
+	}
+
+	if d.opts == nil {
+		return "", nil
 	}
 
 	// Handle SBOM download. SPDX and CycloneDX land under distinct result
@@ -113,7 +139,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		}
 	}
 
-	return nil
+	return "", nil
 }
 
 // downloadAndSave downloads from a URL and saves to a file.

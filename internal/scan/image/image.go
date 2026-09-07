@@ -246,21 +246,23 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
-	// Handle SBOM/VEX downloads if requested
-	if s.sbomVEXOpts != nil && (s.sbomVEXOpts.GenerateSBOM || s.sbomVEXOpts.GenerateVEX) {
-		// Extract artifact name from tarball path (remove extension)
-		artifactName := filepath.Base(tarballPath)
-		if ext := filepath.Ext(artifactName); ext != "" {
-			artifactName = artifactName[:len(artifactName)-len(ext)]
-		}
-		downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
-		if err := downloader.Download(ctx, scanID, artifactName); err != nil {
-			// Log warning but don't fail the scan
-			cli.PrintWarningf("%v", err)
-		}
+	// Always check artifact scan results: this surfaces scanner-skip warnings
+	// (e.g. appsec-v2 skipped for exceeding a file-count limit) even when the
+	// user didn't request SBOM/VEX generation. Download() no-ops the SBOM/VEX
+	// download steps when s.sbomVEXOpts is nil.
+	artifactName := filepath.Base(tarballPath)
+	if ext := filepath.Ext(artifactName); ext != "" {
+		artifactName = artifactName[:len(artifactName)-len(ext)]
+	}
+	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
+	skipReason, err := downloader.Download(ctx, scanID, artifactName)
+	if err != nil {
+		// Log warning but don't fail the scan
+		cli.PrintWarningf("%v", err)
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
+	result.Summary.ScannerSkipReason = skipReason
 	return result, nil
 }
 
