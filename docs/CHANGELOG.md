@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.22.1] - 2026-09-08
+
+### Fixed
+
+- `scan repo`/`scan image`: backend scanner-skip warnings (e.g. AI scan skipped for exceeding a file-count threshold) are now surfaced to users instead of being silently swallowed — artifact results are always fetched and the skip reason is shown both as a warning and in the scan summary. (#311)
+
+---
+
 ## [1.22.0] - 2026-08-20
 
 ### Added
@@ -705,7 +713,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.1...HEAD
+[1.22.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.0...v1.22.1
 [1.22.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.19.0...v1.20.0
