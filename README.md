@@ -482,14 +482,24 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 Scans a local directory, creates a tarball, and uploads to Armis Cloud for analysis.
 
 ```bash
-armis-cli scan repo [path]
+armis-cli scan repo [path] [file...]
 ```
+
+`path` is the repository root and defaults to `.`. Any argument after it is a file
+to scan, relative to that root -- the same selection `--include-files` makes, in
+the form a tool that appends filenames to a fixed command line can produce
+(`pre-commit` with `pass_filenames: true`, `xargs`, a git hook). The two are
+merged and de-duplicated, at most `1000` distinct files, and neither can be
+combined with `--changed`.
 
 **Size Limit**: 2GB
 **Example**:
 
 ```bash
 armis-cli scan repo ./my-app --format json --fail-on HIGH,CRITICAL
+
+# Scan two specific files
+armis-cli scan repo . src/app.py src/db.py
 
 # Generate SBOM and VEX documents
 armis-cli scan repo ./my-app --sbom --vex
@@ -540,7 +550,8 @@ Notes:
 
 - Requires a git repository. If no files changed, the scan exits early with nothing to do.
 - `staged` and `uncommitted` are reserved keywords and cannot be used as ref names.
-- `--changed` is mutually exclusive with `--include-files` (use one or the other).
+- `--changed` is mutually exclusive with `--include-files` and with trailing file
+  arguments (use one or the other).
 
 See [PR Scanning with Changed Files](docs/CI-INTEGRATION.md#pr-scanning-with-changed-files) for CI usage.
 
@@ -917,7 +928,7 @@ jobs:
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
 | `image-tarball` | string | | Path to image tarball (for image scans) |
 | `scan-timeout` | number | `60` | Scan timeout in minutes |
-| `include-files` | string | | Comma-separated file paths to scan (for targeted scanning) |
+| `include-files` | string | | Comma-separated file paths to scan (for targeted scanning); merged and de-duplicated with any trailing file arguments |
 | `region` | string | | Armis cloud region (overrides auto-discovery) |
 
 **Required secrets:**
