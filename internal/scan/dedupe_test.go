@@ -175,3 +175,108 @@ func TestCWEIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// TestDeduplicateFindingsKeepsDistinctTypes covers the reported failure: identity
+// omitted Type/FindingCategory, so two genuinely different findings reported at one
+// location collapsed and the lexicographically smaller ID won -- which could
+// discard the exposed-secret finding.
+func TestDeduplicateFindingsKeepsDistinctTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		findings []model.Finding
+		wantIDs  []string
+	}{
+		{
+			// A hard-coded credential in a config file is commonly reported both as
+			// an exposed secret and as a misconfiguration at the same file, line and
+			// column, both HIGH, neither carrying a CWE. Collapsing them here keeps
+			// "aaa-misconfig" and drops the secret.
+			name: "secret and misconfig at one location both survive",
+			findings: []model.Finding{
+				func() model.Finding {
+					f := codeFinding("aaa-misconfig", "deploy/values.yaml", 12, 3, model.SeverityHigh)
+					f.Type = model.FindingTypeMisconfig
+					f.FindingCategory = "INFRA_AS_CODE"
+					return f
+				}(),
+				func() model.Finding {
+					f := codeFinding("zzz-secret", "deploy/values.yaml", 12, 3, model.SeverityHigh)
+					f.Type = model.FindingTypeSecret
+					f.FindingCategory = "SECRET_EXPOSURE"
+					return f
+				}(),
+			},
+			wantIDs: []string{"aaa-misconfig", "zzz-secret"},
+		},
+		{
+			// Same type, but the backend distinguished them by category.
+			name: "same type, different finding_category both survive",
+			findings: []model.Finding{
+				func() model.Finding {
+					f := codeFinding("a", "src/a.py", 4, 1, model.SeverityHigh, "CWE-798")
+					f.FindingCategory = "CODE_VULNERABILITY"
+					return f
+				}(),
+				func() model.Finding {
+					f := codeFinding("b", "src/a.py", 4, 1, model.SeverityHigh, "CWE-798")
+					f.FindingCategory = "SECRET_EXPOSURE"
+					return f
+				}(),
+			},
+			wantIDs: []string{"a", "b"},
+		},
+		{
+			// Copilot's case: with no column and no CWE, file+line+severity is not
+			// specific enough to call two findings the same defect -- two different
+			// secrets on one line would collapse.
+			name: "no column and no CWE is too unspecific to collapse",
+			findings: []model.Finding{
+				codeFinding("a", "src/a.py", 9, 0, model.SeverityHigh),
+				codeFinding("b", "src/a.py", 9, 0, model.SeverityHigh),
+			},
+			wantIDs: []string{"a", "b"},
+		},
+		{
+			// Still collapses when there is a real discriminator: same CWE, no column.
+			name: "no column but a shared CWE still collapses",
+			findings: []model.Finding{
+				codeFinding("a", "src/a.py", 9, 0, model.SeverityHigh, "CWE-78"),
+				codeFinding("b", "src/a.py", 9, 0, model.SeverityHigh, "CWE-78"),
+			},
+			wantIDs: []string{"a"},
+		},
+		{
+			// The dash-separated spelling matcher.go already tolerates has to
+			// normalize here too, or real duplicates keep separate keys.
+			name: "dash-separated CWE spelling normalizes like matcher.go",
+			findings: []model.Finding{
+				codeFinding("a", "src/a.py", 22, 5, model.SeverityHigh, "CWE-78 - OS Command Injection"),
+				codeFinding("b", "src/a.py", 22, 5, model.SeverityHigh, "CWE-78: OS Command Injection"),
+			},
+			wantIDs: []string{"a"},
+		},
+		{
+			// A bare numeric CWE is the third spelling matcher.go accepts.
+			name: "bare numeric CWE normalizes like matcher.go",
+			findings: []model.Finding{
+				codeFinding("a", "src/a.py", 22, 5, model.SeverityHigh, "78"),
+				codeFinding("b", "src/a.py", 22, 5, model.SeverityHigh, "CWE-78"),
+			},
+			wantIDs: []string{"a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ids(DeduplicateFindings(tt.findings))
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("DeduplicateFindings() = %v, want %v", got, tt.wantIDs)
+			}
+			for i := range got {
+				if got[i] != tt.wantIDs[i] {
+					t.Fatalf("DeduplicateFindings() = %v, want %v", got, tt.wantIDs)
+				}
+			}
+		})
+	}
+}
