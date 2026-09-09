@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,10 +191,13 @@ func TestFileListFiles(t *testing.T) {
 func TestParseFileListMaxFilesLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Generate more files than the limit
+	// Generate more *distinct* files than the limit. This test used to repeat one
+	// name MaxFiles+1 times, which no longer overflows now that addFile
+	// de-duplicates -- it was passing because the old count was of arguments, not
+	// of files.
 	files := make([]string, MaxFiles+1)
 	for i := range files {
-		files[i] = "file.go" // Doesn't need to exist for this test
+		files[i] = fmt.Sprintf("file%d.go", i) // Doesn't need to exist for this test
 	}
 
 	_, err := ParseFileList(tmpDir, files)
@@ -202,15 +207,80 @@ func TestParseFileListMaxFilesLimit(t *testing.T) {
 	if err != nil && !strings.Contains(err.Error(), "too many files") {
 		t.Errorf("expected error message to mention 'too many files', got: %s", err.Error())
 	}
+	if err != nil && !errors.Is(err, ErrTooManyFiles) {
+		t.Errorf("expected the error to match ErrTooManyFiles, got: %v", err)
+	}
+}
+
+func TestParseFileListDeduplicates(t *testing.T) {
+	// --include-files and the filenames a tool appends as trailing arguments name
+	// the same thing, so a caller that merges the two lists hands the same path in
+	// twice. A duplicate is one file and must neither be scanned twice nor spend
+	// the MaxFiles budget twice.
+	tmpDir := t.TempDir()
+	for _, name := range []string{"a.go", "b.go"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+
+	// Every spelling below names one of two files: repeated verbatim, with a "./"
+	// prefix, and as an absolute path.
+	fl, err := ParseFileList(tmpDir, []string{"a.go", "b.go", "a.go", "./a.go", filepath.Join(tmpDir, "b.go")})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fl.Files(); len(got) != 2 {
+		t.Errorf("expected 2 distinct files, got %d: %v", len(got), got)
+	}
+}
+
+func TestParseFileListDuplicatesDoNotExhaustLimit(t *testing.T) {
+	// The whole point of counting after de-duplication: a selection whose
+	// argument count is well over MaxFiles but whose file count is 1.
+	tmpDir := t.TempDir()
+
+	files := make([]string, MaxFiles*3)
+	for i := range files {
+		files[i] = "only.go"
+	}
+
+	fl, err := ParseFileList(tmpDir, files)
+	if err != nil {
+		t.Fatalf("expected %d repeats of one path to be one file, got error: %v", len(files), err)
+	}
+	if got := fl.Files(); len(got) != 1 {
+		t.Errorf("expected 1 file, got %d: %v", len(got), got)
+	}
+}
+
+func TestParseFileListEmptyEntriesDoNotExhaustLimit(t *testing.T) {
+	// A --include-files value with trailing or doubled commas produces empty
+	// entries. They are skipped, so they must not count towards MaxFiles either.
+	tmpDir := t.TempDir()
+
+	files := make([]string, 0, MaxFiles+10)
+	files = append(files, "real.go")
+	for i := 0; i < MaxFiles+9; i++ {
+		files = append(files, "")
+	}
+
+	fl, err := ParseFileList(tmpDir, files)
+	if err != nil {
+		t.Fatalf("expected empty entries to be skipped, got error: %v", err)
+	}
+	if got := fl.Files(); len(got) != 1 {
+		t.Errorf("expected 1 file, got %d: %v", len(got), got)
+	}
 }
 
 func TestParseFileListAtMaxFilesLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Generate exactly MaxFiles files (should succeed)
+	// Generate exactly MaxFiles distinct files (should succeed)
 	files := make([]string, MaxFiles)
 	for i := range files {
-		files[i] = "file.go" // Doesn't need to exist for this test
+		files[i] = fmt.Sprintf("file%d.go", i) // Doesn't need to exist for this test
 	}
 
 	fl, err := ParseFileList(tmpDir, files)

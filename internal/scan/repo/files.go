@@ -2,6 +2,7 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,9 +15,15 @@ import (
 // This limit prevents resource exhaustion from extremely large file lists.
 const MaxFiles = 1000
 
+// ErrTooManyFiles is returned when a selection holds more than MaxFiles distinct
+// files. It is a sentinel so a caller can tell an over-large selection apart
+// from a rejected path and say something useful about the difference.
+var ErrTooManyFiles = errors.New("too many files")
+
 // FileList represents a list of files to be scanned.
 type FileList struct {
 	files    []string
+	seen     map[string]struct{}
 	repoRoot string
 }
 
@@ -29,7 +36,7 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 		return nil, fmt.Errorf("failed to resolve repo root: %w", err)
 	}
 
-	fl := &FileList{repoRoot: absRoot}
+	fl := &FileList{repoRoot: absRoot, seen: make(map[string]struct{}, len(files))}
 	for _, f := range files {
 		if err := fl.addFile(f); err != nil {
 			return nil, err
@@ -39,17 +46,15 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 }
 
 func (fl *FileList) addFile(path string) error {
-	// Check file count limit to prevent resource exhaustion
-	if len(fl.files) >= MaxFiles {
-		return fmt.Errorf("too many files: maximum %d files allowed", MaxFiles)
-	}
-
 	if path == "" {
 		return nil // Skip empty paths
 	}
 
-	// Normalize path separators
-	path = filepath.FromSlash(path)
+	// Normalize path separators, then lexically clean the path so that "a.go",
+	// "./a.go" and "dir/../a.go" are one key. Without this the de-duplication
+	// below compares spellings rather than files. Clean cannot escape the root --
+	// a result that starts with ".." is still rejected by SafeJoinPath below.
+	path = filepath.Clean(filepath.FromSlash(path))
 
 	// Convert absolute paths to relative
 	if filepath.IsAbs(path) {
@@ -86,6 +91,25 @@ func (fl *FileList) addFile(path string) error {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
 
+	// De-duplicate on the normalized path. Two spellings of one file are one
+	// file, so a repeat must not consume the MaxFiles budget: a caller that
+	// merges two selections -- --include-files plus the filenames a tool appends
+	// -- would otherwise trip the limit at a fraction of the real file count.
+	if _, seen := fl.seen[path]; seen {
+		return nil
+	}
+
+	// Check file count limit to prevent resource exhaustion. Counted after
+	// normalization, de-duplication and the empty-path skip, so the number
+	// checked is the number of files that will actually be scanned.
+	if len(fl.files) >= MaxFiles {
+		return fmt.Errorf("%w: maximum %d files allowed", ErrTooManyFiles, MaxFiles)
+	}
+
+	if fl.seen == nil {
+		fl.seen = make(map[string]struct{})
+	}
+	fl.seen[path] = struct{}{}
 	fl.files = append(fl.files, path)
 	return nil
 }
