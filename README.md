@@ -29,6 +29,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 - [Ignoring Files and Suppressing Findings](#ignoring-files-and-suppressing-findings)
 - [Supply Chain Protection](#supply-chain-protection)
 - [Output Formats](#output-formats)
+- [Pre-commit Framework Integration](#pre-commit-framework-integration)
 - [CI/CD Integration](#cicd-integration)
 - [Environment Variables](#environment-variables)
 - [Security Considerations](#security-considerations)
@@ -881,6 +882,133 @@ Test report format for CI/CD integration.
 ```bash
 armis-cli scan repo ./my-app --format junit > results.xml
 ```
+
+---
+
+## Pre-commit Framework Integration
+
+This repository publishes hook definitions in
+[`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml), so it can be used directly on
+the right-hand side of a `repo:` entry in a consumer project's
+`.pre-commit-config.yaml`. `language: golang` makes [pre-commit](https://pre-commit.com)
+fetch a pinned Go toolchain and `go install` the CLI into its own cache -- there is
+nothing to install first.
+
+This is separate from `armis-cli hook init`, which writes a standalone
+`.git/hooks/pre-commit` script for projects that do not use the pre-commit
+framework. Use one or the other, not both.
+
+```yaml
+# .pre-commit-config.yaml in your project
+repos:
+  - repo: https://github.com/ArmisSecurity/armis-cli
+    rev: ""   # pin the first released tag that contains .pre-commit-hooks.yaml
+    hooks:
+      - id: armis-scan
+```
+
+> **Pin a tag that actually contains the manifest.** `rev` must name a tag whose
+> tree holds `.pre-commit-hooks.yaml`; tags cut before it was published resolve to
+> a repository with no hooks in it, and `pre-commit` fails at install time rather
+> than skipping. Do not copy a version out of an example -- check it:
+>
+> ```bash
+> # published tags
+> git ls-remote --tags https://github.com/ArmisSecurity/armis-cli
+>
+> # does this one carry the manifest?
+> curl -fsSL -o /dev/null \
+>   https://raw.githubusercontent.com/ArmisSecurity/armis-cli/<tag>/.pre-commit-hooks.yaml \
+>   && echo present
+> ```
+
+### The four hooks
+
+| Hook ID | Scans | `pass_filenames` | Default `stages` |
+|---|---|---|---|
+| `armis-scan` | the files pre-commit selected, appended to `scan repo` | `true` | `pre-commit`, `pre-push`, `manual` |
+| `armis-scan-staged` | the git index (`--changed=staged`) | `false` | `pre-commit` |
+| `armis-scan-base-ref` | the diff against a base branch (`--changed=origin/main`) | `false` | `manual`, `pre-push` |
+| `armis-scan-repo` | the whole repository | `false` | `manual`, `pre-push` |
+
+All four fail on `HIGH` or `CRITICAL` findings and run with `--no-progress`.
+`armis-scan` additionally filters by `types_or`, so it only sees source files
+pre-commit recognises (Python, notebooks, shell, SQL, YAML, Terraform, Go,
+JavaScript/TypeScript, Java, Scala).
+
+Override the stage list per project with `stages:`, and the base ref with `args:`.
+
+### Profile 1 — local developer feedback
+
+Fast, file-scoped scans on the commit path. Pick one:
+
+```yaml
+repos:
+  - repo: https://github.com/ArmisSecurity/armis-cli
+    rev: ""   # see the pinning note above
+    hooks:
+      # Scan the files being committed.
+      - id: armis-scan
+        stages: [pre-commit]
+
+      # Or: scan whatever is in the index, in one invocation.
+      # Not for CI -- a fresh checkout has an empty index, so this hook
+      # would report success without scanning anything.
+      # - id: armis-scan-staged
+```
+
+### Profile 2 — CI gate
+
+A whole-repository scan is one upload regardless of size, has no file selection
+and so no `1000`-file limit to exceed, and is the only form that sends git hints,
+letting the backend reuse a baseline. It takes minutes rather than seconds, which
+is why it is deliberately **not** on the `pre-commit` stage:
+
+```yaml
+repos:
+  - repo: https://github.com/ArmisSecurity/armis-cli
+    rev: ""   # see the pinning note above
+    hooks:
+      - id: armis-scan-repo
+```
+
+```bash
+# `--all-files` alone runs the pre-commit stage, where this hook is absent.
+# Ask for the stage explicitly, or the job passes without scanning:
+pre-commit run --all-files --hook-stage manual
+```
+
+If a full scan is too slow for a PR check, gate on the diff instead:
+
+```yaml
+      - id: armis-scan-base-ref
+        args: [--changed=origin/develop]   # default is origin/main
+```
+
+### Things that bite
+
+- **`--changed` and filenames are mutually exclusive.** Adding
+  `args: [--changed=staged]` to `armis-scan` -- a `pass_filenames: true` hook --
+  makes pre-commit produce `scan repo . foo.py --changed=staged`, which fails with
+  `cannot use --changed together with positional file arguments`. `--changed`
+  derives its own file list, so a second one would be silently discarded. Use
+  `armis-scan-staged` instead.
+- **`args:` appends, it does not replace.** Each hook's `entry` already carries its
+  flags, so `args: [--changed=origin/develop]` on `armis-scan-base-ref` arrives
+  after the built-in `--changed=origin/main`. Last value wins, which is why the
+  override above works; it also means you cannot remove a flag this way.
+- **Enabling several hooks puts more than one scan on a stage.** With the whole
+  portfolio enabled, three hooks land on `pre-push` and three on `manual`, and one
+  of them is the multi-minute whole-repository form. Set `stages:` explicitly per
+  hook rather than accepting the defaults for all four.
+- **Large selections are partitioned.** For `armis-scan`, pre-commit splits a big
+  filename list across several invocations, each a separate upload. On a large
+  repository prefer `armis-scan-repo` on the `manual` stage. Do not set
+  `require_serial: true` to control this: it forces one partition, which removes
+  the cap keeping a partition under the CLI's `1000`-file limit.
+- **Credentials must be in the environment that invokes pre-commit.**
+  `ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`, or a completed `armis-cli auth login`.
+  A hook runs in an isolated environment and never sees your project's `.env` file.
 
 ---
 
