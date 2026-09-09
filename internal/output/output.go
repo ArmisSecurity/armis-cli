@@ -76,10 +76,14 @@ type ExitPolicy struct {
 	FailOnSeverities []string
 	// FailOnSecret fails the scan when a secret is exposed in the scanned source,
 	// whatever severity the backend assigned it. An exposed secret arrives as
-	// severity INFO with no CWE unless --include-non-exploitable is passed, so
-	// under the usual --fail-on HIGH,CRITICAL a credential committed to source is
-	// a passing scan. Reachability grading has no bearing on a literal secret:
-	// it is already disclosed to everyone who can read the repository.
+	// severity INFO with no CWE, so under the usual --fail-on HIGH,CRITICAL a
+	// credential committed to source is a passing scan.
+	//
+	// Reachability grading has no bearing on a literal secret -- it is already
+	// disclosed to everyone who can read the repository -- so exposed secrets are
+	// exempt from the exploitability filter and reach this policy whether or not
+	// --include-non-exploitable was passed. That flag changes which *graded*
+	// findings appear, not whether secrets do.
 	FailOnSecret bool
 }
 

@@ -64,7 +64,7 @@ func ConvertNormalizedFindings(
 			continue
 		}
 
-		if !includeNonExploitable && ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
+		if ShouldFilterFinding(nf, includeNonExploitable) {
 			filteredCount++
 			continue
 		}

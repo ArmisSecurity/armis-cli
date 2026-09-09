@@ -40,10 +40,46 @@ func TestDeriveFindingType(t *testing.T) {
 			want:            model.FindingTypeVulnerability,
 		},
 		{
-			name:            "secret overrides an unrelated category",
+			// A dependency finding whose captured blob happens to contain a token is
+			// still a dependency finding. Any category that maps to a specific type
+			// is the more specific signal and wins over the blob-level flag.
+			name:            "package vulnerability category beats a secret in the blob",
 			hasCVEs:         false,
 			hasSecret:       true,
 			findingCategory: "CODE_PACKAGE_VULNERABILITY",
+			want:            model.FindingTypeSCA,
+		},
+		{
+			// The reported failure: a Terraform/K8s misconfiguration whose blob has an
+			// unrelated token a few lines away must not become an exposed secret --
+			// with --fail-on-secret default-on that fails a build over a misconfig.
+			name:            "infra-as-code category beats a secret in the blob",
+			hasCVEs:         false,
+			hasSecret:       true,
+			findingCategory: "INFRA_AS_CODE",
+			want:            model.FindingTypeMisconfig,
+		},
+		{
+			name:            "lowercase misconfig category beats a secret in the blob",
+			hasCVEs:         false,
+			hasSecret:       true,
+			findingCategory: "misconfig",
+			want:            model.FindingTypeMisconfig,
+		},
+		{
+			name:            "license category beats a secret in the blob",
+			hasCVEs:         false,
+			hasSecret:       true,
+			findingCategory: "LICENSE_COMPLIANCE_RISK",
+			want:            model.FindingTypeLicense,
+		},
+		{
+			// No recognised category means no more specific signal than the flag, so
+			// the flag still rescues the finding rather than defaulting it to SCA.
+			name:            "secret still overrides an unrecognised category",
+			hasCVEs:         false,
+			hasSecret:       true,
+			findingCategory: "UNKNOWN_CATEGORY",
 			want:            model.FindingTypeSecret,
 		},
 		{
@@ -132,11 +168,36 @@ func TestDeriveFindingType(t *testing.T) {
 			want:            model.FindingTypeSCA,
 		},
 		{
-			name:            "CVEs override category",
+			// The CVE list discriminates inside the dependency space: a package
+			// finding that names CVEs is reported as a vulnerability, not as SCA.
+			name:            "CVEs upgrade a package category to vulnerability",
 			hasCVEs:         true,
 			hasSecret:       false,
 			findingCategory: "CODE_PACKAGE_VULNERABILITY",
 			want:            model.FindingTypeVulnerability,
+		},
+		{
+			// ...but it does not override a non-dependency classification. An
+			// exposed-secret category with a CVE attached is still an exposed secret.
+			name:            "CVEs do not override a secret category",
+			hasCVEs:         true,
+			hasSecret:       false,
+			findingCategory: "SECRET_EXPOSURE",
+			want:            model.FindingTypeSecret,
+		},
+		{
+			name:            "CVEs do not override a license category",
+			hasCVEs:         true,
+			hasSecret:       false,
+			findingCategory: "LICENSE_COMPLIANCE_RISK",
+			want:            model.FindingTypeLicense,
+		},
+		{
+			name:            "CVEs do not override an infra-as-code category",
+			hasCVEs:         true,
+			hasSecret:       false,
+			findingCategory: "INFRA_AS_CODE",
+			want:            model.FindingTypeMisconfig,
 		},
 		{
 			name:            "LICENSE_COMPLIANCE_RISK category results in license",
@@ -159,6 +220,34 @@ func TestDeriveFindingType(t *testing.T) {
 			got := DeriveFindingType(tt.hasCVEs, tt.hasSecret, tt.findingCategory)
 			if got != tt.want {
 				t.Errorf("DeriveFindingType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSecretCategoryClassificationIsShared pins the two secret-category readers to
+// one source of truth. IsSecretExposure (which exempts a finding from the
+// exploitability filter) and DeriveFindingType (which types it) must agree on every
+// category: if the backend adds a third spelling for secrets and only one of them
+// learns about it, a finding gets exempted from filtering but typed as something
+// else -- or worse, typed as a secret and still dropped by the filter.
+func TestSecretCategoryClassificationIsShared(t *testing.T) {
+	categories := []string{
+		"SECRET", "SECRET_EXPOSURE", "secret", "secret_exposure", "  SECRET  ",
+		"CODE_VULNERABILITY", "VULNERABILITY", "CODE_PACKAGE_VULNERABILITY", "SCA",
+		"INFRA_AS_CODE", "MISCONFIG", "LICENSE_COMPLIANCE_RISK", "LICENSE",
+		"UNKNOWN_CATEGORY", "",
+	}
+
+	for _, category := range categories {
+		t.Run(category, func(t *testing.T) {
+			nf := model.NormalizedFinding{}
+			nf.NormalizedRemediation.FindingCategory = category
+
+			typedAsSecret := DeriveFindingType(false, false, category) == model.FindingTypeSecret
+			if got := IsSecretExposure(nf); got != typedAsSecret {
+				t.Errorf("IsSecretExposure(%q) = %v, but DeriveFindingType says secret = %v",
+					category, got, typedAsSecret)
 			}
 		})
 	}
