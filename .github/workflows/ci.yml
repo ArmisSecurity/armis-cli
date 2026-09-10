@@ -84,6 +84,9 @@ jobs:
           path: coverage
 
       - name: Post PR comment
+        # GITHUB_TOKEN is read-only on pull_request runs triggered from a fork,
+        # so posting/updating a comment would 403 and fail the job. Skip on fork PRs.
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           retries: 3
