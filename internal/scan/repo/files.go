@@ -58,29 +58,9 @@ func (fl *FileList) addFile(path string) error {
 
 	// Convert absolute paths to relative
 	if filepath.IsAbs(path) {
-		// Security: Resolve symlinks to prevent path traversal attacks (CWE-22).
-		// Using filepath.EvalSymlinks ensures we compare actual filesystem paths,
-		// preventing symlink-based escapes from the repository root.
-		evalPath, err := filepath.EvalSymlinks(path)
+		rel, err := fl.relativeToRoot(path)
 		if err != nil {
-			// Path doesn't exist yet - fall back to Clean for normalization
-			evalPath = filepath.Clean(path)
-		}
-		evalRoot, err := filepath.EvalSymlinks(fl.repoRoot)
-		if err != nil {
-			evalRoot = filepath.Clean(fl.repoRoot)
-		}
-
-		// Use filepath.Rel to check containment - it returns an error or
-		// a path starting with ".." if the path is outside the root
-		relCheck, err := filepath.Rel(evalRoot, evalPath)
-		if err != nil || strings.HasPrefix(relCheck, "..") {
-			return fmt.Errorf("absolute path %q is outside repository root %q", path, fl.repoRoot)
-		}
-
-		rel, err := filepath.Rel(fl.repoRoot, path)
-		if err != nil {
-			return fmt.Errorf("cannot make path relative to repo: %s", path)
+			return err
 		}
 		path = rel
 	}
@@ -112,6 +92,45 @@ func (fl *FileList) addFile(path string) error {
 	fl.seen[path] = struct{}{}
 	fl.files = append(fl.files, path)
 	return nil
+}
+
+// relativeToRoot turns an absolute path into a path relative to the repository
+// root, with symlinks resolved on *both* sides so the comparison is between real
+// filesystem locations rather than spellings (CWE-22: a symlink pointing out of
+// the repository still resolves out of it and is still rejected).
+//
+// Resolving only one side -- which is what this used to do, taking the relative
+// path from the unresolved root after checking containment against the resolved
+// one -- rejects a legitimate selection whenever the repository root is itself
+// reached through a symlink. /tmp and /var are symlinks to /private/... on macOS,
+// so an absolute path under any temporary directory hit this.
+func (fl *FileList) relativeToRoot(path string) (string, error) {
+	rel, err := filepath.Rel(resolveExisting(fl.repoRoot), resolveExisting(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("absolute path %q is outside repository root %q", path, fl.repoRoot)
+	}
+	return rel, nil
+}
+
+// resolveExisting resolves symlinks in path. A path that does not exist yet is
+// still resolved as far as it can be: EvalSymlinks fails on a missing leaf, so
+// the deepest existing ancestor is resolved and the remainder re-appended. A
+// file that is about to be created therefore resolves through its symlinked
+// parents the same way an existing one does.
+func resolveExisting(path string) string {
+	cleaned := filepath.Clean(path)
+	remainder := ""
+	for current := cleaned; ; {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, remainder)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return cleaned // nothing along this path exists
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
 }
 
 // Files returns the validated list of relative file paths.

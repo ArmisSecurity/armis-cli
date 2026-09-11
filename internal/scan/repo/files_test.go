@@ -291,3 +291,73 @@ func TestParseFileListAtMaxFilesLimit(t *testing.T) {
 		t.Errorf("expected %d files, got %d", MaxFiles, len(fl.Files()))
 	}
 }
+
+func TestParseFileListAbsolutePathUnderSymlinkedRoot(t *testing.T) {
+	// The containment check resolved symlinks on both sides, then the relative
+	// path was recomputed from the *unresolved* root -- so whenever the root was
+	// itself reached through a symlink (every t.TempDir() on macOS, where /var is
+	// a symlink to /private/var) a legitimate absolute path inside the repository
+	// was rejected as traversal.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0750); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	existing := filepath.Join(root, "src", "app.py")
+	if err := os.WriteFile(existing, []byte("x = 1\n"), 0600); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"root spelling", existing},
+		{"resolved spelling", resolved},
+		// A file that does not exist yet must resolve through its symlinked
+		// parents the same way an existing one does.
+		{"not created yet", filepath.Join(filepath.Dir(resolved), "new.py")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fl, err := ParseFileList(root, []string{tc.path})
+			if err != nil {
+				t.Fatalf("ParseFileList(%q) error = %v", tc.path, err)
+			}
+			if len(fl.Files()) != 1 {
+				t.Fatalf("got %v, want one file", fl.Files())
+			}
+			if dir := filepath.Dir(fl.Files()[0]); dir != "src" {
+				t.Errorf("got %q, want a path under src/", fl.Files()[0])
+			}
+		})
+	}
+}
+
+func TestParseFileListRejectsSymlinkEscapingRoot(t *testing.T) {
+	// Guard for the fix above: resolving both sides is what keeps a symlink that
+	// points out of the repository from selecting a file outside it (CWE-22).
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(root, 0750); err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0750); err != nil {
+		t.Fatalf("failed to create outside dir: %v", err)
+	}
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret\n"), 0600); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := ParseFileList(root, []string{filepath.Join(root, "link", "secret.txt")}); err == nil {
+		t.Fatal("expected a path resolving outside the repository root to be rejected")
+	}
+}
