@@ -70,24 +70,66 @@ func GetFormatter(format string) (Formatter, error) {
 	}
 }
 
+// ExitPolicy describes what makes a scan fail.
+type ExitPolicy struct {
+	// FailOnSeverities are the severity levels that fail the scan.
+	FailOnSeverities []string
+	// FailOnSecret fails the scan when a secret is exposed in the scanned source,
+	// whatever severity the backend assigned it. An exposed secret arrives as
+	// severity INFO with no CWE, so under the usual --fail-on HIGH,CRITICAL a
+	// credential committed to source is a passing scan.
+	//
+	// Reachability grading has no bearing on a literal secret -- it is already
+	// disclosed to everyone who can read the repository -- so exposed secrets are
+	// exempt from the exploitability filter and reach this policy whether or not
+	// --include-non-exploitable was passed. That flag changes which *graded*
+	// findings appear, not whether secrets do.
+	FailOnSecret bool
+}
+
 // ShouldFail determines if the scan should fail based on the severity of findings.
 // Suppressed findings are excluded from the evaluation.
 func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
+	return ShouldFailPolicy(result, ExitPolicy{FailOnSeverities: failOnSeverities})
+}
+
+// ShouldFailPolicy determines if the scan should fail under the given policy.
+// Suppressed findings are excluded from the evaluation, so .armisignore remains the
+// escape hatch for a finding the policy would otherwise fail on.
+func ShouldFailPolicy(result *model.ScanResult, policy ExitPolicy) bool {
+	return failureReason(result, policy) != failureNone
+}
+
+type failureKind int
+
+const (
+	failureNone failureKind = iota
+	failureSeverity
+	failureSecret
+)
+
+func failureReason(result *model.ScanResult, policy ExitPolicy) failureKind {
 	severityMap := make(map[string]bool)
-	for _, sev := range failOnSeverities {
+	for _, sev := range policy.FailOnSeverities {
 		severityMap[sev] = true
 	}
 
+	reason := failureNone
 	for _, finding := range result.Findings {
 		if finding.Suppressed {
 			continue
 		}
 		if severityMap[string(finding.Severity)] {
-			return true
+			// A severity match is the reason the user configured, so report it in
+			// preference to the secret rule even if both apply.
+			return failureSeverity
+		}
+		if policy.FailOnSecret && finding.Type == model.FindingTypeSecret {
+			reason = failureSecret
 		}
 	}
 
-	return false
+	return reason
 }
 
 // FilterActiveFindings returns only non-suppressed findings.
@@ -105,7 +147,22 @@ func FilterActiveFindings(findings []model.Finding) []model.Finding {
 // The returned error should be propagated to main.go which handles the exit.
 // Returns nil if no findings match the fail-on severities.
 func CheckExit(result *model.ScanResult, failOnSeverities []string, exitCode int) error {
-	if ShouldFail(result, failOnSeverities) {
+	return CheckExitPolicy(result, ExitPolicy{FailOnSeverities: failOnSeverities}, exitCode)
+}
+
+// CheckExitPolicy returns an error if the scan should fail under the given policy.
+// The returned error should be propagated to main.go which handles the exit.
+func CheckExitPolicy(result *model.ScanResult, policy ExitPolicy, exitCode int) error {
+	reason := failureReason(result, policy)
+	if reason != failureNone {
+		if reason == failureSecret {
+			// Without this the exit is unexplainable: every finding sits below the
+			// configured --fail-on threshold, yet the scan failed.
+			// armis:ignore cwe:253 reason:fmt.Fprintf to stderr for warning; return value not actionable
+			_, _ = fmt.Fprintf(stderrWriter,
+				"Failing because a secret is exposed in the scanned source; "+
+					"severity thresholds do not apply to secrets (--fail-on-secret=false to disable)\n")
+		}
 		// Normalize exit code to valid POSIX range (0-255)
 		if exitCode < 0 || exitCode > 255 {
 			exitCode = 1
