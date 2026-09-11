@@ -224,6 +224,16 @@ var scanRepoCmd = &cobra.Command{
 				if errors.Is(err, repo.ErrGitNotFound) {
 					return fmt.Errorf("--changed: %w", err)
 				}
+				// --changed reaches the same MaxFiles limit through the same
+				// ParseFileList, so it gets the same remediation. Without this the
+				// sibling path one function away names the alternatives and this one
+				// returns a bare limit message. The alternatives differ: the way out of
+				// an over-large --changed selection is a smaller range, not a smaller
+				// file list.
+				if errors.Is(err, repo.ErrTooManyFiles) {
+					return fmt.Errorf("--changed: %w (scan the whole repository by dropping --changed, "+
+						"or narrow the range, e.g. --changed=staged)", err)
+				}
 				return fmt.Errorf("--changed: %w", err)
 			}
 

@@ -683,3 +683,82 @@ func TestScanRepoRunE_MergedSelectionDoesNotDoubleCount(t *testing.T) {
 		t.Errorf("expected the selection to be accepted and the run to reach auth, got %v", err)
 	}
 }
+
+func TestScanRepoRunE_ChangedOverflowNamesTheWayOut(t *testing.T) {
+	// --changed reaches MaxFiles through the same ParseFileList as the selection
+	// path, but its error chain had no ErrTooManyFiles branch, so it returned a
+	// bare limit message while the sibling path one function away named the
+	// alternatives. Two of the four published pre-commit hook ids drive
+	// --changed, so this is the message a blocked commit actually sees.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	originalToken := token
+	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalChangedRef := changedRef
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		_ = scanRepoCmd.Flags().Set("changed", "")
+		scanRepoCmd.Flags().Lookup("changed").Changed = false
+		changedRef = originalChangedRef
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	_ = os.Setenv("ARMIS_API_URL", "http://localhost:1")
+	t.Setenv("ARMIS_CLIENT_ID", "")
+	t.Setenv("ARMIS_CLIENT_SECRET", "")
+	token = testToken
+	tenantID = testTenantID
+	clientID = ""
+	clientSecret = ""
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+
+	tmpDir := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"config", "user.email", "t@example.com"}, {"config", "user.name", "t"}} {
+		if err := runTestGitCmd(tmpDir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	// One more than the limit, staged: the overflow has to come from the file
+	// count itself, not from a rejected path.
+	for i := 0; i <= 1000; i++ {
+		name := filepath.Join(tmpDir, fmt.Sprintf("f%04d.py", i))
+		if err := os.WriteFile(name, []byte("x = 1\n"), 0600); err != nil {
+			t.Fatalf("failed to create file: %v", err)
+		}
+	}
+	if err := runTestGitCmd(tmpDir, "add", "-A"); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+
+	changedRef = "staged"
+	if err := scanRepoCmd.Flags().Set("changed", "staged"); err != nil {
+		t.Fatalf("failed to set changed flag: %v", err)
+	}
+
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{tmpDir})
+	if err == nil {
+		t.Fatal("expected an over-large --changed selection to be rejected")
+	}
+	if !strings.Contains(err.Error(), "too many files") {
+		t.Errorf("expected the limit error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "narrow the range") {
+		t.Errorf("expected the remediation hint the --include-files path gives, got: %v", err)
+	}
+}

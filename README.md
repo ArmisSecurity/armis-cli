@@ -1005,7 +1005,10 @@ If a full scan is too slow for a PR check, gate on the diff instead:
   filename list across several invocations, each a separate upload. On a large
   repository prefer `armis-scan-repo` on the `manual` stage. Do not set
   `require_serial: true` to control this: it forces one partition, which removes
-  the cap keeping a partition under the CLI's `1000`-file limit.
+  the cap keeping a partition under the CLI's `1000`-file limit. The
+  `--changed` hooks are not partitioned at all -- a selection over the limit is an
+  error naming the alternatives (a whole-repository scan, or a narrower range),
+  never a silent fall back to scanning everything.
 - **Credentials must be in the environment that invokes pre-commit.**
   `ARMIS_CLIENT_ID` / `ARMIS_CLIENT_SECRET`, or a completed `armis-cli auth login`.
   A hook runs in an isolated environment and never sees your project's `.env` file.
