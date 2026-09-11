@@ -292,6 +292,40 @@ func TestParseFileListAtMaxFilesLimit(t *testing.T) {
 	}
 }
 
+func TestParseFileListDedupesCaseVariantsOnCaseInsensitiveFilesystems(t *testing.T) {
+	// Two spellings that differ only in case are one file on APFS or NTFS and two
+	// files on ext4. Keying the de-duplication map on the exact string spent two
+	// of the MaxFiles slots on one file and uploaded it twice under two names,
+	// which is the merge-and-dedupe guarantee failing on the platform most
+	// developers run the pre-commit hook from.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0750); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "app.py"), []byte("x = 1\n"), 0600); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	fl, err := ParseFileList(root, []string{"Src/App.py", "src/app.py"})
+	if err != nil {
+		t.Fatalf("ParseFileList() error = %v", err)
+	}
+
+	// Asserted against the filesystem's own behaviour rather than runtime.GOOS,
+	// so this is meaningful on a case-sensitive volume too.
+	want := 2
+	if caseInsensitiveFS(root) {
+		want = 1
+	}
+	if got := len(fl.Files()); got != want {
+		t.Errorf("case variants: got %d files %v, want %d (caseInsensitiveFS=%v)",
+			got, fl.Files(), want, caseInsensitiveFS(root))
+	}
+	if caseInsensitiveFS(root) && fl.Files()[0] != filepath.Join("Src", "App.py") {
+		t.Errorf("the first spelling should be the one kept, got %q", fl.Files()[0])
+	}
+}
+
 func TestParseFileListAbsolutePathUnderSymlinkedRoot(t *testing.T) {
 	// The containment check resolved symlinks on both sides, then the relative
 	// path was recomputed from the *unresolved* root -- so whenever the root was

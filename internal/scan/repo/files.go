@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -25,6 +26,10 @@ type FileList struct {
 	files    []string
 	seen     map[string]struct{}
 	repoRoot string
+	// foldCase records whether the filesystem holding repoRoot is
+	// case-insensitive, so that de-duplication keys on what the filesystem
+	// considers one file rather than on the spelling.
+	foldCase bool
 }
 
 // ParseFileList parses file paths from the --include-files flag.
@@ -36,7 +41,11 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 		return nil, fmt.Errorf("failed to resolve repo root: %w", err)
 	}
 
-	fl := &FileList{repoRoot: absRoot, seen: make(map[string]struct{}, len(files))}
+	fl := &FileList{
+		repoRoot: absRoot,
+		seen:     make(map[string]struct{}, len(files)),
+		foldCase: caseInsensitiveFS(absRoot),
+	}
 	for _, f := range files {
 		if err := fl.addFile(f); err != nil {
 			return nil, err
@@ -75,7 +84,8 @@ func (fl *FileList) addFile(path string) error {
 	// file, so a repeat must not consume the MaxFiles budget: a caller that
 	// merges two selections -- --include-files plus the filenames a tool appends
 	// -- would otherwise trip the limit at a fraction of the real file count.
-	if _, seen := fl.seen[path]; seen {
+	key := fl.dedupeKey(path)
+	if _, seen := fl.seen[key]; seen {
 		return nil
 	}
 
@@ -86,10 +96,7 @@ func (fl *FileList) addFile(path string) error {
 		return fmt.Errorf("%w: maximum %d files allowed", ErrTooManyFiles, MaxFiles)
 	}
 
-	if fl.seen == nil {
-		fl.seen = make(map[string]struct{})
-	}
-	fl.seen[path] = struct{}{}
+	fl.seen[key] = struct{}{}
 	fl.files = append(fl.files, path)
 	return nil
 }
@@ -131,6 +138,66 @@ func resolveExisting(path string) string {
 		remainder = filepath.Join(filepath.Base(current), remainder)
 		current = parent
 	}
+}
+
+// dedupeKey returns the key a path is de-duplicated under. On a case-insensitive
+// filesystem two spellings that differ only in case are one file, so keying on
+// the exact string would spend two of the MaxFiles slots on it and upload it
+// twice under two names.
+func (fl *FileList) dedupeKey(path string) string {
+	if fl.foldCase {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
+// caseInsensitiveFS reports whether the filesystem holding root treats names
+// case-insensitively. It is probed rather than inferred from runtime.GOOS,
+// because macOS is case-insensitive by default but can be formatted
+// case-sensitive, and either kind of volume can be mounted anywhere.
+//
+// The probe re-stats an existing directory under an inverted spelling of its own
+// name and asks whether both names reach the same file. It creates nothing. When
+// no ancestor has a name that can be re-cased (a path of digits, say) there is
+// nothing to probe with and it falls back to the platform default.
+func caseInsensitiveFS(root string) bool {
+	for current := filepath.Clean(root); ; {
+		base := filepath.Base(current)
+		if flipped := flipCase(base); flipped != base {
+			info, err := os.Stat(current)
+			if err != nil {
+				return platformCaseInsensitive()
+			}
+			other, err := os.Stat(filepath.Join(filepath.Dir(current), flipped))
+			if err != nil {
+				return false
+			}
+			return os.SameFile(info, other)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return platformCaseInsensitive()
+		}
+		current = parent
+	}
+}
+
+func platformCaseInsensitive() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
+// flipCase inverts the case of every ASCII letter in s, returning s unchanged
+// when it holds none.
+func flipCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r - ('a' - 'A')
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
 }
 
 // Files returns the validated list of relative file paths.
