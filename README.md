@@ -491,7 +491,9 @@ to scan, relative to that root -- the same selection `--include-files` makes, in
 the form a tool that appends filenames to a fixed command line can produce
 (`pre-commit` with `pass_filenames: true`, `xargs`, a git hook). The two are
 merged and de-duplicated, at most `1000` distinct files, and neither can be
-combined with `--changed`.
+combined with `--changed`. Every argument after the first is a *file*: a second
+directory is rejected rather than silently treated as a selection, so
+`scan repo ./frontend ./shared` fails immediately instead of scanning neither.
 
 **Size Limit**: 2GB
 **Example**:

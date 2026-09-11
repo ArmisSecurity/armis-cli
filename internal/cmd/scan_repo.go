@@ -89,6 +89,30 @@ var scanRepoCmd = &cobra.Command{
 				"e.g. `scan repo . %s`)", repoPath, repoPath)
 		}
 
+		// A trailing argument that names a directory is rejected here rather than
+		// warned about inside the scanner. `scan repo ./frontend ./shared` reads
+		// as two directories to scan; what it means is one file selector under
+		// ./frontend. A directory is never scanned as a selection -- it becomes a
+		// "skipping directory" warning, and when it is the whole selection, a
+		// "no files to scan" error raised after auth has already been paid for.
+		// Saying so before the first network call is what keeps the ambiguity
+		// cobra.ArbitraryArgs now allows from costing anything.
+		//
+		// Positional arguments only: --include-files has always warned and
+		// skipped, and that contract is not this change's to alter.
+		for _, f := range trailingFiles {
+			candidate := f
+			if !filepath.IsAbs(candidate) {
+				candidate = filepath.Join(repoPath, candidate)
+			}
+			// armis:ignore cwe:22 reason:read-only os.Stat for an error message; containment is enforced by ParseFileList below
+			if fi, statErr := os.Stat(candidate); statErr == nil && fi.IsDir() {
+				return fmt.Errorf("file argument %q is a directory: every argument after the "+
+					"repository path is a file to scan (to scan a directory, pass it as the "+
+					"repository path: `scan repo %s`)", f, f)
+			}
+		}
+
 		// Resolve and validate the file selection here, before any network call.
 		// Cobra's Args stage used to reject a malformed invocation for free;
 		// ArbitraryArgs moved that work into RunE, so it has to stay ahead of

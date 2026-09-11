@@ -684,6 +684,74 @@ func TestScanRepoRunE_MergedSelectionDoesNotDoubleCount(t *testing.T) {
 	}
 }
 
+func TestScanRepoRunE_DirectoryFileArgumentIsRejectedBeforeAuth(t *testing.T) {
+	// `scan repo ./frontend ./shared` reads as two directories to scan, and
+	// ArbitraryArgs no longer rejects it at cobra's Args stage. It never scanned
+	// ./shared -- a directory in a selection is skipped with a warning and, when
+	// it is the whole selection, fails with "no files to scan" -- but that
+	// happened inside the scanner, after a live token exchange. The ambiguity is
+	// now named before the first network call.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	originalToken := token
+	originalTenantID := tenantID
+	originalClientID := clientID
+	originalClientSecret := clientSecret
+	originalColorFlag := colorFlag
+	originalThemeFlag := themeFlag
+	originalNoUpdateCheck := noUpdateCheck
+	originalIncludeFiles := includeFiles
+
+	t.Cleanup(func() {
+		token = originalToken
+		tenantID = originalTenantID
+		clientID = originalClientID
+		clientSecret = originalClientSecret
+		colorFlag = originalColorFlag
+		themeFlag = originalThemeFlag
+		noUpdateCheck = originalNoUpdateCheck
+		includeFiles = originalIncludeFiles
+		_ = os.Unsetenv("ARMIS_API_URL")
+	})
+
+	// Client credentials with no cached token: reaching auth means a round trip.
+	_ = os.Setenv("ARMIS_API_URL", srv.URL)
+	t.Setenv("ARMIS_CLIENT_ID", "test-client-id")
+	t.Setenv("ARMIS_CLIENT_SECRET", "test-client-secret")
+	token = ""
+	tenantID = ""
+	clientID = "test-client-id"
+	clientSecret = "test-client-secret"
+	colorFlag = testColorNever
+	themeFlag = themeAuto
+	noUpdateCheck = true
+	includeFiles = nil
+
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "shared"), 0750); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	err := scanRepoCmd.RunE(scanRepoCmd, []string{tmpDir, "shared"})
+	if err == nil {
+		t.Fatal("expected a directory passed as a file argument to be rejected")
+	}
+	if !strings.Contains(err.Error(), "is a directory") {
+		t.Errorf("error should say the argument is a directory, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "repository path") {
+		t.Errorf("error should point at the repository-path form, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("expected 0 requests before argument validation, got %d", got)
+	}
+}
+
 func TestScanRepoRunE_ChangedOverflowNamesTheWayOut(t *testing.T) {
 	// --changed reaches MaxFiles through the same ParseFileList as the selection
 	// path, but its error chain had no ErrTooManyFiles branch, so it returned a
