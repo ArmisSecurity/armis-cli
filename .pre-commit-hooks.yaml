@@ -1,0 +1,81 @@
+# Hook definitions published by armis-cli for the pre-commit framework
+# (https://pre-commit.com). This file is what makes this repository usable on the
+# right-hand side of a `repo:` entry in a consumer project's
+# .pre-commit-config.yaml -- it is not .pre-commit-config.yaml, which configures
+# the linters that run against armis-cli's own source.
+#
+#   # in a consumer project's .pre-commit-config.yaml
+#   - repo: https://github.com/ArmisSecurity/armis-cli
+#     rev: ""   # pin the first released tag that contains this file
+#     hooks:
+#       - id: armis-scan
+#
+# `language: golang` makes pre-commit fetch a pinned Go toolchain and `go install`
+# this repository into its own cache, so no packaging change is required.
+#
+# Credentials must be present in the environment that invokes pre-commit
+# (ARMIS_CLIENT_ID / ARMIS_CLIENT_SECRET, or a completed SSO login). A hook runs in
+# an isolated environment and never sees the consumer project's .env file.
+#
+# None of these hooks sets `require_serial`. pre-commit only consults that flag in
+# lang_base.run_xargs, where it forces `jobs = 1` for the filename partitions of a
+# single hook; hooks themselves always run one at a time. So on a
+# `pass_filenames: false` hook it is a no-op, and on `armis-scan` it is harmful
+# twice over: each partition is a full tarball-upload-and-poll round trip, so
+# serializing them makes the waits additive instead of overlapping, and
+# `jobs = 1` also removes the `ceil(N / target_concurrency)` cap on partition size
+# that keeps a partition under the CLI's 1000-file `--include-files` limit.
+
+- id: armis-scan
+  name: Armis security scan (selected files)
+  description: >-
+    Scan the files pre-commit selected and fail on HIGH or CRITICAL findings. For
+    the commit path, where the selection is the handful of files being committed;
+    filenames are appended as trailing arguments to `scan repo`. On a large
+    repository prefer `armis-scan-repo` via
+    `pre-commit run --all-files --hook-stage manual`, which is one upload rather
+    than one per filename partition.
+  entry: armis-cli scan repo . --no-progress --fail-on HIGH,CRITICAL
+  language: golang
+  pass_filenames: true
+  types_or: [python, jupyter, shell, bash, sql, yaml, terraform, go, javascript, ts, tsx, java, scala]
+  stages: [pre-commit, pre-push, manual]
+
+- id: armis-scan-staged
+  name: Armis security scan (staged changes)
+  description: >-
+    Scan only what is in the git index and fail on HIGH or CRITICAL findings. For the
+    local commit path. Not for CI: a fresh checkout has an empty index, so this hook
+    would report success without scanning anything.
+  entry: armis-cli scan repo . --changed=staged --no-progress --fail-on HIGH,CRITICAL
+  language: golang
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+
+- id: armis-scan-base-ref
+  name: Armis security scan (vs base branch)
+  description: >-
+    Scan what differs from a base branch and fail on HIGH or CRITICAL findings, for
+    pull-request gating where a whole-repository scan is too slow. Override the ref
+    per project with `args: [--changed=origin/develop]`.
+  entry: armis-cli scan repo . --changed=origin/main --no-progress --fail-on HIGH,CRITICAL
+  language: golang
+  pass_filenames: false
+  always_run: true
+  stages: [manual, pre-push]
+
+- id: armis-scan-repo
+  name: Armis security scan (whole repository)
+  description: >-
+    Scan the whole repository and fail on HIGH or CRITICAL findings. The CI hook:
+    one upload regardless of repository size, no file selection and so no
+    `--include-files` limit to exceed, and it is the only form that sends git
+    hints, letting the backend reuse a baseline. Deliberately not on the
+    `pre-commit` stage -- a whole-repository scan is minutes, not seconds -- so CI
+    must ask for it by stage: `pre-commit run --all-files --hook-stage manual`.
+  entry: armis-cli scan repo . --no-progress --fail-on HIGH,CRITICAL
+  language: golang
+  pass_filenames: false
+  always_run: true
+  stages: [manual, pre-push]

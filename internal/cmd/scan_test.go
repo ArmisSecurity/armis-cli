@@ -35,11 +35,13 @@ func TestScanCmd(t *testing.T) {
 
 		hasRepo := false
 		hasImage := false
+		// Match on Name() rather than Use: the usage string carries the optional
+		// arguments, which change as arguments are added.
 		for _, cmd := range subcommands {
-			if cmd.Use == "repo [path]" {
+			if cmd.Name() == "repo" {
 				hasRepo = true
 			}
-			if cmd.Use == "image [image-name]" {
+			if cmd.Name() == "image" {
 				hasImage = true
 			}
 		}
@@ -102,27 +104,24 @@ func TestScanRepoCmd(t *testing.T) {
 		if scanRepoCmd == nil {
 			t.Fatal("scanRepoCmd should not be nil")
 		}
-		if scanRepoCmd.Use != "repo [path]" {
-			t.Errorf("Expected Use 'repo [path]', got %s", scanRepoCmd.Use)
+		if scanRepoCmd.Use != "repo [path] [file...]" {
+			t.Errorf("Expected Use 'repo [path] [file...]', got %s", scanRepoCmd.Use)
 		}
 	})
 
-	t.Run("repo command accepts zero or one arg", func(t *testing.T) {
-		// PPSC-1006 #18: the path is optional and defaults to "." in RunE, so
-		// MaximumNArgs(1) accepts zero args; only two or more are rejected.
-		err := scanRepoCmd.Args(scanRepoCmd, []string{})
-		if err != nil {
-			t.Errorf("Expected no error when no args provided (path defaults to '.'), got %v", err)
-		}
-
-		err = scanRepoCmd.Args(scanRepoCmd, []string{"path1", "path2"})
-		if err == nil {
-			t.Error("Expected error when too many args provided")
-		}
-
-		err = scanRepoCmd.Args(scanRepoCmd, []string{"path"})
-		if err != nil {
-			t.Errorf("Expected no error with one arg, got %v", err)
+	t.Run("repo command accepts a path and trailing files", func(t *testing.T) {
+		// PPSC-1006 #18: the path is optional and defaults to "." in RunE, so zero
+		// args is valid. Arguments after the path are files to scan, so more than one
+		// argument is valid too -- RunE, not Args, decides what each one means.
+		for _, args := range [][]string{
+			{},
+			{"path"},
+			{"path", "a.py"},
+			{"path", "a.py", "b.py"},
+		} {
+			if err := scanRepoCmd.Args(scanRepoCmd, args); err != nil {
+				t.Errorf("Expected no error for args %v, got %v", args, err)
+			}
 		}
 	})
 

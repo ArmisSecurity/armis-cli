@@ -2,9 +2,11 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/util"
@@ -14,10 +16,20 @@ import (
 // This limit prevents resource exhaustion from extremely large file lists.
 const MaxFiles = 1000
 
+// ErrTooManyFiles is returned when a selection holds more than MaxFiles distinct
+// files. It is a sentinel so a caller can tell an over-large selection apart
+// from a rejected path and say something useful about the difference.
+var ErrTooManyFiles = errors.New("too many files")
+
 // FileList represents a list of files to be scanned.
 type FileList struct {
 	files    []string
+	seen     map[string]struct{}
 	repoRoot string
+	// foldCase records whether the filesystem holding repoRoot is
+	// case-insensitive, so that de-duplication keys on what the filesystem
+	// considers one file rather than on the spelling.
+	foldCase bool
 }
 
 // ParseFileList parses file paths from the --include-files flag.
@@ -29,7 +41,11 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 		return nil, fmt.Errorf("failed to resolve repo root: %w", err)
 	}
 
-	fl := &FileList{repoRoot: absRoot}
+	fl := &FileList{
+		repoRoot: absRoot,
+		seen:     make(map[string]struct{}, len(files)),
+		foldCase: caseInsensitiveFS(absRoot),
+	}
 	for _, f := range files {
 		if err := fl.addFile(f); err != nil {
 			return nil, err
@@ -39,43 +55,21 @@ func ParseFileList(repoRoot string, files []string) (*FileList, error) {
 }
 
 func (fl *FileList) addFile(path string) error {
-	// Check file count limit to prevent resource exhaustion
-	if len(fl.files) >= MaxFiles {
-		return fmt.Errorf("too many files: maximum %d files allowed", MaxFiles)
-	}
-
 	if path == "" {
 		return nil // Skip empty paths
 	}
 
-	// Normalize path separators
-	path = filepath.FromSlash(path)
+	// Normalize path separators, then lexically clean the path so that "a.go",
+	// "./a.go" and "dir/../a.go" are one key. Without this the de-duplication
+	// below compares spellings rather than files. Clean cannot escape the root --
+	// a result that starts with ".." is still rejected by SafeJoinPath below.
+	path = filepath.Clean(filepath.FromSlash(path))
 
 	// Convert absolute paths to relative
 	if filepath.IsAbs(path) {
-		// Security: Resolve symlinks to prevent path traversal attacks (CWE-22).
-		// Using filepath.EvalSymlinks ensures we compare actual filesystem paths,
-		// preventing symlink-based escapes from the repository root.
-		evalPath, err := filepath.EvalSymlinks(path)
+		rel, err := fl.relativeToRoot(path)
 		if err != nil {
-			// Path doesn't exist yet - fall back to Clean for normalization
-			evalPath = filepath.Clean(path)
-		}
-		evalRoot, err := filepath.EvalSymlinks(fl.repoRoot)
-		if err != nil {
-			evalRoot = filepath.Clean(fl.repoRoot)
-		}
-
-		// Use filepath.Rel to check containment - it returns an error or
-		// a path starting with ".." if the path is outside the root
-		relCheck, err := filepath.Rel(evalRoot, evalPath)
-		if err != nil || strings.HasPrefix(relCheck, "..") {
-			return fmt.Errorf("absolute path %q is outside repository root %q", path, fl.repoRoot)
-		}
-
-		rel, err := filepath.Rel(fl.repoRoot, path)
-		if err != nil {
-			return fmt.Errorf("cannot make path relative to repo: %s", path)
+			return err
 		}
 		path = rel
 	}
@@ -86,8 +80,124 @@ func (fl *FileList) addFile(path string) error {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
 
+	// De-duplicate on the normalized path. Two spellings of one file are one
+	// file, so a repeat must not consume the MaxFiles budget: a caller that
+	// merges two selections -- --include-files plus the filenames a tool appends
+	// -- would otherwise trip the limit at a fraction of the real file count.
+	key := fl.dedupeKey(path)
+	if _, seen := fl.seen[key]; seen {
+		return nil
+	}
+
+	// Check file count limit to prevent resource exhaustion. Counted after
+	// normalization, de-duplication and the empty-path skip, so the number
+	// checked is the number of files that will actually be scanned.
+	if len(fl.files) >= MaxFiles {
+		return fmt.Errorf("%w: maximum %d files allowed", ErrTooManyFiles, MaxFiles)
+	}
+
+	fl.seen[key] = struct{}{}
 	fl.files = append(fl.files, path)
 	return nil
+}
+
+// relativeToRoot turns an absolute path into a path relative to the repository
+// root, with symlinks resolved on *both* sides so the comparison is between real
+// filesystem locations rather than spellings (CWE-22: a symlink pointing out of
+// the repository still resolves out of it and is still rejected).
+//
+// Resolving only one side -- which is what this used to do, taking the relative
+// path from the unresolved root after checking containment against the resolved
+// one -- rejects a legitimate selection whenever the repository root is itself
+// reached through a symlink. /tmp and /var are symlinks to /private/... on macOS,
+// so an absolute path under any temporary directory hit this.
+func (fl *FileList) relativeToRoot(path string) (string, error) {
+	rel, err := filepath.Rel(resolveExisting(fl.repoRoot), resolveExisting(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("absolute path %q is outside repository root %q", path, fl.repoRoot)
+	}
+	return rel, nil
+}
+
+// resolveExisting resolves symlinks in path. A path that does not exist yet is
+// still resolved as far as it can be: EvalSymlinks fails on a missing leaf, so
+// the deepest existing ancestor is resolved and the remainder re-appended. A
+// file that is about to be created therefore resolves through its symlinked
+// parents the same way an existing one does.
+func resolveExisting(path string) string {
+	cleaned := filepath.Clean(path)
+	remainder := ""
+	for current := cleaned; ; {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, remainder)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return cleaned // nothing along this path exists
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
+}
+
+// dedupeKey returns the key a path is de-duplicated under. On a case-insensitive
+// filesystem two spellings that differ only in case are one file, so keying on
+// the exact string would spend two of the MaxFiles slots on it and upload it
+// twice under two names.
+func (fl *FileList) dedupeKey(path string) string {
+	if fl.foldCase {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
+// caseInsensitiveFS reports whether the filesystem holding root treats names
+// case-insensitively. It is probed rather than inferred from runtime.GOOS,
+// because macOS is case-insensitive by default but can be formatted
+// case-sensitive, and either kind of volume can be mounted anywhere.
+//
+// The probe re-stats an existing directory under an inverted spelling of its own
+// name and asks whether both names reach the same file. It creates nothing. When
+// no ancestor has a name that can be re-cased (a path of digits, say) there is
+// nothing to probe with and it falls back to the platform default.
+func caseInsensitiveFS(root string) bool {
+	for current := filepath.Clean(root); ; {
+		base := filepath.Base(current)
+		if flipped := flipCase(base); flipped != base {
+			info, err := os.Stat(current)
+			if err != nil {
+				return platformCaseInsensitive()
+			}
+			other, err := os.Stat(filepath.Join(filepath.Dir(current), flipped))
+			if err != nil {
+				return false
+			}
+			return os.SameFile(info, other)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return platformCaseInsensitive()
+		}
+		current = parent
+	}
+}
+
+func platformCaseInsensitive() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
+// flipCase inverts the case of every ASCII letter in s, returning s unchanged
+// when it holds none.
+func flipCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r - ('a' - 'A')
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
 }
 
 // Files returns the validated list of relative file paths.
