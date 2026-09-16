@@ -151,12 +151,31 @@ jobs:
               return lines;
             }
 
+            // All proper path-suffixes of a slash-separated path (i.e. excluding
+            // the path itself, which is already indexed verbatim in diffLines),
+            // longest first, e.g. 'a/b/c.py' -> ['b/c.py', 'c.py'].
+            function pathSuffixes(p) {
+              const parts = p.split('/');
+              const suffixes = [];
+              for (let i = 1; i < parts.length; i++) {
+                suffixes.push(parts.slice(i).join('/'));
+              }
+              return suffixes;
+            }
+
             // Use a null-prototype object to avoid prototype pollution from filenames
             // like '__proto__' or 'constructor' that would corrupt a regular object.
             // null sentinel means the file is changed but has no patch (e.g. large diffs
             // or binary files) — findings for those files are always included so we never
             // silently under-report issues on files GitHub couldn't supply a patch for.
             const diffLines = Object.create(null);
+            // Armis CLI reports SARIF artifact locations relative to whichever
+            // directory the underlying scanner analyzed a file from — for a
+            // monorepo member this can be the package root rather than the repo
+            // root, so it won't string-equal the repo-root-relative path GitHub's
+            // listFiles returns. Index every path suffix so a shorter SARIF path
+            // can still be matched against the full diff path.
+            const suffixIndex = Object.create(null);
             let page = 1;
             while (true) {
               const { data: files } = await github.rest.pulls.listFiles({
@@ -168,6 +187,10 @@ jobs:
               if (!files.length) break;
               for (const f of files) {
                 diffLines[f.filename] = f.patch ? parseDiffLineNumbers(f.patch) : null;
+                for (const suffix of pathSuffixes(f.filename)) {
+                  if (!suffixIndex[suffix]) suffixIndex[suffix] = [];
+                  suffixIndex[suffix].push(f.filename);
+                }
               }
               if (files.length < 100) break;
               page++;
@@ -185,9 +208,25 @@ jobs:
               const file = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || '';
               const line = r.locations?.[0]?.physicalLocation?.region?.startLine;
               if (!file || !line) return false;
-              if (!(file in diffLines)) return false;
-              const lineSet = diffLines[file];
-              return lineSet === null || lineSet.has(line);
+
+              if (file in diffLines) {
+                const lineSet = diffLines[file];
+                return lineSet === null || lineSet.has(line);
+              }
+
+              // No exact path match — fall back to suffix matching. A suffix
+              // match only tells us that some changed file's path *ends with*
+              // this SARIF path; it never proves the finding is actually about
+              // that file (e.g. an untouched 'vendor/utils.py' finding reported
+              // as short path 'utils.py' could coincidentally suffix-match an
+              // unrelated changed 'app/utils.py'). So we don't trust the
+              // matched file's line set here — we only use the suffix index to
+              // decide whether *any* changed file could plausibly be the
+              // target, and keep the finding rather than risk a false
+              // negative/misattribution from checking the wrong file's lines
+              // (same policy as the null-sentinel case above).
+              const candidates = suffixIndex[file];
+              return !!(candidates && candidates.length > 0);
             });
 
             // Count by severity - read from properties.severity if available
