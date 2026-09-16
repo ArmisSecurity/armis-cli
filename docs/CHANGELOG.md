@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.22.2] - 2026-09-16
+
+### Fixed
+
+- CI action: SARIF finding locations reported relative to a scanned subdirectory now match GitHub's repo-root-relative PR diff paths by path suffix instead of exact string, so findings under a subdirectory scan are no longer silently dropped from PR annotations. (#321)
+- CI action: skip the Coverage Comment and Security Scan comment-posting steps on fork PRs, where the read-only `GITHUB_TOKEN` caused them to 403 and fail otherwise-passing jobs. (#316)
+
+---
+
 ## [1.22.1] - 2026-09-08
 
 ### Fixed
@@ -713,7 +722,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.2...HEAD
+[1.22.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.1...v1.22.2
 [1.22.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.0...v1.22.1
 [1.22.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.20.0...v1.21.0
