@@ -10,7 +10,9 @@ var mcpCmd = &cobra.Command{
 	Long: `Inspect and debug the MCP servers armis-cli install registered.
 
 Use 'armis-cli mcp doctor' to check the scanner and knowledge MCP servers:
-plugin files, credentials, editor registrations, and a live handshake.`,
+plugin files, credentials, editor registrations, and a live handshake.
+
+Use 'armis-cli mcp update' to update them to the latest version.`,
 }
 
 func init() {
