@@ -143,6 +143,7 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 	}
 
 	found := false
+	venvFound := false
 	for _, sub := range []string{"prod", "stage", "dev"} {
 		envDir := filepath.Join(k.PluginDir, sub)
 		bridge := filepath.Join(envDir, "bridge.py")
@@ -160,6 +161,7 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 		if _, err := os.Stat(filepath.Join(envDir, ".venv")); err != nil {
 			continue
 		}
+		venvFound = true
 
 		subComponent := component + " " + sub
 		pythonPath := venvPython(envDir)
@@ -175,8 +177,11 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 			runHandshakeCheck(report, subComponent, pythonPath, []string{bridge}, env, opts.Timeout)
 		}
 	}
-	if !found {
+	switch {
+	case !found:
 		report.add(component, "bridge", StatusFail, fmt.Sprintf("no bridge.py found under %s", k.PluginDir))
+	case !venvFound:
+		report.add(component, "python venv", StatusFail, fmt.Sprintf("bridge.py found under %s but no environment has a .venv — install may have failed", k.PluginDir))
 	}
 }
 
@@ -211,7 +216,11 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 			name = ed.Name
 		}
 
-		if _, err := os.Stat(entry.ConfigFile); err != nil {
+		// readBoundedConfigFile applies the same regular-file and size guards as
+		// readJSONFileAsMap/readYAMLFileAsMap, so a non-regular or oversized
+		// config is reported here rather than silently read as empty by
+		// lookupEntryCommand below and misreported as "entry not found".
+		if _, err := readBoundedConfigFile(entry.ConfigFile); err != nil {
 			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err))
 			continue
 		}
