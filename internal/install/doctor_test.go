@@ -28,13 +28,13 @@ func runMCPHelperProcess(mode string) {
 		select {}
 	case "garbage":
 		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		fmt.Fprintln(os.Stdout, "not json")
+		_, _ = fmt.Fprintln(os.Stdout, "not json")
 	case "error":
 		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"boom"}}`)
+		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"boom"}}`)
 	default: // "ok"
 		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}}`)
+		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}}`)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestCheckManifestEditors(t *testing.T) {
 	dir := t.TempDir()
 
 	realCommand := filepath.Join(dir, "python")
-	_ = os.WriteFile(realCommand, []byte("x"), 0o700)
+	_ = os.WriteFile(realCommand, []byte("x"), 0o700) // #nosec G306 -- needs exec bit for isExecutableFile checks
 
 	presentFile := filepath.Join(dir, "present.json")
 	mustWriteJSON(t, presentFile, map[string]interface{}{
@@ -291,7 +291,7 @@ func TestIsExecutableFile(t *testing.T) {
 	}
 
 	executable := filepath.Join(dir, "executable")
-	_ = os.WriteFile(executable, []byte("x"), 0o700)
+	_ = os.WriteFile(executable, []byte("x"), 0o700) // #nosec G306 -- needs exec bit for isExecutableFile checks
 	if !isExecutableFile(executable) {
 		t.Error("isExecutableFile() = false for an executable file")
 	}
@@ -393,7 +393,7 @@ func writeFakeVenv(t *testing.T, pluginDir string) {
 	if err := os.MkdirAll(filepath.Dir(python), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(python, []byte("#!/bin/sh\n"), 0o700); err != nil {
+	if err := os.WriteFile(python, []byte("#!/bin/sh\n"), 0o700); err != nil { // #nosec G306 -- needs exec bit to run as fake venv python
 		t.Fatal(err)
 	}
 }

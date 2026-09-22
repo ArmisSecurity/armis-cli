@@ -343,7 +343,7 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 	}
 
 	switch format {
-	case "vscode-servers":
+	case configFormatVSCode:
 		servers, _ := readJSONFileAsMap(configFile)["servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
@@ -351,7 +351,7 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 		}
 		cmd, _ := entry[jsonKeyCommand].(string)
 		return cmd, true
-	case "zed-context_servers":
+	case configFormatZed:
 		servers, _ := readJSONFileAsMap(configFile)["context_servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
@@ -360,7 +360,7 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 		cmdObj, _ := entry[jsonKeyCommand].(map[string]interface{})
 		cmd, _ := cmdObj[jsonKeyPath].(string)
 		return cmd, true
-	case "continue-yaml":
+	case configFormatContinue:
 		list, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
 		for _, item := range list {
 			m, ok := item.(map[string]interface{})

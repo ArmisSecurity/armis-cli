@@ -85,7 +85,7 @@ func printMCPDoctorPlain(cmd *cobra.Command, report *install.DoctorReport) {
 	out := cmd.OutOrStdout()
 
 	if len(report.Checks) == 0 {
-		fmt.Fprintln(out, "No checks produced any output.")
+		_, _ = fmt.Fprintln(out, "No checks produced any output.")
 		return
 	}
 
@@ -93,10 +93,10 @@ func printMCPDoctorPlain(cmd *cobra.Command, report *install.DoctorReport) {
 	var lastComponent string
 	for _, c := range report.Checks {
 		if c.Component != lastComponent {
-			fmt.Fprintf(out, "%s:\n", c.Component)
+			_, _ = fmt.Fprintf(out, "%s:\n", c.Component)
 			lastComponent = c.Component
 		}
-		fmt.Fprintf(out, "  %s %-20s %s\n", statusSymbol(c.Status, accessible), c.Name, c.Detail)
+		_, _ = fmt.Fprintf(out, "  %s %-20s %s\n", statusSymbol(c.Status, accessible), c.Name, c.Detail)
 	}
 }
 
