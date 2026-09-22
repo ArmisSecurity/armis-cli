@@ -312,7 +312,7 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 	}
 	content, err := readBoundedConfigFile(codex.ConfigFile)
 	if err != nil {
-		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file missing: %s", codex.ConfigFile))
+		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err))
 		return
 	}
 	if !strings.Contains(strings.ToLower(string(content)), strings.ToLower(identifier)) {
