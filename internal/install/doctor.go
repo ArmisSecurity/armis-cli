@@ -220,8 +220,17 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 		// readJSONFileAsMap/readYAMLFileAsMap, so a non-regular or oversized
 		// config is reported here rather than silently read as empty by
 		// lookupEntryCommand below and misreported as "entry not found".
-		if _, err := readBoundedConfigFile(entry.ConfigFile); err != nil {
+		content, err := readBoundedConfigFile(entry.ConfigFile)
+		if err != nil {
 			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err))
+			continue
+		}
+		// readJSONFileAsMap (used by every format except configFormatContinue)
+		// also returns an empty map on a parse error, so a corrupted JSON
+		// config would otherwise fall through to the same "entry not found"
+		// warning as a genuinely edited-out entry. Catch that case explicitly.
+		if entry.Format != configFormatContinue && !json.Valid(content) {
+			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid JSON", entry.ConfigFile))
 			continue
 		}
 
@@ -484,12 +493,18 @@ func mcpHandshake(command string, args []string, env map[string]string, timeout 
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close()
 		return nil, "", fmt.Errorf("opening stdout: %w", err)
 	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
+	// Start() failing means Wait() will never run to close these pipes for us
+	// (that cleanup is documented as conditional on a successful Start), so
+	// close them ourselves rather than leaking the file descriptors.
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
 		return nil, "", fmt.Errorf("starting process: %w", err)
 	}
 
