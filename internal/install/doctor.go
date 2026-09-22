@@ -184,7 +184,11 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 // returns its contents for reuse by a following live handshake.
 func checkCredentials(report *DoctorReport, component, envFile string) map[string]string {
 	env, err := parseEnvFile(envFile)
-	if err != nil || env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
+	if err != nil {
+		report.add(component, "credentials", StatusWarn, fmt.Sprintf("%s: %v", envFile, err))
+		return env
+	}
+	if env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
 		report.add(component, "credentials", StatusWarn,
 			fmt.Sprintf("ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET not set in %s", envFile))
 		return env
@@ -208,7 +212,7 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 		}
 
 		if _, err := os.Stat(entry.ConfigFile); err != nil {
-			report.add(component, name, StatusFail, fmt.Sprintf("config file missing: %s", entry.ConfigFile))
+			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err))
 			continue
 		}
 
