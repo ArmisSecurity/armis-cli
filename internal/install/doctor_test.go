@@ -123,7 +123,7 @@ func TestLookupEntryCommand(t *testing.T) {
 		},
 		{
 			name:        "vscode-servers format match",
-			format:      "vscode-servers",
+			format:      configFormatVSCode,
 			content:     `{"servers":{"armis-appsec":{"type":"stdio","command":"/bin/python"}}}`,
 			fileName:    "vscode.json",
 			identifier:  "armis-appsec",
@@ -132,7 +132,7 @@ func TestLookupEntryCommand(t *testing.T) {
 		},
 		{
 			name:        "zed-context_servers format match",
-			format:      "zed-context_servers",
+			format:      configFormatZed,
 			content:     `{"context_servers":{"armis-appsec":{"command":{"path":"/bin/python","args":[]}}}}`,
 			fileName:    "zed.json",
 			identifier:  "armis-appsec",
@@ -141,7 +141,7 @@ func TestLookupEntryCommand(t *testing.T) {
 		},
 		{
 			name:        "continue-yaml format match",
-			format:      "continue-yaml",
+			format:      configFormatContinue,
 			content:     "mcpServers:\n  - name: armis-knowledge\n    command: /bin/python\n",
 			fileName:    "continue.yaml",
 			identifier:  "armis-knowledge",
@@ -150,7 +150,7 @@ func TestLookupEntryCommand(t *testing.T) {
 		},
 		{
 			name:       "continue-yaml format no match",
-			format:     "continue-yaml",
+			format:     configFormatContinue,
 			content:    "mcpServers:\n  - name: other\n    command: /bin/python\n",
 			fileName:   "continue2.yaml",
 			identifier: "armis-knowledge",

@@ -233,12 +233,16 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 			continue
 		}
 		// readJSONFileAsMap (used by every format except configFormatContinue)
-		// also returns an empty map on a parse error, so a corrupted JSON
-		// config would otherwise fall through to the same "entry not found"
-		// warning as a genuinely edited-out entry. Catch that case explicitly.
-		if entry.Format != configFormatContinue && !json.Valid(content) {
-			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid JSON", entry.ConfigFile))
-			continue
+		// also returns an empty map on a parse error, so a corrupted or
+		// non-object JSON config (null, an array, ...) would otherwise fall
+		// through to the same "entry not found" warning as a genuinely
+		// edited-out entry. Catch that case explicitly.
+		if entry.Format != configFormatContinue {
+			var obj map[string]interface{}
+			if err := json.Unmarshal(content, &obj); err != nil {
+				report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid JSON: %v", entry.ConfigFile, err))
+				continue
+			}
 		}
 
 		command, found := lookupEntryCommand(entry.ConfigFile, entry.Format, identifier)
