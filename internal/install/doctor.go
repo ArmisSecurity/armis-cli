@@ -239,7 +239,14 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 		// edited-out entry. Catch that case explicitly.
 		if entry.Format != configFormatContinue {
 			var obj map[string]interface{}
-			if err := json.Unmarshal(content, &obj); err != nil {
+			err := json.Unmarshal(content, &obj)
+			// json.Unmarshal accepts a top-level `null` into obj without
+			// error (obj just stays nil), so an explicit err-only check
+			// would miss it — require a non-nil object too.
+			if err == nil && obj == nil {
+				err = fmt.Errorf("top-level value is not a JSON object")
+			}
+			if err != nil {
 				report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid JSON: %v", entry.ConfigFile, err))
 				continue
 			}
