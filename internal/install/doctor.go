@@ -317,6 +317,9 @@ func readBoundedConfigFile(path string) ([]byte, error) {
 // pluginKeyPrefix is recorded as installed and/or enabled in Claude Code's
 // own registry files.
 func claudeRegistryStatus(claudeDir, pluginKeyPrefix string) (installed, enabled bool) {
+	if claudeDir == "" {
+		return false, false
+	}
 	prefix := strings.ToLower(pluginKeyPrefix)
 
 	instFile := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
