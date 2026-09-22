@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // maxHandshakeLineSize bounds a single line read from a spawned MCP server's
@@ -232,24 +234,27 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err))
 			continue
 		}
-		// readJSONFileAsMap (used by every format except configFormatContinue)
-		// also returns an empty map on a parse error, so a corrupted or
-		// non-object JSON config (null, an array, ...) would otherwise fall
-		// through to the same "entry not found" warning as a genuinely
-		// edited-out entry. Catch that case explicitly.
-		if entry.Format != configFormatContinue {
-			var obj map[string]interface{}
-			err := json.Unmarshal(content, &obj)
-			// json.Unmarshal accepts a top-level `null` into obj without
-			// error (obj just stays nil), so an explicit err-only check
-			// would miss it — require a non-nil object too.
-			if err == nil && obj == nil {
-				err = fmt.Errorf("top-level value is not a JSON object")
-			}
-			if err != nil {
-				report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid JSON: %v", entry.ConfigFile, err))
-				continue
-			}
+		// readJSONFileAsMap/readYAMLFileAsMap also return an empty map on a
+		// parse error, so a corrupted or non-object config (null, an array,
+		// invalid YAML, ...) would otherwise fall through to the same "entry
+		// not found" warning as a genuinely edited-out entry. Catch that case
+		// explicitly.
+		var obj map[string]interface{}
+		var parseErr error
+		if entry.Format == configFormatContinue {
+			parseErr = yaml.Unmarshal(content, &obj)
+		} else {
+			parseErr = json.Unmarshal(content, &obj)
+		}
+		// Both unmarshalers accept a top-level `null` without error (obj just
+		// stays nil), so an err-only check would miss it — require a non-nil
+		// object too.
+		if parseErr == nil && obj == nil {
+			parseErr = fmt.Errorf("top-level value is not an object")
+		}
+		if parseErr != nil {
+			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr))
+			continue
 		}
 
 		command, found := lookupEntryCommand(entry.ConfigFile, entry.Format, identifier)
@@ -483,7 +488,10 @@ func runHandshakeCheck(report *DoctorReport, component, command string, args []s
 	}
 	detail := "responded to initialize"
 	if res.ServerName != "" {
-		detail = fmt.Sprintf("%s v%s responded", res.ServerName, res.ServerVersion)
+		detail = res.ServerName + " responded"
+		if res.ServerVersion != "" {
+			detail = fmt.Sprintf("%s v%s responded", res.ServerName, res.ServerVersion)
+		}
 	}
 	report.add(component, "live handshake", StatusOK, detail)
 }
@@ -537,6 +545,7 @@ func mcpHandshake(command string, args []string, env map[string]string, timeout 
 	// it here first so the unblock is explicit and ordered rather than racing
 	// Wait's internal close.
 	_ = stdout.Close()
+	_ = stdin.Close()
 	_ = cmd.Wait()
 
 	if opErr != nil {
