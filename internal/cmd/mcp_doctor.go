@@ -82,7 +82,7 @@ func printMCPDoctorJSON(cmd *cobra.Command, report *install.DoctorReport) error 
 }
 
 func printMCPDoctorPlain(cmd *cobra.Command, report *install.DoctorReport) {
-	out := cmd.OutOrStdout()
+	out := cmd.ErrOrStderr()
 
 	if len(report.Checks) == 0 {
 		_, _ = fmt.Fprintln(out, "No checks produced any output.")

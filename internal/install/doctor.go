@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,12 @@ import (
 	"strings"
 	"time"
 )
+
+// maxHandshakeLineSize bounds a single line read from a spawned MCP server's
+// stdout during the doctor's live handshake — generous for a JSON-RPC
+// initialize response, but small enough to stop a broken or hostile server
+// process from growing the read buffer without limit (CWE-770).
+const maxHandshakeLineSize = 1 << 20 // 1 MB
 
 // knowledgeJSONIdentifier and knowledgeCodexIdentifier are the substrings used
 // to spot a knowledge-bridge entry in an editor config, mirroring how
@@ -549,9 +556,13 @@ func communicateInitialize(stdin io.WriteCloser, stdout io.ReadCloser, timeout t
 	}
 	lineCh := make(chan readOutcome, 1)
 	go func() {
-		reader := bufio.NewReader(stdout)
-		l, rerr := reader.ReadBytes('\n')
-		lineCh <- readOutcome{l, rerr}
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxHandshakeLineSize)
+		if scanner.Scan() {
+			lineCh <- readOutcome{append([]byte(nil), scanner.Bytes()...), nil}
+			return
+		}
+		lineCh <- readOutcome{nil, scanner.Err()}
 	}()
 
 	if _, err := stdin.Write(append(line, '\n')); err != nil {
@@ -563,6 +574,9 @@ func communicateInitialize(stdin io.WriteCloser, stdout io.ReadCloser, timeout t
 		return nil, fmt.Errorf("timed out waiting for response after %s", timeout)
 	case out := <-lineCh:
 		if len(out.line) == 0 {
+			if errors.Is(out.err, bufio.ErrTooLong) {
+				return nil, fmt.Errorf("response exceeded %d bytes", maxHandshakeLineSize)
+			}
 			if out.err != nil {
 				return nil, fmt.Errorf("no response: %w", out.err)
 			}
