@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -86,23 +89,38 @@ func printMCPDoctorPlain(cmd *cobra.Command, report *install.DoctorReport) {
 		return
 	}
 
+	accessible := !cli.ColorsEnabled()
 	var lastComponent string
 	for _, c := range report.Checks {
 		if c.Component != lastComponent {
 			fmt.Fprintf(out, "%s:\n", c.Component)
 			lastComponent = c.Component
 		}
-		fmt.Fprintf(out, "  %s %-20s %s\n", statusSymbol(c.Status), c.Name, c.Detail)
+		fmt.Fprintf(out, "  %s %-20s %s\n", statusSymbol(c.Status, accessible), c.Name, c.Detail)
 	}
 }
 
-func statusSymbol(s install.CheckStatus) string {
+// statusSymbol renders a check's status, matching the color/theme handling
+// (cli.ColorsEnabled) and ASCII fallback used by the rest of the install/
+// uninstall output (see install_interactive.go, uninstall.go) so `mcp doctor`
+// doesn't diverge from the CLI's centralized styling.
+func statusSymbol(s install.CheckStatus, accessible bool) string {
+	if accessible {
+		switch s {
+		case install.StatusOK:
+			return "[OK]"
+		case install.StatusWarn:
+			return "[WARN]"
+		default:
+			return "[FAIL]"
+		}
+	}
 	switch s {
 	case install.StatusOK:
-		return "✓"
+		return lipgloss.NewStyle().Foreground(cmdutil.BrandSuccess).Render("✓")
 	case install.StatusWarn:
-		return "⚠"
+		return lipgloss.NewStyle().Foreground(cmdutil.BrandWarn).Render("⚠")
 	default:
-		return "✗"
+		return lipgloss.NewStyle().Foreground(cmdutil.BrandError).Render("✗")
 	}
 }

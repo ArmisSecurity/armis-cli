@@ -151,17 +151,28 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 		}
 		found = true
 
-		pythonPath := venvPython(envDir)
-		if !isExecutableFile(pythonPath) {
-			report.add(component, sub+" python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath))
+		// Fetch extracts the whole knowledge repo (see EnvDir's doc comment),
+		// so every environment's bridge.py lands on disk even though only the
+		// one the user actually chose gets a venv (createPluginVenv is only
+		// called for that EnvDir). A sibling env with bridge.py but no .venv/
+		// at all was never installed here — skip it rather than reporting a
+		// false failure; only flag a venv as broken once it was set up.
+		if _, err := os.Stat(filepath.Join(envDir, ".venv")); err != nil {
 			continue
 		}
-		report.add(component, sub+" python venv", StatusOK, pythonPath)
 
-		env := checkCredentials(report, component+" "+sub, filepath.Join(envDir, ".env"))
+		subComponent := component + " " + sub
+		pythonPath := venvPython(envDir)
+		if !isExecutableFile(pythonPath) {
+			report.add(subComponent, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath))
+			continue
+		}
+		report.add(subComponent, "python venv", StatusOK, pythonPath)
+
+		env := checkCredentials(report, subComponent, filepath.Join(envDir, ".env"))
 
 		if opts.Handshake {
-			runHandshakeCheck(report, component+" "+sub, pythonPath, []string{bridge}, env, opts.Timeout)
+			runHandshakeCheck(report, subComponent, pythonPath, []string{bridge}, env, opts.Timeout)
 		}
 	}
 	if !found {
@@ -236,6 +247,27 @@ func checkClaudeSection(report *DoctorReport, component string, claude *Manifest
 	}
 }
 
+// readBoundedConfigFile reads path the same way editors.go's
+// readJSONFileAsMap/readYAMLFileAsMap do: reject non-regular files (devices,
+// FIFOs, symlinks to either) and cap the size at maxEditorConfigSize before
+// reading, so a doctor check can't block or exhaust memory on a config path
+// that isn't the plain file it's expected to be (CWE-770).
+func readBoundedConfigFile(path string) ([]byte, error) {
+	clean := filepath.Clean(path)
+	info, err := os.Stat(clean)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", clean)
+	}
+	if info.Size() > maxEditorConfigSize {
+		return nil, fmt.Errorf("%s exceeds %d bytes", clean, maxEditorConfigSize)
+	}
+	// armis:ignore cwe:22 cwe:770 reason:path from the install manifest/known config locations; regular-file and size checks above bound the read
+	return os.ReadFile(clean) //nolint:gosec
+}
+
 // claudeRegistryStatus reports whether any plugin key containing
 // pluginKeyPrefix is recorded as installed and/or enabled in Claude Code's
 // own registry files.
@@ -243,8 +275,7 @@ func claudeRegistryStatus(claudeDir, pluginKeyPrefix string) (installed, enabled
 	prefix := strings.ToLower(pluginKeyPrefix)
 
 	instFile := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
+	if b, err := readBoundedConfigFile(instFile); err == nil {
 		var data struct {
 			Plugins map[string]json.RawMessage `json:"plugins"`
 		}
@@ -259,8 +290,7 @@ func claudeRegistryStatus(claudeDir, pluginKeyPrefix string) (installed, enabled
 	}
 
 	settingsFile := filepath.Join(claudeDir, "settings.json")
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
+	if b, err := readBoundedConfigFile(settingsFile); err == nil {
 		var data struct {
 			EnabledPlugins map[string]bool `json:"enabledPlugins"`
 		}
@@ -280,8 +310,7 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 	if codex == nil {
 		return
 	}
-	// armis:ignore cwe:770 reason:reads bounded local config file (~/.codex/config.toml)
-	content, err := os.ReadFile(filepath.Clean(codex.ConfigFile))
+	content, err := readBoundedConfigFile(codex.ConfigFile)
 	if err != nil {
 		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file missing: %s", codex.ConfigFile))
 		return
@@ -369,8 +398,7 @@ func isExecutableFile(path string) bool {
 // parseEnvFile reads a "KEY=VALUE" per line .env file, as written by
 // writeEnvFromEnvironment/WriteEnvFromValues.
 func parseEnvFile(path string) (map[string]string, error) {
-	// armis:ignore cwe:770 reason:reads a local plugin .env file the CLI itself wrote, always small
-	b, err := os.ReadFile(filepath.Clean(path))
+	b, err := readBoundedConfigFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +484,13 @@ func mcpHandshake(command string, args []string, env map[string]string, timeout 
 
 	// armis:ignore cwe:404 reason:best-effort cleanup of a short-lived diagnostic subprocess we just spawned
 	_ = cmd.Process.Kill()
+	// On the timeout path, communicateInitialize's reader goroutine may still
+	// be blocked reading stdout when we get here. os/exec's docs warn it is
+	// "incorrect to call Wait before all reads from the pipe have completed"
+	// because Wait closes this same pipe as part of its own cleanup — close
+	// it here first so the unblock is explicit and ordered rather than racing
+	// Wait's internal close.
+	_ = stdout.Close()
 	_ = cmd.Wait()
 
 	if opErr != nil {

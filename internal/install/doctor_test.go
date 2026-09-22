@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -343,6 +344,43 @@ func TestRunDoctorStructuralChecks(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("RunDoctor() checks = %+v, want ok check for scanner/Cursor", report.Checks)
+	}
+}
+
+// TestCheckKnowledgePluginSkipsUninstalledSiblingEnv pins the fix for a false
+// failure: Fetch extracts the whole knowledge repo, so every env's bridge.py
+// (prod/stage/dev) lands on disk even though only the chosen env gets a venv.
+// A sibling env with bridge.py but no .venv/ was never installed and must not
+// be reported as a failure.
+func TestCheckKnowledgePluginSkipsUninstalledSiblingEnv(t *testing.T) {
+	dir := t.TempDir()
+
+	// "prod" is the env the user actually installed: bridge.py + a real venv.
+	writeFakeVenv(t, filepath.Join(dir, "prod"))
+	_ = os.WriteFile(filepath.Join(dir, "prod", "bridge.py"), []byte("# bridge"), 0o600)
+
+	// "dev" is a sibling extracted alongside it, with no venv ever created.
+	_ = os.MkdirAll(filepath.Join(dir, "dev"), 0o750)
+	_ = os.WriteFile(filepath.Join(dir, "dev", "bridge.py"), []byte("# bridge"), 0o600)
+
+	report := &DoctorReport{}
+	checkKnowledgePlugin(report, &ManifestKnowledge{PluginDir: dir}, DoctorOptions{Handshake: false})
+
+	if report.HasFailures() {
+		t.Errorf("checkKnowledgePlugin() unexpected failures for uninstalled sibling env: %+v", report.Checks)
+	}
+
+	var sawProdOK bool
+	for _, c := range report.Checks {
+		if c.Component == "knowledge prod" && c.Name == "python venv" && c.Status == StatusOK {
+			sawProdOK = true
+		}
+		if c.Component == "knowledge dev" || strings.HasPrefix(c.Name, "dev ") {
+			t.Errorf("checkKnowledgePlugin() reported a check for uninstalled sibling env dev: %+v", c)
+		}
+	}
+	if !sawProdOK {
+		t.Errorf("checkKnowledgePlugin() checks = %+v, want ok check for knowledge prod / python venv", report.Checks)
 	}
 }
 

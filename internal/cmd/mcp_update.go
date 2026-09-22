@@ -79,6 +79,8 @@ func runMCPUpdate(cmd *cobra.Command, _ []string) error {
 	for _, id := range editorIDs {
 		e, ok := install.EditorByID(id)
 		if !ok {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s: no longer supported by this CLI version — skipping\n", id)
+			failed = append(failed, string(id))
 			continue
 		}
 		if err := e.Register(ei.PluginDir()); err != nil {
