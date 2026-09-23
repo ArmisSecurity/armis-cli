@@ -11,6 +11,8 @@ var mcpCmd = &cobra.Command{
 
 Use 'armis-cli mcp doctor' to check the scanner and knowledge MCP servers:
 plugin files, credentials, editor registrations, and a live handshake.
+'armis-cli mcp doctor --fix' repairs what it can; '--bundle' writes a support
+bundle.
 
 Use 'armis-cli mcp update' to update them to the latest version.`,
 }

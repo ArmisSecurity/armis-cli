@@ -1,16 +1,14 @@
 package install
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,30 +36,84 @@ const (
 // answer the initialize handshake before reporting it as unresponsive.
 const DefaultHandshakeTimeout = 10 * time.Second
 
+// networkProbeTimeout bounds the server-runtime network probe.
+const networkProbeTimeout = 30 * time.Second
+
 // CheckStatus is the outcome of a single doctor check.
 type CheckStatus string
+
+// ComponentInstall is the component of the check reporting a missing install
+// manifest.
+const ComponentInstall = "install"
 
 const (
 	StatusOK   CheckStatus = "ok"
 	StatusWarn CheckStatus = "warn"
 	StatusFail CheckStatus = "fail"
+	// StatusInfo carries guidance for things the doctor can't verify locally
+	// (e.g. organization-level Copilot policy). It never affects the exit code.
+	StatusInfo CheckStatus = "info"
+)
+
+// FixAction names a repair `mcp doctor --fix` can perform for a check.
+type FixAction string
+
+const (
+	FixNone FixAction = ""
+	// FixReregister rewrites the editor registrations recorded in the manifest.
+	FixReregister FixAction = "reregister"
+	// FixReinstall re-downloads the plugin and rebuilds its venv, then
+	// re-registers every editor.
+	FixReinstall FixAction = "reinstall"
 )
 
 // DoctorCheck is one diagnostic result reported by RunDoctor.
 type DoctorCheck struct {
-	Component string      `json:"component"`
-	Name      string      `json:"name"`
-	Status    CheckStatus `json:"status"`
-	Detail    string      `json:"detail"`
+	Component   string      `json:"component"`
+	Name        string      `json:"name"`
+	Status      CheckStatus `json:"status"`
+	Detail      string      `json:"detail"`
+	Remediation string      `json:"remediation,omitempty"`
+	Fix         FixAction   `json:"fix,omitempty"`
+}
+
+// hint attaches remediation text a user can act on without support.
+func (c *DoctorCheck) hint(remediation string) *DoctorCheck {
+	c.Remediation = remediation
+	return c
+}
+
+// fix marks the check as repairable by `mcp doctor --fix`.
+func (c *DoctorCheck) fix(action FixAction, remediation string) *DoctorCheck {
+	c.Fix = action
+	c.Remediation = remediation
+	return c
 }
 
 // DoctorReport is the full set of diagnostic results from RunDoctor.
 type DoctorReport struct {
 	Checks []DoctorCheck `json:"checks"`
+	// Artifacts holds raw diagnostic material (full server stderr, config
+	// excerpts, log tails) for the support bundle. Keyed by bundle file name.
+	// Kept out of the JSON report, which stays a concise list of checks.
+	Artifacts map[string]string `json:"-"`
+	// secrets are credential values seen during the run, scrubbed verbatim
+	// from everything written to the support bundle.
+	secrets []string
 }
 
-func (r *DoctorReport) add(component, name string, status CheckStatus, detail string) {
+// add appends a check and returns it so a hint or fix can be attached. The
+// pointer is only valid until the next add.
+func (r *DoctorReport) add(component, name string, status CheckStatus, detail string) *DoctorCheck {
 	r.Checks = append(r.Checks, DoctorCheck{Component: component, Name: name, Status: status, Detail: detail})
+	return &r.Checks[len(r.Checks)-1]
+}
+
+func (r *DoctorReport) artifact(name, content string) {
+	if r.Artifacts == nil {
+		r.Artifacts = make(map[string]string)
+	}
+	r.Artifacts[name] = content
 }
 
 // HasFailures reports whether any check in the report failed.
@@ -74,78 +126,208 @@ func (r *DoctorReport) HasFailures() bool {
 	return false
 }
 
+// HasProblems reports whether any check failed or warned.
+func (r *DoctorReport) HasProblems() bool {
+	for _, c := range r.Checks {
+		if c.Status == StatusFail || c.Status == StatusWarn {
+			return true
+		}
+	}
+	return false
+}
+
+// Fixes returns the distinct repairs `--fix` can apply for failing or warning
+// checks. FixReinstall subsumes FixReregister, so only one is returned.
+func (r *DoctorReport) Fixes() []FixAction {
+	var reregister, reinstall bool
+	for _, c := range r.Checks {
+		if c.Status != StatusFail && c.Status != StatusWarn {
+			continue
+		}
+		switch c.Fix {
+		case FixReinstall:
+			reinstall = true
+		case FixReregister:
+			reregister = true
+		}
+	}
+	switch {
+	case reinstall:
+		return []FixAction{FixReinstall}
+	case reregister:
+		return []FixAction{FixReregister}
+	}
+	return nil
+}
+
 // DoctorOptions configures RunDoctor.
 type DoctorOptions struct {
-	// Handshake, when true, spawns each registered MCP server and performs a
-	// live JSON-RPC initialize handshake over stdio.
+	// Handshake, when true, spawns each registered MCP server and runs a live
+	// MCP session over stdio (initialize, tools/list, a diagnostic tool call),
+	// and runs the network checks.
 	Handshake bool
 	// Timeout bounds how long the handshake waits for a response. Defaults to
 	// DefaultHandshakeTimeout when zero.
 	Timeout time.Duration
+	// AuthCheck, when set and Handshake is true, verifies the scanner's client
+	// credentials against the Armis API. Injected by the caller so this
+	// package stays independent of the auth client.
+	AuthCheck func(ctx context.Context, clientID, clientSecret string) error
+	// WorkspaceDir is where a workspace-level .vscode/mcp.json is looked for.
+	// Defaults to the current directory.
+	WorkspaceDir string
+}
+
+// doctorRun carries state shared by the checks of a single RunDoctor call.
+type doctorRun struct {
+	report *DoctorReport
+	opts   DoctorOptions
+	// probes caches live-session outcomes by launch, so an editor entry that
+	// launches exactly what an earlier check already ran isn't spawned twice.
+	probes map[string]*probeOutcome
+	// manifestConfigs are config files already covered by manifest checks,
+	// so VS Code discovery doesn't report them twice.
+	manifestConfigs map[string]bool
+}
+
+type probeOutcome struct {
+	label string // component/name of the check that ran it
+	ok    bool
+}
+
+func newDoctorRun(opts DoctorOptions) *doctorRun {
+	return &doctorRun{
+		report:          &DoctorReport{},
+		opts:            opts,
+		probes:          make(map[string]*probeOutcome),
+		manifestConfigs: make(map[string]bool),
+	}
 }
 
 // RunDoctor inspects everything armis-cli install may have registered — the
 // shared scanner plugin, the knowledge bridge, and every editor config
 // recorded in the install manifest — and, when requested, spawns each MCP
-// server to confirm it actually answers a protocol handshake.
+// server to confirm it actually answers a protocol handshake and serves tools.
+// VS Code gets extra checks (all install variants and profiles, workspace
+// configs, chat settings, Group Policy, and its MCP logs) since Copilot's MCP
+// support has the most ways to silently not load a server.
 func RunDoctor(opts DoctorOptions) *DoctorReport {
-	report := &DoctorReport{}
+	d := newDoctorRun(opts)
+	report := d.report
 
 	ei := NewEditorInstaller()
+	report.artifact("system.txt", systemInfo())
 	manifest := ReadManifest(ei.PluginDir())
 	if manifest == nil {
-		report.add("install", "manifest", StatusFail,
-			fmt.Sprintf("no install manifest found at %s — run: armis-cli install", ei.PluginDir()))
+		report.add(ComponentInstall, "manifest", StatusFail,
+			fmt.Sprintf("no install manifest found at %s", ei.PluginDir())).
+			hint("Run: armis-cli install")
+		checkVSCode(d, ei.PluginDir(), false)
 		return report
 	}
+	if b, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+		report.artifact("manifest.json", string(b))
+	}
+	for _, e := range manifest.Editors {
+		d.manifestConfigs[filepath.Clean(e.ConfigFile)] = true
+	}
 
-	checkScannerPlugin(report, ei, opts)
-	checkManifestEditors(report, "scanner", mcpServerName, manifest.Editors)
+	checkScannerPlugin(d, ei)
+	checkManifestEditors(d, "scanner", mcpServerName, manifest.Editors)
 	checkClaudeSection(report, "scanner", manifest.Claude, pluginName)
 	checkCodexSection(report, "scanner", manifest.Codex, codexMCPServerName)
 
 	if manifest.Knowledge != nil {
-		checkKnowledgePlugin(report, manifest.Knowledge, opts)
-		checkManifestEditors(report, "knowledge", knowledgeJSONIdentifier, manifest.Knowledge.Editors)
+		checkKnowledgePlugin(d, manifest.Knowledge)
+		checkManifestEditors(d, "knowledge", knowledgeJSONIdentifier, manifest.Knowledge.Editors)
 		checkClaudeSection(report, "knowledge", manifest.Knowledge.Claude, knowledgeJSONIdentifier)
 		checkCodexSection(report, "knowledge", manifest.Knowledge.Codex, knowledgeCodexIdentifier)
 	}
 
+	_, hasVSCode := manifest.Editors[EditorVSCode]
+	checkVSCode(d, ei.PluginDir(), hasVSCode)
+
 	return report
 }
 
-func checkScannerPlugin(report *DoctorReport, ei *EditorInstaller, opts DoctorOptions) {
+// checkScannerPlugin verifies the scanner's files, venv, and credentials and,
+// when enabled, runs the live session and network checks.
+func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 	const component = "scanner"
+	report := d.report
+	pythonPath := venvPython(ei.PluginDir())
+	serverPy := filepath.Join(ei.PluginDir(), "server.py")
 
 	if v := ei.GetInstalledVersion(); v == "" {
-		report.add(component, "plugin version", StatusWarn, "no installed version recorded")
+		report.add(component, "plugin version", StatusWarn, "no installed version recorded").
+			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 	} else {
 		report.add(component, "plugin version", StatusOK, "v"+v)
 	}
 
-	pythonPath := venvPython(ei.PluginDir())
 	if !isExecutableFile(pythonPath) {
-		report.add(component, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath))
+		report.add(component, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath)).
+			fix(FixReinstall, "Rebuild the venv: armis-cli mcp doctor --fix")
+		return
+	}
+	if !checkVenvBase(report, component, filepath.Join(ei.PluginDir(), ".venv")) {
 		return
 	}
 	report.add(component, "python venv", StatusOK, pythonPath)
 
-	serverPy := filepath.Join(ei.PluginDir(), "server.py")
 	if _, err := os.Stat(serverPy); err != nil {
-		report.add(component, "server script", StatusFail, fmt.Sprintf("missing: %s", serverPy))
+		report.add(component, "server script", StatusFail, fmt.Sprintf("missing: %s", serverPy)).
+			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 		return
 	}
 	report.add(component, "server script", StatusOK, serverPy)
 
 	env := checkCredentials(report, component, ei.EnvFilePath())
 
-	if opts.Handshake {
-		runHandshakeCheck(report, component, pythonPath, []string{serverPy}, env, opts.Timeout)
+	if d.opts.Handshake {
+		// The canonical check launches with the .env merged in, which is what
+		// VS Code does via envFile; editors without envFile rely on the server
+		// loading .env itself, which it does from its own directory.
+		d.probe(component, "", serverLaunch{Command: pythonPath, Args: []string{serverPy}, EnvFile: ei.EnvFilePath(), Env: env})
+		checkServerNetwork(d, component, pythonPath, env, ei.EnvFilePath())
+		checkAuth(d, component, env)
 	}
 }
 
-func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts DoctorOptions) {
+// checkVenvBase verifies the interpreter a venv was created from still
+// exists. A venv's python.exe on Windows is a thin launcher that execs the
+// base interpreter recorded in pyvenv.cfg; uninstalling or upgrading that
+// Python leaves a venv whose python.exe exists but can't start ("No Python
+// at ..."). Returns false after reporting a failure.
+func checkVenvBase(report *DoctorReport, component, venvDir string) bool {
+	cfgPath := filepath.Join(venvDir, "pyvenv.cfg")
+	b, err := readBoundedConfigFile(cfgPath)
+	if err != nil {
+		return true // older/unusual venvs may lack it; the handshake still catches a broken one
+	}
+	report.artifact(sanitizeArtifactName(component)+"/pyvenv.cfg", string(b))
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != "home" {
+			continue
+		}
+		home := strings.TrimSpace(v)
+		if home == "" {
+			return true
+		}
+		if _, err := os.Stat(home); err != nil {
+			report.add(component, "python venv", StatusFail,
+				fmt.Sprintf("the venv's base Python (%s) no longer exists — Python was likely uninstalled or upgraded", home)).
+				fix(FixReinstall, "Rebuild the venv against a current Python: armis-cli mcp doctor --fix")
+			return false
+		}
+	}
+	return true
+}
+
+func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
 	const component = "knowledge"
+	report := d.report
 
 	if k.SHA != "" {
 		report.add(component, "bridge commit", StatusOK, k.SHA)
@@ -175,40 +357,220 @@ func checkKnowledgePlugin(report *DoctorReport, k *ManifestKnowledge, opts Docto
 		subComponent := component + " " + sub
 		pythonPath := venvPython(envDir)
 		if !isExecutableFile(pythonPath) {
-			report.add(subComponent, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath))
+			report.add(subComponent, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath)).
+				fix(FixReinstall, "Rebuild the venv: armis-cli mcp doctor --fix")
+			continue
+		}
+		if !checkVenvBase(report, subComponent, filepath.Join(envDir, ".venv")) {
 			continue
 		}
 		report.add(subComponent, "python venv", StatusOK, pythonPath)
 
-		env := checkCredentials(report, subComponent, filepath.Join(envDir, ".env"))
+		envFile := filepath.Join(envDir, ".env")
+		env := checkCredentials(report, subComponent, envFile)
 
-		if opts.Handshake {
-			runHandshakeCheck(report, subComponent, pythonPath, []string{bridge}, env, opts.Timeout)
+		if d.opts.Handshake {
+			d.probe(subComponent, "", serverLaunch{Command: pythonPath, Args: []string{bridge}, EnvFile: envFile, Env: env})
 		}
 	}
 	switch {
 	case !found:
-		report.add(component, "bridge", StatusFail, fmt.Sprintf("no bridge.py found under %s", k.PluginDir))
+		report.add(component, "bridge", StatusFail, fmt.Sprintf("no bridge.py found under %s", k.PluginDir)).
+			fix(FixReinstall, "Reinstall Armis Knowledge: armis-cli mcp doctor --fix")
 	case !venvFound:
-		report.add(component, "python venv", StatusFail, fmt.Sprintf("bridge.py found under %s but no environment has a .venv — install may have failed", k.PluginDir))
+		report.add(component, "python venv", StatusFail, fmt.Sprintf("bridge.py found under %s but no environment has a .venv — install may have failed", k.PluginDir)).
+			fix(FixReinstall, "Reinstall Armis Knowledge: armis-cli mcp doctor --fix")
 	}
 }
+
+// credentialsHint is how a user re-enters client credentials without support.
+const credentialsHint = "Re-enter your client ID and secret with: armis-cli install --interactive " +
+	"(or set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET in this file). " +
+	"If you sign in with SSO instead, you can ignore this."
 
 // checkCredentials validates envFile carries both required credentials and
 // returns its contents for reuse by a following live handshake.
 func checkCredentials(report *DoctorReport, component, envFile string) map[string]string {
 	env, err := parseEnvFile(envFile)
 	if err != nil {
-		report.add(component, "credentials", StatusWarn, fmt.Sprintf("%s: %v", envFile, err))
+		report.add(component, "credentials", StatusWarn, fmt.Sprintf("%s: %v", envFile, err)).hint(credentialsHint)
 		return env
+	}
+	keys := make([]string, 0, len(env))
+	for k, v := range env {
+		keys = append(keys, k)
+		if isSecretKey(k) && v != "" {
+			report.secrets = append(report.secrets, v)
+		}
+	}
+	sort.Strings(keys)
+	report.artifact(sanitizeArtifactName(component)+"/env-keys.txt",
+		"Variables set in "+envFile+" (values omitted):\n"+strings.Join(keys, "\n")+"\n")
+
+	if raw, rerr := readBoundedConfigFile(envFile); rerr == nil && bytes.HasPrefix(raw, utf8BOM) {
+		report.add(component, "credentials file", StatusWarn,
+			fmt.Sprintf("%s starts with a UTF-8 byte-order mark", envFile)).
+			hint("Some editors and the server's .env loader misread the first variable when a BOM is present. Re-save the file as \"UTF-8\" (not \"UTF-8 with BOM\").")
 	}
 	if env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
 		report.add(component, "credentials", StatusWarn,
-			fmt.Sprintf("ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET not set in %s", envFile))
+			fmt.Sprintf("ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET not set in %s", envFile)).hint(credentialsHint)
 		return env
 	}
 	report.add(component, "credentials", StatusOK, "configured")
 	return env
+}
+
+// checkAuth exchanges the scanner's client credentials for a token, proving
+// they're valid for this tenant before the user ever reaches a tool call.
+func checkAuth(d *doctorRun, component string, env map[string]string) {
+	if d.opts.AuthCheck == nil || env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), networkProbeTimeout)
+	defer cancel()
+	if err := d.opts.AuthCheck(ctx, env["ARMIS_CLIENT_ID"], env["ARMIS_CLIENT_SECRET"]); err != nil {
+		msg := err.Error()
+		c := d.report.add(component, "authentication", StatusFail, msg)
+		lower := strings.ToLower(msg)
+		switch {
+		case strings.Contains(lower, "401") || strings.Contains(lower, "403") ||
+			strings.Contains(lower, "invalid") || strings.Contains(lower, "unauthorized"):
+			c.hint("The client ID/secret were rejected. They may be revoked, expired, or for another tenant. " + credentialsHint)
+		case strings.Contains(lower, "x509") || strings.Contains(lower, "certificate"):
+			c.hint("TLS verification failed. Your network may be intercepting HTTPS; ask IT for the corporate root CA to be installed in the Windows certificate store.")
+		default:
+			c.hint("Check network access to the Armis API from this machine (proxy, firewall, VPN).")
+		}
+		return
+	}
+	d.report.add(component, "authentication", StatusOK, "client credentials accepted")
+}
+
+// checkServerNetwork runs the network probe with the server's own Python
+// runtime, which is where TLS-inspection and proxy problems actually bite.
+func checkServerNetwork(d *doctorRun, component, python string, env map[string]string, envFile string) {
+	if caFile := firstNonEmpty(env["SSL_CERT_FILE"], os.Getenv("SSL_CERT_FILE")); caFile != "" {
+		// armis:ignore cwe:22 reason:stat-only existence check of the user's own SSL_CERT_FILE setting
+		if _, err := os.Stat(caFile); err != nil { //nolint:gosec // stat-only check of the user's own setting
+			d.report.add(component, "CA bundle", StatusFail, fmt.Sprintf("SSL_CERT_FILE points to a missing file: %s", caFile)).
+				hint("Fix the SSL_CERT_FILE path in " + envFile + " (or your environment) to point at your organization's root CA PEM file.")
+		}
+	}
+	url := serverAPIURL(env)
+	out, err := runNetworkProbe(python, env, url, networkProbeTimeout)
+	d.report.artifact(sanitizeArtifactName(component)+"/network-probe.txt", fmt.Sprintf("GET %s\n%s\n", url, out))
+	if err != nil {
+		d.report.add(component, "server network", StatusFail, fmt.Sprintf("%s: %s", url, truncate(err.Error(), 300))).
+			hint(networkHint(err.Error(), envFile))
+		return
+	}
+	d.report.add(component, "server network", StatusOK, fmt.Sprintf("%s reachable from the server's Python runtime (%s)", url, out))
+}
+
+// probe runs a live MCP session for launch and reports the handshake, tool
+// listing, and diagnostic tool call as checks. label prefixes the check names
+// ("" for the plugin's own launch, the editor name for an editor's entry). A
+// launch identical to one already probed is reported by reference instead of
+// being spawned again.
+func (d *doctorRun) probe(component, label string, launch serverLaunch) {
+	report := d.report
+	named := func(n string) string {
+		if label == "" {
+			return n
+		}
+		return label + " " + n
+	}
+
+	key := launch.key()
+	if prev, ok := d.probes[key]; ok {
+		status := StatusOK
+		if !prev.ok {
+			status = StatusFail
+		}
+		report.add(component, named("launch"), status, "same launch command as "+prev.label+" (see above)")
+		return
+	}
+	outcome := &probeOutcome{label: component + " / " + named("live handshake")}
+	d.probes[key] = outcome
+
+	start := time.Now()
+	res, stderr, err := mcpHandshake(launch.Command, launch.Args, launch.Env, d.opts.Timeout)
+	elapsed := time.Since(start).Round(100 * time.Millisecond)
+	if stderr != "" {
+		report.artifact("stderr/"+sanitizeArtifactName(component+" "+named("live handshake"))+".txt",
+			"$ "+launch.commandLine()+"\n\n"+stderr+"\n")
+	}
+	if err != nil {
+		detail := err.Error()
+		if stderr != "" {
+			detail += " — stderr: " + tail(stderr, 300)
+		}
+		hint, action := launchHint(err, stderr, launch)
+		report.add(component, named("live handshake"), StatusFail, detail).fix(action, hint)
+		return
+	}
+	outcome.ok = true
+
+	detail := "responded to initialize"
+	if res.ServerName != "" {
+		detail = res.ServerName + " responded"
+		if res.ServerVersion != "" {
+			detail = fmt.Sprintf("%s v%s responded", res.ServerName, res.ServerVersion)
+		}
+	}
+	detail += " in " + elapsed.String()
+	if elapsed > slowStartThreshold {
+		report.add(component, named("live handshake"), StatusWarn, detail+" (slow start)").
+			hint("Slow starts are usually antivirus scanning the venv. If your editor gives up before the server is ready, ask IT to exclude " + filepath.Dir(filepath.Dir(filepath.Dir(launch.Command))) + " from real-time scanning.")
+	} else {
+		report.add(component, named("live handshake"), StatusOK, detail)
+	}
+
+	switch {
+	case res.ToolsErr != nil:
+		outcome.ok = false
+		report.add(component, named("tools"), StatusFail, "tools/list failed: "+res.ToolsErr.Error()).
+			hint(launchHintText(res.ToolsErr, stderr, launch))
+	case len(res.Tools) == 0:
+		outcome.ok = false
+		report.add(component, named("tools"), StatusFail, "server started but exposes no tools").
+			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
+	default:
+		report.add(component, named("tools"), StatusOK, fmt.Sprintf("%d tools: %s", len(res.Tools), strings.Join(res.Tools, ", ")))
+	}
+
+	switch {
+	case res.DebugErr != nil:
+		outcome.ok = false
+		report.add(component, named("tool call"), StatusFail, debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
+			hint(launchHintText(res.DebugErr, stderr, launch))
+	case res.DebugConfig != "":
+		report.artifact(sanitizeArtifactName(component)+"/debug_config.txt", res.DebugConfig+"\n")
+		report.add(component, named("tool call"), StatusOK, debugConfigTool+" succeeded — "+summarizeDebugConfig(res.DebugConfig))
+	}
+}
+
+func launchHintText(err error, stderr string, launch serverLaunch) string {
+	h, _ := launchHint(err, stderr, launch)
+	return h
+}
+
+// summarizeDebugConfig pulls the lines of debug_config output most useful at
+// a glance into a single line.
+func summarizeDebugConfig(out string) string {
+	var parts []string
+	for _, line := range strings.Split(out, "\n") {
+		for _, p := range []string{"Auth method:", "API URL:", "Env:"} {
+			if strings.HasPrefix(strings.TrimSpace(line), p) {
+				parts = append(parts, strings.TrimSpace(line))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return truncate(strings.ReplaceAll(strings.TrimSpace(out), "\n", "; "), 120)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // checkManifestEditors verifies, for every editor the manifest recorded a
@@ -218,8 +580,20 @@ func checkCredentials(report *DoctorReport, component, envFile string) map[strin
 // drive-letter change, or a reinstall into a new plugin dir leaves editors
 // pointing at a command path that no longer resolves — the entry is still
 // present by name, so a name-only check would report this as healthy.
-func checkManifestEditors(report *DoctorReport, component, identifier string, editors map[EditorID]ManifestEntry) {
-	for id, entry := range editors {
+//
+// With handshakes enabled it then launches exactly what the editor's config
+// says (command, args, envFile, env) rather than what the manifest expects,
+// since that's what the editor will actually run.
+func checkManifestEditors(d *doctorRun, component, identifier string, editors map[EditorID]ManifestEntry) {
+	report := d.report
+	ids := make([]EditorID, 0, len(editors))
+	for id := range editors {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	for _, id := range ids {
+		entry := editors[id]
 		name := string(id)
 		if ed, ok := EditorByID(id); ok {
 			name = ed.Name
@@ -228,23 +602,25 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 		// readBoundedConfigFile applies the same regular-file and size guards as
 		// readJSONFileAsMap/readYAMLFileAsMap, so a non-regular or oversized
 		// config is reported here rather than silently read as empty by
-		// lookupEntryCommand below and misreported as "entry not found".
+		// lookupEntry below and misreported as "entry not found".
 		content, err := readBoundedConfigFile(entry.ConfigFile)
 		if err != nil {
-			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err))
+			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err)).
+				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
 		}
 		// readJSONFileAsMap/readYAMLFileAsMap also return an empty map on a
 		// parse error, so a corrupted or non-object config (null, an array,
 		// invalid YAML, ...) would otherwise fall through to the same "entry
 		// not found" warning as a genuinely edited-out entry. Catch that case
-		// explicitly.
+		// explicitly. JSON configs are parsed as JSONC: VS Code's mcp.json
+		// allows comments and trailing commas.
 		var obj map[string]interface{}
 		var parseErr error
 		if entry.Format == configFormatContinue {
 			parseErr = yaml.Unmarshal(content, &obj)
 		} else {
-			parseErr = json.Unmarshal(content, &obj)
+			parseErr = json.Unmarshal(stripJSONC(content), &obj)
 		}
 		// Both unmarshalers accept a top-level `null` without error (obj just
 		// stays nil), so an err-only check would miss it — require a non-nil
@@ -253,22 +629,40 @@ func checkManifestEditors(report *DoctorReport, component, identifier string, ed
 			parseErr = fmt.Errorf("top-level value is not an object")
 		}
 		if parseErr != nil {
-			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr))
+			// Not auto-fixable: re-registering would start from an empty map
+			// and drop every other server the user configured in this file.
+			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
+				hint(name + " ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			continue
 		}
 
-		command, found := lookupEntryCommand(entry.ConfigFile, entry.Format, identifier)
+		launch, found := lookupEntry(entry.ConfigFile, entry.Format, identifier)
 		if !found {
 			report.add(component, name, StatusWarn,
-				fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", entry.ConfigFile))
+				fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", entry.ConfigFile)).
+				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
 		}
-		if command != "" && !isExecutableFile(command) {
+		report.artifact(fmt.Sprintf("editors/%s-%s-entry.json", sanitizeArtifactName(component), id), launchArtifact(entry.ConfigFile, launch))
+		if launch.Command != "" && !isExecutableFile(launch.Command) {
 			report.add(component, name, StatusFail,
-				fmt.Sprintf("entry found in %s but its command does not exist: %s — likely stale after a reinstall or profile/home directory change; re-run armis-cli install", entry.ConfigFile, command))
+				fmt.Sprintf("entry found in %s but its command does not exist: %s — likely stale after a reinstall or profile/home directory change", entry.ConfigFile, launch.Command)).
+				fix(FixReregister, "Point the entry at the current install: armis-cli mcp doctor --fix")
 			continue
+		}
+		if launch.EnvFile != "" {
+			if _, err := os.Stat(launch.EnvFile); err != nil {
+				report.add(component, name, StatusFail,
+					fmt.Sprintf("entry in %s references an envFile that does not exist: %s", entry.ConfigFile, launch.EnvFile)).
+					fix(FixReregister, "Point the entry at the current install: armis-cli mcp doctor --fix")
+				continue
+			}
 		}
 		report.add(component, name, StatusOK, entry.ConfigFile)
+
+		if d.opts.Handshake && launch.Command != "" {
+			d.probe(component, name, launch)
+		}
 	}
 }
 
@@ -277,16 +671,19 @@ func checkClaudeSection(report *DoctorReport, component string, claude *Manifest
 		return
 	}
 	if _, err := os.Stat(claude.CacheDir); err != nil {
-		report.add(component, "Claude Code", StatusFail, fmt.Sprintf("cache dir missing: %s", claude.CacheDir))
+		report.add(component, "Claude Code", StatusFail, fmt.Sprintf("cache dir missing: %s", claude.CacheDir)).
+			fix(FixReregister, "Reinstall the Claude Code plugin: armis-cli mcp doctor --fix")
 		return
 	}
 
 	installed, enabled := claudeRegistryStatus(homeDir(".claude"), pluginKeyPrefix)
 	switch {
 	case !installed:
-		report.add(component, "Claude Code", StatusWarn, "not found in installed_plugins.json — re-run install")
+		report.add(component, "Claude Code", StatusWarn, "not found in installed_plugins.json").
+			fix(FixReregister, "Reinstall the Claude Code plugin: armis-cli mcp doctor --fix")
 	case !enabled:
-		report.add(component, "Claude Code", StatusWarn, "installed but not enabled in settings.json")
+		report.add(component, "Claude Code", StatusWarn, "installed but not enabled in settings.json").
+			hint("Enable it in Claude Code with /plugin, or re-run: armis-cli mcp doctor --fix")
 	default:
 		report.add(component, "Claude Code", StatusOK, claude.CacheDir)
 	}
@@ -360,30 +757,44 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 	}
 	content, err := readBoundedConfigFile(codex.ConfigFile)
 	if err != nil {
-		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err))
+		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err)).
+			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 		return
 	}
 	if !strings.Contains(strings.ToLower(string(content)), strings.ToLower(identifier)) {
 		report.add(component, "Codex CLI", StatusWarn,
-			fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", codex.ConfigFile))
+			fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", codex.ConfigFile)).
+			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 		return
 	}
 	report.add(component, "Codex CLI", StatusOK, codex.ConfigFile)
 }
 
 // lookupEntryCommand finds the server entry matching identifier in configFile
-// (read per the manifest's recorded format) and returns the command path it
-// declares. found is true as soon as a matching entry name exists, even when
+// and returns the command path it declares. See lookupEntry.
+func lookupEntryCommand(configFile, format, identifier string) (command string, found bool) {
+	l, found := lookupEntry(configFile, format, identifier)
+	return l.Command, found
+}
+
+// lookupEntry finds the server entry matching identifier in configFile (read
+// per the manifest's recorded format) and returns how it launches the server.
+// found is true as soon as a matching entry name exists, even when the
 // command comes back empty because the format stores it somewhere this
 // function doesn't understand — callers must treat an empty command as
 // "unknown", not "missing".
-func lookupEntryCommand(configFile, format, identifier string) (command string, found bool) {
+func lookupEntry(configFile, format, identifier string) (serverLaunch, bool) {
 	identifier = strings.ToLower(identifier)
 
 	matchEntry := func(servers map[string]interface{}) (map[string]interface{}, bool) {
-		for k, v := range servers {
+		keys := make([]string, 0, len(servers))
+		for k := range servers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
 			if strings.Contains(strings.ToLower(k), identifier) {
-				m, _ := v.(map[string]interface{})
+				m, _ := servers[k].(map[string]interface{})
 				return m, true
 			}
 		}
@@ -395,19 +806,18 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 		servers, _ := readJSONFileAsMap(configFile)["servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
-			return "", false
+			return serverLaunch{}, false
 		}
-		cmd, _ := entry[jsonKeyCommand].(string)
-		return cmd, true
+		return vscodeLaunch(entry, ""), true
 	case configFormatZed:
 		servers, _ := readJSONFileAsMap(configFile)["context_servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
-			return "", false
+			return serverLaunch{}, false
 		}
 		cmdObj, _ := entry[jsonKeyCommand].(map[string]interface{})
 		cmd, _ := cmdObj[jsonKeyPath].(string)
-		return cmd, true
+		return serverLaunch{Command: cmd, Args: stringSlice(cmdObj[jsonKeyArgs]), Env: stringMap(cmdObj["env"])}, true
 	case configFormatContinue:
 		list, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
 		for _, item := range list {
@@ -417,19 +827,44 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 			}
 			if n, _ := m["name"].(string); strings.Contains(strings.ToLower(n), identifier) {
 				cmd, _ := m[jsonKeyCommand].(string)
-				return cmd, true
+				return serverLaunch{Command: cmd, Args: stringSlice(m[jsonKeyArgs]), Env: stringMap(m["env"])}, true
 			}
 		}
-		return "", false
+		return serverLaunch{}, false
 	default: // "mcpServers"
 		servers, _ := readJSONFileAsMap(configFile)["mcpServers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
-			return "", false
+			return serverLaunch{}, false
 		}
 		cmd, _ := entry[jsonKeyCommand].(string)
-		return cmd, true
+		return serverLaunch{Command: cmd, Args: stringSlice(entry[jsonKeyArgs]), Env: stringMap(entry["env"])}, true
 	}
+}
+
+func stringSlice(v interface{}) []string {
+	list, _ := v.([]interface{})
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func stringMap(v interface{}) map[string]string {
+	m, _ := v.(map[string]interface{})
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, val := range m {
+		if s, ok := val.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
 }
 
 func isExecutableFile(path string) bool {
@@ -444,12 +879,14 @@ func isExecutableFile(path string) bool {
 }
 
 // parseEnvFile reads a "KEY=VALUE" per line .env file, as written by
-// writeEnvFromEnvironment/WriteEnvFromValues.
+// writeEnvFromEnvironment/WriteEnvFromValues. A leading UTF-8 BOM is ignored
+// so a file re-saved by a Windows editor still parses.
 func parseEnvFile(path string) (map[string]string, error) {
 	b, err := readBoundedConfigFile(path)
 	if err != nil {
 		return nil, err
 	}
+	b = bytes.TrimPrefix(b, utf8BOM)
 	env := make(map[string]string)
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
@@ -465,173 +902,22 @@ func parseEnvFile(path string) (map[string]string, error) {
 	return env, nil
 }
 
-// handshakeResult carries the identity the MCP server reported in its
-// initialize response.
-type handshakeResult struct {
-	ServerName    string
-	ServerVersion string
+// isSecretKey reports whether an env var name likely holds a credential.
+func isSecretKey(k string) bool {
+	k = strings.ToUpper(k)
+	for _, marker := range []string{"SECRET", "TOKEN", "PASSWORD", "CLIENT_ID", "API_KEY", "PROXY"} {
+		if strings.Contains(k, marker) {
+			return true
+		}
+	}
+	return false
 }
 
-type mcpInitResult struct {
-	ServerInfo struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	} `json:"serverInfo"`
-}
-
-func runHandshakeCheck(report *DoctorReport, component, command string, args []string, env map[string]string, timeout time.Duration) {
-	res, stderrTail, err := mcpHandshake(command, args, env, timeout)
-	if err != nil {
-		detail := err.Error()
-		if stderrTail != "" {
-			detail += " — stderr: " + stderrTail
-		}
-		report.add(component, "live handshake", StatusFail, detail)
-		return
-	}
-	detail := "responded to initialize"
-	if res.ServerName != "" {
-		detail = res.ServerName + " responded"
-		if res.ServerVersion != "" {
-			detail = fmt.Sprintf("%s v%s responded", res.ServerName, res.ServerVersion)
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
 		}
 	}
-	report.add(component, "live handshake", StatusOK, detail)
-}
-
-// mcpHandshake spawns command as an MCP stdio server, sends a single
-// "initialize" JSON-RPC request, and waits up to timeout for a response line.
-// The process is always killed and waited-on before returning, so stderr can
-// be read back safely (os/exec only finishes copying stderr into the buffer
-// once Wait returns).
-func mcpHandshake(command string, args []string, env map[string]string, timeout time.Duration) (*handshakeResult, string, error) {
-	if timeout <= 0 {
-		timeout = DefaultHandshakeTimeout
-	}
-
-	// armis:ignore cwe:78 cwe:88 reason:command/args come from the CLI's own recorded install paths (venv interpreter + server script), not user input
-	cmd := exec.Command(command, args...) //nolint:gosec // command/args are the CLI's own recorded install paths
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, "", fmt.Errorf("opening stdin: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, "", fmt.Errorf("opening stdout: %w", err)
-	}
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	// Start() failing means Wait() will never run to close these pipes for us
-	// (that cleanup is documented as conditional on a successful Start), so
-	// close them ourselves rather than leaking the file descriptors.
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil, "", fmt.Errorf("starting process: %w", err)
-	}
-
-	result, opErr := communicateInitialize(stdin, stdout, timeout)
-
-	// armis:ignore cwe:404 reason:best-effort cleanup of a short-lived diagnostic subprocess we just spawned
-	_ = cmd.Process.Kill()
-	// On the timeout path, communicateInitialize's reader goroutine may still
-	// be blocked reading stdout when we get here. os/exec's docs warn it is
-	// "incorrect to call Wait before all reads from the pipe have completed"
-	// because Wait closes this same pipe as part of its own cleanup — close
-	// it here first so the unblock is explicit and ordered rather than racing
-	// Wait's internal close.
-	_ = stdout.Close()
-	_ = stdin.Close()
-	_ = cmd.Wait()
-
-	if opErr != nil {
-		return nil, stderrTail(&stderrBuf), opErr
-	}
-	return result, "", nil
-}
-
-func communicateInitialize(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Duration) (*handshakeResult, error) {
-	req := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "armis-cli-doctor", "version": "1.0"},
-		},
-	}
-	line, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	type readOutcome struct {
-		line []byte
-		err  error
-	}
-	lineCh := make(chan readOutcome, 1)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), maxHandshakeLineSize)
-		if scanner.Scan() {
-			lineCh <- readOutcome{append([]byte(nil), scanner.Bytes()...), nil}
-			return
-		}
-		lineCh <- readOutcome{nil, scanner.Err()}
-	}()
-
-	if _, err := stdin.Write(append(line, '\n')); err != nil {
-		return nil, fmt.Errorf("writing initialize request: %w", err)
-	}
-
-	select {
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("timed out waiting for response after %s", timeout)
-	case out := <-lineCh:
-		if len(out.line) == 0 {
-			if errors.Is(out.err, bufio.ErrTooLong) {
-				return nil, fmt.Errorf("response exceeded %d bytes", maxHandshakeLineSize)
-			}
-			if out.err != nil {
-				return nil, fmt.Errorf("no response: %w", out.err)
-			}
-			return nil, fmt.Errorf("no response")
-		}
-		var rpc struct {
-			Result *mcpInitResult `json:"result"`
-			Error  *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(out.line, &rpc); err != nil {
-			return nil, fmt.Errorf("invalid response: %w", err)
-		}
-		if rpc.Error != nil {
-			return nil, fmt.Errorf("server returned error: %s", rpc.Error.Message)
-		}
-		if rpc.Result == nil {
-			return nil, fmt.Errorf("response missing result")
-		}
-		return &handshakeResult{
-			ServerName:    rpc.Result.ServerInfo.Name,
-			ServerVersion: rpc.Result.ServerInfo.Version,
-		}, nil
-	}
-}
-
-func stderrTail(buf *bytes.Buffer) string {
-	s := strings.TrimSpace(buf.String())
-	const maxLen = 300
-	if len(s) > maxLen {
-		s = s[len(s)-maxLen:]
-	}
-	return s
+	return ""
 }

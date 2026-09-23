@@ -2,6 +2,7 @@ package install
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,19 +23,51 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// runMCPHelperProcess acts as a fake MCP stdio server. It answers each
+// request line by method so the doctor's full session (initialize,
+// tools/list, tools/call) can be exercised.
 func runMCPHelperProcess(mode string) {
-	switch mode {
-	case "hang":
+	if mode == "hang" {
 		select {}
-	case "garbage":
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, "not json")
-	case "error":
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"boom"}}`)
-	default: // "ok"
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}}`)
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req struct {
+			ID     *int   `json:"id"`
+			Method string `json:"method"`
+		}
+		if json.Unmarshal(line, &req) != nil || req.ID == nil {
+			continue // notification
+		}
+		reply := func(body string) {
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%d,%s}`+"\n", *req.ID, body)
+		}
+		switch {
+		case mode == "garbage":
+			_, _ = fmt.Fprintln(os.Stdout, "not json")
+			return
+		case mode == "error":
+			reply(`"error":{"code":-1,"message":"boom"}`)
+			return
+		case req.Method == "initialize":
+			// A log notification before the response must be skipped.
+			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"notifications/message","params":{}}`)
+			reply(`"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}`)
+		case req.Method == "tools/list" && mode == "notools":
+			reply(`"result":{"tools":[]}`)
+		case req.Method == "tools/list":
+			reply(`"result":{"tools":[{"name":"scan_code"},{"name":"debug_config"}]}`)
+		case req.Method == "tools/call" && mode == "toolerror":
+			reply(`"result":{"content":[{"type":"text","text":"config broken"}],"isError":true}`)
+		case req.Method == "tools/call":
+			reply(`"result":{"content":[{"type":"text","text":"Auth: configured\nAuth method: JWT\nAPI URL: https://moose.armis.com/api/v1\nEnv: prod"}]}`)
+		default:
+			reply(`"error":{"code":-32601,"message":"method not found"}`)
+		}
 	}
 }
 
@@ -45,6 +78,12 @@ func TestMCPHandshakeSuccess(t *testing.T) {
 	}
 	if res.ServerName != "fake-mcp" || res.ServerVersion != "9.9.9" {
 		t.Errorf("mcpHandshake() result = %+v, want fake-mcp v9.9.9", res)
+	}
+	if res.ToolsErr != nil || strings.Join(res.Tools, ",") != "scan_code,debug_config" {
+		t.Errorf("mcpHandshake() tools = %v (err %v), want scan_code,debug_config", res.Tools, res.ToolsErr)
+	}
+	if res.DebugErr != nil || !strings.Contains(res.DebugConfig, "Auth method: JWT") {
+		t.Errorf("mcpHandshake() debug_config = %q (err %v), want Auth method line", res.DebugConfig, res.DebugErr)
 	}
 }
 
@@ -211,8 +250,9 @@ func TestCheckManifestEditors(t *testing.T) {
 		EditorVSCode:   {ConfigFile: deadCommandFile, Format: "mcpServers"},
 	}
 
-	report := &DoctorReport{}
-	checkManifestEditors(report, "scanner", "armis-appsec", editors)
+	d := newDoctorRun(DoctorOptions{})
+	checkManifestEditors(d, "scanner", "armis-appsec", editors)
+	report := d.report
 
 	statuses := make(map[string]CheckStatus)
 	for _, c := range report.Checks {
@@ -298,6 +338,7 @@ func TestIsExecutableFile(t *testing.T) {
 }
 
 func TestRunDoctorNoManifest(t *testing.T) {
+	stubVSCode(t, nil)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -312,6 +353,7 @@ func TestRunDoctorNoManifest(t *testing.T) {
 }
 
 func TestRunDoctorStructuralChecks(t *testing.T) {
+	stubVSCode(t, nil)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -363,8 +405,9 @@ func TestCheckKnowledgePluginSkipsUninstalledSiblingEnv(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "dev"), 0o750)
 	_ = os.WriteFile(filepath.Join(dir, "dev", "bridge.py"), []byte("# bridge"), 0o600)
 
-	report := &DoctorReport{}
-	checkKnowledgePlugin(report, &ManifestKnowledge{PluginDir: dir}, DoctorOptions{Handshake: false})
+	d := newDoctorRun(DoctorOptions{Handshake: false})
+	checkKnowledgePlugin(d, &ManifestKnowledge{PluginDir: dir})
+	report := d.report
 
 	if report.HasFailures() {
 		t.Errorf("checkKnowledgePlugin() unexpected failures for uninstalled sibling env: %+v", report.Checks)
