@@ -34,7 +34,7 @@ func WriteSupportBundle(report *DoctorReport, path, cliVersion string) error {
 
 	scrub := func(s string) string {
 		for _, secret := range report.secrets {
-			if len(secret) >= 4 {
+			if secret != "" {
 				s = strings.ReplaceAll(s, secret, "***")
 			}
 		}

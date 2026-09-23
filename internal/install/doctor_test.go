@@ -316,6 +316,24 @@ func TestCheckVSCodeWorkspaceInvalidConfig(t *testing.T) {
 	}
 }
 
+// TestReadJSONCObjectBOMOnly pins that a file containing only a UTF-8 BOM (or
+// BOM plus comments/whitespace) is treated as empty rather than a parse
+// error: TrimSpace alone doesn't strip the BOM rune, so the emptiness check
+// must run after stripJSONC removes it.
+func TestReadJSONCObjectBOMOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+
+	_ = os.WriteFile(path, []byte("\xEF\xBB\xBF"), 0o600)
+	if obj, exists, err := readJSONCObject(path); err != nil || !exists || len(obj) != 0 {
+		t.Errorf("readJSONCObject(BOM only) = (%v, %v, %v), want (empty map, true, nil)", obj, exists, err)
+	}
+
+	_ = os.WriteFile(path, []byte("\xEF\xBB\xBF// just a comment\n"), 0o600)
+	if obj, exists, err := readJSONCObject(path); err != nil || !exists || len(obj) != 0 {
+		t.Errorf("readJSONCObject(BOM + comment) = (%v, %v, %v), want (empty map, true, nil)", obj, exists, err)
+	}
+}
+
 func TestClaudeRegistryStatus(t *testing.T) {
 	dir := t.TempDir()
 	pluginsDir := filepath.Join(dir, "plugins")

@@ -474,10 +474,11 @@ func readJSONCObject(path string) (obj map[string]interface{}, exists bool, err 
 		}
 		return nil, true, err
 	}
-	if len(strings.TrimSpace(string(b))) == 0 {
+	stripped := stripJSONC(b)
+	if len(strings.TrimSpace(string(stripped))) == 0 {
 		return map[string]interface{}{}, true, nil
 	}
-	if err := json.Unmarshal(stripJSONC(b), &obj); err != nil {
+	if err := json.Unmarshal(stripped, &obj); err != nil {
 		return nil, true, err
 	}
 	if obj == nil {

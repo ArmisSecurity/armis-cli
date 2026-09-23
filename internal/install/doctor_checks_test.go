@@ -515,6 +515,35 @@ func TestWriteSupportBundleScrubsSecrets(t *testing.T) {
 	}
 }
 
+// TestWriteSupportBundleScrubsShortSecrets pins that a short proxy password
+// or test credential is scrubbed too, not just secrets 4+ characters long.
+func TestWriteSupportBundleScrubsShortSecrets(t *testing.T) {
+	report := &DoctorReport{secrets: []string{"pw1"}}
+	report.artifact("stderr/x.txt", "proxy auth failed with password pw1\n")
+
+	path := filepath.Join(t.TempDir(), "bundle.zip")
+	if err := WriteSupportBundle(report, path, "1.2.3"); err != nil {
+		t.Fatalf("WriteSupportBundle() error = %v", err)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if strings.Contains(string(b), "pw1") {
+			t.Errorf("%s contains the short secret: %s", f.Name, b)
+		}
+	}
+}
+
 func TestMaskURLUserinfo(t *testing.T) {
 	if got := maskURLUserinfo("http://user:pw@proxy:8080"); got != "http://***@proxy:8080" {
 		t.Errorf("maskURLUserinfo() = %q", got)
