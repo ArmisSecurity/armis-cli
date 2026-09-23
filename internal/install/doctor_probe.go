@@ -171,8 +171,13 @@ type mcpSession struct {
 
 func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Duration) (*probeResult, error) {
 	s := &mcpSession{
-		stdin:    stdin,
-		lines:    make(chan []byte, 16),
+		stdin: stdin,
+		// Buffered generously: nothing drains this channel between the
+		// synchronous call()/notify() invocations below, so a server that
+		// bursts many log/notification lines right after answering one
+		// call could otherwise block the reader goroutine until the next
+		// call starts draining.
+		lines:    make(chan []byte, 256),
 		readErr:  make(chan error, 1),
 		deadline: time.Now().Add(timeout),
 	}

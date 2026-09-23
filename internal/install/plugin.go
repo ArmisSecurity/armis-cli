@@ -564,7 +564,7 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 func SetEnvFileVars(envPath string, vars [][2]string) error {
 	for _, kv := range vars {
 		if kv[0] == "" || strings.ContainsAny(kv[0], "=\n\r") || strings.ContainsAny(kv[1], "\n\r") {
-			return fmt.Errorf("invalid env entry for %q: keys and values must not contain newlines", kv[0])
+			return fmt.Errorf("invalid env entry for %q: keys must not contain '=' or newlines, and values must not contain newlines", kv[0])
 		}
 	}
 
