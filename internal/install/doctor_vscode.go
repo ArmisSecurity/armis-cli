@@ -75,10 +75,7 @@ type vscodeFound struct {
 // or Group Policy, or organization Copilot policy.
 func checkVSCode(d *doctorRun, pluginDir string, registered bool) {
 	report := d.report
-	workspace := d.opts.WorkspaceDir
-	if workspace == "" {
-		workspace, _ = os.Getwd()
-	}
+	workspace := d.workspaceDir()
 
 	var detected []vscodeVariant
 	for _, v := range vscodeVariants() {

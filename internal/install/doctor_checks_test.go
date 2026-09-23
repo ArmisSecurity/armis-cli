@@ -128,7 +128,7 @@ func TestLookupEntryVSCodeLaunch(t *testing.T) {
   },
 }`)
 
-	l, ok := lookupEntry(path, configFormatVSCode, mcpServerName)
+	l, ok := lookupEntry(path, configFormatVSCode, mcpServerName, "")
 	if !ok {
 		t.Fatal("lookupEntry() found = false")
 	}
@@ -140,6 +140,16 @@ func TestLookupEntryVSCodeLaunch(t *testing.T) {
 	}
 	if l.Env["ARMIS_CLIENT_ID"] != "id" || l.Env["FROM_FILE"] != "2" || l.Env["EXTRA"] != "x" {
 		t.Errorf("Env = %v, want envFile merged with inline env winning", l.Env)
+	}
+}
+
+func TestLookupEntryVSCodeExpandsWorkspaceFolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	mustWrite(t, path, `{"servers": {"armis-appsec": {"command": "${workspaceFolder}/python"}}}`)
+
+	l, ok := lookupEntry(path, configFormatVSCode, mcpServerName, "/ws")
+	if !ok || l.Command != "/ws/python" {
+		t.Errorf("lookupEntry() = %q, %v, want ${workspaceFolder} expanded to /ws", l.Command, ok)
 	}
 }
 

@@ -247,6 +247,15 @@ type doctorRun struct {
 	manifestConfigs map[string]bool
 }
 
+// workspaceDir returns opts.WorkspaceDir, defaulting to the current directory.
+func (d *doctorRun) workspaceDir() string {
+	if d.opts.WorkspaceDir != "" {
+		return d.opts.WorkspaceDir
+	}
+	wd, _ := os.Getwd()
+	return wd
+}
+
 type probeOutcome struct {
 	label string // component/name of the check that ran it
 	ok    bool
@@ -737,7 +746,7 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 			continue
 		}
 
-		launch, found := lookupEntry(entry.ConfigFile, entry.Format, identifier)
+		launch, found := lookupEntry(entry.ConfigFile, entry.Format, identifier, d.workspaceDir())
 		if !found {
 			report.add(component, name, StatusWarn,
 				fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", entry.ConfigFile)).
@@ -882,17 +891,15 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 // lookupEntryCommand finds the server entry matching identifier in configFile
 // and returns the command path it declares. See lookupEntry.
 func lookupEntryCommand(configFile, format, identifier string) (command string, found bool) {
-	l, found := lookupEntry(configFile, format, identifier)
+	l, found := lookupEntry(configFile, format, identifier, "")
 	return l.Command, found
 }
 
 // lookupEntry finds the server entry matching identifier in configFile (read
 // per the manifest's recorded format) and returns how it launches the server.
-// found is true as soon as a matching entry name exists, even when the
-// command comes back empty because the format stores it somewhere this
-// function doesn't understand — callers must treat an empty command as
-// "unknown", not "missing".
-func lookupEntry(configFile, format, identifier string) (serverLaunch, bool) {
+// found is true as soon as a matching entry name exists, even when the entry
+// has no command. workspace resolves ${workspaceFolder} in VS Code entries.
+func lookupEntry(configFile, format, identifier, workspace string) (serverLaunch, bool) {
 	identifier = strings.ToLower(identifier)
 
 	matchEntry := func(servers map[string]interface{}) (map[string]interface{}, bool) {
@@ -917,7 +924,7 @@ func lookupEntry(configFile, format, identifier string) (serverLaunch, bool) {
 		if !ok {
 			return serverLaunch{}, false
 		}
-		return vscodeLaunch(entry, ""), true
+		return vscodeLaunch(entry, workspace), true
 	case configFormatZed:
 		servers, _ := readJSONFileAsMap(configFile)["context_servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
