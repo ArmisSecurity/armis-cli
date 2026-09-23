@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -115,6 +116,26 @@ func TestMCPHandshakeInvalidResponseAfterInit(t *testing.T) {
 	}
 	if res.ToolsErr == nil {
 		t.Fatal("mcpHandshake() ToolsErr = nil, want error from invalid JSON on stdout during tools/list")
+	}
+}
+
+// TestMCPSessionCallClampsNegativeWait pins that a deadline already in the
+// past (because earlier steps in the same session consumed the whole
+// timeout) produces a sensible "after 0s"-style message, not a confusing
+// negative duration.
+func TestMCPSessionCallClampsNegativeWait(t *testing.T) {
+	s := &mcpSession{
+		stdin:    io.Discard,
+		lines:    make(chan []byte, 1),
+		readErr:  make(chan error, 1),
+		deadline: time.Now().Add(-time.Second),
+	}
+	_, err := s.call(1, "initialize", map[string]interface{}{}, time.Second)
+	if err == nil {
+		t.Fatal("call() error = nil, want a timeout error")
+	}
+	if strings.Contains(err.Error(), "-") {
+		t.Errorf("call() error = %q, want no negative duration in the message", err.Error())
 	}
 }
 

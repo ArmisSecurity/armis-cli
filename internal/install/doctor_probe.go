@@ -272,6 +272,9 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 	}
 
 	wait := time.Until(s.deadline)
+	if wait < 0 {
+		wait = 0
+	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
