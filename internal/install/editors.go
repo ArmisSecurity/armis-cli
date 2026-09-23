@@ -32,6 +32,13 @@ const (
 	jsonTypeCommand = "command"
 )
 
+// Config format identifiers returned by ConfigFormat, keyed by editor.
+const (
+	configFormatVSCode   = "vscode-servers"
+	configFormatZed      = "zed-context_servers"
+	configFormatContinue = "continue-yaml"
+)
+
 // EditorID identifies a supported editor.
 type EditorID string
 

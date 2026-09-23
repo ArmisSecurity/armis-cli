@@ -514,11 +514,11 @@ func knowledgeServerNames() []string {
 func deregisterServerFromFile(configFile, format string, names []string) error {
 	key := "mcpServers"
 	switch format {
-	case "vscode-servers":
+	case configFormatVSCode:
 		key = "servers"
-	case "zed-context_servers":
+	case configFormatZed:
 		key = "context_servers"
-	case "continue-yaml":
+	case configFormatContinue:
 		// Continue's servers are a YAML list, not a JSON map.
 		return removeContinueEntry(configFile, names)
 	}

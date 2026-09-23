@@ -59,7 +59,10 @@ Not auto-configurable (manual setup required):
   armis-cli install claude
 
   # Check installed version
-  armis-cli install --version`,
+  armis-cli install --version
+
+  # Debug a broken or missing MCP setup
+  armis-cli mcp doctor`,
 	RunE: runInstall,
 }
 
@@ -396,6 +399,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 
 		if ci.HasExistingEnv() {
 			fmt.Fprintln(os.Stderr, "Credentials configured. Restart Claude Code to pick up the updated plugin.")
+			fmt.Fprintln(os.Stderr, "Run 'armis-cli mcp doctor' to verify the setup works.")
 		} else {
 			fmt.Fprintln(os.Stderr, "Next steps:")
 			fmt.Fprintf(os.Stderr, "  1. Set your credentials in %s:\n", ci.EnvFilePath())
@@ -426,6 +430,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 func printCredentialStatus(ei *install.EditorInstaller) {
 	if ei.HasExistingEnv() {
 		fmt.Fprintln(os.Stderr, "Credentials configured. Restart your editors to use the MCP server.")
+		fmt.Fprintln(os.Stderr, "Run 'armis-cli mcp doctor' to verify the setup works.")
 	} else {
 		fmt.Fprintln(os.Stderr, "Next steps:")
 		fmt.Fprintf(os.Stderr, "  1. Set your credentials in %s:\n", ei.EnvFilePath())
@@ -458,5 +463,8 @@ func printKnowledgeResult(res knowledgeResult) {
 		}
 	} else if !res.skipped {
 		fmt.Fprintln(os.Stderr, "  ⚠ Knowledge was not registered in any editor.")
+	}
+	if len(res.warnings) > 0 {
+		fmt.Fprintln(os.Stderr, "Run 'armis-cli mcp doctor' to see what's wrong.")
 	}
 }

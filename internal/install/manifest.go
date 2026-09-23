@@ -170,11 +170,11 @@ func (k *ManifestKnowledge) SetCodex(configFile string) {
 func ConfigFormat(id EditorID) string {
 	switch id {
 	case EditorVSCode:
-		return "vscode-servers"
+		return configFormatVSCode
 	case EditorZed:
-		return "zed-context_servers"
+		return configFormatZed
 	case EditorContinue:
-		return "continue-yaml"
+		return configFormatContinue
 	default:
 		return "mcpServers"
 	}
