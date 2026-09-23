@@ -592,13 +592,21 @@ func SetEnvFileVars(envPath string, vars [][2]string) error {
 
 	for _, kv := range vars {
 		replaced := false
-		for i, line := range lines {
+		kept := lines[:0]
+		for _, line := range lines {
 			k, _, ok := strings.Cut(strings.TrimSpace(line), "=")
-			if ok && !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(k) == kv[0] {
-				lines[i] = kv[0] + "=" + kv[1]
+			isAssignment := ok && !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(k) == kv[0]
+			switch {
+			case !isAssignment:
+				kept = append(kept, line)
+			case !replaced:
+				// Keep the first assignment, updated in place; drop any
+				// further duplicate assignments of the same key below.
+				kept = append(kept, kv[0]+"="+kv[1])
 				replaced = true
 			}
 		}
+		lines = kept
 		if !replaced {
 			lines = append(lines, kv[0]+"="+kv[1])
 		}

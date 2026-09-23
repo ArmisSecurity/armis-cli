@@ -541,6 +541,23 @@ func TestSetEnvFileVars(t *testing.T) {
 	}
 }
 
+// TestSetEnvFileVarsDedupesExistingDuplicateKey pins that a key already
+// duplicated in the file (e.g. from a hand edit) collapses to one line
+// instead of ending up duplicated with the same value twice.
+func TestSetEnvFileVarsDedupesExistingDuplicateKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	mustWrite(t, path, "ARMIS_CLIENT_ID=old\nSSL_CERT_FILE=/ca.pem\nARMIS_CLIENT_ID=stale-dup\n")
+
+	if err := SetEnvFileVars(path, [][2]string{{"ARMIS_CLIENT_ID", "new"}}); err != nil {
+		t.Fatalf("SetEnvFileVars() error = %v", err)
+	}
+	b, _ := os.ReadFile(path) //nolint:gosec // test temp dir
+	want := "ARMIS_CLIENT_ID=new\nSSL_CERT_FILE=/ca.pem\n"
+	if string(b) != want {
+		t.Errorf("content = %q, want %q (duplicate assignment collapsed)", b, want)
+	}
+}
+
 // TestWriteEnvFromValuesKeepsOtherVars pins that re-entering credentials
 // doesn't drop a proxy or CA setting the doctor (or the user) added.
 func TestWriteEnvFromValuesKeepsOtherVars(t *testing.T) {
