@@ -396,15 +396,85 @@ func launchHint(err error, stderr string, launch serverLaunch) (string, FixActio
 // the MCP server uses. The CLI's own Go HTTP stack uses the OS certificate
 // store and PAC proxy settings, so a Go-side check can pass while the server
 // fails — this probe measures what the server will actually experience.
-const networkProbeScript = `import sys
+//
+// Newer plugin versions trust the OS certificate store via truststore unless
+// SSL_CERT_FILE is set; the probe does the same when truststore is installed
+// in the venv, and reports which CA source it used.
+const networkProbeScript = `import os, sys
+ca = "certifi"
+if os.environ.get("SSL_CERT_FILE"):
+    ca = "SSL_CERT_FILE"
+else:
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+        ca = "system store"
+    except Exception:
+        pass
 try:
     import httpx
     r = httpx.get(sys.argv[1], timeout=15)
-    print("HTTP", r.status_code)
+    print("HTTP", r.status_code, "(CA: " + ca + ")")
 except Exception as e:
-    print("ERR", type(e).__name__, str(e)[:500])
+    print("ERR", type(e).__name__, str(e)[:500], "(CA: " + ca + ")")
     sys.exit(1)
 `
+
+// systemProxyScript prints the HTTPS proxy the OS is configured with
+// (Windows registry / macOS System Settings), as Python's urllib sees it.
+// PAC-only configurations aren't visible this way.
+const systemProxyScript = `import urllib.request
+p = urllib.request.getproxies()
+print(p.get("https") or p.get("http") or "")
+`
+
+// networkProbe and systemProxyLookup are vars so tests can stub them.
+var (
+	networkProbe      = runNetworkProbe
+	systemProxyLookup = lookupSystemProxy
+)
+
+// lookupSystemProxy returns the OS-configured proxy URL, or "" if none.
+func lookupSystemProxy(python string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// armis:ignore cwe:78 cwe:88 reason:python is the CLI's own recorded venv interpreter; the script is a constant
+	out, err := exec.CommandContext(ctx, python, "-c", systemProxyScript).Output() //nolint:gosec // constant script, venv interpreter
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimSpace(string(out))
+	if p != "" && !strings.Contains(p, "://") {
+		p = "http://" + p
+	}
+	return p
+}
+
+// envHTTPSProxy is the proxy variable the server's HTTP client reads.
+const envHTTPSProxy = "HTTPS_PROXY"
+
+// hasProxyEnv reports whether a proxy is already configured for the server,
+// either in its env file or the inherited environment.
+func hasProxyEnv(env map[string]string) bool {
+	for _, k := range []string{envHTTPSProxy, "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+		if env[k] != "" || os.Getenv(k) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// isConnectFailure reports whether probe output is a connection-level
+// failure (as opposed to TLS or HTTP errors) that a proxy could explain.
+func isConnectFailure(output string) bool {
+	o := strings.ToLower(output)
+	for _, s := range []string{"connecterror", "connecttimeout", "timed out", "getaddrinfo", "name or service not known", "nodename", "network is unreachable", "connection refused"} {
+		if strings.Contains(o, s) && !strings.Contains(o, "certificate") {
+			return true
+		}
+	}
+	return false
+}
 
 const (
 	appsecProdURL = "https://moose.armis.com/api/v1"
@@ -468,8 +538,11 @@ func networkHint(output, envFile string) string {
 	switch {
 	case strings.Contains(o, "certificate_verify_failed") || strings.Contains(o, "certificate verify failed") ||
 		strings.Contains(o, "self-signed") || strings.Contains(o, "unable to get local issuer"):
-		return "Your network re-signs HTTPS traffic (TLS inspection, e.g. Zscaler or Netskope) and the MCP server's Python runtime doesn't trust that certificate — it uses its own CA bundle, not the Windows certificate store. " +
-			"Export your organization's root CA as a PEM (Base-64 .cer) file, then add SSL_CERT_FILE=<path to that file> to " + envFile + " and restart VS Code."
+		if strings.Contains(o, "(ca: certifi)") {
+			return "Your network re-signs HTTPS traffic (TLS inspection, e.g. Zscaler or Netskope) and this version of the MCP server doesn't trust that certificate — it uses its own CA bundle, not the Windows certificate store. " +
+				"Update the server (armis-cli mcp update) to a version that uses the system certificate store, or export your organization's root CA as a PEM (Base-64 .cer) file and add SSL_CERT_FILE=<path to that file> to " + envFile + ", then restart VS Code."
+		}
+		return "The server's Python runtime doesn't trust the certificate the Armis API presented, even with the system certificate store. If your network uses TLS inspection, ask IT to install the inspection root CA in the system certificate store, or export it as a PEM file and add SSL_CERT_FILE=<path to that file> to " + envFile + ", then restart VS Code."
 	case strings.Contains(o, "proxyerror") || strings.Contains(o, "407"):
 		return "The proxy rejected the request. Check the HTTPS_PROXY value in " + envFile + " (including credentials if your proxy requires them)."
 	case strings.Contains(o, "connecterror") || strings.Contains(o, "connecttimeout") || strings.Contains(o, "timed out") ||

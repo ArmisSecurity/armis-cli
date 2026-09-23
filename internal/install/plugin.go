@@ -3,6 +3,7 @@ package install
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -542,16 +543,32 @@ func writeEnvFromEnvironment(envPath string) error {
 }
 
 // WriteEnvFromValues writes client credentials to a .env file at envPath.
-// If the file already exists, it is backed up to .env.bak before overwriting.
-// The write is atomic (temp file + rename) to prevent corruption on interrupt.
+// Other variables already in the file (HTTPS_PROXY, SSL_CERT_FILE, ...) are
+// kept. If the file already exists, it is backed up to .env.bak first. The
+// write is atomic (temp file + rename) to prevent corruption on interrupt.
 // armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install functions
 func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
-	if strings.ContainsAny(clientID, "\n\r") || strings.ContainsAny(clientSecret, "\n\r") {
-		return fmt.Errorf("credentials must not contain newline characters")
+	return SetEnvFileVars(envPath, [][2]string{
+		{"ARMIS_CLIENT_ID", clientID},
+		{"ARMIS_CLIENT_SECRET", clientSecret},
+	})
+}
+
+// SetEnvFileVars sets vars (in order) in the .env file at envPath, replacing
+// existing assignments of the same keys in place and appending new ones.
+// Comments, blank lines, and other variables are preserved; a UTF-8 BOM is
+// dropped. An existing file is backed up to .env.bak, and the write is atomic.
+// armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install/doctor functions
+func SetEnvFileVars(envPath string, vars [][2]string) error {
+	for _, kv := range vars {
+		if kv[0] == "" || strings.ContainsAny(kv[0], "=\n\r") || strings.ContainsAny(kv[1], "\n\r") {
+			return fmt.Errorf("invalid env entry for %q: keys and values must not contain newlines", kv[0])
+		}
 	}
 
 	cleanPath := filepath.Clean(envPath)
 
+	var lines []string
 	// Back up existing file via copy (not rename) so the original remains if a later step fails
 	if _, err := os.Stat(cleanPath); err == nil {
 		bakPath := cleanPath + ".bak"
@@ -559,8 +576,30 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 		if err := copyFile(cleanPath, bakPath); err != nil {
 			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
 		}
+		existing, err := readBoundedConfigFile(cleanPath)
+		if err != nil {
+			return fmt.Errorf("reading existing env file: %w", err)
+		}
+		text := strings.TrimRight(string(bytes.TrimPrefix(existing, utf8BOM)), "\r\n")
+		if text != "" {
+			lines = strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking existing env file: %w", err)
+	}
+
+	for _, kv := range vars {
+		replaced := false
+		for i, line := range lines {
+			k, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if ok && !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(k) == kv[0] {
+				lines[i] = kv[0] + "=" + kv[1]
+				replaced = true
+			}
+		}
+		if !replaced {
+			lines = append(lines, kv[0]+"="+kv[1])
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
@@ -568,7 +607,7 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	}
 
 	// armis:ignore cwe:522 reason:CLI writes credentials to .env file with 0600 permissions for local auth config
-	content := fmt.Sprintf("ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n", clientID, clientSecret)
+	content := strings.Join(lines, "\n") + "\n"
 
 	// Atomic write: randomized temp file + rename
 	// armis:ignore cwe:73 reason:temp file created in same directory as target, derived from known plugin dir

@@ -611,7 +611,7 @@ func systemInfo() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "os: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(&b, "time: %s\n", time.Now().UTC().Format(time.RFC3339))
-	for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+	for _, k := range []string{envHTTPSProxy, "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
 		"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "APPSEC_ENV", "APPSEC_API_URL", "ARMIS_API_URL", "ARMIS_REGION"} {
 		if v := os.Getenv(k); v != "" {
 			fmt.Fprintf(&b, "%s=%s\n", k, maskURLUserinfo(v))

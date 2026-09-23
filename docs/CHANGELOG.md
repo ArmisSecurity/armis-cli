@@ -9,13 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mcp doctor` now runs a full MCP session (initialize, tools/list, a diagnostic tool call) using each editor's own config entry, checks credentials against the API, and checks that the server's Python runtime can reach the Armis API through the local proxy and TLS setup. Every failing check prints a remediation.
+- `mcp doctor` VS Code / Copilot checks: VS Code Insiders and VSCodium, profile and workspace configs, duplicate and stale entries, `chat.mcp.*` / `chat.agent.enabled` settings, Windows Group Policy (ChatMCP, ChatAgentMode), and the last error from VS Code's MCP server log.
+- `mcp doctor` Windows diagnostics: a venv whose base Python was removed, antivirus or AppLocker blocking the interpreter, slow starts, and output on stdout that corrupts the MCP stream.
+- `mcp doctor --fix`: re-registers editors, rebuilds a broken venv, and writes the system proxy to the server's `.env` when the doctor has verified it works.
+- `mcp doctor --bundle` / `--bundle-path`: writes a support zip with the report, server stderr and logs, and VS Code's MCP log. Credential values are excluded and scrubbed.
+
 ### Changed
+
+- Writing credentials to the MCP server's `.env` (interactive `install`) now keeps other variables in the file, such as `HTTPS_PROXY` and `SSL_CERT_FILE`.
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- `install` and `mcp doctor` parse VS Code's `mcp.json` / `settings.json` as JSONC. A file with comments, trailing commas, or a UTF-8 BOM was treated as empty, so `install` dropped the user's other MCP servers and `mcp doctor` reported the file as invalid.
 
 ### Security
 

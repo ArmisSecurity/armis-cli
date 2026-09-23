@@ -65,6 +65,9 @@ const (
 	// FixReinstall re-downloads the plugin and rebuilds its venv, then
 	// re-registers every editor.
 	FixReinstall FixAction = "reinstall"
+	// FixSetProxy writes a proxy the doctor verified works into the plugin's
+	// .env, so the server uses it on its next start.
+	FixSetProxy FixAction = "set-proxy"
 )
 
 // DoctorCheck is one diagnostic result reported by RunDoctor.
@@ -97,6 +100,8 @@ type DoctorReport struct {
 	// excerpts, log tails) for the support bundle. Keyed by bundle file name.
 	// Kept out of the JSON report, which stays a concise list of checks.
 	Artifacts map[string]string `json:"-"`
+	// envFix holds the .env update FixSetProxy applies.
+	envFix *envFix
 	// secrets are credential values seen during the run, scrubbed verbatim
 	// from everything written to the support bundle.
 	secrets []string
@@ -137,9 +142,11 @@ func (r *DoctorReport) HasProblems() bool {
 }
 
 // Fixes returns the distinct repairs `--fix` can apply for failing or warning
-// checks. FixReinstall subsumes FixReregister, so only one is returned.
+// checks. FixReinstall subsumes FixReregister, so at most one of the two is
+// returned; FixSetProxy is independent and comes first.
 func (r *DoctorReport) Fixes() []FixAction {
-	var reregister, reinstall bool
+	var out []FixAction
+	var reregister, reinstall, setProxy bool
 	for _, c := range r.Checks {
 		if c.Status != StatusFail && c.Status != StatusWarn {
 			continue
@@ -149,15 +156,43 @@ func (r *DoctorReport) Fixes() []FixAction {
 			reinstall = true
 		case FixReregister:
 			reregister = true
+		case FixSetProxy:
+			setProxy = r.envFix != nil
 		}
+	}
+	if setProxy {
+		out = append(out, FixSetProxy)
 	}
 	switch {
 	case reinstall:
-		return []FixAction{FixReinstall}
+		out = append(out, FixReinstall)
 	case reregister:
-		return []FixAction{FixReregister}
+		out = append(out, FixReregister)
 	}
-	return nil
+	return out
+}
+
+// envFix is a verified set of variables to add to a .env file.
+type envFix struct {
+	EnvFile string
+	Vars    [][2]string
+}
+
+// ApplyEnvFix performs FixSetProxy: it writes the verified variables into the
+// plugin's .env, keeping everything else in the file. It returns a
+// description of the change with credentials masked.
+func (r *DoctorReport) ApplyEnvFix() (string, error) {
+	if r.envFix == nil {
+		return "", nil
+	}
+	if err := SetEnvFileVars(r.envFix.EnvFile, r.envFix.Vars); err != nil {
+		return "", fmt.Errorf("updating %s: %w", r.envFix.EnvFile, err)
+	}
+	parts := make([]string, 0, len(r.envFix.Vars))
+	for _, kv := range r.envFix.Vars {
+		parts = append(parts, kv[0]+"="+maskURLUserinfo(kv[1]))
+	}
+	return fmt.Sprintf("set %s in %s", strings.Join(parts, ", "), r.envFix.EnvFile), nil
 }
 
 // DoctorOptions configures RunDoctor.
@@ -283,6 +318,12 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 	report.add(component, "server script", StatusOK, serverPy)
 
 	env := checkCredentials(report, component, ei.EnvFilePath())
+
+	// Plugin versions that keep their own log write it here; include the
+	// recent part in the support bundle.
+	if b, err := readBoundedConfigFile(filepath.Join(ei.PluginDir(), "logs", "server.log")); err == nil && len(b) > 0 {
+		report.artifact("scanner/server.log", tail(string(b), 64<<10)+"\n")
+	}
 
 	if d.opts.Handshake {
 		// The canonical check launches with the .env merged in, which is what
@@ -458,14 +499,46 @@ func checkServerNetwork(d *doctorRun, component, python string, env map[string]s
 		}
 	}
 	url := serverAPIURL(env)
-	out, err := runNetworkProbe(python, env, url, networkProbeTimeout)
+	out, err := networkProbe(python, env, url, networkProbeTimeout)
 	d.report.artifact(sanitizeArtifactName(component)+"/network-probe.txt", fmt.Sprintf("GET %s\n%s\n", url, out))
 	if err != nil {
-		d.report.add(component, "server network", StatusFail, fmt.Sprintf("%s: %s", url, truncate(err.Error(), 300))).
-			hint(networkHint(err.Error(), envFile))
+		c := d.report.add(component, "server network", StatusFail, fmt.Sprintf("%s: %s", url, truncate(err.Error(), 300)))
+		c.hint(networkHint(err.Error(), envFile))
+		if isConnectFailure(err.Error()) && !hasProxyEnv(env) {
+			tryProxyFix(d, c, python, env, envFile, url)
+		}
 		return
 	}
 	d.report.add(component, "server network", StatusOK, fmt.Sprintf("%s reachable from the server's Python runtime (%s)", url, out))
+}
+
+// tryProxyFix handles the most common corporate-network failure: Python
+// ignores the OS proxy settings the browser and CLI use. If the OS has a
+// proxy configured and the probe succeeds through it, the check becomes
+// auto-fixable by writing that proxy to .env. Nothing is written here.
+func tryProxyFix(d *doctorRun, c *DoctorCheck, python string, env map[string]string, envFile, url string) {
+	proxy := systemProxyLookup(python)
+	if proxy == "" {
+		return
+	}
+	withProxy := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		withProxy[k] = v
+	}
+	withProxy[envHTTPSProxy] = proxy
+	out, err := networkProbe(python, withProxy, url, networkProbeTimeout)
+	masked := maskURLUserinfo(proxy)
+	if masked != proxy {
+		d.report.secrets = append(d.report.secrets, proxy)
+	}
+	d.report.artifact("scanner/network-probe-system-proxy.txt", fmt.Sprintf("GET %s via %s\n%s\n", url, masked, out))
+	if err != nil {
+		c.hint(c.Remediation + "\nThe system proxy " + masked + " was tried and also failed: " + truncate(err.Error(), 200))
+		return
+	}
+	d.report.envFix = &envFix{EnvFile: envFile, Vars: [][2]string{{envHTTPSProxy, proxy}}}
+	c.fix(FixSetProxy, "Your system proxy "+masked+" works but the MCP server doesn't use it. "+
+		"armis-cli mcp doctor --fix adds HTTPS_PROXY="+masked+" to "+envFile+"; then restart VS Code.")
 }
 
 // probe runs a live MCP session for launch and reports the handshake, tool

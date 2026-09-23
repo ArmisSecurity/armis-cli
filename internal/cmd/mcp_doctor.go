@@ -46,7 +46,8 @@ Windows Group Policy that disable MCP or Agent mode, and VS Code's own MCP log
 for the server.
 
 Every failing check prints how to fix it. --fix repairs what the CLI can
-(stale or missing registrations, a broken venv) and re-runs the checks.
+(stale or missing registrations, a broken venv, a system proxy the server
+isn't using) and re-runs the checks.
 --bundle writes a zip with the full diagnostics, credentials removed, to send
 to support.
 
@@ -165,22 +166,31 @@ func applyDoctorFixes(out io.Writer, report *install.DoctorReport) (bool, error)
 		return false, nil
 	}
 
-	force := false
 	for _, f := range fixes {
-		if f == install.FixReinstall {
-			force = true
+		switch f {
+		case install.FixSetProxy:
+			desc, err := report.ApplyEnvFix()
+			if err != nil {
+				return true, fmt.Errorf("repair failed: %w", err)
+			}
+			_, _ = fmt.Fprintf(out, "\nConfigured the MCP server's proxy: %s\nRestart VS Code (or your editor) so the server picks it up.\n", desc)
+		case install.FixReinstall, install.FixReregister:
+			force := f == install.FixReinstall
+			if force {
+				_, _ = fmt.Fprintln(out, "\nReinstalling the MCP server and re-registering editors...")
+			} else {
+				_, _ = fmt.Fprintln(out, "\nRe-registering editors...")
+			}
+			if err := mcpDoctorUpdate(force, false); err != nil {
+				return true, fmt.Errorf("repair failed: %w", err)
+			}
 		}
-	}
-	if force {
-		_, _ = fmt.Fprintln(out, "\nReinstalling the MCP server and re-registering editors...")
-	} else {
-		_, _ = fmt.Fprintln(out, "\nRe-registering editors...")
-	}
-	if err := performMCPUpdate(force, false); err != nil {
-		return true, fmt.Errorf("repair failed: %w", err)
 	}
 	return true, nil
 }
+
+// mcpDoctorUpdate is performMCPUpdate, swappable in tests.
+var mcpDoctorUpdate = performMCPUpdate
 
 func printMCPDoctorJSON(cmd *cobra.Command, report *install.DoctorReport) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())

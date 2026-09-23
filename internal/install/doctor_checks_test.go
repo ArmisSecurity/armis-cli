@@ -520,3 +520,134 @@ func TestMaskURLUserinfo(t *testing.T) {
 		t.Errorf("maskURLUserinfo() = %q", got)
 	}
 }
+
+func TestSetEnvFileVars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	mustWrite(t, path, "\xEF\xBB\xBF# creds\r\nARMIS_CLIENT_ID=old\r\nSSL_CERT_FILE=/ca.pem\r\n")
+
+	if err := SetEnvFileVars(path, [][2]string{{"ARMIS_CLIENT_ID", "new"}, {"HTTPS_PROXY", "http://p:8080"}}); err != nil {
+		t.Fatalf("SetEnvFileVars() error = %v", err)
+	}
+	b, _ := os.ReadFile(path) //nolint:gosec // test temp dir
+	want := "# creds\nARMIS_CLIENT_ID=new\nSSL_CERT_FILE=/ca.pem\nHTTPS_PROXY=http://p:8080\n"
+	if string(b) != want {
+		t.Errorf("content = %q, want %q", b, want)
+	}
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Errorf("no backup written: %v", err)
+	}
+	if err := SetEnvFileVars(path, [][2]string{{"X", "a\nB=c"}}); err == nil {
+		t.Error("SetEnvFileVars() accepted a value with a newline")
+	}
+}
+
+// TestWriteEnvFromValuesKeepsOtherVars pins that re-entering credentials
+// doesn't drop a proxy or CA setting the doctor (or the user) added.
+func TestWriteEnvFromValuesKeepsOtherVars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	mustWrite(t, path, "ARMIS_CLIENT_ID=a\nARMIS_CLIENT_SECRET=b\nHTTPS_PROXY=http://p:8080\n")
+	if err := WriteEnvFromValues(path, "c", "d"); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := parseEnvFile(path)
+	if env["ARMIS_CLIENT_ID"] != "c" || env["ARMIS_CLIENT_SECRET"] != "d" || env["HTTPS_PROXY"] != "http://p:8080" {
+		t.Errorf("env = %v", env)
+	}
+}
+
+// stubNetwork replaces the network probe and system proxy lookup. probe
+// receives the env the probe would run with.
+func stubNetwork(t *testing.T, proxy string, probe func(env map[string]string) (string, error)) {
+	t.Helper()
+	origProbe, origLookup := networkProbe, systemProxyLookup
+	networkProbe = func(_ string, env map[string]string, _ string, _ time.Duration) (string, error) { return probe(env) }
+	systemProxyLookup = func(string) string { return proxy }
+	t.Cleanup(func() { networkProbe, systemProxyLookup = origProbe, origLookup })
+}
+
+func TestCheckServerNetworkProxyFix(t *testing.T) {
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "SSL_CERT_FILE"} {
+		t.Setenv(k, "")
+	}
+	connectErr := errors.New("ERR ConnectError [Errno 11001] getaddrinfo failed (CA: certifi)")
+	viaProxy := func(env map[string]string) (string, error) {
+		if env["HTTPS_PROXY"] != "" {
+			return "HTTP 401 (CA: certifi)", nil
+		}
+		return connectErr.Error(), connectErr
+	}
+
+	t.Run("system proxy works", func(t *testing.T) {
+		stubNetwork(t, "http://user:pw@proxy.corp:8080", viaProxy)
+		envFile := filepath.Join(t.TempDir(), ".env")
+		mustWrite(t, envFile, "ARMIS_CLIENT_ID=id\n")
+
+		d := newDoctorRun(DoctorOptions{})
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, envFile)
+		c := wantStatus(t, checkMap(d.report), "scanner/server network", StatusFail)
+		if c.Fix != FixSetProxy || strings.Contains(c.Remediation, "pw") {
+			t.Errorf("check = %+v, want FixSetProxy with the password masked", c)
+		}
+		if f := d.report.Fixes(); len(f) != 1 || f[0] != FixSetProxy {
+			t.Fatalf("Fixes() = %v", f)
+		}
+		desc, err := d.report.ApplyEnvFix()
+		if err != nil || strings.Contains(desc, "pw") {
+			t.Fatalf("ApplyEnvFix() = %q, %v", desc, err)
+		}
+		env, _ := parseEnvFile(envFile)
+		if env["HTTPS_PROXY"] != "http://user:pw@proxy.corp:8080" || env["ARMIS_CLIENT_ID"] != "id" { // #nosec G101 -- test fixture
+			t.Errorf(".env after fix = %v", env)
+		}
+	})
+
+	t.Run("system proxy also fails", func(t *testing.T) {
+		stubNetwork(t, "http://proxy.corp:8080", func(map[string]string) (string, error) { return connectErr.Error(), connectErr })
+		d := newDoctorRun(DoctorOptions{})
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env")
+		c := wantStatus(t, checkMap(d.report), "scanner/server network", StatusFail)
+		if c.Fix != FixNone || !strings.Contains(c.Remediation, "also failed") {
+			t.Errorf("check = %+v", c)
+		}
+	})
+
+	t.Run("proxy already configured", func(t *testing.T) {
+		stubNetwork(t, "http://proxy.corp:8080", viaProxy)
+		d := newDoctorRun(DoctorOptions{})
+		checkServerNetwork(d, "scanner", "python", map[string]string{"HTTPS_PROXY": "http://other:1"}, "/p/.env")
+		if c := checkMap(d.report)["scanner/server network"]; c.Fix != FixNone {
+			t.Errorf("proxy fix offered although HTTPS_PROXY is set: %+v", c)
+		}
+	})
+
+	t.Run("reachable", func(t *testing.T) {
+		stubNetwork(t, "", func(map[string]string) (string, error) { return "HTTP 401 (CA: system store)", nil })
+		d := newDoctorRun(DoctorOptions{})
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env")
+		wantStatus(t, checkMap(d.report), "scanner/server network", StatusOK)
+	})
+}
+
+func TestNetworkHintTLSByCASource(t *testing.T) {
+	old := networkHint("ERR ConnectError [SSL: CERTIFICATE_VERIFY_FAILED] (CA: certifi)", "/p/.env")
+	if !strings.Contains(old, "armis-cli mcp update") {
+		t.Errorf("certifi hint = %q, want update suggestion", old)
+	}
+	sys := networkHint("ERR ConnectError [SSL: CERTIFICATE_VERIFY_FAILED] (CA: system store)", "/p/.env")
+	if strings.Contains(sys, "mcp update") || !strings.Contains(sys, "system certificate store") {
+		t.Errorf("system-store hint = %q", sys)
+	}
+}
+
+func TestIsConnectFailure(t *testing.T) {
+	for out, want := range map[string]bool{
+		"ERR ConnectError [Errno 11001] getaddrinfo failed":                           true,
+		"ERR ConnectTimeout timed out":                                                true,
+		"ERR ConnectError [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed": false,
+		"ERR ProxyError 407":                                                          false,
+	} {
+		if got := isConnectFailure(out); got != want {
+			t.Errorf("isConnectFailure(%q) = %v, want %v", out, got, want)
+		}
+	}
+}
