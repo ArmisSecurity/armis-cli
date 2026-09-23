@@ -266,12 +266,13 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 		return nil, fmt.Errorf("writing %s request: %w", method, err)
 	}
 
-	timer := time.NewTimer(time.Until(s.deadline))
+	wait := time.Until(s.deadline)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
 		select {
 		case <-timer.C:
-			return nil, fmt.Errorf("timed out waiting for %s response after %s", method, timeout)
+			return nil, fmt.Errorf("timed out waiting for %s response after %s", method, wait.Round(time.Millisecond))
 		case err := <-s.readErr:
 			s.readErr <- err // keep it for any later call
 			if errors.Is(err, bufio.ErrTooLong) {

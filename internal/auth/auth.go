@@ -144,6 +144,13 @@ func (p *AuthProvider) Expiry() time.Time {
 // If ClientID and ClientSecret are set, uses JWT auth with the specified base URL.
 // Otherwise falls back to legacy Basic auth with Token.
 func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
+	return NewAuthProviderWithContext(context.Background(), config)
+}
+
+// NewAuthProviderWithContext creates an AuthProvider from configuration,
+// using ctx for the initial JWT token exchange so callers can bound or
+// cancel it. Otherwise behaves like NewAuthProvider.
+func NewAuthProviderWithContext(ctx context.Context, config AuthConfig) (*AuthProvider, error) {
 	p := &AuthProvider{
 		config: config,
 	}
@@ -169,8 +176,7 @@ func NewAuthProvider(config AuthConfig) (*AuthProvider, error) {
 		}
 		p.authClient = authClient
 
-		// Initial token exchange (use background context for initialization)
-		if err := p.exchangeCredentials(context.Background()); err != nil {
+		if err := p.exchangeCredentials(ctx); err != nil {
 			return nil, fmt.Errorf("failed to authenticate: %w", err)
 		}
 	} else if config.Token != "" {

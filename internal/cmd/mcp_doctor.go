@@ -138,8 +138,8 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 
 // doctorAuthCheck exchanges client credentials for a token against the same
 // API base URL the rest of the CLI uses.
-func doctorAuthCheck(_ context.Context, id, secret string) error {
-	_, err := auth.NewAuthProvider(auth.AuthConfig{
+func doctorAuthCheck(ctx context.Context, id, secret string) error {
+	_, err := auth.NewAuthProviderWithContext(ctx, auth.AuthConfig{
 		ClientID:     id,
 		ClientSecret: secret,
 		BaseURL:      getAPIBaseURL(),

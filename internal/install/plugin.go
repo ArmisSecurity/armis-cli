@@ -556,8 +556,10 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 
 // SetEnvFileVars sets vars (in order) in the .env file at envPath, replacing
 // existing assignments of the same keys in place and appending new ones.
-// Comments, blank lines, and other variables are preserved; a UTF-8 BOM is
-// dropped. An existing file is backed up to .env.bak, and the write is atomic.
+// Full-line comments, blank lines, and other variables are preserved; a
+// UTF-8 BOM is dropped. An inline comment on a replaced assignment's line is
+// not preserved, since the new value replaces the whole line. An existing
+// file is backed up to .env.bak, and the write is atomic.
 // armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install/doctor functions
 func SetEnvFileVars(envPath string, vars [][2]string) error {
 	for _, kv := range vars {
