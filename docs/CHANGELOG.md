@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.23.0] - 2026-09-23
+
+### Added
+
+- `mcp doctor`: new subcommand diagnoses a broken or missing MCP setup by inspecting plugin files, credentials, editor registrations, Claude Code's plugin registry, and Codex's `config.toml`, optionally performing a live initialize handshake against each server. `install` now points users at it when credentials are configured or warnings occur. (#324)
+- `mcp update`: new subcommand reads the install manifest to update the plugin and re-register it across all previously configured editors, without requiring the user to re-specify editor names. (#324)
+
+---
+
 ## [1.22.2] - 2026-09-16
 
 ### Fixed
@@ -722,7 +731,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.2...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.23.0...HEAD
+[1.23.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.2...v1.23.0
 [1.22.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.1...v1.22.2
 [1.22.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.0...v1.22.1
 [1.22.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.21.0...v1.22.0
