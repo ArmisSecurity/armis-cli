@@ -84,11 +84,29 @@ type DoctorCheck struct {
 	Detail      string      `json:"detail"`
 	Remediation string      `json:"remediation,omitempty"`
 	Fix         FixAction   `json:"fix,omitempty"`
+	// Editor names the editor this check is about ("" for checks on the
+	// server itself), so the compact view can fold editors into one line.
+	Editor string `json:"editor,omitempty"`
+	// Summary is a short phrase for the compact view ("5 tools"). Checks
+	// without one are only counted there.
+	Summary string `json:"-"`
 }
 
 // hint attaches remediation text a user can act on without support.
 func (c *DoctorCheck) hint(remediation string) *DoctorCheck {
 	c.Remediation = remediation
+	return c
+}
+
+// short sets the check's phrase for the compact view.
+func (c *DoctorCheck) short(summary string) *DoctorCheck {
+	c.Summary = summary
+	return c
+}
+
+// forEditor tags the check as being about the named editor.
+func (c *DoctorCheck) forEditor(name string) *DoctorCheck {
+	c.Editor = name
 	return c
 }
 
@@ -118,6 +136,12 @@ type DoctorReport struct {
 func (r *DoctorReport) add(component, name string, status CheckStatus, detail string) *DoctorCheck {
 	r.Checks = append(r.Checks, DoctorCheck{Component: component, Name: name, Status: status, Detail: detail})
 	return &r.Checks[len(r.Checks)-1]
+}
+
+// addEditor appends a check about an editor's registration, named after the
+// editor.
+func (r *DoctorReport) addEditor(component, editor string, status CheckStatus, detail string) *DoctorCheck {
+	return r.add(component, editor, status, detail).forEditor(editor)
 }
 
 func (r *DoctorReport) artifact(name, content string) {
@@ -257,8 +281,8 @@ func (d *doctorRun) workspaceDir() string {
 }
 
 type probeOutcome struct {
-	label string // component/name of the check that ran it
-	ok    bool
+	component, name string // the check that ran it
+	ok              bool
 }
 
 func newDoctorRun(opts DoctorOptions) *doctorRun {
@@ -328,7 +352,7 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 		report.add(component, "plugin version", StatusWarn, "no installed version recorded").
 			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 	} else {
-		report.add(component, "plugin version", StatusOK, "v"+v)
+		report.add(component, "plugin version", StatusOK, "v"+v).short("v" + v)
 	}
 
 	if !isExecutableFile(pythonPath) {
@@ -402,7 +426,7 @@ func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
 	report := d.report
 
 	if k.SHA != "" {
-		report.add(component, "bridge commit", StatusOK, k.SHA)
+		report.add(component, "bridge commit", StatusOK, k.SHA).short("commit " + k.SHA[:min(len(k.SHA), 7)])
 	}
 
 	found := false
@@ -522,7 +546,8 @@ func checkAuth(d *doctorRun, component string, env map[string]string) {
 		}
 		return
 	}
-	d.report.add(component, "authentication", StatusOK, "client credentials accepted")
+	d.report.add(component, "authentication", StatusOK, "the client ID and secret in .env were accepted by the Armis API").
+		short("credentials accepted")
 }
 
 // checkServerNetwork runs the network probe with the server's own Python
@@ -546,7 +571,14 @@ func checkServerNetwork(d *doctorRun, component, python string, env map[string]s
 		}
 		return
 	}
-	d.report.add(component, "server network", StatusOK, fmt.Sprintf("%s reachable from the server's Python runtime (%s)", url, out))
+	// Any HTTP status proves reachability (the probe is unauthenticated, so
+	// it's usually 401); showing it next to a pass reads like an error. The
+	// status stays in the bundle's network-probe.txt.
+	detail := url + " reachable from the server's Python runtime"
+	if i := strings.Index(out, "(CA: "); i >= 0 {
+		detail += " " + strings.TrimSpace(out[i:])
+	}
+	d.report.add(component, "server network", StatusOK, detail).short("API reachable")
 }
 
 // tryProxyFix handles the most common corporate-network failure: Python
@@ -584,12 +616,21 @@ func tryProxyFix(d *doctorRun, c *DoctorCheck, python string, env map[string]str
 // launch identical to one already probed is reported by reference instead of
 // being spawned again.
 func (d *doctorRun) probe(component, label string, launch serverLaunch) {
-	report := d.report
 	named := func(n string) string {
 		if label == "" {
 			return n
 		}
 		return label + " " + n
+	}
+	add := func(name string, status CheckStatus, detail string) *DoctorCheck {
+		return d.report.add(component, named(name), status, detail).forEditor(label)
+	}
+	// Only the server's own launch contributes to the compact summary; an
+	// editor's probe passing is already implied by the editor's ✓.
+	short := func(c *DoctorCheck, summary string) {
+		if label == "" {
+			c.short(summary)
+		}
 	}
 
 	key := launch.key()
@@ -598,15 +639,20 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 		if !prev.ok {
 			status = StatusFail
 		}
-		report.add(component, named("launch"), status, "same launch command as "+prev.label+" (see above)")
+		ref := prev.name
+		if prev.component != component {
+			ref = prev.component + " " + ref
+		}
+		add("launch", status, fmt.Sprintf("same launch command as the %q check above", ref))
 		return
 	}
-	outcome := &probeOutcome{label: component + " / " + named("live handshake")}
+	outcome := &probeOutcome{component: component, name: named("live handshake")}
 	d.probes[key] = outcome
 
 	start := time.Now()
 	res, stderr, err := mcpHandshake(launch.Command, launch.Args, launch.Env, d.opts.Timeout)
 	elapsed := time.Since(start).Round(100 * time.Millisecond)
+	report := d.report
 	if stderr != "" {
 		report.artifact("stderr/"+sanitizeArtifactName(component+" "+named("live handshake"))+".txt",
 			"$ "+launch.commandLine()+"\n\n"+stderr+"\n")
@@ -617,7 +663,7 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 			detail += " — stderr: " + tail(stderr, 300)
 		}
 		hint, action := launchHint(err, stderr, launch)
-		report.add(component, named("live handshake"), StatusFail, detail).fix(action, hint)
+		add("live handshake", StatusFail, detail).fix(action, hint)
 		return
 	}
 	outcome.ok = true
@@ -631,33 +677,34 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 	}
 	detail += " in " + elapsed.String()
 	if elapsed > slowStartThreshold {
-		report.add(component, named("live handshake"), StatusWarn, detail+" (slow start)").
+		add("live handshake", StatusWarn, detail+" (slow start)").
 			hint("Slow starts are usually antivirus scanning the venv. If your editor gives up before the server is ready, ask IT to exclude " + filepath.Dir(filepath.Dir(filepath.Dir(launch.Command))) + " from real-time scanning.")
 	} else {
-		report.add(component, named("live handshake"), StatusOK, detail)
+		short(add("live handshake", StatusOK, detail), "starts in "+elapsed.String())
 	}
 
 	switch {
 	case res.ToolsErr != nil:
 		outcome.ok = false
-		report.add(component, named("tools"), StatusFail, "tools/list failed: "+res.ToolsErr.Error()).
+		add("tools", StatusFail, "tools/list failed: "+res.ToolsErr.Error()).
 			hint(launchHintText(res.ToolsErr, stderr, launch))
 	case len(res.Tools) == 0:
 		outcome.ok = false
-		report.add(component, named("tools"), StatusFail, "server started but exposes no tools").
+		add("tools", StatusFail, "server started but exposes no tools").
 			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 	default:
-		report.add(component, named("tools"), StatusOK, fmt.Sprintf("%d tools: %s", len(res.Tools), strings.Join(res.Tools, ", ")))
+		short(add("tools", StatusOK, fmt.Sprintf("%d tools: %s", len(res.Tools), strings.Join(res.Tools, ", "))),
+			fmt.Sprintf("%d tools", len(res.Tools)))
 	}
 
 	switch {
 	case res.DebugErr != nil:
 		outcome.ok = false
-		report.add(component, named("tool call"), StatusFail, debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
+		add("tool call", StatusFail, debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
 			hint(launchHintText(res.DebugErr, stderr, launch))
 	case res.DebugConfig != "":
 		report.artifact(sanitizeArtifactName(component)+"/debug_config.txt", res.DebugConfig+"\n")
-		report.add(component, named("tool call"), StatusOK, debugConfigTool+" succeeded — "+summarizeDebugConfig(res.DebugConfig))
+		add("tool call", StatusOK, debugConfigTool+" succeeded — "+summarizeDebugConfig(res.DebugConfig))
 	}
 }
 
@@ -715,7 +762,7 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 		// lookupEntry below and misreported as "entry not found".
 		content, err := readBoundedConfigFile(entry.ConfigFile)
 		if err != nil {
-			report.add(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err)).
+			report.addEditor(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err)).
 				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
 		}
@@ -741,14 +788,14 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 		if parseErr != nil {
 			// Not auto-fixable: re-registering would start from an empty map
 			// and drop every other server the user configured in this file.
-			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
+			report.addEditor(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
 				fix(FixBlocked, name+" ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			continue
 		}
 
 		launch, found := lookupEntry(entry.ConfigFile, entry.Format, identifier, d.workspaceDir())
 		if !found {
-			report.add(component, name, StatusWarn,
+			report.addEditor(component, name, StatusWarn,
 				fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", entry.ConfigFile)).
 				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
@@ -757,26 +804,26 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 		// lookupEntry understands every format the installer writes, so an
 		// entry with no command here can't be started by the editor.
 		if launch.Command == "" {
-			report.add(component, name, StatusFail,
+			report.addEditor(component, name, StatusFail,
 				fmt.Sprintf("entry found in %s but it has no command", entry.ConfigFile)).
 				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
 		}
 		if !isExecutableFile(launch.Command) {
-			report.add(component, name, StatusFail,
+			report.addEditor(component, name, StatusFail,
 				fmt.Sprintf("entry found in %s but its command does not exist: %s — likely stale after a reinstall or profile/home directory change", entry.ConfigFile, launch.Command)).
 				fix(FixReregister, "Point the entry at the current install: armis-cli mcp doctor --fix")
 			continue
 		}
 		if launch.EnvFile != "" {
 			if _, err := os.Stat(launch.EnvFile); err != nil {
-				report.add(component, name, StatusFail,
+				report.addEditor(component, name, StatusFail,
 					fmt.Sprintf("entry in %s references an envFile that does not exist: %s", entry.ConfigFile, launch.EnvFile)).
 					fix(FixReregister, "Point the entry at the current install: armis-cli mcp doctor --fix")
 				continue
 			}
 		}
-		report.add(component, name, StatusOK, entry.ConfigFile)
+		report.addEditor(component, name, StatusOK, entry.ConfigFile)
 
 		if d.opts.Handshake {
 			d.probe(component, name, launch)
@@ -789,7 +836,7 @@ func checkClaudeSection(report *DoctorReport, component string, claude *Manifest
 		return
 	}
 	if _, err := os.Stat(claude.CacheDir); err != nil {
-		report.add(component, "Claude Code", StatusFail, fmt.Sprintf("cache dir missing: %s", claude.CacheDir)).
+		report.addEditor(component, "Claude Code", StatusFail, fmt.Sprintf("cache dir missing: %s", claude.CacheDir)).
 			fix(FixReregister, "Reinstall the Claude Code plugin: armis-cli mcp doctor --fix")
 		return
 	}
@@ -797,13 +844,13 @@ func checkClaudeSection(report *DoctorReport, component string, claude *Manifest
 	installed, enabled := claudeRegistryStatus(homeDir(".claude"), pluginKeyPrefix)
 	switch {
 	case !installed:
-		report.add(component, "Claude Code", StatusWarn, "not found in installed_plugins.json").
+		report.addEditor(component, "Claude Code", StatusWarn, "not found in installed_plugins.json").
 			fix(FixReregister, "Reinstall the Claude Code plugin: armis-cli mcp doctor --fix")
 	case !enabled:
-		report.add(component, "Claude Code", StatusWarn, "installed but not enabled in settings.json").
+		report.addEditor(component, "Claude Code", StatusWarn, "installed but not enabled in settings.json").
 			hint("Enable it in Claude Code with /plugin, or re-run: armis-cli mcp doctor --fix")
 	default:
-		report.add(component, "Claude Code", StatusOK, claude.CacheDir)
+		report.addEditor(component, "Claude Code", StatusOK, claude.CacheDir)
 	}
 }
 
@@ -875,17 +922,17 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 	}
 	content, err := readBoundedConfigFile(codex.ConfigFile)
 	if err != nil {
-		report.add(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err)).
+		report.addEditor(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err)).
 			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 		return
 	}
 	if !strings.Contains(strings.ToLower(string(content)), strings.ToLower(identifier)) {
-		report.add(component, "Codex CLI", StatusWarn,
+		report.addEditor(component, "Codex CLI", StatusWarn,
 			fmt.Sprintf("registered at %s but entry not found — was it edited or removed?", codex.ConfigFile)).
 			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 		return
 	}
-	report.add(component, "Codex CLI", StatusOK, codex.ConfigFile)
+	report.addEditor(component, "Codex CLI", StatusOK, codex.ConfigFile)
 }
 
 // lookupEntryCommand finds the server entry matching identifier in configFile

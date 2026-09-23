@@ -187,8 +187,14 @@ func TestProbeReportsHandshakeToolsAndToolCall(t *testing.T) {
 	}
 	// The identical second launch is reported by reference, not re-spawned.
 	dup := wantStatus(t, checks, "scanner/Cursor launch", StatusOK)
-	if !strings.Contains(dup.Detail, "same launch command") {
+	if !strings.Contains(dup.Detail, `same launch command as the "live handshake" check`) {
 		t.Errorf("dedup detail = %q", dup.Detail)
+	}
+	if dup.Editor != "Cursor" || tools.Editor != "" {
+		t.Errorf("editor tags = %q/%q, want Cursor/empty", dup.Editor, tools.Editor)
+	}
+	if !strings.HasSuffix(tools.Summary, " tools") {
+		t.Errorf("tools summary = %q", tools.Summary)
 	}
 	if _, ok := checks["scanner/Cursor live handshake"]; ok {
 		t.Error("identical launch was probed twice")
@@ -730,6 +736,12 @@ func TestCheckServerNetworkProxyFix(t *testing.T) {
 		d := newDoctorRun(DoctorOptions{})
 		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env")
 		wantStatus(t, checkMap(d.report), "scanner/server network", StatusOK)
+		// The unauthenticated probe's 401 proves reachability; it must not
+		// appear next to a pass.
+		c := checkMap(d.report)["scanner/server network"]
+		if strings.Contains(c.Detail, "401") || !strings.Contains(c.Detail, "(CA: system store)") {
+			t.Errorf("detail = %q, want the CA source and no HTTP status", c.Detail)
+		}
 	})
 }
 

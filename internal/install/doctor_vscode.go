@@ -175,17 +175,17 @@ func checkVSCodeVariant(d *doctorRun, v vscodeVariant, workspace, pluginDir, sni
 		}
 		name := v.Name + " (" + f.Source.Label + ")"
 		if f.Launch.Command == "" {
-			report.add(componentVSCode, name, StatusFail, f.Source.Path+": entry has no command").
+			report.addEditor(componentVSCode, name, StatusFail, f.Source.Path+": entry has no command").
 				hint(v.Name + " can't start an entry with no command. Delete it from " + f.Source.Path + ", or replace it with:\n" + snippet)
 			continue
 		}
 		if !isExecutableFile(f.Launch.Command) {
-			report.add(componentVSCode, name, StatusFail,
+			report.addEditor(componentVSCode, name, StatusFail,
 				fmt.Sprintf("%s: command does not exist: %s", f.Source.Path, f.Launch.Command)).
 				hint("This entry is stale. Delete it from " + f.Source.Path + ", or replace it with:\n" + snippet)
 			continue
 		}
-		report.add(componentVSCode, name, StatusOK, f.Source.Path)
+		report.addEditor(componentVSCode, name, StatusOK, f.Source.Path)
 		if d.opts.Handshake {
 			d.probe(componentVSCode, name, f.Launch)
 		}

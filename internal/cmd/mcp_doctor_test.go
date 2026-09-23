@@ -20,7 +20,7 @@ func TestPrintMCPDoctorPlain(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	printMCPDoctorPlain(&out, report, true)
+	printMCPDoctorPlain(&out, report, true, true)
 	got := out.String()
 
 	for _, want := range []string{
@@ -43,11 +43,75 @@ func TestPrintMCPDoctorPlain(t *testing.T) {
 		t.Errorf("columns not aligned to the longest name:\n%s", got)
 	}
 
+	if strings.Contains(got, "--verbose") {
+		t.Error("--verbose suggested in verbose output")
+	}
+
 	out.Reset()
-	printMCPDoctorPlain(&out, report, false)
+	printMCPDoctorPlain(&out, report, false, true)
 	if strings.Contains(out.String(), "--fix") {
 		t.Error("--fix suggested after --fix already ran")
 	}
+}
+
+func TestPrintMCPDoctorPlainCompact(t *testing.T) {
+	healthy := []install.DoctorCheck{
+		{Component: "scanner", Name: "plugin version", Status: install.StatusOK, Detail: "v1.2.2", Summary: "v1.2.2"},
+		{Component: "scanner", Name: "python venv", Status: install.StatusOK, Detail: "/venv/python"},
+		{Component: "scanner", Name: "tools", Status: install.StatusOK, Detail: "5 tools: a, b", Summary: "5 tools"},
+		{Component: "scanner", Name: "Cursor", Editor: "Cursor", Status: install.StatusOK, Detail: "/cursor/mcp.json"},
+		{Component: "scanner", Name: "Cursor launch", Editor: "Cursor", Status: install.StatusOK, Detail: "same launch command"},
+		{Component: "scanner", Name: "Antigravity", Editor: "Antigravity", Status: install.StatusOK, Detail: "/ag/mcp_config.json"},
+		{Component: "vscode", Name: "VS Code settings", Status: install.StatusOK, Detail: "MCP and Agent mode not disabled"},
+		{Component: "vscode", Name: "Copilot", Status: install.StatusInfo, Detail: "can't be verified", Remediation: "1. Switch to Agent mode"},
+	}
+
+	t.Run("all passing", func(t *testing.T) {
+		var out bytes.Buffer
+		printMCPDoctorPlain(&out, &install.DoctorReport{Checks: healthy}, true, false)
+		got := out.String()
+		for _, want := range []string{
+			"scanner  v1.2.2 · 5 tools\n",
+			"editors  Antigravity, Cursor\n",
+			"vscode   MCP and Agent mode not disabled\n",
+			"7 passed, 0 warnings, 0 failed",
+			"notes on Copilot: armis-cli mcp doctor --verbose",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("output missing %q:\n%s", want, got)
+			}
+		}
+		for _, hidden := range []string{"/venv/python", "same launch command", "Agent mode\n", "--bundle"} {
+			if strings.Contains(got, hidden) {
+				t.Errorf("compact output shows %q:\n%s", hidden, got)
+			}
+		}
+	})
+
+	t.Run("problems expand", func(t *testing.T) {
+		checks := append([]install.DoctorCheck(nil), healthy...)
+		checks[1] = install.DoctorCheck{Component: "scanner", Name: "python venv", Status: install.StatusFail,
+			Detail: "missing", Remediation: "Rebuild the venv"}
+		checks[4] = install.DoctorCheck{Component: "scanner", Name: "Cursor launch", Editor: "Cursor", Status: install.StatusFail,
+			Detail: "exited", Remediation: "Check Cursor"}
+		var out bytes.Buffer
+		printMCPDoctorPlain(&out, &install.DoctorReport{Checks: checks}, true, false)
+		got := out.String()
+		for _, want := range []string{
+			"scanner  python venv: missing\n      → Rebuild the venv\n",
+			"editors  Antigravity\n",
+			"editors  Cursor launch: exited\n      → Check Cursor\n",
+			"--bundle",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("output missing %q:\n%s", want, got)
+			}
+		}
+		// A failing component shows its problems, not its summary.
+		if strings.Contains(got, "v1.2.2 · 5 tools") {
+			t.Errorf("summary shown for a failing component:\n%s", got)
+		}
+	})
 }
 
 func stubDoctorUpdate(t *testing.T) *[]bool {
@@ -163,7 +227,7 @@ func TestRunMCPDoctorWritesBundle(t *testing.T) {
 }
 
 func TestMCPDoctorFlags(t *testing.T) {
-	for name, def := range map[string]string{"fix": "false", "bundle": "false", "bundle-path": "", "no-handshake": "false"} {
+	for name, def := range map[string]string{"fix": "false", "bundle": "false", "bundle-path": "", "no-handshake": "false", "verbose": "false"} {
 		f := mcpDoctorCmd.Flags().Lookup(name)
 		if f == nil {
 			t.Errorf("mcp doctor is missing --%s", name)
