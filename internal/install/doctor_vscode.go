@@ -143,7 +143,7 @@ func checkVSCodeVariant(d *doctorRun, v vscodeVariant, workspace, pluginDir, sni
 		servers := vscodeServers(obj, src.InSettings)
 		name, entry, ok := findServer(servers, mcpServerName)
 		if !ok {
-			if strings.HasPrefix(src.Label, "profile") && servers != nil {
+			if strings.HasPrefix(src.Label, "profile") && len(servers) > 0 {
 				profilesWithout = append(profilesWithout, src)
 			}
 			continue
@@ -178,7 +178,8 @@ func checkVSCodeVariant(d *doctorRun, v vscodeVariant, workspace, pluginDir, sni
 		}
 		name := v.Name + " (" + f.Source.Label + ")"
 		if f.Launch.Command == "" {
-			report.add(componentVSCode, name, StatusWarn, f.Source.Path+": entry has no command")
+			report.add(componentVSCode, name, StatusFail, f.Source.Path+": entry has no command").
+				hint(v.Name + " can't start an entry with no command. Delete it from " + f.Source.Path + ", or replace it with:\n" + snippet)
 			continue
 		}
 		if !isExecutableFile(f.Launch.Command) {

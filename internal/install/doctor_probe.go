@@ -181,11 +181,20 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 		readErr:  make(chan error, 1),
 		deadline: time.Now().Add(timeout),
 	}
+	// done unblocks the reader once the session is over, so a server that
+	// keeps writing after the last call can't park the goroutine on a full
+	// channel forever. Dropping lines instead could drop the response itself.
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), maxHandshakeLineSize)
 		for scanner.Scan() {
-			s.lines <- append([]byte(nil), scanner.Bytes()...)
+			select {
+			case s.lines <- append([]byte(nil), scanner.Bytes()...):
+			case <-done:
+				return
+			}
 		}
 		s.readErr <- scanner.Err()
 	}()

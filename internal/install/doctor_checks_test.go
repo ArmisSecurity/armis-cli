@@ -413,6 +413,25 @@ func TestCheckVSCodeFindsConfigProblems(t *testing.T) {
 	wantStatus(t, checks, "vscode/Copilot", StatusInfo)
 }
 
+func TestCheckVSCodeEmptyProfileAndMissingCommand(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "User")
+	mustWrite(t, filepath.Join(user, "mcp.json"), `{"servers": {"armis-appsec": {"type": "stdio"}}}`)
+	mustWrite(t, filepath.Join(user, "profiles", "abc123", "mcp.json"), `{"servers": {}}`)
+	stubVSCode(t, []vscodeVariant{{Name: "VS Code", Root: root}})
+
+	d := newDoctorRun(DoctorOptions{WorkspaceDir: t.TempDir()})
+	checkVSCode(d, "/plugin", false)
+	checks := checkMap(d.report)
+
+	if c := wantStatus(t, checks, "vscode/VS Code (user mcp.json)", StatusFail); c.Remediation == "" {
+		t.Error("entry with no command has no remediation")
+	}
+	if c, ok := checks["vscode/VS Code profile"]; ok {
+		t.Errorf("profile check = %+v, want none for a profile with an empty servers object", c)
+	}
+}
+
 func TestCheckVSCodeNotRegistered(t *testing.T) {
 	stable, insiders := t.TempDir(), t.TempDir()
 	for _, root := range []string{stable, insiders} {
