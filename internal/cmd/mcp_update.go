@@ -47,7 +47,13 @@ func runMCPUpdate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("reading --with-knowledge flag: %w", err)
 	}
+	return performMCPUpdate(force, withKnowledgeFlag)
+}
 
+// performMCPUpdate re-fetches the plugin (a full reinstall when force is set)
+// and re-registers every editor recorded in the install manifest. Shared by
+// `mcp update` and `mcp doctor --fix`.
+func performMCPUpdate(force, withKnowledgeFlag bool) error {
 	ei := install.NewEditorInstaller()
 	manifest := install.ReadManifest(ei.PluginDir())
 	if manifest == nil {

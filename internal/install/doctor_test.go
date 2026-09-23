@@ -2,7 +2,9 @@ package install
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,19 +24,54 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// runMCPHelperProcess acts as a fake MCP stdio server. It answers each
+// request line by method so the doctor's full session (initialize,
+// tools/list, tools/call) can be exercised.
 func runMCPHelperProcess(mode string) {
-	switch mode {
-	case "hang":
+	if mode == "hang" {
 		select {}
-	case "garbage":
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, "not json")
-	case "error":
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"boom"}}`)
-	default: // "ok"
-		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
-		_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}}`)
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req struct {
+			ID     *int   `json:"id"`
+			Method string `json:"method"`
+		}
+		if json.Unmarshal(line, &req) != nil || req.ID == nil {
+			continue // notification
+		}
+		reply := func(body string) {
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%d,%s}`+"\n", *req.ID, body)
+		}
+		switch {
+		case mode == "garbage":
+			_, _ = fmt.Fprintln(os.Stdout, "not json")
+			return
+		case mode == "error":
+			reply(`"error":{"code":-1,"message":"boom"}`)
+			return
+		case req.Method == "initialize":
+			// A log notification before the response must be skipped.
+			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"notifications/message","params":{}}`)
+			reply(`"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}`)
+		case req.Method == "tools/list" && mode == "garbage-after-init":
+			_, _ = fmt.Fprintln(os.Stdout, "not json")
+			return
+		case req.Method == "tools/list" && mode == "notools":
+			reply(`"result":{"tools":[]}`)
+		case req.Method == "tools/list":
+			reply(`"result":{"tools":[{"name":"scan_code"},{"name":"debug_config"}]}`)
+		case req.Method == "tools/call" && mode == "toolerror":
+			reply(`"result":{"content":[{"type":"text","text":"config broken"}],"isError":true}`)
+		case req.Method == "tools/call":
+			reply(`"result":{"content":[{"type":"text","text":"Auth: configured\nAuth method: JWT\nAPI URL: https://moose.armis.com/api/v1\nEnv: prod"}]}`)
+		default:
+			reply(`"error":{"code":-32601,"message":"method not found"}`)
+		}
 	}
 }
 
@@ -45,6 +82,12 @@ func TestMCPHandshakeSuccess(t *testing.T) {
 	}
 	if res.ServerName != "fake-mcp" || res.ServerVersion != "9.9.9" {
 		t.Errorf("mcpHandshake() result = %+v, want fake-mcp v9.9.9", res)
+	}
+	if res.ToolsErr != nil || strings.Join(res.Tools, ",") != "scan_code,debug_config" {
+		t.Errorf("mcpHandshake() tools = %v (err %v), want scan_code,debug_config", res.Tools, res.ToolsErr)
+	}
+	if res.DebugErr != nil || !strings.Contains(res.DebugConfig, "Auth method: JWT") {
+		t.Errorf("mcpHandshake() debug_config = %q (err %v), want Auth method line", res.DebugConfig, res.DebugErr)
 	}
 }
 
@@ -59,6 +102,40 @@ func TestMCPHandshakeInvalidResponse(t *testing.T) {
 	_, _, err := mcpHandshake(os.Args[0], nil, map[string]string{"ARMIS_TEST_MCP_HELPER": "garbage"}, 5*time.Second)
 	if err == nil {
 		t.Fatal("mcpHandshake() error = nil, want error from invalid JSON response")
+	}
+}
+
+// TestMCPHandshakeInvalidResponseAfterInit pins that non-JSON stdout is
+// caught even once the session is past initialize, not just before it: a
+// server that starts clean but later corrupts its own stdout stream should
+// surface as a tools error rather than being silently skipped forever.
+func TestMCPHandshakeInvalidResponseAfterInit(t *testing.T) {
+	res, _, err := mcpHandshake(os.Args[0], nil, map[string]string{"ARMIS_TEST_MCP_HELPER": "garbage-after-init"}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("mcpHandshake() error = %v, want initialize to still succeed", err)
+	}
+	if res.ToolsErr == nil {
+		t.Fatal("mcpHandshake() ToolsErr = nil, want error from invalid JSON on stdout during tools/list")
+	}
+}
+
+// TestMCPSessionCallClampsNegativeWait pins that a deadline already in the
+// past (because earlier steps in the same session consumed the whole
+// timeout) produces a sensible "after 0s"-style message, not a confusing
+// negative duration.
+func TestMCPSessionCallClampsNegativeWait(t *testing.T) {
+	s := &mcpSession{
+		stdin:    io.Discard,
+		lines:    make(chan []byte, 1),
+		readErr:  make(chan error, 1),
+		deadline: time.Now().Add(-time.Second),
+	}
+	_, err := s.call(1, "initialize", map[string]interface{}{}, time.Second)
+	if err == nil {
+		t.Fatal("call() error = nil, want a timeout error")
+	}
+	if strings.Contains(err.Error(), "-") {
+		t.Errorf("call() error = %q, want no negative duration in the message", err.Error())
 	}
 }
 
@@ -204,19 +281,35 @@ func TestCheckManifestEditors(t *testing.T) {
 		},
 	})
 
+	// Malformed JSON: not auto-fixable, since re-registering reads this file
+	// as an empty map and would drop every other server it configures.
+	invalidFile := filepath.Join(dir, "invalid.json")
+	_ = os.WriteFile(invalidFile, []byte(`{"mcpServers": {`), 0o600)
+
+	// Entry present by name but with no command: the editor can't start it.
+	noCommandFile := filepath.Join(dir, "no-command.json")
+	mustWriteJSON(t, noCommandFile, map[string]interface{}{
+		"mcpServers": map[string]interface{}{"armis-appsec": map[string]interface{}{"args": []string{"-m", "x"}}},
+	})
+
 	editors := map[EditorID]ManifestEntry{
 		EditorCursor:   {ConfigFile: presentFile, Format: "mcpServers"},
 		EditorWindsurf: {ConfigFile: staleFile, Format: "mcpServers"},
 		EditorZed:      {ConfigFile: missingFile, Format: "mcpServers"},
 		EditorVSCode:   {ConfigFile: deadCommandFile, Format: "mcpServers"},
+		EditorCline:    {ConfigFile: invalidFile, Format: "mcpServers"},
+		EditorAmazonQ:  {ConfigFile: noCommandFile, Format: "mcpServers"},
 	}
 
-	report := &DoctorReport{}
-	checkManifestEditors(report, "scanner", "armis-appsec", editors)
+	d := newDoctorRun(DoctorOptions{})
+	checkManifestEditors(d, "scanner", "armis-appsec", editors)
+	report := d.report
 
 	statuses := make(map[string]CheckStatus)
+	fixes := make(map[string]FixAction)
 	for _, c := range report.Checks {
 		statuses[c.Name] = c.Status
+		fixes[c.Name] = c.Fix
 	}
 
 	if statuses["Cursor"] != StatusOK {
@@ -230,6 +323,63 @@ func TestCheckManifestEditors(t *testing.T) {
 	}
 	if statuses["VS Code"] != StatusFail {
 		t.Errorf("VS Code status = %v, want fail (command path dead)", statuses["VS Code"])
+	}
+	amazonQ, _ := EditorByID(EditorAmazonQ)
+	if statuses[amazonQ.Name] != StatusFail || fixes[amazonQ.Name] != FixReregister {
+		t.Errorf("%s status/fix = %v/%v, want fail/reregister (empty command)", amazonQ.Name, statuses[amazonQ.Name], fixes[amazonQ.Name])
+	}
+	if statuses["Cline"] != StatusFail || fixes["Cline"] != FixBlocked {
+		t.Errorf("Cline status/fix = %v/%v, want fail/blocked (invalid JSON)", statuses["Cline"], fixes["Cline"])
+	}
+
+	// Zed and VS Code alone would call for FixReregister, but the invalid
+	// Cline config must veto it for the whole report: reregistering goes
+	// through every manifest editor, including Cline's.
+	for _, f := range report.Fixes() {
+		if f == FixReregister || f == FixReinstall {
+			t.Errorf("Fixes() = %v, want FixReregister/FixReinstall withheld while a config is unparsable", report.Fixes())
+		}
+	}
+}
+
+func TestCheckVSCodeWorkspaceInvalidConfig(t *testing.T) {
+	workspace := t.TempDir()
+	vscodeDir := filepath.Join(workspace, ".vscode")
+	_ = os.MkdirAll(vscodeDir, 0o750)
+	// Malformed JSONC: VS Code ignores the whole file, so a real armis-appsec
+	// entry in here would silently stop loading.
+	_ = os.WriteFile(filepath.Join(vscodeDir, "mcp.json"), []byte(`{"servers": {`), 0o600)
+
+	d := newDoctorRun(DoctorOptions{})
+	checkVSCodeWorkspace(d, workspace)
+
+	if len(d.report.Checks) != 1 {
+		t.Fatalf("checks = %+v, want exactly one failing check for the unparsable workspace config", d.report.Checks)
+	}
+	c := d.report.Checks[0]
+	if c.Status != StatusFail || c.Component != componentVSCode {
+		t.Errorf("check = %+v, want a StatusFail check in the vscode component", c)
+	}
+	if c.Remediation == "" {
+		t.Errorf("check has no remediation hint for the unparsable config")
+	}
+}
+
+// TestReadJSONCObjectBOMOnly pins that a file containing only a UTF-8 BOM (or
+// BOM plus comments/whitespace) is treated as empty rather than a parse
+// error: TrimSpace alone doesn't strip the BOM rune, so the emptiness check
+// must run after stripJSONC removes it.
+func TestReadJSONCObjectBOMOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+
+	_ = os.WriteFile(path, []byte("\xEF\xBB\xBF"), 0o600)
+	if obj, exists, err := readJSONCObject(path); err != nil || !exists || len(obj) != 0 {
+		t.Errorf("readJSONCObject(BOM only) = (%v, %v, %v), want (empty map, true, nil)", obj, exists, err)
+	}
+
+	_ = os.WriteFile(path, []byte("\xEF\xBB\xBF// just a comment\n"), 0o600)
+	if obj, exists, err := readJSONCObject(path); err != nil || !exists || len(obj) != 0 {
+		t.Errorf("readJSONCObject(BOM + comment) = (%v, %v, %v), want (empty map, true, nil)", obj, exists, err)
 	}
 }
 
@@ -298,6 +448,7 @@ func TestIsExecutableFile(t *testing.T) {
 }
 
 func TestRunDoctorNoManifest(t *testing.T) {
+	stubVSCode(t, nil)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -312,6 +463,7 @@ func TestRunDoctorNoManifest(t *testing.T) {
 }
 
 func TestRunDoctorStructuralChecks(t *testing.T) {
+	stubVSCode(t, nil)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -323,7 +475,9 @@ func TestRunDoctorStructuralChecks(t *testing.T) {
 		[]byte("ARMIS_CLIENT_ID=id\nARMIS_CLIENT_SECRET=secret\n"), 0o600)
 
 	editorConfig := filepath.Join(home, "editor-mcp.json")
-	_ = os.WriteFile(editorConfig, []byte(`{"mcpServers":{"armis-appsec":{}}}`), 0o600)
+	mustWriteJSON(t, editorConfig, map[string]interface{}{
+		"mcpServers": map[string]interface{}{"armis-appsec": map[string]interface{}{"command": venvPython(pluginDir)}},
+	})
 
 	manifest := NewManifest(pluginDir, "1.2.3")
 	manifest.AddEditor(EditorCursor, editorConfig, "mcpServers")
@@ -363,8 +517,9 @@ func TestCheckKnowledgePluginSkipsUninstalledSiblingEnv(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "dev"), 0o750)
 	_ = os.WriteFile(filepath.Join(dir, "dev", "bridge.py"), []byte("# bridge"), 0o600)
 
-	report := &DoctorReport{}
-	checkKnowledgePlugin(report, &ManifestKnowledge{PluginDir: dir}, DoctorOptions{Handshake: false})
+	d := newDoctorRun(DoctorOptions{Handshake: false})
+	checkKnowledgePlugin(d, &ManifestKnowledge{PluginDir: dir})
+	report := d.report
 
 	if report.HasFailures() {
 		t.Errorf("checkKnowledgePlugin() unexpected failures for uninstalled sibling env: %+v", report.Checks)

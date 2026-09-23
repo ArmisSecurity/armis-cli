@@ -679,6 +679,44 @@ armis-cli scan status --format json
 
 `scan status` reports every state the API can return: `PENDING_UPLOAD`, `UPLOADED`, `INITIATED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `STOPPED`.
 
+### MCP Server for AI Editors
+
+`armis-cli install` sets up the Armis AppSec MCP server and registers it with the AI editors it detects (VS Code / GitHub Copilot, Cursor, Claude Code, Windsurf, Codex CLI, and others).
+
+```bash
+armis-cli install        # install and register with detected editors
+armis-cli mcp update     # update the server and re-register editors
+armis-cli mcp doctor     # diagnose why an editor doesn't see or can't use the server
+```
+
+#### Troubleshooting with `mcp doctor`
+
+`mcp doctor` checks the whole path from install to a working tool call, and prints a `→` line with the fix under every check that fails:
+
+- plugin files, the Python venv (including a base Python that was uninstalled or upgraded), and credentials
+- every editor config: the entry still exists, its command and envFile exist, and the server starts **exactly as that editor launches it** and answers `initialize`, `tools/list`, and a diagnostic tool call
+- that the credentials are accepted, and that the server's own Python runtime can reach the Armis API (proxy and TLS-inspection problems often affect it and not the CLI)
+- VS Code / Copilot: VS Code Insiders and VSCodium, per-profile and workspace configs, duplicate or stale entries, settings and Windows Group Policy that disable MCP or Agent mode, and the last error in VS Code's own MCP log for the server
+
+```bash
+# Diagnose, then repair what can be repaired automatically: re-register
+# editors, rebuild a broken venv, and configure the system proxy for the
+# server when it works but the server isn't using it
+armis-cli mcp doctor --fix
+
+# Write a zip for Armis support (report, server stderr and logs, VS Code MCP
+# log, settings excerpts). Credential values are never included.
+armis-cli mcp doctor --bundle
+armis-cli mcp doctor --bundle-path C:\Users\me\Desktop\armis-doctor.zip
+
+# Structural checks only (don't start servers or make network calls)
+armis-cli mcp doctor --no-handshake
+```
+
+Run it from your project folder to include that workspace's `.vscode/mcp.json` and `.vscode/settings.json`. If every check passes but Copilot still doesn't call the tools, the report ends with the remaining manual checks: Agent mode, the tools picker, **MCP: List Servers → Start Server**, and your GitHub organization's "MCP servers in Copilot" policy.
+
+The server reads extra environment variables from `~/.armis/plugins/armis-appsec-mcp/.env`. Behind a corporate proxy or TLS inspection, `HTTPS_PROXY` and `SSL_CERT_FILE` there apply to the server only; restart the editor after changing them.
+
 ### Other Commands
 
 ```bash

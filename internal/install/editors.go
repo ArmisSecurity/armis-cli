@@ -28,6 +28,7 @@ const (
 	jsonKeyPath        = "path"
 	jsonKeyLastUpdated = "lastUpdated"
 	jsonKeySource      = "source"
+	jsonKeyName        = "name"
 
 	jsonTypeCommand = "command"
 )
@@ -57,6 +58,10 @@ const (
 	EditorCopilotCLI    EditorID = "copilot"
 )
 
+// editorNameVSCode is VS Code's display name, shared by the editor list and
+// the doctor's VS Code checks.
+const editorNameVSCode = "VS Code"
+
 // Editor represents a code editor with MCP server support.
 type Editor struct {
 	ID   EditorID
@@ -65,7 +70,7 @@ type Editor struct {
 
 // AllEditors lists every editor that can be auto-configured.
 var AllEditors = []Editor{
-	{EditorVSCode, "VS Code"},
+	{EditorVSCode, editorNameVSCode},
 	{EditorCursor, "Cursor"},
 	{EditorWindsurf, "Windsurf"},
 	{EditorZed, "Zed"},
@@ -442,7 +447,7 @@ func registerContinueFormat(configFile string, entry mcpEntry) error {
 	}
 
 	server := map[string]interface{}{
-		"name":         entry.name,
+		jsonKeyName:    entry.name,
 		jsonKeyCommand: entry.command,
 	}
 	if len(entry.args) > 0 {
@@ -517,8 +522,10 @@ func readJSONFileAsMap(path string) map[string]interface{} {
 	}
 	// armis:ignore cwe:22 cwe:253 reason:path from filepath.Join with known base dirs; filepath.Clean applied; ReadFile error handled by err == nil guard
 	if b, err := os.ReadFile(clean); err == nil { //nolint:gosec
+		// VS Code's mcp.json is JSONC; strip comments/trailing commas/BOM so a
+		// hand-edited file keeps its other servers instead of parsing as empty.
 		// armis:ignore cwe:502 cwe:770 reason:Go encoding/json into map[string]interface{} has no gadget/polymorphic deserialization; input is the user's own local editor config, size-bounded by the maxEditorConfigSize guard above
-		_ = json.Unmarshal(b, &data)
+		_ = json.Unmarshal(stripJSONC(b), &data)
 	}
 	return data
 }
