@@ -57,6 +57,9 @@ func runMCPHelperProcess(mode string) {
 			// A log notification before the response must be skipped.
 			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"notifications/message","params":{}}`)
 			reply(`"result":{"serverInfo":{"name":"fake-mcp","version":"9.9.9"}}`)
+		case req.Method == "tools/list" && mode == "garbage-after-init":
+			_, _ = fmt.Fprintln(os.Stdout, "not json")
+			return
 		case req.Method == "tools/list" && mode == "notools":
 			reply(`"result":{"tools":[]}`)
 		case req.Method == "tools/list":
@@ -98,6 +101,20 @@ func TestMCPHandshakeInvalidResponse(t *testing.T) {
 	_, _, err := mcpHandshake(os.Args[0], nil, map[string]string{"ARMIS_TEST_MCP_HELPER": "garbage"}, 5*time.Second)
 	if err == nil {
 		t.Fatal("mcpHandshake() error = nil, want error from invalid JSON response")
+	}
+}
+
+// TestMCPHandshakeInvalidResponseAfterInit pins that non-JSON stdout is
+// caught even once the session is past initialize, not just before it: a
+// server that starts clean but later corrupts its own stdout stream should
+// surface as a tools error rather than being silently skipped forever.
+func TestMCPHandshakeInvalidResponseAfterInit(t *testing.T) {
+	res, _, err := mcpHandshake(os.Args[0], nil, map[string]string{"ARMIS_TEST_MCP_HELPER": "garbage-after-init"}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("mcpHandshake() error = %v, want initialize to still succeed", err)
+	}
+	if res.ToolsErr == nil {
+		t.Fatal("mcpHandshake() ToolsErr = nil, want error from invalid JSON on stdout during tools/list")
 	}
 }
 

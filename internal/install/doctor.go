@@ -462,7 +462,13 @@ func checkCredentials(report *DoctorReport, component, envFile string) map[strin
 	keys := make([]string, 0, len(env))
 	for k, v := range env {
 		keys = append(keys, k)
-		if isSecretKey(k) && v != "" {
+		switch {
+		case isSecretKey(k) && v != "":
+			report.secrets = append(report.secrets, v)
+		case strings.Contains(strings.ToUpper(k), "PROXY") && v != "" && maskURLUserinfo(v) != v:
+			// Only the credentials embedded in a proxy URL are secret; the
+			// host/port on their own are useful diagnostic detail worth
+			// keeping readable in the bundle.
 			report.secrets = append(report.secrets, v)
 		}
 	}
@@ -1000,7 +1006,7 @@ func parseEnvFile(path string) (map[string]string, error) {
 // isSecretKey reports whether an env var name likely holds a credential.
 func isSecretKey(k string) bool {
 	k = strings.ToUpper(k)
-	for _, marker := range []string{"SECRET", "TOKEN", "PASSWORD", "CLIENT_ID", "API_KEY", "PROXY"} {
+	for _, marker := range []string{"SECRET", "TOKEN", "PASSWORD", "CLIENT_ID", "API_KEY"} {
 		if strings.Contains(k, marker) {
 			return true
 		}

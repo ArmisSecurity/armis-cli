@@ -135,7 +135,7 @@ func checkVSCodeVariant(d *doctorRun, v vscodeVariant, workspace, pluginDir, sni
 		}
 		if err != nil {
 			if !d.manifestConfigs[filepath.Clean(src.Path)] {
-				report.add(componentVSCode, v.Name+" config", StatusFail, fmt.Sprintf("%s is not valid JSON: %v", src.Path, err)).
+				report.add(componentVSCode, v.Name+" config", StatusFail, fmt.Sprintf("%s is not valid JSONC: %v", src.Path, err)).
 					hint(v.Name + " ignores a file it can't parse, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			}
 			continue
@@ -221,7 +221,7 @@ func checkVSCodeWorkspace(d *doctorRun, workspace string) {
 		}
 		if err != nil {
 			if !d.manifestConfigs[filepath.Clean(src.Path)] {
-				d.report.add(componentVSCode, src.Label, StatusFail, fmt.Sprintf("%s is not valid JSON: %v", src.Path, err)).
+				d.report.add(componentVSCode, src.Label, StatusFail, fmt.Sprintf("%s is not valid JSONC: %v", src.Path, err)).
 					hint("VS Code ignores a workspace config it can't parse, so no servers in it load — including armis-appsec if it's registered there. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			}
 			continue

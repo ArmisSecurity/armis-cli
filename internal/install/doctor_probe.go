@@ -290,13 +290,11 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 		case line := <-s.lines:
 			var msg rpcMessage
 			if err := json.Unmarshal(line, &msg); err != nil {
-				if id == 1 {
-					// Anything but JSON on stdout before initialize means the
-					// server (or a wrapper script) is printing to stdout,
-					// which corrupts the MCP stream for every client.
-					return nil, fmt.Errorf("invalid response (non-JSON on stdout: %q): %w", truncate(string(line), 120), err)
-				}
-				continue
+				// Anything but JSON on stdout means the server (or a wrapper
+				// script) is printing to stdout, which corrupts the MCP
+				// stream for every client — not just while waiting on
+				// initialize.
+				return nil, fmt.Errorf("invalid response (non-JSON on stdout: %q): %w", truncate(string(line), 120), err)
 			}
 			if msg.ID == nil || *msg.ID != id {
 				continue

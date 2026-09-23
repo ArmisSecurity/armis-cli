@@ -313,6 +313,36 @@ func TestCheckCredentialsBOMAndSecrets(t *testing.T) {
 	}
 }
 
+// TestCheckCredentialsProxyOnlyScrubsCredentials pins that a plain proxy URL
+// with no embedded userinfo isn't collected as a secret — scrubbing it would
+// blank out the host:port, which is useful diagnostic detail, not a
+// credential. A proxy URL that does carry userinfo is still collected.
+func TestCheckCredentialsProxyOnlyScrubsCredentials(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), ".env")
+	mustWrite(t, envFile, "ARMIS_CLIENT_ID=the-id\nARMIS_CLIENT_SECRET=the-secret\n"+
+		"HTTPS_PROXY=http://proxy.corp:8080\nHTTP_PROXY=http://user:pw@proxy.corp:8080\n")
+
+	report := &DoctorReport{}
+	checkCredentials(report, "scanner", envFile)
+
+	for _, want := range []string{"the-secret", "user:pw"} {
+		found := false
+		for _, s := range report.secrets {
+			if s == want || strings.Contains(s, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("secrets = %v, want an entry covering %q", report.secrets, want)
+		}
+	}
+	for _, s := range report.secrets {
+		if s == "http://proxy.corp:8080" {
+			t.Errorf("secrets = %v, plain non-credential proxy URL should not be collected", report.secrets)
+		}
+	}
+}
+
 func TestReportFixes(t *testing.T) {
 	r := &DoctorReport{}
 	if r.Fixes() != nil {
