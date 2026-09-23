@@ -745,7 +745,15 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 			continue
 		}
 		report.artifact(fmt.Sprintf("editors/%s-%s-entry.json", sanitizeArtifactName(component), id), launchArtifact(entry.ConfigFile, launch))
-		if launch.Command != "" && !isExecutableFile(launch.Command) {
+		// lookupEntry understands every format the installer writes, so an
+		// entry with no command here can't be started by the editor.
+		if launch.Command == "" {
+			report.add(component, name, StatusFail,
+				fmt.Sprintf("entry found in %s but it has no command", entry.ConfigFile)).
+				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
+			continue
+		}
+		if !isExecutableFile(launch.Command) {
 			report.add(component, name, StatusFail,
 				fmt.Sprintf("entry found in %s but its command does not exist: %s — likely stale after a reinstall or profile/home directory change", entry.ConfigFile, launch.Command)).
 				fix(FixReregister, "Point the entry at the current install: armis-cli mcp doctor --fix")
@@ -761,7 +769,7 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 		}
 		report.add(component, name, StatusOK, entry.ConfigFile)
 
-		if d.opts.Handshake && launch.Command != "" {
+		if d.opts.Handshake {
 			d.probe(component, name, launch)
 		}
 	}

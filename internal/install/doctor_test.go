@@ -286,12 +286,19 @@ func TestCheckManifestEditors(t *testing.T) {
 	invalidFile := filepath.Join(dir, "invalid.json")
 	_ = os.WriteFile(invalidFile, []byte(`{"mcpServers": {`), 0o600)
 
+	// Entry present by name but with no command: the editor can't start it.
+	noCommandFile := filepath.Join(dir, "no-command.json")
+	mustWriteJSON(t, noCommandFile, map[string]interface{}{
+		"mcpServers": map[string]interface{}{"armis-appsec": map[string]interface{}{"args": []string{"-m", "x"}}},
+	})
+
 	editors := map[EditorID]ManifestEntry{
 		EditorCursor:   {ConfigFile: presentFile, Format: "mcpServers"},
 		EditorWindsurf: {ConfigFile: staleFile, Format: "mcpServers"},
 		EditorZed:      {ConfigFile: missingFile, Format: "mcpServers"},
 		EditorVSCode:   {ConfigFile: deadCommandFile, Format: "mcpServers"},
 		EditorCline:    {ConfigFile: invalidFile, Format: "mcpServers"},
+		EditorAmazonQ:  {ConfigFile: noCommandFile, Format: "mcpServers"},
 	}
 
 	d := newDoctorRun(DoctorOptions{})
@@ -316,6 +323,10 @@ func TestCheckManifestEditors(t *testing.T) {
 	}
 	if statuses["VS Code"] != StatusFail {
 		t.Errorf("VS Code status = %v, want fail (command path dead)", statuses["VS Code"])
+	}
+	amazonQ, _ := EditorByID(EditorAmazonQ)
+	if statuses[amazonQ.Name] != StatusFail || fixes[amazonQ.Name] != FixReregister {
+		t.Errorf("%s status/fix = %v/%v, want fail/reregister (empty command)", amazonQ.Name, statuses[amazonQ.Name], fixes[amazonQ.Name])
 	}
 	if statuses["Cline"] != StatusFail || fixes["Cline"] != FixBlocked {
 		t.Errorf("Cline status/fix = %v/%v, want fail/blocked (invalid JSON)", statuses["Cline"], fixes["Cline"])
@@ -464,7 +475,9 @@ func TestRunDoctorStructuralChecks(t *testing.T) {
 		[]byte("ARMIS_CLIENT_ID=id\nARMIS_CLIENT_SECRET=secret\n"), 0o600)
 
 	editorConfig := filepath.Join(home, "editor-mcp.json")
-	_ = os.WriteFile(editorConfig, []byte(`{"mcpServers":{"armis-appsec":{}}}`), 0o600)
+	mustWriteJSON(t, editorConfig, map[string]interface{}{
+		"mcpServers": map[string]interface{}{"armis-appsec": map[string]interface{}{"command": venvPython(pluginDir)}},
+	})
 
 	manifest := NewManifest(pluginDir, "1.2.3")
 	manifest.AddEditor(EditorCursor, editorConfig, "mcpServers")
