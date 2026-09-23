@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ var (
 	mcpDoctorFix         bool
 	mcpDoctorBundle      bool
 	mcpDoctorBundlePath  string
+	mcpDoctorVerbose     bool
 )
 
 var mcpDoctorCmd = &cobra.Command{
@@ -45,6 +47,9 @@ VSCodium, per-profile and workspace configs, duplicate entries, settings and
 Windows Group Policy that disable MCP or Agent mode, and VS Code's own MCP log
 for the server.
 
+By default only a summary and the checks that need attention are shown;
+--verbose lists every check.
+
 Every failing check prints how to fix it. --fix repairs what the CLI can
 (stale or missing registrations, a broken venv, a system proxy the server
 isn't using) and re-runs the checks.
@@ -54,6 +59,9 @@ to support.
 Exits non-zero if any check fails.`,
 	Example: `  # Full diagnostic, including live handshake
   armis-cli mcp doctor
+
+  # Show every check, not just the summary
+  armis-cli mcp doctor --verbose
 
   # Diagnose and repair what can be repaired automatically
   armis-cli mcp doctor --fix
@@ -78,6 +86,7 @@ func init() {
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorFix, "fix", false, "Repair fixable problems (re-register editors, rebuild the venv), then re-check")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorBundle, "bundle", false, "Write a support bundle zip (credentials removed) for Armis support")
 	mcpDoctorCmd.Flags().StringVar(&mcpDoctorBundlePath, "bundle-path", "", "Where to write the support bundle (implies --bundle; default: ./armis-mcp-doctor-<timestamp>.zip)")
+	mcpDoctorCmd.Flags().BoolVarP(&mcpDoctorVerbose, "verbose", "v", false, "List every check, including passing ones and informational notes")
 }
 
 func runMCPDoctor(cmd *cobra.Command, _ []string) error {
@@ -96,7 +105,7 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 
 	report := install.RunDoctor(opts)
 	if mcpDoctorFormat == agentFormatPlain {
-		printMCPDoctorPlain(stderr, report, !mcpDoctorFix)
+		printMCPDoctorPlain(stderr, report, !mcpDoctorFix, mcpDoctorVerbose)
 	}
 
 	if mcpDoctorFix {
@@ -108,7 +117,7 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 			_, _ = fmt.Fprintln(stderr, "\nRe-running checks...")
 			report = install.RunDoctor(opts)
 			if mcpDoctorFormat == agentFormatPlain {
-				printMCPDoctorPlain(stderr, report, false)
+				printMCPDoctorPlain(stderr, report, false, mcpDoctorVerbose)
 			}
 		}
 	}
@@ -201,28 +210,22 @@ func printMCPDoctorJSON(cmd *cobra.Command, report *install.DoctorReport) error 
 	return enc.Encode(report)
 }
 
-func printMCPDoctorPlain(out io.Writer, report *install.DoctorReport, suggestFix bool) {
+func printMCPDoctorPlain(out io.Writer, report *install.DoctorReport, suggestFix, verbose bool) {
 	if len(report.Checks) == 0 {
 		_, _ = fmt.Fprintln(out, "No checks produced any output.")
 		return
 	}
 
 	accessible := !cli.ColorsEnabled()
-	width := 20
-	for _, c := range report.Checks {
-		width = max(width, len(c.Name))
+	var hiddenNotes []string
+	if verbose {
+		printDoctorChecksVerbose(out, report.Checks, accessible)
+	} else {
+		hiddenNotes = printDoctorChecksCompact(out, report.Checks, accessible)
 	}
-	var lastComponent string
+
 	var passed, warned, failed int
 	for _, c := range report.Checks {
-		if c.Component != lastComponent {
-			_, _ = fmt.Fprintf(out, "%s:\n", c.Component)
-			lastComponent = c.Component
-		}
-		_, _ = fmt.Fprintf(out, "  %s %-*s %s\n", statusSymbol(c.Status, accessible), width, c.Name, c.Detail)
-		if c.Remediation != "" && c.Status != install.StatusOK {
-			printRemediation(out, c.Remediation)
-		}
 		switch c.Status {
 		case install.StatusOK:
 			passed++
@@ -232,7 +235,6 @@ func printMCPDoctorPlain(out io.Writer, report *install.DoctorReport, suggestFix
 			failed++
 		}
 	}
-
 	_, _ = fmt.Fprintf(out, "\n%d passed, %d warnings, %d failed\n", passed, warned, failed)
 	if suggestFix && len(report.Fixes()) > 0 {
 		_, _ = fmt.Fprintln(out, "Some of these can be repaired automatically: armis-cli mcp doctor --fix")
@@ -240,6 +242,151 @@ func printMCPDoctorPlain(out io.Writer, report *install.DoctorReport, suggestFix
 	if warned+failed > 0 {
 		_, _ = fmt.Fprintln(out, "Still stuck? Run 'armis-cli mcp doctor --bundle' and send the zip to Armis support.")
 	}
+	if !verbose {
+		if len(hiddenNotes) > 0 {
+			_, _ = fmt.Fprintf(out, "Every check, plus notes on %s: armis-cli mcp doctor --verbose\n", strings.Join(hiddenNotes, ", "))
+		} else {
+			_, _ = fmt.Fprintln(out, "Every check: armis-cli mcp doctor --verbose")
+		}
+	}
+}
+
+// printDoctorChecksVerbose prints every check, grouped by component.
+func printDoctorChecksVerbose(out io.Writer, checks []install.DoctorCheck, accessible bool) {
+	width := 20
+	for _, c := range checks {
+		width = max(width, len(c.Name))
+	}
+	var lastComponent string
+	for _, c := range checks {
+		if c.Component != lastComponent {
+			_, _ = fmt.Fprintf(out, "%s:\n", c.Component)
+			lastComponent = c.Component
+		}
+		_, _ = fmt.Fprintf(out, "  %s %-*s %s\n", statusSymbol(c.Status, accessible), width, c.Name, c.Detail)
+		if c.Remediation != "" && c.Status != install.StatusOK {
+			printRemediation(out, c.Remediation)
+		}
+	}
+}
+
+// doctorRow is one line of the compact view: a passing summary, or a single
+// problem check with its hint.
+type doctorRow struct {
+	status install.CheckStatus
+	label  string
+	text   string
+	check  *install.DoctorCheck // set for problem rows
+}
+
+// printDoctorChecksCompact prints one line per component and one for its
+// editors when everything passes, and only the failing or warning checks
+// otherwise. It returns the names of the informational checks it left out.
+func printDoctorChecksCompact(out io.Writer, checks []install.DoctorCheck, accessible bool) []string {
+	var components []string
+	byComponent := make(map[string][]install.DoctorCheck)
+	for _, c := range checks {
+		if _, ok := byComponent[c.Component]; !ok {
+			components = append(components, c.Component)
+		}
+		byComponent[c.Component] = append(byComponent[c.Component], c)
+	}
+
+	var rows []doctorRow
+	var notes []string
+	for _, comp := range components {
+		var server, editors []install.DoctorCheck
+		for _, c := range byComponent[comp] {
+			switch {
+			case c.Status == install.StatusInfo:
+				notes = append(notes, c.Name)
+			case c.Editor != "":
+				editors = append(editors, c)
+			default:
+				server = append(server, c)
+			}
+		}
+		rows = append(rows, compactServerRows(comp, server)...)
+		label := "editors"
+		if comp != "scanner" {
+			label = comp + " editors"
+		}
+		rows = append(rows, compactEditorRows(label, editors)...)
+	}
+
+	width := 0
+	for _, r := range rows {
+		width = max(width, len(r.label))
+	}
+	for _, r := range rows {
+		_, _ = fmt.Fprintf(out, "  %s %-*s  %s\n", statusSymbol(r.status, accessible), width, r.label, r.text)
+		if r.check != nil && r.check.Remediation != "" {
+			printRemediation(out, r.check.Remediation)
+		}
+	}
+	return notes
+}
+
+func compactServerRows(label string, checks []install.DoctorCheck) []doctorRow {
+	if len(checks) == 0 {
+		return nil
+	}
+	if problems := problemRows(label, checks); len(problems) > 0 {
+		return problems
+	}
+	var parts []string
+	for _, c := range checks {
+		if c.Summary != "" {
+			parts = append(parts, c.Summary)
+		}
+	}
+	text := strings.Join(parts, " · ")
+	switch {
+	case text != "":
+	case len(checks) == 1:
+		text = checks[0].Detail
+	default:
+		text = fmt.Sprintf("%d checks passed", len(checks))
+	}
+	return []doctorRow{{status: install.StatusOK, label: label, text: text}}
+}
+
+// compactEditorRows lists every editor whose checks all pass on one line,
+// followed by the problem checks of the rest.
+func compactEditorRows(label string, checks []install.DoctorCheck) []doctorRow {
+	failing := make(map[string]bool)
+	for _, c := range checks {
+		if c.Status != install.StatusOK {
+			failing[c.Editor] = true
+		}
+	}
+	var healthy []string
+	seen := make(map[string]bool)
+	for _, c := range checks {
+		if !failing[c.Editor] && !seen[c.Editor] {
+			seen[c.Editor] = true
+			healthy = append(healthy, c.Editor)
+		}
+	}
+	sort.Strings(healthy)
+
+	var rows []doctorRow
+	if len(healthy) > 0 {
+		rows = append(rows, doctorRow{status: install.StatusOK, label: label, text: strings.Join(healthy, ", ")})
+	}
+	return append(rows, problemRows(label, checks)...)
+}
+
+func problemRows(label string, checks []install.DoctorCheck) []doctorRow {
+	var rows []doctorRow
+	for i := range checks {
+		c := &checks[i]
+		if c.Status == install.StatusOK {
+			continue
+		}
+		rows = append(rows, doctorRow{status: c.Status, label: label, text: c.Name + ": " + c.Detail, check: c})
+	}
+	return rows
 }
 
 // printRemediation prints a check's hint under it, indenting continuation
