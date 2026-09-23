@@ -68,6 +68,12 @@ const (
 	// FixSetProxy writes a proxy the doctor verified works into the plugin's
 	// .env, so the server uses it on its next start.
 	FixSetProxy FixAction = "set-proxy"
+	// FixBlocked marks a check that --fix cannot safely repair and that
+	// blocks FixReregister/FixReinstall for every editor: re-registering
+	// reads the editor's config as a map first, and a config that fails to
+	// parse reads back as empty, so writing it out again would drop every
+	// other server the user configured in that file.
+	FixBlocked FixAction = "blocked"
 )
 
 // DoctorCheck is one diagnostic result reported by RunDoctor.
@@ -163,13 +169,29 @@ func (r *DoctorReport) Fixes() []FixAction {
 	if setProxy {
 		out = append(out, FixSetProxy)
 	}
-	switch {
-	case reinstall:
-		out = append(out, FixReinstall)
-	case reregister:
-		out = append(out, FixReregister)
+	if !r.HasBlockedRegistration() {
+		switch {
+		case reinstall:
+			out = append(out, FixReinstall)
+		case reregister:
+			out = append(out, FixReregister)
+		}
 	}
 	return out
+}
+
+// HasBlockedRegistration reports whether any check is marked FixBlocked,
+// meaning at least one editor's config file failed to parse. Reregistering
+// any editor goes through the same manifest-wide update, so this blocks
+// FixReregister/FixReinstall entirely rather than risk rewriting that
+// editor's config from an empty map.
+func (r *DoctorReport) HasBlockedRegistration() bool {
+	for _, c := range r.Checks {
+		if (c.Status == StatusFail || c.Status == StatusWarn) && c.Fix == FixBlocked {
+			return true
+		}
+	}
+	return false
 }
 
 // envFix is a verified set of variables to add to a .env file.
@@ -705,7 +727,7 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 			// Not auto-fixable: re-registering would start from an empty map
 			// and drop every other server the user configured in this file.
 			report.add(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
-				hint(name + " ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
+				fix(FixBlocked, name+" ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			continue
 		}
 

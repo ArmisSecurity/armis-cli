@@ -159,6 +159,9 @@ func applyDoctorFixes(out io.Writer, report *install.DoctorReport) (bool, error)
 	}
 
 	fixes := report.Fixes()
+	if report.HasBlockedRegistration() {
+		_, _ = fmt.Fprintln(out, "\nSkipping editor re-registration: at least one editor's config file couldn't be parsed, and rewriting it would drop the other servers configured there. Fix the syntax (see the hint above), then re-run --fix.")
+	}
 	if len(fixes) == 0 {
 		if report.HasProblems() {
 			_, _ = fmt.Fprintln(out, "\nNone of the remaining problems can be fixed automatically — follow the → hints above.")

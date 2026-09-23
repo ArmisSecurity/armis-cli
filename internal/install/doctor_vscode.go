@@ -216,7 +216,14 @@ func checkVSCodeWorkspace(d *doctorRun, workspace string) {
 		{Label: "workspace .vscode/settings.json", Path: filepath.Join(workspace, ".vscode", "settings.json"), InSettings: true},
 	} {
 		obj, exists, err := readJSONCObject(src.Path)
-		if !exists || err != nil {
+		if !exists {
+			continue
+		}
+		if err != nil {
+			if !d.manifestConfigs[filepath.Clean(src.Path)] {
+				d.report.add(componentVSCode, src.Label, StatusFail, fmt.Sprintf("%s is not valid JSON: %v", src.Path, err)).
+					hint("VS Code ignores a workspace config it can't parse, so no servers in it load — including armis-appsec if it's registered there. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
+			}
 			continue
 		}
 		if _, entry, ok := findServer(vscodeServers(obj, src.InSettings), mcpServerName); ok {

@@ -243,11 +243,17 @@ func TestCheckManifestEditors(t *testing.T) {
 		},
 	})
 
+	// Malformed JSON: not auto-fixable, since re-registering reads this file
+	// as an empty map and would drop every other server it configures.
+	invalidFile := filepath.Join(dir, "invalid.json")
+	_ = os.WriteFile(invalidFile, []byte(`{"mcpServers": {`), 0o600)
+
 	editors := map[EditorID]ManifestEntry{
 		EditorCursor:   {ConfigFile: presentFile, Format: "mcpServers"},
 		EditorWindsurf: {ConfigFile: staleFile, Format: "mcpServers"},
 		EditorZed:      {ConfigFile: missingFile, Format: "mcpServers"},
 		EditorVSCode:   {ConfigFile: deadCommandFile, Format: "mcpServers"},
+		EditorCline:    {ConfigFile: invalidFile, Format: "mcpServers"},
 	}
 
 	d := newDoctorRun(DoctorOptions{})
@@ -255,8 +261,10 @@ func TestCheckManifestEditors(t *testing.T) {
 	report := d.report
 
 	statuses := make(map[string]CheckStatus)
+	fixes := make(map[string]FixAction)
 	for _, c := range report.Checks {
 		statuses[c.Name] = c.Status
+		fixes[c.Name] = c.Fix
 	}
 
 	if statuses["Cursor"] != StatusOK {
@@ -270,6 +278,41 @@ func TestCheckManifestEditors(t *testing.T) {
 	}
 	if statuses["VS Code"] != StatusFail {
 		t.Errorf("VS Code status = %v, want fail (command path dead)", statuses["VS Code"])
+	}
+	if statuses["Cline"] != StatusFail || fixes["Cline"] != FixBlocked {
+		t.Errorf("Cline status/fix = %v/%v, want fail/blocked (invalid JSON)", statuses["Cline"], fixes["Cline"])
+	}
+
+	// Zed and VS Code alone would call for FixReregister, but the invalid
+	// Cline config must veto it for the whole report: reregistering goes
+	// through every manifest editor, including Cline's.
+	for _, f := range report.Fixes() {
+		if f == FixReregister || f == FixReinstall {
+			t.Errorf("Fixes() = %v, want FixReregister/FixReinstall withheld while a config is unparsable", report.Fixes())
+		}
+	}
+}
+
+func TestCheckVSCodeWorkspaceInvalidConfig(t *testing.T) {
+	workspace := t.TempDir()
+	vscodeDir := filepath.Join(workspace, ".vscode")
+	_ = os.MkdirAll(vscodeDir, 0o750)
+	// Malformed JSONC: VS Code ignores the whole file, so a real armis-appsec
+	// entry in here would silently stop loading.
+	_ = os.WriteFile(filepath.Join(vscodeDir, "mcp.json"), []byte(`{"servers": {`), 0o600)
+
+	d := newDoctorRun(DoctorOptions{})
+	checkVSCodeWorkspace(d, workspace)
+
+	if len(d.report.Checks) != 1 {
+		t.Fatalf("checks = %+v, want exactly one failing check for the unparsable workspace config", d.report.Checks)
+	}
+	c := d.report.Checks[0]
+	if c.Status != StatusFail || c.Component != componentVSCode {
+		t.Errorf("check = %+v, want a StatusFail check in the vscode component", c)
+	}
+	if c.Remediation == "" {
+		t.Errorf("check has no remediation hint for the unparsable config")
 	}
 }
 
