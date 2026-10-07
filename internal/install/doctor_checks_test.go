@@ -694,7 +694,7 @@ func TestCheckServerNetworkProxyFix(t *testing.T) {
 		mustWrite(t, envFile, "ARMIS_CLIENT_ID=id\n")
 
 		d := newDoctorRun(DoctorOptions{})
-		checkServerNetwork(d, "scanner", "python", map[string]string{}, envFile)
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, envFile, "https://moose.armis.com/api/v1", false)
 		c := wantStatus(t, checkMap(d.report), "scanner/server network", StatusFail)
 		if c.Fix != FixSetProxy || strings.Contains(c.Remediation, "pw") {
 			t.Errorf("check = %+v, want FixSetProxy with the password masked", c)
@@ -715,7 +715,7 @@ func TestCheckServerNetworkProxyFix(t *testing.T) {
 	t.Run("system proxy also fails", func(t *testing.T) {
 		stubNetwork(t, "http://proxy.corp:8080", func(map[string]string) (string, error) { return connectErr.Error(), connectErr })
 		d := newDoctorRun(DoctorOptions{})
-		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env")
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env", "https://moose.armis.com/api/v1", false)
 		c := wantStatus(t, checkMap(d.report), "scanner/server network", StatusFail)
 		if c.Fix != FixNone || !strings.Contains(c.Remediation, "also failed") {
 			t.Errorf("check = %+v", c)
@@ -725,7 +725,7 @@ func TestCheckServerNetworkProxyFix(t *testing.T) {
 	t.Run("proxy already configured", func(t *testing.T) {
 		stubNetwork(t, "http://proxy.corp:8080", viaProxy)
 		d := newDoctorRun(DoctorOptions{})
-		checkServerNetwork(d, "scanner", "python", map[string]string{"HTTPS_PROXY": "http://other:1"}, "/p/.env")
+		checkServerNetwork(d, "scanner", "python", map[string]string{"HTTPS_PROXY": "http://other:1"}, "/p/.env", "https://moose.armis.com/api/v1", false)
 		if c := checkMap(d.report)["scanner/server network"]; c.Fix != FixNone {
 			t.Errorf("proxy fix offered although HTTPS_PROXY is set: %+v", c)
 		}
@@ -734,7 +734,7 @@ func TestCheckServerNetworkProxyFix(t *testing.T) {
 	t.Run("reachable", func(t *testing.T) {
 		stubNetwork(t, "", func(map[string]string) (string, error) { return "HTTP 401 (CA: system store)", nil })
 		d := newDoctorRun(DoctorOptions{})
-		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env")
+		checkServerNetwork(d, "scanner", "python", map[string]string{}, "/p/.env", "https://moose.armis.com/api/v1", false)
 		wantStatus(t, checkMap(d.report), "scanner/server network", StatusOK)
 		// The unauthenticated probe's 401 proves reachability; it must not
 		// appear next to a pass.
@@ -766,5 +766,143 @@ func TestIsConnectFailure(t *testing.T) {
 		if got := isConnectFailure(out); got != want {
 			t.Errorf("isConnectFailure(%q) = %v, want %v", out, got, want)
 		}
+	}
+}
+
+func TestCheckServerNetworkKnowledge(t *testing.T) {
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "SSL_CERT_FILE"} {
+		t.Setenv(k, "")
+	}
+	certErr := errors.New("ERR ConnectError [SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate (CA: certifi)")
+	stubNetwork(t, "http://proxy.corp:8080", func(map[string]string) (string, error) { return certErr.Error(), certErr })
+
+	d := newDoctorRun(DoctorOptions{})
+	checkServerNetwork(d, "knowledge prod", "python", map[string]string{}, "/k/.env", "https://knowledge-api.moose.armis.com", true)
+	c := wantStatus(t, checkMap(d.report), "knowledge prod/server network", StatusFail)
+	if !strings.Contains(c.Remediation, "SSL_CERT_FILE") || strings.Contains(c.Remediation, "Update the server") {
+		t.Errorf("knowledge hint = %q, want the SSL_CERT_FILE workaround and no scanner update advice", c.Remediation)
+	}
+	if !strings.Contains(c.Detail, "knowledge-api.moose.armis.com") {
+		t.Errorf("detail = %q, want the knowledge API URL", c.Detail)
+	}
+	if c.Fix != FixNone {
+		t.Errorf("knowledge network check must not offer the scanner's proxy fix: %+v", c)
+	}
+}
+
+func TestKnowledgeAPIURL(t *testing.T) {
+	t.Setenv("ARMIS_KNOWLEDGE_API_URL", "")
+	for sub, want := range map[KnowledgeEnv]string{
+		KnowledgeEnvProd:  "https://knowledge-api.moose.armis.com",
+		KnowledgeEnvStage: "https://knowledge-api.moose-stg.armis.com",
+		KnowledgeEnvDev:   "https://knowledge-api.moose-dev.armis.com",
+	} {
+		if got := knowledgeAPIURL(sub, nil); got != want {
+			t.Errorf("knowledgeAPIURL(%q) = %q, want %q", sub, got, want)
+		}
+	}
+	if got := knowledgeAPIURL(KnowledgeEnvProd, map[string]string{"ARMIS_KNOWLEDGE_API_URL": "https://x.example"}); got != "https://x.example" {
+		t.Errorf("override ignored: %q", got)
+	}
+}
+
+func TestCheckCredentialsSessionFallback(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), ".env")
+	mustWrite(t, envFile, "HTTPS_PROXY=http://p:1\n")
+
+	for _, tt := range []struct {
+		name    string
+		session bool
+		want    CheckStatus
+	}{
+		{"no .env credentials and no login", false, StatusWarn},
+		{"no .env credentials but a login exists", true, StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := sessionUsable
+			sessionUsable = func() bool { return tt.session }
+			t.Cleanup(func() { sessionUsable = orig })
+
+			r := &DoctorReport{}
+			checkCredentials(r, "scanner", envFile)
+			c := wantStatus(t, checkMap(r), "scanner/credentials", tt.want)
+			if tt.want == StatusWarn && (!strings.Contains(c.Remediation, "shell") || !strings.Contains(c.Remediation, "auth login")) {
+				t.Errorf("hint should explain shell exports and name the login alternative: %q", c.Remediation)
+			}
+		})
+	}
+}
+
+func TestCheckCredentialsMissingFileWithoutLogin(t *testing.T) {
+	orig := sessionUsable
+	sessionUsable = func() bool { return false }
+	t.Cleanup(func() { sessionUsable = orig })
+
+	r := &DoctorReport{}
+	checkCredentials(r, "scanner", filepath.Join(t.TempDir(), "absent.env"))
+	wantStatus(t, checkMap(r), "scanner/credentials", StatusWarn)
+}
+
+func TestCheckVSCodeCopilotNoteIsPinnedAndExplainsLoading(t *testing.T) {
+	root := t.TempDir()
+	writeVSCodeFixture(t, root, os.Args[0])
+	stubVSCode(t, []vscodeVariant{{Name: "VS Code", Root: root}})
+
+	d := newDoctorRun(DoctorOptions{WorkspaceDir: t.TempDir()})
+	checkVSCode(d, "/plugin", true)
+	c := wantStatus(t, checkMap(d.report), "vscode/Copilot", StatusInfo)
+	if !c.Pinned {
+		t.Error("the Copilot note must stay visible in the compact view")
+	}
+	for _, want := range []string{"does not mean VS Code loaded it", "MCP: List Servers", "Output", "MCP servers in Copilot", "organization admin"} {
+		if !strings.Contains(c.Remediation, want) {
+			t.Errorf("Copilot hint missing %q:\n%s", want, c.Remediation)
+		}
+	}
+}
+
+func TestScannerServerLogGoesInBundleRedacted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ei := NewEditorInstaller()
+	writeFakeVenv(t, ei.PluginDir())
+	mustWrite(t, filepath.Join(ei.PluginDir(), "server.py"), "# server")
+	mustWrite(t, ei.EnvFilePath(), "ARMIS_CLIENT_ID=the-client-id\nARMIS_CLIENT_SECRET=the-client-secret\n")
+	mustWrite(t, filepath.Join(ei.PluginDir(), "logs", "server.log"),
+		"2026-10-01 started\nauth failed for the-client-secret\n")
+
+	d := newDoctorRun(DoctorOptions{})
+	checkScannerPlugin(d, ei)
+	if _, ok := d.report.Artifacts["scanner/server.log"]; !ok {
+		t.Fatalf("server.log not collected; artifacts: %v", d.report.Artifacts)
+	}
+
+	path := filepath.Join(t.TempDir(), "bundle.zip")
+	if err := WriteSupportBundle(d.report, path, "test"); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+	found := false
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		b, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if strings.Contains(string(b), "the-client-secret") {
+			t.Errorf("%s leaks the secret", f.Name)
+		}
+		if f.Name == "scanner/server.log" {
+			found = true
+			if !strings.Contains(string(b), "auth failed") {
+				t.Errorf("server.log content missing: %s", b)
+			}
+		}
+	}
+	if !found {
+		t.Error("bundle has no scanner/server.log")
 	}
 }

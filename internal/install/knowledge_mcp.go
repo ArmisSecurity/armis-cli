@@ -81,11 +81,11 @@ func (ki *KnowledgeMCPInstaller) EnvFilePath() string {
 func (ki *KnowledgeMCPInstaller) envSubdir() string {
 	switch ki.env {
 	case KnowledgeEnvStage:
-		return "stage"
+		return string(KnowledgeEnvStage)
 	case KnowledgeEnvDev:
-		return "dev"
+		return string(KnowledgeEnvDev)
 	default:
-		return "prod"
+		return string(KnowledgeEnvProd)
 	}
 }
 
@@ -254,6 +254,31 @@ func (ki *KnowledgeMCPInstaller) Fetch(force bool) error {
 	_ = os.WriteFile(filepath.Clean(filepath.Join(ki.pluginDir, knowledgeSHAFile)), []byte(latest), 0o600)
 
 	return nil
+}
+
+// HasCredentials reports whether the knowledge .env holds both client
+// credentials.
+func (ki *KnowledgeMCPInstaller) HasCredentials() bool {
+	env, err := parseEnvFile(ki.EnvFilePath())
+	return err == nil && env["ARMIS_CLIENT_ID"] != "" && env["ARMIS_CLIENT_SECRET"] != ""
+}
+
+// SeedCredentialsFrom copies ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET from the
+// scanner's .env at scannerEnvPath into the knowledge .env when the latter has
+// neither credential of its own. Editors launch servers without the user's shell
+// exports, so the bridge only sees credentials that are in its .env (VS Code
+// loads it via envFile). An existing knowledge value is never overwritten, and
+// a missing scanner .env is not an error.
+func (ki *KnowledgeMCPInstaller) SeedCredentialsFrom(scannerEnvPath string) error {
+	src, err := parseEnvFile(scannerEnvPath)
+	if err != nil || src["ARMIS_CLIENT_ID"] == "" || src["ARMIS_CLIENT_SECRET"] == "" {
+		return nil //nolint:nilerr // no scanner credentials to copy
+	}
+	dst, _ := parseEnvFile(ki.EnvFilePath())
+	if dst["ARMIS_CLIENT_ID"] != "" || dst["ARMIS_CLIENT_SECRET"] != "" {
+		return nil
+	}
+	return WriteEnvFromValues(ki.EnvFilePath(), src["ARMIS_CLIENT_ID"], src["ARMIS_CLIENT_SECRET"])
 }
 
 // PluginKey returns the "plugin@marketplace" key Claude Code uses to identify

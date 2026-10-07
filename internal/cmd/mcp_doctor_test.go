@@ -238,3 +238,22 @@ func TestMCPDoctorFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintMCPDoctorPlainCompactShowsPinnedGuidance(t *testing.T) {
+	// A pinned info check (the Copilot "registered != loaded" note) stays
+	// visible in the compact view even though every check passes.
+	report := &install.DoctorReport{Checks: []install.DoctorCheck{
+		{Component: "vscode", Name: "VS Code settings", Status: install.StatusOK, Detail: "fine"},
+		{Component: "vscode", Name: "Copilot", Status: install.StatusInfo, Pinned: true,
+			Detail: "passing checks mean the config is valid, not that VS Code loaded the server", Remediation: "1. Run \"MCP: List Servers\""},
+	}}
+
+	var out bytes.Buffer
+	printMCPDoctorPlain(&out, report, false, false)
+	got := out.String()
+	for _, want := range []string{"not that VS Code loaded the server", "MCP: List Servers"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("compact output missing %q:\n%s", want, got)
+		}
+	}
+}

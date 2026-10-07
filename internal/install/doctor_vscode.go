@@ -94,13 +94,15 @@ func checkVSCode(d *doctorRun, pluginDir string, registered bool) {
 	checkVSCodeWorkspace(d, workspace)
 	checkVSCodePolicy(report)
 
-	report.add(componentVSCode, "Copilot", StatusInfo, "can't be verified from this machine").
+	report.add(componentVSCode, "Copilot", StatusInfo,
+		"passing checks mean the config is valid, not that VS Code loaded the server").
+		pin().
 		hint(strings.Join([]string{
-			"If every check above passes but Copilot Chat doesn't use the Armis tools:",
-			"1. Switch Copilot Chat to Agent mode (the mode picker under the chat input) — tools are only used in Agent mode.",
-			"2. Click the tools icon in the chat input and make sure armis-appsec and its tools are ticked.",
-			"3. Run \"MCP: List Servers\" from the Command Palette, select armis-appsec, and choose Start Server (accept the trust prompt if shown). \"Show Output\" there shows VS Code's own log for the server.",
-			"4. On a Copilot Business/Enterprise seat, the \"MCP servers in Copilot\" policy must be enabled by your GitHub organization admin (it is off by default). If it's off, VS Code shows the server but Copilot won't call it.",
+			"Registered in mcp.json does not mean VS Code loaded it. If Copilot Chat doesn't list the Armis tools:",
+			"1. Run \"MCP: List Servers\" from the Command Palette. armis-appsec should be listed and Running; if not, select it and choose Start Server (accept the trust prompt).",
+			"2. In that menu choose Show Output (or open View > Output and pick the MCP log) for VS Code's own log of the server.",
+			"3. Switch Copilot Chat to Agent mode and tick armis-appsec in the tools picker under the chat input; tools are only used in Agent mode.",
+			"4. If the server is listed but blocked, or never appears, ask your GitHub organization admin whether the \"MCP servers in Copilot\" policy is enabled. It is off by default on Copilot Business/Enterprise, and no local setting overrides it.",
 		}, "\n"))
 }
 

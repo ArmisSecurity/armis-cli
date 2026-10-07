@@ -252,6 +252,7 @@ func installAll(force, withKnowledge bool) error {
 		printKnowledgeResult(kres)
 	}
 
+	printInstallSummary(os.Stderr, installSummary{targets: kt, knowledge: kres.registered})
 	printCredentialStatus(ei)
 	return nil
 }
@@ -298,6 +299,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 	}
 
 	needsSharedPlugin := len(editorIDs) > 0 || hasCodex
+	var kres knowledgeResult
 
 	// Both the shared-plugin and Claude paths build a Python venv, so verify the
 	// interpreter is present before downloading anything (advisory-only targets
@@ -415,7 +417,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 
 		pluginDir := install.NewEditorInstaller().PluginDir()
 		manifest := install.ReadManifest(pluginDir)
-		kres := installKnowledgeFor(kt, force, manifest)
+		kres = installKnowledgeFor(kt, force, manifest)
 		if manifest != nil {
 			if err := install.WriteManifest(manifest); err != nil {
 				fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
@@ -424,6 +426,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 		printKnowledgeResult(kres)
 	}
 
+	printInstallSummary(os.Stderr, installSummary{targets: kt, knowledge: kres.registered})
 	return nil
 }
 
@@ -448,18 +451,24 @@ func printKnowledgeResult(res knowledgeResult) {
 	}
 	if len(res.registered) > 0 {
 		if res.shortSHA != "" {
-			fmt.Fprintf(os.Stderr, "  ✓ Knowledge bridge (%s)\n", res.shortSHA)
+			state := ""
+			if res.upToDate {
+				state = ", up to date"
+			}
+			fmt.Fprintf(os.Stderr, "  ✓ Knowledge bridge (%s%s)\n", res.shortSHA, state)
 		}
 		fmt.Fprintf(os.Stderr, "  ✓ Knowledge registered in: %s\n", strings.Join(res.registered, ", "))
 		fmt.Fprintln(os.Stderr, "")
-		// The bridge reads these at startup and fails without them, so say so
-		// whether or not credentials were configured during this run.
-		if install.CredentialsPresent() {
-			fmt.Fprintln(os.Stderr, "Knowledge reads ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET at runtime.")
+		fmt.Fprintln(os.Stderr, "Armis Knowledge is a second MCP server (armis-knowledge) next to armis-appsec.")
+		// Editors launch servers without the user's shell exports, so the
+		// bridge only sees credentials stored in its own .env.
+		ki := install.NewKnowledgeMCPInstaller(knowledgeEnvForDev(useDev))
+		if ki.HasCredentials() {
+			fmt.Fprintf(os.Stderr, "Knowledge reads its credentials from %s.\n", ki.EnvFilePath())
 		} else {
-			fmt.Fprintln(os.Stderr, "Knowledge needs credentials exported before it can answer queries:")
-			fmt.Fprintln(os.Stderr, "  export ARMIS_CLIENT_ID=<your-client-id>")
-			fmt.Fprintln(os.Stderr, "  export ARMIS_CLIENT_SECRET=<your-client-secret>")
+			fmt.Fprintf(os.Stderr, "Knowledge needs credentials in %s (editors do not inherit shell exports):\n", ki.EnvFilePath())
+			fmt.Fprintln(os.Stderr, "  ARMIS_CLIENT_ID=<your-client-id>")
+			fmt.Fprintln(os.Stderr, "  ARMIS_CLIENT_SECRET=<your-client-secret>")
 		}
 	} else if !res.skipped {
 		fmt.Fprintln(os.Stderr, "  ⚠ Knowledge was not registered in any editor.")

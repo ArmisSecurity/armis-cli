@@ -38,7 +38,7 @@ const (
 	maxArchiveEntries = 10000             // max tar entries to prevent resource exhaustion
 )
 
-var pythonCandidates = []string{"python3.13", "python3.12", "python3.11", "python3", "python"}
+var pythonCandidates = []string{"python3.14", "python3.13", "python3.12", "python3.11", "python3", "python"}
 
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
@@ -290,6 +290,23 @@ func downloadAndExtractTarball(client *http.Client, tarballURL, destDir, subtree
 	return nil
 }
 
+// venvOldSuffix names the sibling directory the previous venv is moved to
+// while a new one is built, so a failed rebuild can restore it.
+const venvOldSuffix = ".old"
+
+// venvCopyWarning is what `python -m venv` logs on Windows when it can't copy
+// a file into the new venv (python.exe locked by antivirus or a running
+// server). venv logs it as a warning and still exits 0, so it must be detected
+// from the output.
+const venvCopyWarning = "Unable to copy"
+
+// createPluginVenv builds pluginDir/.venv and installs requirements.txt into it.
+//
+// The previous venv is moved to .venv.old and the new one is built at its
+// final path (venvs are not relocatable: console scripts and activate embed
+// the absolute path they were created at). On failure at any step the
+// half-built venv is removed and the previous one restored. Errors name the
+// step that failed.
 func createPluginVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
@@ -297,20 +314,77 @@ func createPluginVenv(pluginDir string) error {
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
+	oldDir := venvDir + venvOldSuffix
+	if err := setVenvAside(venvDir, oldDir); err != nil {
+		return err
+	}
+	hadOld := dirExists(oldDir)
+	if err := buildVenv(python, venvDir, filepath.Join(pluginDir, "requirements.txt")); err != nil {
+		_ = os.RemoveAll(venvDir)
+		if hadOld {
+			_ = os.Rename(oldDir, venvDir)
+		}
+		return err
+	}
+	if hadOld {
+		_ = os.RemoveAll(oldDir)
+	}
+	return nil
+}
+
+// setVenvAside moves an existing venvDir to oldDir. A leftover oldDir from an
+// interrupted run is restored first when venvDir is missing, and discarded
+// otherwise.
+func setVenvAside(venvDir, oldDir string) error {
+	if !dirExists(venvDir) {
+		if dirExists(oldDir) {
+			if err := os.Rename(oldDir, venvDir); err != nil {
+				return fmt.Errorf("step 1/3 (creating venv): restoring %s: %w", oldDir, err)
+			}
+		} else {
+			return nil
+		}
+	}
+	if err := os.RemoveAll(oldDir); err != nil {
+		return fmt.Errorf("step 1/3 (creating venv): removing leftover %s: %w", oldDir, err)
+	}
+	if err := os.Rename(venvDir, oldDir); err != nil {
+		return fmt.Errorf("step 1/3 (creating venv): the existing %s is in use (a running MCP server or antivirus is holding it), close your editor and retry: %w", venvDir, err)
+	}
+	return nil
+}
+
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// buildVenv creates a venv at dir, verifies its interpreter, and installs
+// reqsFile with that interpreter's pip.
+func buildVenv(python, dir, reqsFile string) error {
+	venvOut := &cappedBuffer{max: maxStderrCapture}
 	// armis:ignore cwe:94 reason:python path from findPython allowlist (python3/python only); args are hardcoded
 	// armis:ignore cwe:78 reason:python binary from findPython allowlist; all args are hardcoded literals
-	venvCmd := exec.Command(python, "-m", "venv", venvDir) //nolint:gosec // python validated by findPython allowlist
-	venvCmd.Stdout = os.Stderr                             // armis:ignore cwe:78 reason:part of venvCmd above
-	venvCmd.Stderr = os.Stderr
+	venvCmd := exec.Command(python, "-m", "venv", dir) //nolint:gosec // python validated by findPython allowlist
+	venvCmd.Stdout = io.MultiWriter(os.Stderr, venvOut)
+	venvCmd.Stderr = io.MultiWriter(os.Stderr, venvOut)
 	if err := venvCmd.Run(); err != nil {
-		return fmt.Errorf("creating venv: %w", err)
+		return fmt.Errorf("step 1/3 (creating venv): %w%s", err, venvFailureHint(venvOut.String()))
+	}
+	// venv exits 0 after failing to copy python.exe on Windows, so check the
+	// result rather than trusting the exit code.
+	if launcherCopyFailed(venvOut.String()) {
+		return fmt.Errorf("step 1/3 (creating venv): python reported it could not copy its launcher%s", venvFailureHint(venvOut.String()))
+	}
+	py := venvInterpreter(dir)
+	if !isExecutableFile(py) {
+		return fmt.Errorf("step 1/3 (creating venv): %s was not created%s", py, venvFailureHint(venvOut.String()))
+	}
+	// armis:ignore cwe:78 cwe:94 reason:py is inside the venv we just created; the -c argument is a hardcoded literal
+	if out, err := exec.Command(py, "-c", "import sys").CombinedOutput(); err != nil { //nolint:gosec // venv interpreter, constant script
+		return fmt.Errorf("step 2/3 (checking venv): %s does not run: %w: %s", py, err, tail(string(out), 300))
 	}
 
-	pip := filepath.Join(venvDir, "bin", "pip")
-	if runtime.GOOS == osWindows {
-		pip = filepath.Join(venvDir, "Scripts", "pip.exe")
-	}
-	reqsFile := filepath.Join(pluginDir, "requirements.txt")
 	// --prefer-binary makes pip favor the newest dependency version that ships a
 	// usable wheel over a newer source-only release, instead of pip's default of
 	// "newest version wins, build from source if needed". This matters for the
@@ -321,16 +395,62 @@ func createPluginVenv(pluginDir string) error {
 	// prior wheeled version exists, so this avoids the build entirely without
 	// pinning anything. pip falls back to a source build only if no version has
 	// a compatible wheel, so machines that already worked are unaffected.
-	// armis:ignore cwe:78 reason:pip binary from our own venv directory; args are hardcoded literals
-	// armis:ignore cwe:94 reason:pip binary from our own venv; reqsFile is hardcoded "requirements.txt"
-	pipCmd := exec.Command(pip, "install", "-q", "--prefer-binary", "-r", reqsFile) //nolint:gosec // pip path derived from our own venv
-	pipCmd.Stdout = os.Stderr
-	pipCmd.Stderr = os.Stderr
+	// "python -m pip" is used instead of Scripts/pip.exe so a missing or
+	// relocated launcher can't be the failure.
+	pipOut := &cappedBuffer{max: maxStderrCapture}
+	// armis:ignore cwe:78 reason:interpreter from our own venv directory; args are hardcoded literals
+	// armis:ignore cwe:94 reason:interpreter from our own venv; reqsFile is hardcoded "requirements.txt"
+	pipCmd := exec.Command(py, "-m", "pip", "install", "-q", "--prefer-binary", "-r", reqsFile) //nolint:gosec // interpreter derived from our own venv
+	pipCmd.Stdout = io.MultiWriter(os.Stderr, pipOut)
+	pipCmd.Stderr = io.MultiWriter(os.Stderr, pipOut)
 	if err := pipCmd.Run(); err != nil {
-		return fmt.Errorf("installing dependencies: %w", err)
+		return fmt.Errorf("step 3/3 (installing dependencies): %w%s", err, pipFailureHint(pipOut.String()))
 	}
-
 	return nil
+}
+
+// launcherCopyFailed reports whether venv's output says it could not copy the
+// main interpreter. A failed copy of an optional file (pythonw.exe and its
+// venvwlauncher.exe) leaves a working venv and is ignored.
+func launcherCopyFailed(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, venvCopyWarning) {
+			continue
+		}
+		l := strings.ToLower(line)
+		if strings.Contains(l, "pythonw") || strings.Contains(l, "venvwlauncher") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// venvInterpreter returns the interpreter inside the venv directory dir.
+func venvInterpreter(dir string) string {
+	if runtime.GOOS == osWindows {
+		return filepath.Join(dir, "Scripts", "python.exe")
+	}
+	return filepath.Join(dir, "bin", "python")
+}
+
+// venvFailureHint adds the likely cause of a venv-creation failure.
+func venvFailureHint(output string) string {
+	if strings.Contains(output, venvCopyWarning) || strings.Contains(strings.ToLower(output), "permission denied") ||
+		strings.Contains(strings.ToLower(output), "being used by another process") {
+		return "\nThe interpreter could not be written. Antivirus or a running MCP server may be holding python.exe: " +
+			"close your editor, ask IT to exclude ~/.armis from real-time scanning, and retry"
+	}
+	return ""
+}
+
+// pipFailureHint adds the likely cause of a pip failure.
+func pipFailureHint(output string) string {
+	o := strings.ToLower(output)
+	if strings.Contains(o, "certificate_verify_failed") || strings.Contains(o, "sslerror") || strings.Contains(o, "[ssl") {
+		return "\npip could not verify a TLS certificate. Behind TLS inspection (Zscaler, Netskope), set PIP_CERT or SSL_CERT_FILE to your organization's root CA PEM file, or install pip-system-certs, and retry"
+	}
+	return ""
 }
 
 func validateGitHubURL(rawURL string) error {
@@ -683,8 +803,5 @@ func copyFile(src, dst string) error {
 
 // venvPython returns the path to the Python interpreter inside a venv.
 func venvPython(pluginDir string) string {
-	if runtime.GOOS == osWindows {
-		return filepath.Join(pluginDir, ".venv", "Scripts", "python.exe")
-	}
-	return filepath.Join(pluginDir, ".venv", "bin", "python")
+	return venvInterpreter(filepath.Join(pluginDir, ".venv"))
 }

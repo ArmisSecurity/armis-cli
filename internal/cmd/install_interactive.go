@@ -79,6 +79,7 @@ func runInteractiveInstall(force bool) error {
 	// Knowledge follows the scanner: only agents the scanner configured
 	// successfully are registered below.
 	var kt knowledgeTargets
+	var kres knowledgeResult
 
 	if needsSharedPlugin {
 		spinner := progress.NewSpinner("Downloading MCP server...", !cli.ColorsEnabled())
@@ -192,7 +193,7 @@ func runInteractiveInstall(force bool) error {
 		spinner.Start()
 
 		manifest := install.ReadManifest(ei.PluginDir())
-		kres := installKnowledgeFor(kt, force, manifest)
+		kres = installKnowledgeFor(kt, force, manifest)
 		if manifest != nil {
 			if err := install.WriteManifest(manifest); err != nil {
 				kres.warnings = append(kres.warnings,
@@ -265,6 +266,7 @@ func runInteractiveInstall(force bool) error {
 
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintf(os.Stderr, "  %s Setup complete.\n", successMark)
+	printInstallSummary(os.Stderr, installSummary{targets: kt, knowledge: kres.registered})
 	fmt.Fprintln(os.Stderr, "")
 	if accessible {
 		fmt.Fprintln(os.Stderr, "  Next steps:")

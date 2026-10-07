@@ -295,9 +295,11 @@ func printDoctorChecksCompact(out io.Writer, checks []install.DoctorCheck, acces
 	var rows []doctorRow
 	var notes []string
 	for _, comp := range components {
-		var server, editors []install.DoctorCheck
+		var server, editors, pinned []install.DoctorCheck
 		for _, c := range byComponent[comp] {
 			switch {
+			case c.Status == install.StatusInfo && c.Pinned:
+				pinned = append(pinned, c)
 			case c.Status == install.StatusInfo:
 				notes = append(notes, c.Name)
 			case c.Editor != "":
@@ -312,6 +314,9 @@ func printDoctorChecksCompact(out io.Writer, checks []install.DoctorCheck, acces
 			label = comp + " editors"
 		}
 		rows = append(rows, compactEditorRows(label, editors)...)
+		for i := range pinned {
+			rows = append(rows, doctorRow{status: pinned[i].Status, label: comp, text: pinned[i].Detail, check: &pinned[i]})
+		}
 	}
 
 	width := 0
