@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.24.1] - 2026-10-07
+
+### Changed
+
+- `mcp install` now seeds the knowledge server's `.env` credentials from the scanner's `.env` (only when neither value is already set), since editors don't inherit shell exports, and prints a summary of servers, config paths, and verify steps. (#331)
+- `mcp update` reports per-server status and exits non-zero only when re-registering a supported agent fails. Knowledge failures and unsupported editors in the manifest no longer fail every later update. (#331)
+- `mcp doctor` falls back to the `armis-cli` login for credentials, checks knowledge API reachability with its own CA hint, and notes in compact output that a VS Code "registered" server may not be loaded. The support bundle now includes the scanner `server.log`, redacted. (#331)
+
+### Fixed
+
+- `mcp update` rebuilds the plugin venv at its final path after moving the old one to `.venv.old`, and restores it on failure or after an interrupted run. Errors are step-numbered with hints for Windows copy failures and TLS-inspection pip errors; failed copies of `pythonw.exe` and `venvwlauncher.exe` are ignored. (#331)
+- Added `python3.14` to the interpreter candidates for the plugin venv. (#331)
+
+---
+
 ## [1.24.0] - 2026-09-23
 
 ### Added
@@ -752,7 +767,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...HEAD
+[1.24.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.0...v1.24.1
 [1.24.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.2...v1.23.0
 [1.22.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.1...v1.22.2
