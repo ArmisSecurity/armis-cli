@@ -265,7 +265,7 @@ func (ki *KnowledgeMCPInstaller) HasCredentials() bool {
 
 // SeedCredentialsFrom copies ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET from the
 // scanner's .env at scannerEnvPath into the knowledge .env when the latter has
-// no credentials of its own. Editors launch servers without the user's shell
+// neither credential of its own. Editors launch servers without the user's shell
 // exports, so the bridge only sees credentials that are in its .env (VS Code
 // loads it via envFile). An existing knowledge value is never overwritten, and
 // a missing scanner .env is not an error.
@@ -275,7 +275,7 @@ func (ki *KnowledgeMCPInstaller) SeedCredentialsFrom(scannerEnvPath string) erro
 		return nil //nolint:nilerr // no scanner credentials to copy
 	}
 	dst, _ := parseEnvFile(ki.EnvFilePath())
-	if dst["ARMIS_CLIENT_ID"] != "" && dst["ARMIS_CLIENT_SECRET"] != "" {
+	if dst["ARMIS_CLIENT_ID"] != "" || dst["ARMIS_CLIENT_SECRET"] != "" {
 		return nil
 	}
 	return WriteEnvFromValues(ki.EnvFilePath(), src["ARMIS_CLIENT_ID"], src["ARMIS_CLIENT_SECRET"])

@@ -67,7 +67,7 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 			scannerState = "already up to date"
 			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
 		} else {
-			return fmt.Errorf("update failed, the installed MCP server was left as it was: %w", err)
+			return fmt.Errorf("update failed: %w", err)
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "MCP server updated to v%s.\n\n", ei.InstalledVersion())
@@ -76,6 +76,10 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 
 	var registered []string
 	var failed []string
+	// registerErrors counts failures to re-register a supported agent. An
+	// editor this CLI no longer supports stays in the manifest, so counting it
+	// would fail every later update too.
+	registerErrors := 0
 	var kt knowledgeTargets
 
 	editorIDs := make([]install.EditorID, 0, len(manifest.Editors))
@@ -94,6 +98,7 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		if err := e.Register(ei.PluginDir()); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
 			failed = append(failed, e.Name)
+			registerErrors++
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 			registered = append(registered, e.Name)
@@ -113,9 +118,11 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		if ciErr != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
 			failed = append(failed, "Claude Code")
+			registerErrors++
 		} else if err := ci.Install(); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", err)
 			failed = append(failed, "Claude Code")
+			registerErrors++
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
 			registered = append(registered, "Claude Code")
@@ -128,6 +135,7 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ Codex CLI (MCP): %v\n", err)
 			failed = append(failed, "Codex CLI")
+			registerErrors++
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 			registered = append(registered, "Codex CLI")
@@ -169,12 +177,12 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Servers:")
 	fmt.Fprintf(os.Stderr, "  armis-appsec     v%s  %s\n", ei.InstalledVersion(), scannerState)
-	knowledgeFailed := false
+	// Knowledge failures stay warnings (see installKnowledgeFor): the scanner
+	// update stands on its own.
 	switch {
 	case !withKnowledge:
 		fmt.Fprintln(os.Stderr, "  armis-knowledge  not installed (add it with: armis-cli mcp update --with-knowledge)")
 	case len(kres.registered) == 0:
-		knowledgeFailed = true
 		fmt.Fprintln(os.Stderr, "  armis-knowledge  NOT updated — see the warnings above")
 	case kres.upToDate:
 		fmt.Fprintf(os.Stderr, "  armis-knowledge  %s  already up to date\n", kres.shortSHA)
@@ -182,7 +190,7 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		fmt.Fprintf(os.Stderr, "  armis-knowledge  %s  updated\n", kres.shortSHA)
 	}
 
-	if len(failed) > 0 || knowledgeFailed {
+	if registerErrors > 0 {
 		return fmt.Errorf("update finished with errors — see above")
 	}
 	fmt.Fprintln(os.Stderr, "Restart your editors so they start the updated servers, then check with: armis-cli mcp doctor")

@@ -479,6 +479,7 @@ func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
 
 		if d.opts.Handshake {
 			d.probe(subComponent, "", serverLaunch{Command: pythonPath, Args: []string{bridge}, EnvFile: envFile, Env: env})
+			checkServerNetwork(d, subComponent, pythonPath, env, envFile, knowledgeAPIURL(kenv, env), true)
 		}
 	}
 	switch {

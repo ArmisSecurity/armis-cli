@@ -101,23 +101,38 @@ func TestCreatePluginVenv_FailuresKeepOldVenvAndNameTheStep(t *testing.T) {
 			if _, statErr := os.Stat(oldMarker); statErr != nil {
 				t.Error("the previous venv must be left untouched on failure")
 			}
-			if _, statErr := os.Stat(filepath.Join(pluginDir, ".venv.new")); !os.IsNotExist(statErr) {
-				t.Error("the half-built staging venv must be removed")
+			if _, statErr := os.Stat(filepath.Join(pluginDir, ".venv.old")); !os.IsNotExist(statErr) {
+				t.Error("the previous venv must be moved back into place, not left in .venv.old")
 			}
 		})
 	}
 }
 
-func TestSwapVenv_RestoresOldWhenStageMissing(t *testing.T) {
-	dir := t.TempDir()
-	venv := filepath.Join(dir, ".venv")
-	if err := os.MkdirAll(venv, 0o750); err != nil {
+func TestCreatePluginVenv_RestoresVenvLeftByInterruptedRun(t *testing.T) {
+	pluginDir, oldMarker := setupFakeVenvEnv(t)
+	// Simulate a run killed after the old venv was set aside.
+	if err := os.Rename(filepath.Join(pluginDir, ".venv"), filepath.Join(pluginDir, ".venv.old")); err != nil {
 		t.Fatal(err)
 	}
-	if err := swapVenv(venv, filepath.Join(dir, ".venv.new")); err == nil {
-		t.Fatal("expected error when the staged venv does not exist")
+	t.Setenv("FAKE_PIP_FAIL", "1")
+	if err := createPluginVenv(pluginDir); err == nil {
+		t.Fatal("expected an error")
 	}
-	if _, err := os.Stat(venv); err != nil {
-		t.Errorf("the old venv must be restored: %v", err)
+	if _, err := os.Stat(oldMarker); err != nil {
+		t.Errorf("the venv left in .venv.old must be restored: %v", err)
+	}
+}
+
+func TestLauncherCopyFailed(t *testing.T) {
+	for out, want := range map[string]bool{
+		"": false,
+		"Unable to copy 'C:\\Py\\venvlauncher.exe'":  true,
+		"Unable to copy 'C:\\Py\\python.exe'":        true,
+		"Unable to copy 'C:\\Py\\venvwlauncher.exe'": false,
+		"Unable to copy 'C:\\Py\\pythonw.exe'":       false,
+	} {
+		if got := launcherCopyFailed(out); got != want {
+			t.Errorf("launcherCopyFailed(%q) = %v, want %v", out, got, want)
+		}
 	}
 }

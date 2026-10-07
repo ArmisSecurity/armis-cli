@@ -290,25 +290,23 @@ func downloadAndExtractTarball(client *http.Client, tarballURL, destDir, subtree
 	return nil
 }
 
-// venvStageSuffix and venvOldSuffix name the sibling directories used while a
-// venv is rebuilt, so a failed rebuild never leaves a half-written .venv.
-const (
-	venvStageSuffix = ".new"
-	venvOldSuffix   = ".old"
-)
+// venvOldSuffix names the sibling directory the previous venv is moved to
+// while a new one is built, so a failed rebuild can restore it.
+const venvOldSuffix = ".old"
 
 // venvCopyWarning is what `python -m venv` logs on Windows when it can't copy
-// the launcher into the new venv (python.exe locked by antivirus or a running
+// a file into the new venv (python.exe locked by antivirus or a running
 // server). venv logs it as a warning and still exits 0, so it must be detected
 // from the output.
 const venvCopyWarning = "Unable to copy"
 
 // createPluginVenv builds pluginDir/.venv and installs requirements.txt into it.
 //
-// The venv is built in .venv.new and swapped into place only after every step
-// succeeded and the interpreter ran, so a failure at any step leaves the
-// previous venv untouched and never a half-built one. Errors name the step
-// that failed.
+// The previous venv is moved to .venv.old and the new one is built at its
+// final path (venvs are not relocatable: console scripts and activate embed
+// the absolute path they were created at). On failure at any step the
+// half-built venv is removed and the previous one restored. Errors name the
+// step that failed.
 func createPluginVenv(pluginDir string) error {
 	python := findPython()
 	if python == "" {
@@ -316,19 +314,49 @@ func createPluginVenv(pluginDir string) error {
 	}
 
 	venvDir := filepath.Join(pluginDir, ".venv")
-	stageDir := venvDir + venvStageSuffix
-	if err := os.RemoveAll(stageDir); err != nil {
-		return fmt.Errorf("step 1/3 (creating venv): removing leftover %s: %w", stageDir, err)
-	}
-	if err := buildVenv(python, stageDir, filepath.Join(pluginDir, "requirements.txt")); err != nil {
-		_ = os.RemoveAll(stageDir)
+	oldDir := venvDir + venvOldSuffix
+	if err := setVenvAside(venvDir, oldDir); err != nil {
 		return err
 	}
-	if err := swapVenv(venvDir, stageDir); err != nil {
-		_ = os.RemoveAll(stageDir)
+	hadOld := dirExists(oldDir)
+	if err := buildVenv(python, venvDir, filepath.Join(pluginDir, "requirements.txt")); err != nil {
+		_ = os.RemoveAll(venvDir)
+		if hadOld {
+			_ = os.Rename(oldDir, venvDir)
+		}
 		return err
+	}
+	if hadOld {
+		_ = os.RemoveAll(oldDir)
 	}
 	return nil
+}
+
+// setVenvAside moves an existing venvDir to oldDir. A leftover oldDir from an
+// interrupted run is restored first when venvDir is missing, and discarded
+// otherwise.
+func setVenvAside(venvDir, oldDir string) error {
+	if !dirExists(venvDir) {
+		if dirExists(oldDir) {
+			if err := os.Rename(oldDir, venvDir); err != nil {
+				return fmt.Errorf("step 1/3 (creating venv): restoring %s: %w", oldDir, err)
+			}
+		} else {
+			return nil
+		}
+	}
+	if err := os.RemoveAll(oldDir); err != nil {
+		return fmt.Errorf("step 1/3 (creating venv): removing leftover %s: %w", oldDir, err)
+	}
+	if err := os.Rename(venvDir, oldDir); err != nil {
+		return fmt.Errorf("step 1/3 (creating venv): the existing %s is in use (a running MCP server or antivirus is holding it), close your editor and retry: %w", venvDir, err)
+	}
+	return nil
+}
+
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // buildVenv creates a venv at dir, verifies its interpreter, and installs
@@ -345,10 +373,10 @@ func buildVenv(python, dir, reqsFile string) error {
 	}
 	// venv exits 0 after failing to copy python.exe on Windows, so check the
 	// result rather than trusting the exit code.
-	if strings.Contains(venvOut.String(), venvCopyWarning) {
+	if launcherCopyFailed(venvOut.String()) {
 		return fmt.Errorf("step 1/3 (creating venv): python reported it could not copy its launcher%s", venvFailureHint(venvOut.String()))
 	}
-	py := stagedPython(dir)
+	py := venvInterpreter(dir)
 	if !isExecutableFile(py) {
 		return fmt.Errorf("step 1/3 (creating venv): %s was not created%s", py, venvFailureHint(venvOut.String()))
 	}
@@ -381,8 +409,25 @@ func buildVenv(python, dir, reqsFile string) error {
 	return nil
 }
 
-// stagedPython returns the interpreter inside the venv directory dir.
-func stagedPython(dir string) string {
+// launcherCopyFailed reports whether venv's output says it could not copy the
+// main interpreter. A failed copy of an optional file (pythonw.exe and its
+// venvwlauncher.exe) leaves a working venv and is ignored.
+func launcherCopyFailed(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, venvCopyWarning) {
+			continue
+		}
+		l := strings.ToLower(line)
+		if strings.Contains(l, "pythonw") || strings.Contains(l, "venvwlauncher") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// venvInterpreter returns the interpreter inside the venv directory dir.
+func venvInterpreter(dir string) string {
 	if runtime.GOOS == osWindows {
 		return filepath.Join(dir, "Scripts", "python.exe")
 	}
@@ -402,37 +447,10 @@ func venvFailureHint(output string) string {
 // pipFailureHint adds the likely cause of a pip failure.
 func pipFailureHint(output string) string {
 	o := strings.ToLower(output)
-	if strings.Contains(o, "certificate_verify_failed") || strings.Contains(o, "ssl") {
+	if strings.Contains(o, "certificate_verify_failed") || strings.Contains(o, "sslerror") || strings.Contains(o, "[ssl") {
 		return "\npip could not verify a TLS certificate. Behind TLS inspection (Zscaler, Netskope), set PIP_CERT or SSL_CERT_FILE to your organization's root CA PEM file, or install pip-system-certs, and retry"
 	}
 	return ""
-}
-
-// swapVenv replaces venvDir with stageDir. The existing venv is moved aside
-// first and restored if the move of the new one fails, so the caller is left
-// with a working venv or the old one, never neither.
-func swapVenv(venvDir, stageDir string) error {
-	oldDir := venvDir + venvOldSuffix
-	hadOld := false
-	if _, err := os.Stat(venvDir); err == nil {
-		hadOld = true
-		if err := os.RemoveAll(oldDir); err != nil {
-			return fmt.Errorf("replacing venv: removing %s: %w", oldDir, err)
-		}
-		if err := os.Rename(venvDir, oldDir); err != nil {
-			return fmt.Errorf("replacing venv: the existing %s is in use (a running MCP server or antivirus is holding it) — close your editor and retry: %w", venvDir, err)
-		}
-	}
-	if err := os.Rename(stageDir, venvDir); err != nil {
-		if hadOld {
-			_ = os.Rename(oldDir, venvDir)
-		}
-		return fmt.Errorf("replacing venv: %w", err)
-	}
-	if hadOld {
-		_ = os.RemoveAll(oldDir)
-	}
-	return nil
 }
 
 func validateGitHubURL(rawURL string) error {
@@ -785,8 +803,5 @@ func copyFile(src, dst string) error {
 
 // venvPython returns the path to the Python interpreter inside a venv.
 func venvPython(pluginDir string) string {
-	if runtime.GOOS == osWindows {
-		return filepath.Join(pluginDir, ".venv", "Scripts", "python.exe")
-	}
-	return filepath.Join(pluginDir, ".venv", "bin", "python")
+	return venvInterpreter(filepath.Join(pluginDir, ".venv"))
 }
