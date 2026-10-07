@@ -61,11 +61,13 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
+	scannerState := "updated"
 	if err := ei.FetchPlugin(force); err != nil {
 		if errors.Is(err, install.ErrAlreadyCurrent) {
+			scannerState = "already up to date"
 			fmt.Fprintf(os.Stderr, "Armis AppSec MCP server v%s is already up to date.\n\n", ei.InstalledVersion())
 		} else {
-			return fmt.Errorf("update failed: %w", err)
+			return fmt.Errorf("update failed, the installed MCP server was left as it was: %w", err)
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "MCP server updated to v%s.\n\n", ei.InstalledVersion())
@@ -164,5 +166,25 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		printKnowledgeResult(kres)
 	}
 
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Servers:")
+	fmt.Fprintf(os.Stderr, "  armis-appsec     v%s  %s\n", ei.InstalledVersion(), scannerState)
+	knowledgeFailed := false
+	switch {
+	case !withKnowledge:
+		fmt.Fprintln(os.Stderr, "  armis-knowledge  not installed (add it with: armis-cli mcp update --with-knowledge)")
+	case len(kres.registered) == 0:
+		knowledgeFailed = true
+		fmt.Fprintln(os.Stderr, "  armis-knowledge  NOT updated — see the warnings above")
+	case kres.upToDate:
+		fmt.Fprintf(os.Stderr, "  armis-knowledge  %s  already up to date\n", kres.shortSHA)
+	default:
+		fmt.Fprintf(os.Stderr, "  armis-knowledge  %s  updated\n", kres.shortSHA)
+	}
+
+	if len(failed) > 0 || knowledgeFailed {
+		return fmt.Errorf("update finished with errors — see above")
+	}
+	fmt.Fprintln(os.Stderr, "Restart your editors so they start the updated servers, then check with: armis-cli mcp doctor")
 	return nil
 }

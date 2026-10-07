@@ -26,6 +26,9 @@ type knowledgeResult struct {
 	warnings   []string
 	shortSHA   string
 	skipped    bool
+	// upToDate is true when the installed bridge already matched the latest
+	// commit, so nothing was downloaded.
+	upToDate bool
 }
 
 // installKnowledgeFor downloads the knowledge bridge and registers it for the
@@ -45,12 +48,20 @@ func installKnowledgeFor(t knowledgeTargets, force bool, m *install.Manifest) kn
 
 	ki := install.NewKnowledgeMCPInstaller(knowledgeEnvForDev(useDev))
 
-	if err := ki.Fetch(force); err != nil && !errors.Is(err, install.ErrAlreadyCurrent) {
-		res.skipped = true
-		res.warnings = append(res.warnings, fmt.Sprintf("Knowledge: %v", err))
-		return res
+	if err := ki.Fetch(force); err != nil {
+		if !errors.Is(err, install.ErrAlreadyCurrent) {
+			res.skipped = true
+			res.warnings = append(res.warnings, fmt.Sprintf("Knowledge: %v", err))
+			return res
+		}
+		res.upToDate = true
 	}
 	res.shortSHA = ki.ShortSHA()
+	// The editor entries point at the knowledge .env via envFile, and editors
+	// never inherit shell exports, so make sure the file carries credentials.
+	if err := ki.SeedCredentialsFrom(install.NewEditorInstaller().EnvFilePath()); err != nil {
+		res.warnings = append(res.warnings, fmt.Sprintf("Knowledge credentials: %v", err))
+	}
 
 	var mk *install.ManifestKnowledge
 	if m != nil {

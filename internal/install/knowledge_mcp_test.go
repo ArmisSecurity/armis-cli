@@ -482,3 +482,40 @@ func TestKnowledgeRegisterCodexAddsSection(t *testing.T) {
 		t.Errorf("expected armis_knowledge section, got:\n%s", b)
 	}
 }
+
+func TestKnowledgeSeedCredentialsFrom(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ki := NewKnowledgeMCPInstaller(KnowledgeEnvProd)
+
+	scannerEnv := filepath.Join(t.TempDir(), ".env")
+
+	// No scanner credentials: nothing written.
+	if err := ki.SeedCredentialsFrom(scannerEnv); err != nil || ki.HasCredentials() {
+		t.Fatalf("seeded without a scanner .env: err=%v has=%v", err, ki.HasCredentials())
+	}
+
+	if err := WriteEnvFromValues(scannerEnv, "id1", "secret1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ki.SeedCredentialsFrom(scannerEnv); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := parseEnvFile(ki.EnvFilePath())
+	if env["ARMIS_CLIENT_ID"] != "id1" || env["ARMIS_CLIENT_SECRET"] != "secret1" { // #nosec G101 -- test fixture
+		t.Fatalf("knowledge .env = %v", env)
+	}
+
+	// Existing knowledge credentials are never overwritten.
+	if err := WriteEnvFromValues(scannerEnv, "id2", "secret2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ki.SeedCredentialsFrom(scannerEnv); err != nil {
+		t.Fatal(err)
+	}
+	env, _ = parseEnvFile(ki.EnvFilePath())
+	if env["ARMIS_CLIENT_ID"] != "id1" {
+		t.Errorf("existing knowledge credentials overwritten: %v", env)
+	}
+}

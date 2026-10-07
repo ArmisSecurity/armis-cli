@@ -515,6 +515,39 @@ func serverAPIURL(env map[string]string) string {
 	return appsecProdURL
 }
 
+// knowledgeAPIURLs are the bridge's default API hosts per environment
+// directory, mirroring _DEFAULT_API_URL in armis-knowledge-mcp's bridge.py.
+var knowledgeAPIURLs = map[KnowledgeEnv]string{
+	KnowledgeEnvProd:  "https://knowledge-api.moose.armis.com",
+	KnowledgeEnvStage: "https://knowledge-api.moose-stg.armis.com",
+	KnowledgeEnvDev:   "https://knowledge-api.moose-dev.armis.com",
+}
+
+// knowledgeAPIURL resolves the API URL the knowledge bridge for the given
+// environment directory will call: ARMIS_KNOWLEDGE_API_URL wins, else the
+// bridge's built-in default.
+func knowledgeAPIURL(envSubdir KnowledgeEnv, env map[string]string) string {
+	if u := firstNonEmpty(env["ARMIS_KNOWLEDGE_API_URL"], os.Getenv("ARMIS_KNOWLEDGE_API_URL")); u != "" {
+		return u
+	}
+	return knowledgeAPIURLs[envSubdir]
+}
+
+// knowledgeNetworkHint is networkHint for the knowledge bridge, whose fix
+// differs: updating doesn't help, because the bridge (unlike the scanner
+// plugin) does not trust the OS certificate store.
+func knowledgeNetworkHint(output, envFile string) string {
+	o := strings.ToLower(output)
+	certFailure := strings.Contains(o, "certificate_verify_failed") || strings.Contains(o, "certificate verify failed") ||
+		strings.Contains(o, "self-signed") || strings.Contains(o, "unable to get local issuer")
+	if certFailure && strings.Contains(o, "(ca: certifi)") {
+		return "The Armis Knowledge bridge only trusts its own bundled CA list, not the Windows certificate store, so TLS inspection (Zscaler, Netskope) breaks it even when the scanner works. " +
+			"Export your organization's root CA as a PEM (Base-64 .cer) file and add SSL_CERT_FILE=<path to that file> to " + envFile + ", then restart your editor. " +
+			"armis-cli mcp update can't fix this: the bridge itself needs to trust the OS store (truststore), which is a change for the armis-knowledge-mcp maintainers."
+	}
+	return networkHint(output, envFile)
+}
+
 // runNetworkProbe runs networkProbeScript with the server's interpreter and
 // environment and returns its single line of output.
 func runNetworkProbe(python string, env map[string]string, url string, timeout time.Duration) (string, error) {

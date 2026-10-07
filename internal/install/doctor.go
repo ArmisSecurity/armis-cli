@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ArmisSecurity/armis-cli/internal/auth"
 )
 
 // maxHandshakeLineSize bounds a single line read from a spawned MCP server's
@@ -90,6 +92,9 @@ type DoctorCheck struct {
 	// Summary is a short phrase for the compact view ("5 tools"). Checks
 	// without one are only counted there.
 	Summary string `json:"-"`
+	// Pinned keeps an informational check visible in the compact view, for
+	// guidance users need even when every check passes.
+	Pinned bool `json:"-"`
 }
 
 // hint attaches remediation text a user can act on without support.
@@ -101,6 +106,12 @@ func (c *DoctorCheck) hint(remediation string) *DoctorCheck {
 // short sets the check's phrase for the compact view.
 func (c *DoctorCheck) short(summary string) *DoctorCheck {
 	c.Summary = summary
+	return c
+}
+
+// pin keeps an informational check visible in the compact view.
+func (c *DoctorCheck) pin() *DoctorCheck {
+	c.Pinned = true
 	return c
 }
 
@@ -385,7 +396,7 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 		// VS Code does via envFile; editors without envFile rely on the server
 		// loading .env itself, which it does from its own directory.
 		d.probe(component, "", serverLaunch{Command: pythonPath, Args: []string{serverPy}, EnvFile: ei.EnvFilePath(), Env: env})
-		checkServerNetwork(d, component, pythonPath, env, ei.EnvFilePath())
+		checkServerNetwork(d, component, pythonPath, env, ei.EnvFilePath(), serverAPIURL(env), false)
 		checkAuth(d, component, env)
 	}
 }
@@ -431,7 +442,8 @@ func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
 
 	found := false
 	venvFound := false
-	for _, sub := range []string{"prod", "stage", "dev"} {
+	for _, kenv := range []KnowledgeEnv{KnowledgeEnvProd, KnowledgeEnvStage, KnowledgeEnvDev} {
+		sub := string(kenv)
 		envDir := filepath.Join(k.PluginDir, sub)
 		bridge := filepath.Join(envDir, "bridge.py")
 		if _, err := os.Stat(bridge); err != nil {
@@ -484,12 +496,39 @@ const credentialsHint = "Re-enter your client ID and secret with: armis-cli inst
 	"(or set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET in this file). " +
 	"If you sign in with SSO instead, you can ignore this."
 
+// credentialsMissingHint is shown when neither the .env nor an armis-cli login
+// can authenticate the server.
+const credentialsMissingHint = "Neither this file nor ~/.armis/.sessions (written by 'armis-cli auth login') has usable credentials. " +
+	"Editors start servers without your shell's exports, so ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET set in a terminal are lost on restart " +
+	"and never reach servers launched by VS Code. Either run 'armis-cli install --interactive' to save a client ID and secret to this file, " +
+	"or run 'armis-cli auth login' to sign in with SSO."
+
+// sessionUsable reports whether ~/.armis/.sessions holds a login the servers
+// could use. A var so tests can stub it.
+var sessionUsable = func() bool {
+	store := auth.NewTokenStore()
+	for _, env := range store.Environments() {
+		tok, _ := store.Load(env)
+		if tok != nil && (tok.RefreshToken != "" || tok.ExpiresAt.After(time.Now())) {
+			return true
+		}
+	}
+	return false
+}
+
+const sessionCredentialsDetail = //nolint:gosec // G101: message text, not a credential
+"no client credentials in .env; the server will use the armis-cli login in ~/.armis/.sessions"
+
 // checkCredentials validates envFile carries both required credentials and
 // returns its contents for reuse by a following live handshake.
 func checkCredentials(report *DoctorReport, component, envFile string) map[string]string {
 	env, err := parseEnvFile(envFile)
 	if err != nil {
-		report.add(component, "credentials", StatusWarn, fmt.Sprintf("%s: %v", envFile, err)).hint(credentialsHint)
+		if sessionUsable() {
+			report.add(component, "credentials", StatusOK, sessionCredentialsDetail).short("armis-cli login")
+			return env
+		}
+		report.add(component, "credentials", StatusWarn, fmt.Sprintf("%s: %v", envFile, err)).hint(credentialsMissingHint)
 		return env
 	}
 	keys := make([]string, 0, len(env))
@@ -515,8 +554,12 @@ func checkCredentials(report *DoctorReport, component, envFile string) map[strin
 			hint("Some editors and the server's .env loader misread the first variable when a BOM is present. Re-save the file as \"UTF-8\" (not \"UTF-8 with BOM\").")
 	}
 	if env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
+		if sessionUsable() {
+			report.add(component, "credentials", StatusOK, sessionCredentialsDetail).short("armis-cli login")
+			return env
+		}
 		report.add(component, "credentials", StatusWarn,
-			fmt.Sprintf("ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET not set in %s", envFile)).hint(credentialsHint)
+			fmt.Sprintf("ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET not set in %s and no armis-cli login found", envFile)).hint(credentialsMissingHint)
 		return env
 	}
 	report.add(component, "credentials", StatusOK, "configured")
@@ -552,7 +595,10 @@ func checkAuth(d *doctorRun, component string, env map[string]string) {
 
 // checkServerNetwork runs the network probe with the server's own Python
 // runtime, which is where TLS-inspection and proxy problems actually bite.
-func checkServerNetwork(d *doctorRun, component, python string, env map[string]string, envFile string) {
+//
+// url is the API the server calls. knowledge selects the bridge's remediation
+// text and skips the system-proxy auto-fix, which is wired to the scanner.
+func checkServerNetwork(d *doctorRun, component, python string, env map[string]string, envFile, url string, knowledge bool) {
 	if caFile := firstNonEmpty(env["SSL_CERT_FILE"], os.Getenv("SSL_CERT_FILE")); caFile != "" {
 		// armis:ignore cwe:22 reason:stat-only existence check of the user's own SSL_CERT_FILE setting
 		if _, err := os.Stat(caFile); err != nil { //nolint:gosec // stat-only check of the user's own setting
@@ -560,13 +606,16 @@ func checkServerNetwork(d *doctorRun, component, python string, env map[string]s
 				hint("Fix the SSL_CERT_FILE path in " + envFile + " (or your environment) to point at your organization's root CA PEM file.")
 		}
 	}
-	url := serverAPIURL(env)
 	out, err := networkProbe(python, env, url, networkProbeTimeout)
 	d.report.artifact(sanitizeArtifactName(component)+"/network-probe.txt", fmt.Sprintf("GET %s\n%s\n", url, out))
 	if err != nil {
 		c := d.report.add(component, "server network", StatusFail, fmt.Sprintf("%s: %s", url, truncate(err.Error(), 300)))
-		c.hint(networkHint(err.Error(), envFile))
-		if isConnectFailure(err.Error()) && !hasProxyEnv(env) {
+		if knowledge {
+			c.hint(knowledgeNetworkHint(err.Error(), envFile))
+		} else {
+			c.hint(networkHint(err.Error(), envFile))
+		}
+		if !knowledge && isConnectFailure(err.Error()) && !hasProxyEnv(env) {
 			tryProxyFix(d, c, python, env, envFile, url)
 		}
 		return
