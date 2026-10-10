@@ -149,7 +149,13 @@ generated alongside them.`,
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		return output.CheckExit(result, failOnSeverities, exitCode)
+		// Same policy as `scan repo` / `scan image`: --fail-on-secret is a
+		// persistent flag on `scan` defaulting to true, so gating on severity
+		// alone here would advertise a gate this command does not apply.
+		return output.CheckExitPolicy(result, output.ExitPolicy{
+			FailOnSeverities: failOnSeverities,
+			FailOnSecret:     failOnSecret,
+		}, exitCode)
 	},
 }
 

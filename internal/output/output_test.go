@@ -360,3 +360,82 @@ func TestSyncColors_Disabled(t *testing.T) {
 		t.Errorf("expected rendered badge to be plain 'TEST' when colors are disabled, got %q", rendered)
 	}
 }
+
+// --- ExitPolicy ---------------------------------------------------------------
+//
+// An exposed secret arrives from the backend as severity INFO with no CWE unless
+// --include-non-exploitable is passed, so under the usual --fail-on HIGH,CRITICAL a
+// credential committed to source produced a passing scan. FailOnSecret closes that.
+
+func secretResult(suppressed bool) *model.ScanResult {
+	return &model.ScanResult{
+		Findings: []model.Finding{
+			{
+				ID:         "secret-1",
+				Type:       model.FindingTypeSecret,
+				Severity:   model.SeverityInfo,
+				File:       "src/config.py",
+				StartLine:  9,
+				Suppressed: suppressed,
+			},
+		},
+	}
+}
+
+func TestShouldFailPolicySecret(t *testing.T) {
+	failOnHighCritical := []string{"HIGH", "CRITICAL"}
+
+	t.Run("secret below the threshold fails when FailOnSecret is set", func(t *testing.T) {
+		if !ShouldFailPolicy(secretResult(false), ExitPolicy{FailOnSeverities: failOnHighCritical, FailOnSecret: true}) {
+			t.Error("expected an exposed secret to fail the scan")
+		}
+	})
+
+	t.Run("secret below the threshold passes when FailOnSecret is unset", func(t *testing.T) {
+		if ShouldFailPolicy(secretResult(false), ExitPolicy{FailOnSeverities: failOnHighCritical}) {
+			t.Error("expected the previous behaviour to be preserved without FailOnSecret")
+		}
+	})
+
+	t.Run("a suppressed secret does not fail", func(t *testing.T) {
+		// .armisignore stays the escape hatch, as it is for every other finding.
+		if ShouldFailPolicy(secretResult(true), ExitPolicy{FailOnSeverities: failOnHighCritical, FailOnSecret: true}) {
+			t.Error("expected a suppressed secret to be ignored")
+		}
+	})
+
+	t.Run("a non-secret finding below the threshold still passes", func(t *testing.T) {
+		result := &model.ScanResult{
+			Findings: []model.Finding{
+				{ID: "v1", Type: model.FindingTypeVulnerability, Severity: model.SeverityMedium},
+			},
+		}
+		if ShouldFailPolicy(result, ExitPolicy{FailOnSeverities: failOnHighCritical, FailOnSecret: true}) {
+			t.Error("FailOnSecret must not affect non-secret findings")
+		}
+	})
+
+	t.Run("ShouldFail keeps its severity-only meaning", func(t *testing.T) {
+		if ShouldFail(secretResult(false), failOnHighCritical) {
+			t.Error("ShouldFail must remain severity-only for existing callers")
+		}
+	})
+}
+
+func TestCheckExitPolicySecretExplainsItself(t *testing.T) {
+	var stderr bytes.Buffer
+	original := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = original })
+
+	err := CheckExitPolicy(secretResult(false),
+		ExitPolicy{FailOnSeverities: []string{"HIGH", "CRITICAL"}, FailOnSecret: true}, 1)
+	if err == nil {
+		t.Fatal("expected a non-zero exit for an exposed secret")
+	}
+	// Without an explanation the exit is unreadable: every finding sits below the
+	// configured threshold, yet the scan failed.
+	if !strings.Contains(stderr.String(), "secret") {
+		t.Errorf("expected stderr to explain the failure, got %q", stderr.String())
+	}
+}

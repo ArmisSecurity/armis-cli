@@ -387,7 +387,8 @@ func TestConvertNormalizedFindings(t *testing.T) {
 
 		findings, _ := convertNormalizedFindings(input, false, true)
 
-		// HasSecret is checked after CVE, so it overrides
+		// The finding_category is the specific signal and wins over both flags: a
+		// secret category stays a secret even when CVEs are attached.
 		if findings[0].Type != model.FindingTypeSecret {
 			t.Errorf("Type = %s, want %s", findings[0].Type, model.FindingTypeSecret)
 		}

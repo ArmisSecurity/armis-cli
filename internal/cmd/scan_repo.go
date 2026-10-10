@@ -211,7 +211,10 @@ var scanRepoCmd = &cobra.Command{
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		return output.CheckExit(result, failOnSeverities, exitCode)
+		return output.CheckExitPolicy(result, output.ExitPolicy{
+			FailOnSeverities: failOnSeverities,
+			FailOnSecret:     failOnSecret,
+		}, exitCode)
 	},
 }
 

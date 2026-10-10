@@ -26,6 +26,12 @@ func BuildScanResult(
 	includeNonExploitable bool,
 ) *model.ScanResult {
 	findings, filteredCount := ConvertNormalizedFindings(normalizedFindings, debug, includeNonExploitable)
+	// Collapse backend duplicates before the summary is built, so the counts the
+	// user sees match the findings the user sees -- same placement as the repo and
+	// image drivers. A no-op for `scan sbom`, this helper's only caller today,
+	// since dedupable() excludes CVE-bearing package findings; it belongs here so
+	// the next scan type routed through the shared path inherits it.
+	findings = DeduplicateFindings(findings)
 
 	summary := model.Summary{
 		Total:                  len(findings),
@@ -64,7 +70,7 @@ func ConvertNormalizedFindings(
 			continue
 		}
 
-		if !includeNonExploitable && ShouldFilterByExploitability(nf.NormalizedTask.Labels) {
+		if ShouldFilterFinding(nf, includeNonExploitable) {
 			filteredCount++
 			continue
 		}
