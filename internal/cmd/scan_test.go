@@ -73,7 +73,7 @@ func TestScanCmd(t *testing.T) {
 		// Scan-output flags were relocated from rootCmd to scanCmd (PPSC-1009) to
 		// keep them out of non-scan command help. They must remain available to
 		// the scan subtree.
-		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+		for _, name := range []string{"format", "no-progress", "fail-on", "min-severity", "exit-code", "page-limit"} {
 			if flags.Lookup(name) == nil {
 				t.Errorf("Expected --%s flag on scanCmd", name)
 			}
@@ -575,6 +575,45 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		})
 	})
 
+	// --min-severity is validated in PersistentPreRunE alongside --fail-on, so a
+	// typo surfaces as a flag error before auth.
+	t.Run("min-severity", func(t *testing.T) {
+		originalMinSeverity := minSeverity
+		t.Cleanup(func() { minSeverity = originalMinSeverity })
+
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		colorFlag = testColorAuto
+
+		t.Run("unset passes", func(t *testing.T) {
+			minSeverity = ""
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected no error for unset --min-severity, got: %v", err)
+			}
+		})
+
+		t.Run("lowercase accepted and normalized", func(t *testing.T) {
+			minSeverity = "high"
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Errorf("expected lowercase --min-severity to be accepted, got: %v", err)
+			}
+			if minSeverity != "HIGH" {
+				t.Errorf("expected --min-severity normalized to HIGH, got: %q", minSeverity)
+			}
+		})
+
+		t.Run("typo returns error", func(t *testing.T) {
+			minSeverity = "HIGHT"
+			err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+			if err == nil {
+				t.Error("expected error for invalid --min-severity 'HIGHT'")
+			}
+			if err != nil && !testutil.ContainsSubstring(err.Error(), "invalid --min-severity value") {
+				t.Errorf("error should mention 'invalid --min-severity value', got: %v", err)
+			}
+		})
+	})
+
 	// --sbom-output/--vex-output without their generation flags is a non-fatal
 	// warning, now emitted before auth (PPSC-1006 #25). The pre-run must still
 	// succeed (no error) on this path.
@@ -635,7 +674,7 @@ func TestRootCmd(t *testing.T) {
 		// Scan-output flags (--format, --no-progress, --fail-on, --exit-code,
 		// --page-limit) were relocated to scanCmd (PPSC-1009) and must NOT remain
 		// root persistent flags, so they stay out of non-scan command help.
-		for _, name := range []string{"format", "no-progress", "fail-on", "exit-code", "page-limit"} {
+		for _, name := range []string{"format", "no-progress", "fail-on", "min-severity", "exit-code", "page-limit"} {
 			if flags.Lookup(name) != nil {
 				t.Errorf("--%s should be scoped to scanCmd, not rootCmd", name)
 			}

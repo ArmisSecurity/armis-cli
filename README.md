@@ -466,6 +466,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 --format string         Output format: human, json, sarif, junit (default: human)
 --no-progress           Disable progress indicators
 --fail-on strings       Fail build on severity levels (default: [CRITICAL])
+--min-severity string   Only display findings at or above this severity (display only; --fail-on still evaluates all findings)
 --exit-code int         Exit code to use when failing (default: 1)
 --page-limit int        Results page size for pagination (default: 500, range: 1-1000)
 --color string          Control colored output: auto, always, never (default: auto)
@@ -760,7 +761,7 @@ vendor/
 
 ### Finding suppression directives
 
-Directives in the **root** `.armisignore` suppress matched findings post-scan. They are excluded from `--fail-on` evaluation and from human/JUnit output, and marked as suppressed in SARIF and JSON. Use `--show-suppressed` to include them in output.
+Directives in the **root** `.armisignore` suppress matched findings post-scan. They are excluded from `--fail-on` evaluation and from human/JUnit output, and marked as suppressed in SARIF and JSON. Use `--show-suppressed` to include them in output. Unlike `.armisignore` severity directives, `--min-severity` only hides findings from output: hidden findings still count toward `--fail-on`, and the CLI warns when they fail the scan.
 
 Format: `<type>:<value> -- <optional reason>`
 

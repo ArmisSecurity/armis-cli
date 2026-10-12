@@ -737,6 +737,12 @@ func suppressionSummaryText(findings []model.Finding) string {
 	return strings.Join(parts, ", ")
 }
 
+// hiddenBelowMinSeverityText describes findings hidden by --min-severity.
+// Example: "3 hidden by --min-severity"
+func hiddenBelowMinSeverityText(hidden int) string {
+	return fmt.Sprintf("%d hidden by --min-severity", hidden)
+}
+
 // renderBriefStatus renders a concise one-line summary of findings count by severity.
 // Example output: "Found 5 issues: 2 critical, 1 high, 2 medium"
 func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
@@ -746,17 +752,26 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 	total := result.Summary.Total
 	suppressed := result.Summary.Suppressed
 
+	// Notes on findings that exist but aren't counted in total
+	var notes []string
+	if suppressed > 0 {
+		notes = append(notes, suppressionSummaryText(result.Findings))
+	}
+	if result.Summary.HiddenBelowMinSeverity > 0 {
+		notes = append(notes, hiddenBelowMinSeverityText(result.Summary.HiddenBelowMinSeverity))
+	}
+
 	// Handle edge case: no findings
-	if total == 0 && suppressed == 0 {
+	if total == 0 && len(notes) == 0 {
 		successStyle := s.SuccessText
 		ew.write("%s %s\n", IconSuccess, successStyle.Render("No issues found"))
 		return ew.err
 	}
 
-	if total == 0 && suppressed > 0 {
+	if total == 0 {
 		successStyle := s.SuccessText
 		ew.write("%s %s\n", IconSuccess, successStyle.Render(
-			fmt.Sprintf("No active issues (%s)", suppressionSummaryText(result.Findings))))
+			fmt.Sprintf("No active issues (%s)", strings.Join(notes, ", "))))
 		return ew.err
 	}
 
@@ -778,11 +793,11 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 		}
 	}
 
-	if suppressed > 0 {
-		// Format: "N issues (M suppressed by .armisignore, K by inline comments)  ·  X critical, Y high"
+	if len(notes) > 0 {
+		// Format: "N issues (M suppressed by .armisignore, K hidden by --min-severity)  ·  X critical, Y high"
 		ew.write("%s  %s  %s\n",
 			s.Bold.Render(fmt.Sprintf("%d %s", total, pluralize("issue", total)))+
-				s.MutedText.Render(fmt.Sprintf(" (%s)", suppressionSummaryText(result.Findings))),
+				s.MutedText.Render(fmt.Sprintf(" (%s)", strings.Join(notes, ", "))),
 			s.MutedText.Render("·"),
 			strings.Join(parts, s.MutedText.Render(", ")))
 	} else {
@@ -826,6 +841,12 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	if result.Summary.Suppressed > 0 {
 		suppressed := s.MutedText.Render(fmt.Sprintf("(%s)", suppressionSummaryText(result.Findings)))
 		content.WriteString(suppressed + "\n")
+	}
+
+	// --min-severity hidden count if any
+	if result.Summary.HiddenBelowMinSeverity > 0 {
+		hidden := s.MutedText.Render(fmt.Sprintf("(%s)", hiddenBelowMinSeverityText(result.Summary.HiddenBelowMinSeverity)))
+		content.WriteString(hidden + "\n")
 	}
 
 	// Scanner-skip warning if the backend skipped a scanner (e.g. a file-count

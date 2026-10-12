@@ -449,6 +449,24 @@ func TestRenderBriefStatus(t *testing.T) {
 			},
 			contains: []string{"10 issues", "1 critical", "2 high", "3 medium", "2 low", "2 info"},
 		},
+		{
+			name: "findings hidden by min-severity",
+			result: &model.ScanResult{
+				Summary: model.Summary{
+					Total:                  1,
+					BySeverity:             map[model.Severity]int{model.SeverityCritical: 1},
+					HiddenBelowMinSeverity: 4,
+				},
+			},
+			contains: []string{"1 issue", "(4 hidden by --min-severity)", "1 critical"},
+		},
+		{
+			name: "every finding hidden by min-severity",
+			result: &model.ScanResult{
+				Summary: model.Summary{Total: 0, HiddenBelowMinSeverity: 3},
+			},
+			contains: []string{"No active issues (3 hidden by --min-severity)"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -88,6 +88,7 @@ type Summary struct {
 	ByCategory             map[string]int      `json:"by_category"`
 	FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
 	Suppressed             int                 `json:"suppressed,omitempty"`
+	HiddenBelowMinSeverity int                 `json:"hidden_below_min_severity,omitempty"`
 	ScannerSkipReason      string              `json:"scanner_skip_reason,omitempty"`
 }
 

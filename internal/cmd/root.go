@@ -41,6 +41,7 @@ var (
 	format        string
 	noProgress    bool
 	failOn        []string
+	minSeverity   string
 	exitCode      int
 	tenantID      string
 	pageLimit     int

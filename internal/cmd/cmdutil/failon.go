@@ -40,3 +40,19 @@ func GetFailOn(failOn []string) ([]string, error) {
 	}
 	return failOn, nil
 }
+
+// ValidateMinSeverity checks a --min-severity value and returns it normalized
+// to uppercase. An empty value is valid and means "show every severity".
+// Unlike --fail-on it takes a single level, since it is a threshold, not a set.
+func ValidateMinSeverity(severity string) (string, error) {
+	if severity == "" {
+		return "", nil
+	}
+	upper := strings.ToUpper(strings.TrimSpace(severity))
+	for _, s := range ValidSeverities {
+		if s == upper {
+			return upper, nil
+		}
+	}
+	return "", fmt.Errorf("invalid --min-severity value %q: must be one of %v", severity, ValidSeverities)
+}
