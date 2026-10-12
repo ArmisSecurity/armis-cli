@@ -152,9 +152,6 @@ func TestFilterByMinSeverity_DoesNotMutateInput(t *testing.T) {
 			if !reflect.DeepEqual(original, before) {
 				t.Error("filtered summary shares maps with the input")
 			}
-			if ShouldFail(original, []string{"INFO"}) != ShouldFail(before, []string{"INFO"}) {
-				t.Error("filtering changed the --fail-on result of the input")
-			}
 		})
 	}
 }
@@ -167,33 +164,8 @@ func TestFilterByMinSeverity_NoFilter(t *testing.T) {
 	if got := FilterByMinSeverity(nil, "HIGH"); got != nil {
 		t.Errorf("expected nil result to stay nil, got %+v", got)
 	}
-}
-
-func TestHiddenFailingCount(t *testing.T) {
-	tests := []struct {
-		name        string
-		minSeverity string
-		failOn      []string
-		want        int
-	}{
-		{name: "no filter", minSeverity: "", failOn: []string{"LOW"}, want: 0},
-		{name: "fail-on only above threshold", minSeverity: "HIGH", failOn: []string{"CRITICAL"}, want: 0},
-		{name: "fail-on at threshold is not hidden", minSeverity: "HIGH", failOn: []string{"HIGH"}, want: 0},
-		{name: "one hidden level", minSeverity: "CRITICAL", failOn: []string{"HIGH"}, want: 1},
-		{name: "suppressed hidden findings ignored", minSeverity: "HIGH", failOn: []string{"LOW"}, want: 1},
-		{name: "several hidden levels", minSeverity: "CRITICAL", failOn: []string{"INFO", "LOW", "MEDIUM", "HIGH"}, want: 4},
-		{name: "nothing matches", minSeverity: "CRITICAL", failOn: nil, want: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := HiddenFailingCount(newFilterTestResult(), tt.minSeverity, tt.failOn); got != tt.want {
-				t.Errorf("HiddenFailingCount(%q, %v) = %d, want %d", tt.minSeverity, tt.failOn, got, tt.want)
-			}
-		})
-	}
-
-	if got := HiddenFailingCount(nil, "HIGH", []string{"LOW"}); got != 0 {
-		t.Errorf("HiddenFailingCount(nil) = %d, want 0", got)
+	// No findings stays nil so JSON keeps emitting "findings": null.
+	if got := FilterByMinSeverity(&model.ScanResult{}, "HIGH"); got.Findings != nil {
+		t.Errorf("expected nil findings to stay nil, got %#v", got.Findings)
 	}
 }

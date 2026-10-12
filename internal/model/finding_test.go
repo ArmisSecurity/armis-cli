@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -432,5 +433,26 @@ func TestFinding_WithFix(t *testing.T) {
 	}
 	if unmarshaled.Fix.PatchFiles["file1.go"] != "patched content 1" {
 		t.Error("PatchFiles content mismatch")
+	}
+}
+
+func TestSummarizeFindings(t *testing.T) {
+	findings := []Finding{
+		{Severity: SeverityHigh, Type: FindingTypeVulnerability, FindingCategory: "sast"},
+		{Severity: SeverityHigh, Type: FindingTypeSecret},
+		{Severity: SeverityLow, Type: FindingTypeSCA, FindingCategory: "sca", Suppressed: true},
+	}
+
+	got := SummarizeFindings(findings)
+
+	want := Summary{
+		Total:      2,
+		BySeverity: map[Severity]int{SeverityHigh: 2},
+		ByType:     map[FindingType]int{FindingTypeVulnerability: 1, FindingTypeSecret: 1},
+		ByCategory: map[string]int{"sast": 1},
+		Suppressed: 1,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SummarizeFindings() = %+v, want %+v", got, want)
 	}
 }

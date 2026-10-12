@@ -145,7 +145,7 @@ generated alongside them.`,
 			FailOnSeverities: failOnSeverities,
 		}
 
-		return formatScanResult(formatter, result, outputCfg.Writer, opts, failOnSeverities)
+		return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
 	},
 }
 

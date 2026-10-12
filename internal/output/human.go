@@ -768,6 +768,13 @@ func renderBriefStatus(w io.Writer, result *model.ScanResult) error {
 		return ew.err
 	}
 
+	// Hidden findings may still fail the scan via --fail-on, so no success mark
+	if total == 0 && result.Summary.HiddenBelowMinSeverity > 0 {
+		ew.write("%s\n", s.MutedText.Render(
+			fmt.Sprintf("No issues shown (%s)", strings.Join(notes, ", "))))
+		return ew.err
+	}
+
 	if total == 0 {
 		successStyle := s.SuccessText
 		ew.write("%s %s\n", IconSuccess, successStyle.Render(

@@ -396,9 +396,10 @@ func TestPluralize(t *testing.T) {
 
 func TestRenderBriefStatus(t *testing.T) {
 	tests := []struct {
-		name     string
-		result   *model.ScanResult
-		contains []string
+		name        string
+		result      *model.ScanResult
+		contains    []string
+		notContains []string
 	}{
 		{
 			name: "no findings",
@@ -465,7 +466,18 @@ func TestRenderBriefStatus(t *testing.T) {
 			result: &model.ScanResult{
 				Summary: model.Summary{Total: 0, HiddenBelowMinSeverity: 3},
 			},
-			contains: []string{"No active issues (3 hidden by --min-severity)"},
+			contains:    []string{"No issues shown (3 hidden by --min-severity)"},
+			notContains: []string{IconSuccess},
+		},
+		{
+			name: "every finding suppressed keeps the success mark",
+			result: &model.ScanResult{
+				Findings: []model.Finding{
+					{Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Source: "armisignore"}},
+				},
+				Summary: model.Summary{Total: 0, Suppressed: 1},
+			},
+			contains: []string{IconSuccess, "No active issues (1 suppressed by .armisignore)"},
 		},
 	}
 
@@ -480,6 +492,11 @@ func TestRenderBriefStatus(t *testing.T) {
 			for _, expected := range tt.contains {
 				if !strings.Contains(output, expected) {
 					t.Errorf("expected output to contain %q, got %q", expected, output)
+				}
+			}
+			for _, unexpected := range tt.notContains {
+				if strings.Contains(output, unexpected) {
+					t.Errorf("expected output not to contain %q, got %q", unexpected, output)
 				}
 			}
 		})

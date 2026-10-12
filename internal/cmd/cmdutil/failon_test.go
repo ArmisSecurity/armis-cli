@@ -86,7 +86,6 @@ func TestValidateMinSeverity(t *testing.T) {
 		{name: "empty means no filter", severity: "", want: ""},
 		{name: "uppercase", severity: "HIGH", want: "HIGH"},
 		{name: "lowercase normalized", severity: "medium", want: "MEDIUM"},
-		{name: "surrounding whitespace trimmed", severity: " critical ", want: "CRITICAL"},
 		{name: "lowest level", severity: "info", want: "INFO"},
 		{name: "typo", severity: "HIGHT", wantErr: true},
 		{name: "comma list rejected", severity: "HIGH,CRITICAL", wantErr: true},

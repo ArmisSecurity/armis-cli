@@ -277,11 +277,11 @@ func fixedCompletions(values []string, descriptions map[string]string) cobra.Com
 	return cobra.FixedCompletions(choices, cobra.ShellCompDirectiveNoFileComp)
 }
 
-// formatCompletions and failOnCompletions return the completion functions for
-// the --format and --fail-on flags. These flags live on scanCmd and are
-// re-registered on scCheckCmd (a sibling of scan with its own flag instances),
-// so the candidate sets are defined once here and reused at both registration
-// sites to keep them from drifting apart.
+// formatCompletions and severityCompletions return the completion functions for
+// the --format and severity (--fail-on, --min-severity) flags. These flags live
+// on scanCmd and are re-registered on scCheckCmd (a sibling of scan with its own
+// flag instances), so the candidate sets are defined once here and reused at
+// every registration site to keep them from drifting apart.
 func formatCompletions() cobra.CompletionFunc {
 	return fixedCompletions(validFormats, map[string]string{
 		statusFormatHuman: "Human-readable terminal output",
@@ -291,7 +291,7 @@ func formatCompletions() cobra.CompletionFunc {
 	})
 }
 
-func failOnCompletions() cobra.CompletionFunc {
+func severityCompletions() cobra.CompletionFunc {
 	return fixedCompletions(cmdutil.ValidSeverities, map[string]string{
 		"INFO":     "Informational findings",
 		"LOW":      "Low-severity findings",

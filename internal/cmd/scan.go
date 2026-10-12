@@ -170,13 +170,13 @@ func warnOnUnusedSBOMVEXFlags() {
 // formatter is filtered, and CheckExit always evaluates the original result,
 // so hiding findings can never weaken the CI gate. CheckExit runs last because
 // it also flushes stdout.
-func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io.Writer, opts output.FormatOptions, failOnSeverities []string) error {
+func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io.Writer, opts output.FormatOptions, minSeverity string, failOnSeverities []string) error {
 	display := output.FilterByMinSeverity(result, minSeverity)
 	if err := formatter.FormatWithOptions(display, w, opts); err != nil {
 		return fmt.Errorf("failed to format output: %w", err)
 	}
 
-	if hidden := output.HiddenFailingCount(result, minSeverity, failOnSeverities); hidden > 0 {
+	if hidden := output.FailingCount(result, failOnSeverities) - output.FailingCount(display, failOnSeverities); hidden > 0 {
 		noun := "findings"
 		if hidden == 1 {
 			noun = "finding"
@@ -204,8 +204,8 @@ func init() {
 	scanCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	// Tab-completion for the relocated enumerated flags now lives with the flags.
 	_ = scanCmd.RegisterFlagCompletionFunc("format", formatCompletions())
-	_ = scanCmd.RegisterFlagCompletionFunc("fail-on", failOnCompletions())
-	_ = scanCmd.RegisterFlagCompletionFunc("min-severity", failOnCompletions())
+	_ = scanCmd.RegisterFlagCompletionFunc("fail-on", severityCompletions())
+	_ = scanCmd.RegisterFlagCompletionFunc("min-severity", severityCompletions())
 
 	scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan (test files are excluded by default)")
 	scanCmd.PersistentFlags().IntVar(&scanTimeout, "scan-timeout", 60, "Maximum time in minutes to wait for scan analysis to complete")
