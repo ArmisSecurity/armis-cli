@@ -102,7 +102,7 @@ func init() {
 	// These are distinct flag instances from scanCmd's, so the completion funcs
 	// must be registered here too (Cobra keys completions by flag pointer).
 	_ = scCheckCmd.RegisterFlagCompletionFunc("format", formatCompletions())
-	_ = scCheckCmd.RegisterFlagCompletionFunc("fail-on", failOnCompletions())
+	_ = scCheckCmd.RegisterFlagCompletionFunc("fail-on", severityCompletions())
 	// --report writes the machine-readable supply-chain compliance report (the
 	// audit trail security teams gate CI on). check parses flags normally, so a
 	// flag is fine here — unlike `wrap`, which forwards every flag to the PM and

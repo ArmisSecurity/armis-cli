@@ -88,7 +88,33 @@ type Summary struct {
 	ByCategory             map[string]int      `json:"by_category"`
 	FilteredNonExploitable int                 `json:"filtered_non_exploitable"`
 	Suppressed             int                 `json:"suppressed,omitempty"`
+	HiddenBelowMinSeverity int                 `json:"hidden_below_min_severity,omitempty"` // active findings only
 	ScannerSkipReason      string              `json:"scanner_skip_reason,omitempty"`
+}
+
+// SummarizeFindings counts findings into a Summary: active findings into Total
+// and the per-severity/type/category maps, suppressed ones into Suppressed.
+// Fields that don't derive from the findings (FilteredNonExploitable,
+// ScannerSkipReason, HiddenBelowMinSeverity) are left for the caller to set.
+func SummarizeFindings(findings []Finding) Summary {
+	summary := Summary{
+		BySeverity: make(map[Severity]int),
+		ByType:     make(map[FindingType]int),
+		ByCategory: make(map[string]int),
+	}
+	for _, f := range findings {
+		if f.Suppressed {
+			summary.Suppressed++
+			continue
+		}
+		summary.Total++
+		summary.BySeverity[f.Severity]++
+		summary.ByType[f.Type]++
+		if f.FindingCategory != "" {
+			summary.ByCategory[f.FindingCategory]++
+		}
+	}
+	return summary
 }
 
 // IngestUploadResponse represents the response from uploading a scan artifact

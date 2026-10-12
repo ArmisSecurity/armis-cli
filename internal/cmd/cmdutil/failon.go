@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// ValidSeverities contains the valid severity level strings for the --fail-on flag.
+// ValidSeverities contains the valid severity level strings for the --fail-on and
+// --min-severity flags.
 var ValidSeverities = []string{"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
 // ValidateFailOn checks that every entry of severities is a recognized severity
@@ -39,4 +40,20 @@ func GetFailOn(failOn []string) ([]string, error) {
 		return nil, err
 	}
 	return failOn, nil
+}
+
+// ValidateMinSeverity checks a --min-severity value and returns it normalized
+// to uppercase. An empty value is valid and means "show every severity".
+// Unlike --fail-on it takes a single level, since it is a threshold, not a set.
+func ValidateMinSeverity(severity string) (string, error) {
+	if severity == "" {
+		return "", nil
+	}
+	upper := strings.ToUpper(severity)
+	for _, s := range ValidSeverities {
+		if s == upper {
+			return upper, nil
+		}
+	}
+	return "", fmt.Errorf("invalid --min-severity value %q: must be one of %v", severity, ValidSeverities)
 }

@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/spf13/cobra"
@@ -132,6 +134,14 @@ var scanCmd = &cobra.Command{
 			return err
 		}
 
+		// Validate --min-severity early for the same reason, normalizing it in
+		// place so the subcommands' RunE can use the package global directly.
+		normalizedMinSeverity, err := cmdutil.ValidateMinSeverity(minSeverity)
+		if err != nil {
+			return err
+		}
+		minSeverity = normalizedMinSeverity
+
 		return nil
 	},
 }
@@ -155,6 +165,34 @@ func warnOnUnusedSBOMVEXFlags() {
 	}
 }
 
+// formatScanResult writes result through formatter and returns the --fail-on
+// exit decision. --min-severity is display-only: only the copy handed to the
+// formatter is filtered, and CheckExit always evaluates the original result,
+// so hiding findings can never weaken the CI gate. SARIF always gets every
+// finding: GitHub code scanning closes alerts missing from an upload as fixed,
+// so filtering it would rewrite alert history. CheckExit runs last because it
+// also flushes stdout.
+func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io.Writer, opts output.FormatOptions, minSeverity string, failOnSeverities []string) error {
+	if _, isSARIF := formatter.(*output.SARIFFormatter); isSARIF && minSeverity != "" {
+		cli.PrintWarning("--min-severity is ignored for SARIF output; all findings are included")
+		minSeverity = ""
+	}
+
+	display, err := output.FilterByMinSeverity(result, minSeverity)
+	if err != nil {
+		return fmt.Errorf("failed to filter findings: %w", err)
+	}
+	if err := formatter.FormatWithOptions(display, w, opts); err != nil {
+		return fmt.Errorf("failed to format output: %w", err)
+	}
+
+	if hidden := output.FailingCount(result, failOnSeverities) - output.FailingCount(display, failOnSeverities); hidden > 0 {
+		cli.PrintWarning(output.HiddenFailingWarning(hidden, minSeverity))
+	}
+
+	return output.CheckExit(result, failOnSeverities, exitCode)
+}
+
 func init() {
 	// Scan-output flags. These were previously root persistent flags but only
 	// apply to the scan subtree, so they are scoped here to keep them out of the
@@ -166,11 +204,13 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
 	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	scanCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
+	scanCmd.PersistentFlags().StringVar(&minSeverity, "min-severity", "", "Only display findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)")
 	// armis:ignore cwe:770 cwe:401 reason:--page-limit is bounded to 1-1000 by validatePageLimit (root.go); every consumer (scan_repo.go, scan_image.go) reads it via getPageLimit() which validates before the value reaches any pagination sink. This is the flag declaration, not a sink.
 	scanCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	// Tab-completion for the relocated enumerated flags now lives with the flags.
 	_ = scanCmd.RegisterFlagCompletionFunc("format", formatCompletions())
-	_ = scanCmd.RegisterFlagCompletionFunc("fail-on", failOnCompletions())
+	_ = scanCmd.RegisterFlagCompletionFunc("fail-on", severityCompletions())
+	_ = scanCmd.RegisterFlagCompletionFunc("min-severity", severityCompletions())
 
 	scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan (test files are excluded by default)")
 	scanCmd.PersistentFlags().IntVar(&scanTimeout, "scan-timeout", 60, "Maximum time in minutes to wait for scan analysis to complete")

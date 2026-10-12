@@ -75,3 +75,31 @@ func TestGetFailOn(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateMinSeverity(t *testing.T) {
+	tests := []struct {
+		name     string
+		severity string
+		want     string
+		wantErr  bool
+	}{
+		{name: "empty means no filter", severity: "", want: ""},
+		{name: "uppercase", severity: "HIGH", want: "HIGH"},
+		{name: "lowercase normalized", severity: "medium", want: "MEDIUM"},
+		{name: "lowest level", severity: "info", want: "INFO"},
+		{name: "typo", severity: "HIGHT", wantErr: true},
+		{name: "comma list rejected", severity: "HIGH,CRITICAL", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateMinSeverity(tt.severity)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateMinSeverity(%q) error = %v, wantErr %v", tt.severity, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("ValidateMinSeverity(%q) = %q, want %q", tt.severity, got, tt.want)
+			}
+		})
+	}
+}

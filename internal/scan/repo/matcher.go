@@ -99,25 +99,8 @@ func ApplySuppression(findings []model.Finding, config *SuppressionConfig) int {
 
 // recomputeSummary rebuilds the Summary counting only active (non-suppressed) findings.
 func recomputeSummary(findings []model.Finding, suppressed int, filteredNonExploitable int) model.Summary {
-	summary := model.Summary{
-		BySeverity:             make(map[model.Severity]int),
-		ByType:                 make(map[model.FindingType]int),
-		ByCategory:             make(map[string]int),
-		Suppressed:             suppressed,
-		FilteredNonExploitable: filteredNonExploitable,
-	}
-
-	for _, f := range findings {
-		if f.Suppressed {
-			continue
-		}
-		summary.Total++
-		summary.BySeverity[f.Severity]++
-		summary.ByType[f.Type]++
-		if f.FindingCategory != "" {
-			summary.ByCategory[f.FindingCategory]++
-		}
-	}
-
+	summary := model.SummarizeFindings(findings)
+	summary.Suppressed = suppressed
+	summary.FilteredNonExploitable = filteredNonExploitable
 	return summary
 }

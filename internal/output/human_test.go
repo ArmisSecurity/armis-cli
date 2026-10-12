@@ -1069,6 +1069,29 @@ func TestRenderBriefStatus_ZeroSuppressedUnchangedFormat(t *testing.T) {
 	}
 }
 
+func TestRenderSummaryDashboard_ShowsHiddenByMinSeverityLine(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+
+	result := &model.ScanResult{
+		Summary: model.Summary{
+			Total:                  1,
+			BySeverity:             map[model.Severity]int{model.SeverityCritical: 1},
+			HiddenBelowMinSeverity: 2,
+		},
+		Findings: []model.Finding{{ID: "1", Severity: model.SeverityCritical}},
+	}
+
+	var buf bytes.Buffer
+	if err := renderSummaryDashboard(&buf, result); err != nil {
+		t.Fatalf("renderSummaryDashboard failed: %v", err)
+	}
+
+	if output := buf.String(); !strings.Contains(output, "(2 hidden by --min-severity)") {
+		t.Errorf("expected hidden-by-min-severity line in dashboard, got %q", output)
+	}
+}
+
 func TestRenderSummaryDashboard_ShowsSuppressionLine(t *testing.T) {
 	cli.InitColors(cli.ColorModeNever)
 	SyncColors()

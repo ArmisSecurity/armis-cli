@@ -160,6 +160,27 @@ func TestShouldFail_CaseSensitive(t *testing.T) {
 	}
 }
 
+func TestFailingCount(t *testing.T) {
+	result := &model.ScanResult{
+		Findings: []model.Finding{
+			{Severity: model.SeverityHigh},
+			{Severity: model.SeverityHigh},
+			{Severity: model.SeverityHigh, Suppressed: true},
+			{Severity: model.SeverityLow},
+		},
+	}
+
+	if got := FailingCount(result, []string{"HIGH"}); got != 2 {
+		t.Errorf("FailingCount(HIGH) = %d, want 2 (suppressed excluded)", got)
+	}
+	if got := FailingCount(result, []string{"HIGH", "LOW"}); got != 3 {
+		t.Errorf("FailingCount(HIGH,LOW) = %d, want 3", got)
+	}
+	if got := FailingCount(result, []string{"CRITICAL"}); got != 0 {
+		t.Errorf("FailingCount(CRITICAL) = %d, want 0", got)
+	}
+}
+
 func TestCheckExit_ReturnsErrorOnMatchingSeverity(t *testing.T) {
 	result := &model.ScanResult{
 		Findings: []model.Finding{

@@ -73,21 +73,28 @@ func GetFormatter(format string) (Formatter, error) {
 // ShouldFail determines if the scan should fail based on the severity of findings.
 // Suppressed findings are excluded from the evaluation.
 func ShouldFail(result *model.ScanResult, failOnSeverities []string) bool {
+	return FailingCount(result, failOnSeverities) > 0
+}
+
+// FailingCount returns how many active (non-suppressed) findings match the
+// --fail-on severities.
+func FailingCount(result *model.ScanResult, failOnSeverities []string) int {
 	severityMap := make(map[string]bool)
 	for _, sev := range failOnSeverities {
 		severityMap[sev] = true
 	}
 
+	count := 0
 	for _, finding := range result.Findings {
 		if finding.Suppressed {
 			continue
 		}
 		if severityMap[string(finding.Severity)] {
-			return true
+			count++
 		}
 	}
 
-	return false
+	return count
 }
 
 // FilterActiveFindings returns only non-suppressed findings.

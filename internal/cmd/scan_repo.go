@@ -207,11 +207,7 @@ var scanRepoCmd = &cobra.Command{
 			ShowSuppressed:   showSuppressed,
 		}
 
-		if err := formatter.FormatWithOptions(result, outputCfg.Writer, opts); err != nil {
-			return fmt.Errorf("failed to format output: %w", err)
-		}
-
-		return output.CheckExit(result, failOnSeverities, exitCode)
+		return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
 	},
 }
 
