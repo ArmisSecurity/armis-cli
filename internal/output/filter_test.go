@@ -2,13 +2,15 @@ package output
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
 // newFilterTestResult returns one active finding per severity plus one
-// suppressed LOW and one suppressed CRITICAL finding.
+// suppressed LOW and one suppressed CRITICAL finding. The filter must keep
+// both suppressed findings at every threshold.
 func newFilterTestResult() *model.ScanResult {
 	findings := []model.Finding{
 		{ID: "info", Severity: model.SeverityInfo, Type: model.FindingTypeVulnerability, FindingCategory: "sast"},
@@ -65,20 +67,26 @@ func TestFilterByMinSeverity(t *testing.T) {
 		{name: "LOW hides INFO", minSeverity: "LOW",
 			wantIDs:   []string{"low", "medium", "high", "critical", "low-suppressed", "critical-suppressed"},
 			wantTotal: 4, wantSuppressed: 2, wantHidden: 1},
-		{name: "MEDIUM hides INFO and LOW, suppressed included", minSeverity: "MEDIUM",
-			wantIDs:   []string{"medium", "high", "critical", "critical-suppressed"},
-			wantTotal: 3, wantSuppressed: 1, wantHidden: 3},
+		{name: "MEDIUM hides INFO and LOW, keeps suppressed LOW", minSeverity: "MEDIUM",
+			wantIDs:   []string{"medium", "high", "critical", "low-suppressed", "critical-suppressed"},
+			wantTotal: 3, wantSuppressed: 2, wantHidden: 2},
 		{name: "HIGH", minSeverity: "HIGH",
-			wantIDs:   []string{"high", "critical", "critical-suppressed"},
-			wantTotal: 2, wantSuppressed: 1, wantHidden: 4},
+			wantIDs:   []string{"high", "critical", "low-suppressed", "critical-suppressed"},
+			wantTotal: 2, wantSuppressed: 2, wantHidden: 3},
 		{name: "CRITICAL", minSeverity: "CRITICAL",
-			wantIDs:   []string{"critical", "critical-suppressed"},
-			wantTotal: 1, wantSuppressed: 1, wantHidden: 5},
+			wantIDs:   []string{"critical", "low-suppressed", "critical-suppressed"},
+			wantTotal: 1, wantSuppressed: 2, wantHidden: 4},
+		{name: "lowercase is normalized", minSeverity: "high",
+			wantIDs:   []string{"high", "critical", "low-suppressed", "critical-suppressed"},
+			wantTotal: 2, wantSuppressed: 2, wantHidden: 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterByMinSeverity(newFilterTestResult(), tt.minSeverity)
+			got, err := FilterByMinSeverity(newFilterTestResult(), tt.minSeverity)
+			if err != nil {
+				t.Fatalf("FilterByMinSeverity(%q): %v", tt.minSeverity, err)
+			}
 
 			if ids := findingIDs(got.Findings); !reflect.DeepEqual(ids, tt.wantIDs) {
 				t.Errorf("findings = %v, want %v", ids, tt.wantIDs)
@@ -95,7 +103,7 @@ func TestFilterByMinSeverity(t *testing.T) {
 
 			bySeverityTotal := 0
 			for sev, n := range got.Summary.BySeverity {
-				if severityRank(sev) > severityRank(model.Severity(tt.minSeverity)) {
+				if severityRank(sev) > severityRank(model.Severity(strings.ToUpper(tt.minSeverity))) {
 					t.Errorf("Summary.BySeverity counts %d %s findings below %s", n, sev, tt.minSeverity)
 				}
 				bySeverityTotal += n
@@ -116,7 +124,10 @@ func TestFilterByMinSeverity(t *testing.T) {
 }
 
 func TestFilterByMinSeverity_RecomputesTypeAndCategory(t *testing.T) {
-	got := FilterByMinSeverity(newFilterTestResult(), "HIGH")
+	got, err := FilterByMinSeverity(newFilterTestResult(), "HIGH")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	wantByType := map[model.FindingType]int{model.FindingTypeVulnerability: 2}
 	if !reflect.DeepEqual(got.Summary.ByType, wantByType) {
@@ -136,7 +147,10 @@ func TestFilterByMinSeverity_DoesNotMutateInput(t *testing.T) {
 			original := newFilterTestResult()
 			before := newFilterTestResult()
 
-			got := FilterByMinSeverity(original, minSeverity)
+			got, err := FilterByMinSeverity(original, minSeverity)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			if !reflect.DeepEqual(original, before) {
 				t.Errorf("FilterByMinSeverity(%s) mutated its input", minSeverity)
@@ -158,14 +172,37 @@ func TestFilterByMinSeverity_DoesNotMutateInput(t *testing.T) {
 
 func TestFilterByMinSeverity_NoFilter(t *testing.T) {
 	result := newFilterTestResult()
-	if got := FilterByMinSeverity(result, ""); got != result {
-		t.Error("expected empty --min-severity to return the input unchanged")
+	if got, err := FilterByMinSeverity(result, ""); err != nil || got != result {
+		t.Errorf("expected empty --min-severity to return the input unchanged, got err %v", err)
 	}
-	if got := FilterByMinSeverity(nil, "HIGH"); got != nil {
-		t.Errorf("expected nil result to stay nil, got %+v", got)
+	if got, err := FilterByMinSeverity(nil, "HIGH"); err != nil || got != nil {
+		t.Errorf("expected nil result to stay nil, got %+v, err %v", got, err)
 	}
 	// No findings stays nil so JSON keeps emitting "findings": null.
-	if got := FilterByMinSeverity(&model.ScanResult{}, "HIGH"); got.Findings != nil {
-		t.Errorf("expected nil findings to stay nil, got %#v", got.Findings)
+	if got, err := FilterByMinSeverity(&model.ScanResult{}, "HIGH"); err != nil || got.Findings != nil {
+		t.Errorf("expected nil findings to stay nil, got %#v, err %v", got, err)
+	}
+}
+
+func TestFilterByMinSeverity_RejectsUnknownSeverity(t *testing.T) {
+	for _, minSeverity := range []string{"HIGHT", "urgent", " HIGH"} {
+		if _, err := FilterByMinSeverity(newFilterTestResult(), minSeverity); err == nil {
+			t.Errorf("FilterByMinSeverity(%q) = nil error, want an error", minSeverity)
+		}
+	}
+}
+
+func TestHiddenFailingWarning(t *testing.T) {
+	tests := []struct {
+		count int
+		want  string
+	}{
+		{1, "1 hidden finding below --min-severity HIGH matches --fail-on; the scan fails on it"},
+		{2, "2 hidden findings below --min-severity HIGH match --fail-on; the scan fails on them"},
+	}
+	for _, tt := range tests {
+		if got := HiddenFailingWarning(tt.count, "HIGH"); got != tt.want {
+			t.Errorf("HiddenFailingWarning(%d) = %q, want %q", tt.count, got, tt.want)
+		}
 	}
 }

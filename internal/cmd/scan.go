@@ -168,21 +168,26 @@ func warnOnUnusedSBOMVEXFlags() {
 // formatScanResult writes result through formatter and returns the --fail-on
 // exit decision. --min-severity is display-only: only the copy handed to the
 // formatter is filtered, and CheckExit always evaluates the original result,
-// so hiding findings can never weaken the CI gate. CheckExit runs last because
-// it also flushes stdout.
+// so hiding findings can never weaken the CI gate. SARIF always gets every
+// finding: GitHub code scanning closes alerts missing from an upload as fixed,
+// so filtering it would rewrite alert history. CheckExit runs last because it
+// also flushes stdout.
 func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io.Writer, opts output.FormatOptions, minSeverity string, failOnSeverities []string) error {
-	display := output.FilterByMinSeverity(result, minSeverity)
+	if _, isSARIF := formatter.(*output.SARIFFormatter); isSARIF && minSeverity != "" {
+		cli.PrintWarning("--min-severity is ignored for SARIF output; all findings are included")
+		minSeverity = ""
+	}
+
+	display, err := output.FilterByMinSeverity(result, minSeverity)
+	if err != nil {
+		return fmt.Errorf("failed to filter findings: %w", err)
+	}
 	if err := formatter.FormatWithOptions(display, w, opts); err != nil {
 		return fmt.Errorf("failed to format output: %w", err)
 	}
 
 	if hidden := output.FailingCount(result, failOnSeverities) - output.FailingCount(display, failOnSeverities); hidden > 0 {
-		noun := "findings"
-		if hidden == 1 {
-			noun = "finding"
-		}
-		cli.PrintWarningf("%d hidden %s below --min-severity %s match --fail-on; the scan fails on them",
-			hidden, noun, minSeverity)
+		cli.PrintWarning(output.HiddenFailingWarning(hidden, minSeverity))
 	}
 
 	return output.CheckExit(result, failOnSeverities, exitCode)
@@ -199,7 +204,7 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
 	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	scanCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
-	scanCmd.PersistentFlags().StringVar(&minSeverity, "min-severity", "", "Only display findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL (display only; --fail-on still evaluates all findings)")
+	scanCmd.PersistentFlags().StringVar(&minSeverity, "min-severity", "", "Only display findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)")
 	// armis:ignore cwe:770 cwe:401 reason:--page-limit is bounded to 1-1000 by validatePageLimit (root.go); every consumer (scan_repo.go, scan_image.go) reads it via getPageLimit() which validates before the value reaches any pagination sink. This is the flag declaration, not a sink.
 	scanCmd.PersistentFlags().IntVar(&pageLimit, "page-limit", getEnvOrDefaultInt("ARMIS_PAGE_LIMIT", 500), "Results page size for pagination (range: 1-1000)")
 	// Tab-completion for the relocated enumerated flags now lives with the flags.

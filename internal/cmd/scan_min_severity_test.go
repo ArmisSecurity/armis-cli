@@ -155,7 +155,8 @@ func TestFormatScanResult_MinSeverityNeverChangesFailOn(t *testing.T) {
 }
 
 // TestFormatScanResult_MinSeverityFiltersEveryFormat checks each formatter
-// shows exactly the findings at or above the threshold.
+// shows exactly the findings at or above the threshold, except SARIF, which
+// always gets every finding so GitHub code scanning never closes alerts.
 func TestFormatScanResult_MinSeverityFiltersEveryFormat(t *testing.T) {
 	forceNoColor(t)
 
@@ -163,7 +164,11 @@ func TestFormatScanResult_MinSeverityFiltersEveryFormat(t *testing.T) {
 		for _, minSev := range append([]string{""}, minSeverityLevels...) {
 			t.Run(outFormat+"/min="+minSev, func(t *testing.T) {
 				_, out := runFormatScanResult(t, outFormat, minSev, nil)
-				if got, want := shownCount(t, outFormat, out), expectedShown(minSev); got != want {
+				want := expectedShown(minSev)
+				if outFormat == "sarif" {
+					want = len(minSeverityFixture)
+				}
+				if got := shownCount(t, outFormat, out); got != want {
 					t.Errorf("shown findings = %d, want %d", got, want)
 				}
 			})
@@ -171,26 +176,32 @@ func TestFormatScanResult_MinSeverityFiltersEveryFormat(t *testing.T) {
 	}
 }
 
-// TestFormatScanResult_MinSeverityWarnsWhenHiddenFindingsFail checks the
-// stderr warning names how many hidden findings trip --fail-on, and stays
-// quiet when only shown findings do.
-func TestFormatScanResult_MinSeverityWarnsWhenHiddenFindingsFail(t *testing.T) {
+// TestFormatScanResult_MinSeverityWarnings checks the stderr warnings: how many
+// hidden findings trip --fail-on (quiet when only shown findings do), and that
+// SARIF says the flag doesn't apply to it.
+func TestFormatScanResult_MinSeverityWarnings(t *testing.T) {
 	forceNoColor(t)
 
 	tests := []struct {
 		name        string
+		format      string
 		minSev      string
 		failOn      []string
 		wantWarning string
 	}{
-		{name: "hidden findings trip fail-on", minSev: "HIGH", failOn: []string{"INFO", "LOW"}, wantWarning: "2 hidden findings below --min-severity HIGH match --fail-on"},
-		{name: "only shown findings trip fail-on", minSev: "HIGH", failOn: []string{"CRITICAL"}},
+		{name: "hidden findings trip fail-on", format: "json", minSev: "HIGH", failOn: []string{"INFO", "LOW"},
+			wantWarning: "2 hidden findings below --min-severity HIGH match --fail-on; the scan fails on them"},
+		{name: "one hidden finding trips fail-on", format: "json", minSev: "HIGH", failOn: []string{"LOW"},
+			wantWarning: "1 hidden finding below --min-severity HIGH matches --fail-on; the scan fails on it"},
+		{name: "only shown findings trip fail-on", format: "json", minSev: "HIGH", failOn: []string{"CRITICAL"}},
+		{name: "sarif ignores the flag", format: "sarif", minSev: "HIGH", failOn: []string{"INFO", "LOW"},
+			wantWarning: "--min-severity is ignored for SARIF output; all findings are included"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stderr := captureStderr(t, func() {
-				runFormatScanResult(t, "json", tt.minSev, tt.failOn)
+				runFormatScanResult(t, tt.format, tt.minSev, tt.failOn)
 			})
 			if tt.wantWarning == "" {
 				if strings.Contains(stderr, "--min-severity") {
@@ -200,6 +211,47 @@ func TestFormatScanResult_MinSeverityWarnsWhenHiddenFindingsFail(t *testing.T) {
 			}
 			if !strings.Contains(stderr, tt.wantWarning) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr, tt.wantWarning)
+			}
+			if tt.format == "sarif" && strings.Contains(stderr, "hidden") {
+				t.Errorf("sarif hides nothing, but stderr = %q", stderr)
+			}
+		})
+	}
+}
+
+// TestFormatScanResult_MinSeverityKeepsSuppressedFindings checks findings that
+// .armisignore suppressed are left alone: they can't fail --fail-on, so they
+// keep their own summary line and are not counted as hidden.
+func TestFormatScanResult_MinSeverityKeepsSuppressedFindings(t *testing.T) {
+	forceNoColor(t)
+
+	result := &model.ScanResult{ScanID: "scan-1", Status: "completed"}
+	for i := 0; i < 3; i++ {
+		result.Findings = append(result.Findings, model.Finding{
+			ID: fmt.Sprintf("low-%d", i), Severity: model.SeverityLow, Type: model.FindingTypeVulnerability, Suppressed: true,
+		})
+	}
+	result.Summary = model.SummarizeFindings(result.Findings)
+
+	for _, outFormat := range []string{"human", "json"} {
+		t.Run(outFormat, func(t *testing.T) {
+			formatter, err := output.GetFormatter(outFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if err := formatScanResult(formatter, result, &buf, output.FormatOptions{}, "HIGH", []string{"LOW"}); err != nil {
+				t.Fatalf("suppressed findings must not trip --fail-on: %v", err)
+			}
+			out := buf.String()
+			if strings.Contains(out, "hidden") {
+				t.Errorf("suppressed findings counted as hidden:\n%s", out)
+			}
+			if outFormat == "human" && !strings.Contains(out, "No active issues (3 suppressed by .armisignore)") {
+				t.Errorf("want the .armisignore summary line, got:\n%s", out)
+			}
+			if outFormat == "json" && !strings.Contains(out, `"suppressed": 3`) {
+				t.Errorf("want suppressed: 3 in JSON, got:\n%s", out)
 			}
 		})
 	}
