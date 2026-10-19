@@ -1,10 +1,13 @@
 package scan
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -132,7 +135,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read SBOM file: %v", err)
 		}
-		if string(data) != string(sbomContent) {
+		if !jsonEqual(t, data, sbomContent) {
 			t.Errorf("SBOM content mismatch: got %s, want %s", data, sbomContent)
 		}
 	})
@@ -185,7 +188,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read VEX file: %v", err)
 		}
-		if string(data) != string(vexContent) {
+		if !jsonEqual(t, data, vexContent) {
 			t.Errorf("VEX content mismatch: got %s, want %s", data, vexContent)
 		}
 	})
@@ -293,7 +296,7 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read SPDX file: %v", err)
 		}
-		if string(data) != string(spdxContent) {
+		if !jsonEqual(t, data, spdxContent) {
 			t.Errorf("SPDX content mismatch: got %s, want %s", data, spdxContent)
 		}
 	})
@@ -529,6 +532,35 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 		if !strings.Contains(stderrOut, "Scanner skipped:") {
 			t.Errorf("expected stderr to contain 'Scanner skipped:' prefix, got: %q", stderrOut)
+		}
+	})
+}
+
+func jsonEqual(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		t.Fatalf("invalid JSON %q: %v", a, err)
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		t.Fatalf("invalid JSON %q: %v", b, err)
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
+func TestIndentJSON(t *testing.T) {
+	t.Run("pretty-prints minified JSON preserving key order", func(t *testing.T) {
+		got := string(indentJSON([]byte(`{"b":1,"a":[1,2],"c":{"d":null}}`)))
+		want := "{\n  \"b\": 1,\n  \"a\": [\n    1,\n    2\n  ],\n  \"c\": {\n    \"d\": null\n  }\n}\n"
+		if got != want {
+			t.Errorf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("returns invalid JSON unchanged", func(t *testing.T) {
+		in := []byte(`<xml/>`)
+		if got := indentJSON(in); !bytes.Equal(got, in) {
+			t.Errorf("got %q, want %q", got, in)
 		}
 	})
 }

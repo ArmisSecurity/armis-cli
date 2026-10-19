@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan repo`/`scan image`/`scan sbom`: downloaded SBOM and VEX files are now pretty-printed (2-space indent) instead of written as the backend's minified single-line JSON. Non-JSON payloads are written unchanged.
+
 ### Security
 
 ---
