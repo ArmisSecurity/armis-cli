@@ -380,6 +380,16 @@ func TestIntegration_CPE_WithVEX(t *testing.T) {
 	if !bytes.Contains(body, []byte("openvex.dev")) {
 		t.Errorf("VEX doesn't look right: %s", string(body))
 	}
+	if !bytes.Contains(body, []byte("\n  ")) {
+		t.Errorf("VEX not pretty-printed: %s", string(body))
+	}
+	raw, err := os.ReadFile(rawOut) //nolint:gosec // sandboxed path
+	if err != nil {
+		t.Fatalf("read raw findings: %v", err)
+	}
+	if !bytes.Contains(raw, []byte("\n  ")) {
+		t.Errorf("raw findings not pretty-printed: %s", string(raw))
+	}
 }
 
 // TestIntegration_Purl_WithVEX asserts the purl path also downloads VEX

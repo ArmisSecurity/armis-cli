@@ -550,7 +550,7 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 
 func TestIndentJSON(t *testing.T) {
 	t.Run("pretty-prints minified JSON preserving key order", func(t *testing.T) {
-		got := string(indentJSON([]byte(`{"b":1,"a":[1,2],"c":{"d":null}}`)))
+		got := string(IndentJSON([]byte(`{"b":1,"a":[1,2],"c":{"d":null}}`)))
 		want := "{\n  \"b\": 1,\n  \"a\": [\n    1,\n    2\n  ],\n  \"c\": {\n    \"d\": null\n  }\n}\n"
 		if got != want {
 			t.Errorf("got:\n%s\nwant:\n%s", got, want)
@@ -559,7 +559,7 @@ func TestIndentJSON(t *testing.T) {
 
 	t.Run("returns invalid JSON unchanged", func(t *testing.T) {
 		in := []byte(`<xml/>`)
-		if got := indentJSON(in); !bytes.Equal(got, in) {
+		if got := IndentJSON(in); !bytes.Equal(got, in) {
 			t.Errorf("got %q, want %q", got, in)
 		}
 	})
