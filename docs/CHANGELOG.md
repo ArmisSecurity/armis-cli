@@ -17,9 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `scan repo`/`scan image`/`scan sbom`: downloaded SBOM and VEX files are now pretty-printed (2-space indent) instead of written as the backend's minified single-line JSON. Non-JSON payloads are written unchanged.
-
 ### Security
+
+---
+
+## [1.25.0] - 2026-10-20
+
+### Added
+
+- `scan repo`, `scan image` and `scan sbom` accept `--min-severity` to hide findings below a severity from human, JSON and JUnit output. The filter is display-only: `--fail-on` still evaluates every finding, the summary reports how many were hidden, and a stderr warning appears when hidden findings still trip `--fail-on`. SARIF output always includes every finding and prints a stderr note, because dropping findings would make GitHub code scanning close their alerts as fixed. (#333)
+
+### Fixed
+
+- `scan repo`/`scan image`/`scan sbom`: downloaded SBOM and VEX files are now pretty-printed (2-space indent) instead of written as the backend's minified single-line JSON. Non-JSON payloads are written unchanged. (#343)
 
 ---
 
@@ -769,7 +779,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...HEAD
+[1.25.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.0...v1.24.1
 [1.24.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.22.2...v1.23.0
