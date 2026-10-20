@@ -296,7 +296,7 @@ func (s *Scanner) downloadRawFindings(ctx context.Context, results *api.Artifact
 		return fmt.Errorf("failed to download raw findings (%s): %w", source, err)
 	}
 	// armis:ignore cwe:22 reason:outputPath sanitized via util.SanitizePath above (rejects ".." segments)
-	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+	if err := os.WriteFile(outputPath, scan.IndentJSON(data), 0600); err != nil {
 		return fmt.Errorf("failed to write raw findings to %s: %w", outputPath, err)
 	}
 
@@ -357,7 +357,7 @@ func (s *Scanner) downloadVEX(ctx context.Context, results *api.ArtifactScanResu
 	if err != nil {
 		return fmt.Errorf("failed to download VEX: %w", err)
 	}
-	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+	if err := os.WriteFile(outputPath, scan.IndentJSON(data), 0600); err != nil {
 		return fmt.Errorf("failed to write VEX to %s: %w", outputPath, err)
 	}
 

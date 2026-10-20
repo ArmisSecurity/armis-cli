@@ -2,7 +2,9 @@
 package scan
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -171,7 +173,7 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 	}
 
 	// Write with secure permissions (owner read/write only)
-	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+	if err := os.WriteFile(outputPath, IndentJSON(data), 0600); err != nil {
 		return fmt.Errorf("failed to write %s to %s: %w", docType, outputPath, err)
 	}
 
@@ -180,4 +182,17 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		styles.SuccessText.Render(fmt.Sprintf("%s saved to:", docType)),
 		styles.Bold.Render(outputPath))
 	return nil
+}
+
+// IndentJSON pretty-prints a JSON document. The backend serves SBOM/VEX
+// artifacts minified; indenting keeps them readable on disk. json.Indent
+// preserves key order and number formatting. Input that is not valid JSON is
+// returned unchanged.
+func IndentJSON(data []byte) []byte {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, data, "", "  "); err != nil {
+		return data
+	}
+	buf.WriteByte('\n')
+	return buf.Bytes()
 }
