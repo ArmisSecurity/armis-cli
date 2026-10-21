@@ -65,6 +65,41 @@ jobs:
             coverage.out
             coverage.txt
 
+  # Exercises scripts/install.ps1 end to end against a pinned release (so a bad "latest"
+  # cannot fail unrelated PRs), on both Windows PowerShell 5.1 and PowerShell 7.
+  install-script-windows:
+    name: Install script (Windows, ${{ matrix.shell }})
+    runs-on: windows-latest
+    env:
+      INSTALL_TEST_VERSION: v1.25.0
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Fresh install, then upgrade over it
+        shell: ${{ matrix.shell }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "armis-cli-install-test"
+          .\scripts\install.ps1 -Version $env:INSTALL_TEST_VERSION -InstallDir $dir
+          & "$dir\armis-cli.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "armis-cli --version failed after fresh install" }
+
+          .\scripts\install.ps1 -Version $env:INSTALL_TEST_VERSION -InstallDir $dir
+          & "$dir\armis-cli.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "armis-cli --version failed after upgrade" }
+          if (Test-Path "$dir\armis-cli.exe.old*") { throw "stale armis-cli.exe.old left behind" }
+
+      - name: Invalid version is rejected without closing the shell
+        shell: ${{ matrix.shell }}
+        run: |
+          $message = $null
+          try { .\scripts\install.ps1 -Version "not-a-version" } catch { $message = $_.Exception.Message }
+          if ($message -notmatch "Invalid version format") { throw "expected 'Invalid version format' error, got: $message" }
+
   lint:
     uses: ./.github/workflows/reusable-lint.yml
 
