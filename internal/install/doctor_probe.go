@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -222,6 +223,11 @@ func runHandshake(req handshakeRequest) handshakeOutcome {
 	if stall != nil {
 		stall.killDescendants()
 		recordProbePID(cmd.Process.Pid)
+		// A wrapper (uv run, a shell script) means the pid server.log shows is a
+		// child's, not the one the doctor started.
+		for _, c := range stall.Snapshot.Children {
+			recordProbePID(c.PID)
+		}
 	}
 	// On the timeout path, the session's reader goroutine may still be
 	// blocked reading stdout when we get here. os/exec's docs warn it is
@@ -352,9 +358,7 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, cfg sessionConfig
 		res.CallElapsed = time.Since(callStart)
 		if err != nil {
 			res.DebugErr = err
-			if isTimeout(err) {
-				return res, nil // the server is gone; nothing further can run
-			}
+			return res, nil // timed out or the server is gone; the deep call would only repeat the failure
 		} else {
 			text, isErr := toolCallText(callRaw)
 			if isErr {
@@ -393,14 +397,7 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, cfg sessionConfig
 	return res, nil
 }
 
-func hasTool(tools []string, name string) bool {
-	for _, t := range tools {
-		if t == name {
-			return true
-		}
-	}
-	return false
-}
+func hasTool(tools []string, name string) bool { return slices.Contains(tools, name) }
 
 func toolCallParams(name string, args map[string]interface{}) map[string]interface{} {
 	if args == nil {
