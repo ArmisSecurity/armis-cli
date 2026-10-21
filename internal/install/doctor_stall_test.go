@@ -352,3 +352,58 @@ func waitFor(t *testing.T, b *syncBuffer, want string) {
 	}
 	t.Fatalf("timed out waiting for %q in:\n%s", want, b.String())
 }
+
+func TestLogWatcherMatchesFinishedCallByDuration(t *testing.T) {
+	stubProcesses(t, []procInfo{{PID: 42}}, nil)
+	var out bytes.Buffer
+	lw := newLogWatcher(&out, time.Second)
+	t0 := time.Now()
+	lw.handleLine("2026-10-21 12:00:00,100 INFO [42] mcp.server.lowlevel.server: Processing request of type CallToolRequest", t0) // hangs
+	lw.handleLine("2026-10-21 12:00:10,000 INFO [42] mcp.server.lowlevel.server: Processing request of type CallToolRequest", t0)
+	lw.handleLine("2026-10-21 12:00:10,200 INFO [42] appsec-mcp: tool debug_config ok in 0.20s", t0)
+	open := lw.procs[42].open
+	if len(open) != 1 || clock(open[0].logTime) != "12:00:00" {
+		t.Fatalf("the hung call must stay open, got %d open:\n%s", len(open), out.String())
+	}
+}
+
+func TestLogWatcherKeepsCallsOfRunningServer(t *testing.T) {
+	stubProcesses(t, []procInfo{{PID: 42}, {PID: 77}}, nil) // both servers run
+	var out bytes.Buffer
+	lw := newLogWatcher(&out, time.Second)
+	t0 := time.Now()
+	lw.handleLine("2026-10-21 12:00:00,100 INFO [42] mcp.server.lowlevel.server: Processing request of type CallToolRequest", t0)
+	lw.handleLine("2026-10-21 12:00:09,100 INFO [77] appsec-mcp: Starting Armis AppSec MCP server 1.4.1 (python 3)", t0)
+	if strings.Contains(out.String(), "never finished") || lw.sum.Stuck != 0 || len(lw.procs[42].open) != 1 {
+		t.Errorf("a running server's call was closed:\n%s", out.String())
+	}
+}
+
+func TestExecutableBaseUnquotedWindowsPath(t *testing.T) {
+	for cmd, want := range map[string]string{
+		`C:\Program Files\Git\cmd\git.exe status`: "git.exe",
+		`C:\Program Files\Git\cmd\git.exe`:        "git.exe",
+		`"C:\Program Files\Git\cmd\git.exe" log`:  "git.exe",
+		`/usr/bin/git status`:                     "git",
+		`git`:                                     "git",
+	} {
+		if got := executableBase(cmd); got != want {
+			t.Errorf("executableBase(%q) = %q, want %q", cmd, got, want)
+		}
+	}
+}
+
+func TestAbortPythonTargetsPythonBelowWrapper(t *testing.T) {
+	if runtime.GOOS == osWindows {
+		t.Skip("no SIGABRT on Windows")
+	}
+	// A non-Python wrapper with no Python below it gets no signal.
+	self, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := processSnapshot{Alive: true, RootCommand: "/bin/sh run.sh", Children: []procInfo{{PID: 1 << 22, Command: "git status"}}}
+	if abortPython(self, snap) {
+		t.Error("signalled a wrapper that isn't Python")
+	}
+}

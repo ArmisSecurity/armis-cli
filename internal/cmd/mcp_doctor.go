@@ -123,6 +123,9 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 	if mcpDoctorWatch {
 		return runMCPDoctorWatch(cmd)
 	}
+	if cmd.Flags().Changed("watch-stuck-after") {
+		return fmt.Errorf("--watch-stuck-after only applies with --watch")
+	}
 	if mcpDoctorDeep && mcpDoctorNoHandshake {
 		return fmt.Errorf("--deep needs the live session; remove --no-handshake")
 	}
@@ -179,8 +182,9 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 
 // runMCPDoctorWatch follows the scanner's server.log until interrupted.
 func runMCPDoctorWatch(cmd *cobra.Command) error {
-	if mcpDoctorFix || mcpDoctorBundle || mcpDoctorBundlePath != "" || mcpDoctorDeep || mcpDoctorFormat != agentFormatPlain {
-		return fmt.Errorf("--watch only follows the log; it can't be combined with --fix, --bundle, --deep, or --format")
+	if mcpDoctorFix || mcpDoctorBundle || mcpDoctorBundlePath != "" || mcpDoctorDeep || mcpDoctorFormat != agentFormatPlain ||
+		cmd.Flags().Changed("no-handshake") || cmd.Flags().Changed("timeout") || cmd.Flags().Changed("verbose") {
+		return fmt.Errorf("--watch only follows the log; it can't be combined with --fix, --bundle, --deep, --format, --no-handshake, --timeout, or --verbose")
 	}
 	ctx, stop := NewSignalContext()
 	defer stop()

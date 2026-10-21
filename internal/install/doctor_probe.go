@@ -108,6 +108,8 @@ type probeResult struct {
 	// RepeatElapsed is a second debug_config call on the same session, which
 	// tells a slow first call (cold start) from a slow every call.
 	RepeatElapsed time.Duration
+	// RepeatErr is set when the second debug_config call failed or timed out.
+	RepeatErr error
 	// DeepRan is true when the deep scan_file call was attempted.
 	DeepRan     bool
 	DeepElapsed time.Duration
@@ -217,6 +219,10 @@ func runHandshake(req handshakeRequest) handshakeOutcome {
 
 	// armis:ignore cwe:404 reason:best-effort cleanup of a short-lived diagnostic subprocess we just spawned
 	_ = cmd.Process.Kill()
+	if stall != nil {
+		stall.killDescendants()
+		recordProbePID(cmd.Process.Pid)
+	}
 	// On the timeout path, the session's reader goroutine may still be
 	// blocked reading stdout when we get here. os/exec's docs warn it is
 	// "incorrect to call Wait before all reads from the pipe have completed"
@@ -358,10 +364,13 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, cfg sessionConfig
 			// A second call on the same session: slow first and fast second is
 			// a cold start; slow both times is something blocking every call.
 			repeatStart := time.Now()
-			if _, err := s.call(4, "tools/call", toolCallParams(debugConfigTool, nil), toolCallTimeout); err == nil {
-				res.RepeatElapsed = time.Since(repeatStart)
-			} else if isTimeout(err) {
-				return res, nil
+			_, err := s.call(4, "tools/call", toolCallParams(debugConfigTool, nil), toolCallTimeout)
+			res.RepeatElapsed = time.Since(repeatStart)
+			if err != nil {
+				res.RepeatErr = err
+				if isTimeout(err) {
+					return res, nil
+				}
 			}
 		}
 	}
@@ -434,7 +443,7 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 			if s.onStall != nil {
 				s.onStall(method)
 			}
-			return nil, fmt.Errorf("timed out waiting for %s response after %s", method, wait.Round(time.Millisecond))
+			return nil, fmt.Errorf("%w waiting for %s response after %s", errCallTimeout, method, wait.Round(time.Millisecond))
 		case err := <-s.readErr:
 			s.readErr <- err // keep it for any later call
 			if errors.Is(err, bufio.ErrTooLong) {

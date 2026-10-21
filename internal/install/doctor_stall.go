@@ -151,9 +151,12 @@ func descendants(all []procInfo, root int) []procInfo {
 
 // processSnapshot is what was running under a server process at one moment.
 type processSnapshot struct {
-	Alive    bool
-	Children []procInfo
-	Err      error
+	Alive bool
+	// RootCommand is the command line of the server process itself, "" when it
+	// wasn't in the process table.
+	RootCommand string
+	Children    []procInfo
+	Err         error
 }
 
 func snapshotProcesses(pid int) processSnapshot {
@@ -165,10 +168,25 @@ func snapshotProcesses(pid int) processSnapshot {
 	for _, p := range all {
 		if p.PID == pid {
 			snap.Alive = true
+			snap.RootCommand = p.Command
 			break
 		}
 	}
 	return snap
+}
+
+// livePIDs returns the pids in the process table, or nil when it can't be
+// read.
+func livePIDs() map[int]bool {
+	all, err := listProcesses()
+	if err != nil {
+		return nil
+	}
+	live := make(map[int]bool, len(all))
+	for _, p := range all {
+		live[p.PID] = true
+	}
+	return live
 }
 
 func (p procInfo) String() string {
@@ -194,13 +212,53 @@ type stallInfo struct {
 func captureStall(proc *os.Process, method string) *stallInfo {
 	st := &stallInfo{Method: method, Snapshot: snapshotProcesses(proc.Pid)}
 	// The doctor launches the server with PYTHONFAULTHANDLER=1, so SIGABRT
-	// makes a Python server print every thread's traceback to stderr before it
-	// dies. The process is about to be killed anyway.
-	if runtime.GOOS != osWindows && proc.Signal(syscall.SIGABRT) == nil {
-		st.Aborted = true
-		time.Sleep(abortDumpWait)
+	// makes a Python process print every thread's traceback to stderr before it
+	// dies. Only Python processes get it: anything else would just die, and may
+	// leave a core dump or crash report.
+	if runtime.GOOS != osWindows {
+		st.Aborted = abortPython(proc, st.Snapshot)
+		if st.Aborted {
+			time.Sleep(abortDumpWait)
+		}
 	}
 	return st
+}
+
+// abortPython sends SIGABRT to the server if it is a Python process, or, when
+// a wrapper (shell script, uv run, node) launched it, to the Python processes
+// below the wrapper. It reports whether any signal was sent.
+func abortPython(proc *os.Process, snap processSnapshot) bool {
+	if snap.Err != nil || snap.RootCommand == "" || isPython(snap.RootCommand) {
+		return proc.Signal(syscall.SIGABRT) == nil
+	}
+	sent := false
+	for _, c := range snap.Children {
+		if !isPython(c.Command) {
+			continue
+		}
+		if p, err := os.FindProcess(c.PID); err == nil && p.Signal(syscall.SIGABRT) == nil {
+			sent = true
+		}
+	}
+	return sent
+}
+
+func isPython(command string) bool {
+	return strings.HasPrefix(executableBase(command), "python")
+}
+
+// killDescendants kills the processes the server had running when it stalled.
+// Killing the server alone leaves them behind, still blocked.
+func (s *stallInfo) killDescendants() {
+	if s == nil {
+		return
+	}
+	for _, c := range s.Snapshot.Children {
+		if p, err := os.FindProcess(c.PID); err == nil {
+			// armis:ignore cwe:404 reason:best-effort cleanup of a diagnostic subprocess's children
+			_ = p.Kill()
+		}
+	}
 }
 
 // text renders the stall for the support bundle.
@@ -263,10 +321,30 @@ func executableBase(command string) string {
 		if i := strings.Index(command[1:], `"`); i >= 0 {
 			exe = command[1 : i+1]
 		}
+	} else if i := exeEnd(command); i >= 0 {
+		exe = command[:i]
 	} else if i := strings.IndexAny(command, " \t"); i >= 0 {
 		exe = command[:i]
 	}
 	return strings.ToLower(filepath.Base(strings.ReplaceAll(exe, `\`, "/")))
+}
+
+// exeEnd returns the index just past a ".exe" that ends the program path in an
+// unquoted command line, so "C:\Program Files\Git\cmd\git.exe status" isn't
+// cut at the space in "Program Files". It returns -1 when there is none.
+func exeEnd(command string) int {
+	lower := strings.ToLower(command)
+	for from := 0; ; {
+		i := strings.Index(lower[from:], ".exe")
+		if i < 0 {
+			return -1
+		}
+		end := from + i + len(".exe")
+		if end == len(lower) || lower[end] == ' ' || lower[end] == '\t' {
+			return end
+		}
+		from = end
+	}
 }
 
 var (
@@ -305,4 +383,73 @@ func pythonThreadTops(stderr string) []string {
 		}
 	}
 	return tops
+}
+
+// --- pids of servers the doctor itself stalled and killed ---
+
+// probePIDsPath is where the doctor remembers the servers it killed after a
+// stall. A var so tests can point it at a temp dir.
+var probePIDsPath = func() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "armis-cli", "doctor-probe-pids")
+}
+
+const (
+	// probePIDsTTL is how long a recorded pid is trusted: pids get reused.
+	probePIDsTTL = 7 * 24 * time.Hour
+	// probePIDsKeep bounds the file.
+	probePIDsKeep = 100
+)
+
+// recordProbePID notes that the doctor killed server pid mid-call, so the
+// unfinished call it left in server.log isn't reported later as a stall the
+// user's editor hit.
+func recordProbePID(pid int) {
+	path := probePIDsPath()
+	if path == "" {
+		return
+	}
+	lines := readProbePIDLines(path)
+	lines = append(lines, fmt.Sprintf("%d %d", pid, time.Now().Unix()))
+	if len(lines) > probePIDsKeep {
+		lines = lines[len(lines)-probePIDsKeep:]
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+// loadProbePIDs returns the recently recorded probe server pids.
+func loadProbePIDs() map[int]bool {
+	path := probePIDsPath()
+	if path == "" {
+		return nil
+	}
+	pids := make(map[int]bool)
+	for _, line := range readProbePIDLines(path) {
+		var pid int
+		var at int64
+		if _, err := fmt.Sscanf(line, "%d %d", &pid, &at); err == nil && time.Since(time.Unix(at, 0)) < probePIDsTTL {
+			pids[pid] = true
+		}
+	}
+	return pids
+}
+
+func readProbePIDLines(path string) []string {
+	b, err := readBoundedConfigFile(path)
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
 }

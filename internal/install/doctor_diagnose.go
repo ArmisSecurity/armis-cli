@@ -1,6 +1,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"runtime"
@@ -97,9 +98,15 @@ func stallHint(component, version string, st *stallInfo) (string, FixAction) {
 	return h + " The bundle (armis-cli mcp doctor --bundle) has the full process list and the server's stack dump.", FixNone
 }
 
+// errCallTimeout marks a request the doctor gave up waiting on. Matching the
+// sentinel, not the message text, keeps a server or tool error that merely
+// says "timed out" (an API timeout, git's own timeout) from being read as a
+// hung server.
+var errCallTimeout = errors.New("timed out")
+
 // isTimeout reports whether a session error is the doctor giving up waiting.
 func isTimeout(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "timed out")
+	return errors.Is(err, errCallTimeout)
 }
 
 // receivedToolCall reports whether the server's stderr shows it received a
@@ -128,21 +135,26 @@ type toolLogStats struct {
 }
 
 // analyzeServerLog counts tool calls per server process. A call is unfinished
-// when its process logged a shutdown, or a later process started, while the
-// call was still open. The last process in the log may still be running, so
-// its open calls aren't counted.
+// when its process logged a shutdown, or is no longer running, while the call
+// was still open. A process that is still running keeps its open calls out of
+// the count, so two editors using the scanner at once don't flag each other.
+// Where the process table can't be read, a process counts as gone once a later
+// one has started. Servers the doctor itself stalled and killed are skipped.
 func analyzeServerLog(log string) toolLogStats {
 	var st toolLogStats
 	type proc struct {
+		pid     int
 		open    int
 		lastReq string
 	}
+	probes := loadProbePIDs()
 	procs := make(map[string]*proc)
 	var order []string
-	closeProc := func(pid string) {
-		if p := procs[pid]; p != nil && p.open > 0 {
+	note := func(ts string) { st.lastStuck = max(st.lastStuck, ts) }
+	abandon := func(p *proc) {
+		if p.open > 0 {
 			st.unfinished += p.open
-			st.lastStuck = p.lastReq
+			note(p.lastReq)
 			p.open = 0
 		}
 	}
@@ -151,16 +163,16 @@ func analyzeServerLog(log string) toolLogStats {
 		if m == nil {
 			continue
 		}
-		ts, pid, msg := m[1], m[2], m[3]
-		p := procs[pid]
+		ts, pidText, msg := m[1], m[2], m[3]
+		pid, _ := strconv.Atoi(pidText)
+		if probes[pid] {
+			continue
+		}
+		p := procs[pidText]
 		if p == nil {
-			// A new process: any earlier one with open calls was killed.
-			for _, prev := range order {
-				closeProc(prev)
-			}
-			p = &proc{}
-			procs[pid] = p
-			order = append(order, pid)
+			p = &proc{pid: pid}
+			procs[pidText] = p
+			order = append(order, pidText)
 		}
 		switch {
 		case strings.Contains(msg, "CallToolRequest"):
@@ -168,7 +180,7 @@ func analyzeServerLog(log string) toolLogStats {
 			p.open++
 			p.lastReq = ts
 		case msg == "MCP server stopped":
-			closeProc(pid)
+			abandon(p)
 		default:
 			d := toolDoneRe.FindStringSubmatch(msg)
 			if d == nil {
@@ -182,8 +194,26 @@ func analyzeServerLog(log string) toolLogStats {
 			st.maxDiag = max(st.maxDiag, secs)
 			if time.Duration(secs*float64(time.Second)) > slowToolCallThreshold {
 				st.slowDiag++
-				st.lastStuck = ts
+				note(ts)
 			}
+		}
+	}
+	var live map[int]bool
+	listed := false
+	for i, key := range order {
+		p := procs[key]
+		if p.open == 0 {
+			continue
+		}
+		if !listed {
+			live, listed = livePIDs(), true
+		}
+		gone := i < len(order)-1
+		if live != nil {
+			gone = !live[p.pid]
+		}
+		if gone {
+			abandon(p)
 		}
 	}
 	return st

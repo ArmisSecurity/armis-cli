@@ -414,6 +414,12 @@ func RunDoctor(opts DoctorOptions) *DoctorReport {
 // the first only, and points the rest back to it. Fix actions are untouched.
 func (r *DoctorReport) dedupeRemediations() {
 	first := make(map[string]string)
+	label := func(c *DoctorCheck) string {
+		if c.Editor != "" {
+			return c.Editor + " " + c.Name
+		}
+		return strings.TrimSpace(c.Component + " " + c.Name)
+	}
 	for i := range r.Checks {
 		c := &r.Checks[i]
 		if c.Remediation == "" || c.Status == StatusOK || c.Status == StatusInfo || len(c.Remediation) < 120 {
@@ -423,7 +429,7 @@ func (r *DoctorReport) dedupeRemediations() {
 			c.Remediation = "Same cause and fix as the " + strconv.Quote(name) + " check above."
 			continue
 		}
-		first[c.Remediation] = c.Name
+		first[c.Remediation] = label(c)
 	}
 }
 
@@ -884,6 +890,12 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 		detail += stallDetail(hs.Stall, stderr)
 		hint, action := stallHint(component, version, hs.Stall)
 		fail("tool call", detail).fix(action, hint)
+	case isTimeout(res.RepeatErr):
+		detail := fmt.Sprintf("%s answered in %s but never answered a second call (gave up after %s)",
+			debugConfigTool, took, res.RepeatElapsed.Round(10*time.Millisecond))
+		detail += stallDetail(hs.Stall, stderr)
+		hint, action := stallHint(component, version, hs.Stall)
+		fail("tool call", detail).fix(action, hint)
 	case res.DebugErr != nil:
 		fail("tool call", debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
 			hint(launchHintText(res.DebugErr, stderr, launch))
@@ -891,7 +903,7 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 		report.artifact(sanitizeArtifactName(component)+"/debug_config.txt", res.DebugConfig+"\n")
 		summary := summarizeDebugConfig(res.DebugConfig)
 		repeat := ""
-		if res.RepeatElapsed > 0 {
+		if res.RepeatErr == nil && res.RepeatElapsed > 0 {
 			repeat = fmt.Sprintf(" (second call %s)", res.RepeatElapsed.Round(10*time.Millisecond))
 		}
 		if res.CallElapsed > slowToolCallThreshold {

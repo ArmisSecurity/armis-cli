@@ -57,6 +57,7 @@ var watchLineRe = regexp.MustCompile(`^(\S+ \S+) (\w+) \[(\d+)\] ([^:]+): (.*)$`
 type watchCall struct {
 	received time.Time
 	logTime  string
+	at       time.Time // logTime parsed; zero if it didn't parse
 	reported time.Time // when it was last reported as stuck; zero if never
 	stuck    bool
 }
@@ -112,11 +113,10 @@ func (lw *logWatcher) handleLine(line string, now time.Time) {
 
 	p := lw.procs[pid]
 	if p == nil {
-		// A new process: the previous one was replaced, and any call it had
-		// open was abandoned.
-		for _, prev := range lw.order {
-			lw.closeProc(prev, ts, "replaced by a new server process")
-		}
+		// A new process. An earlier one that is gone was replaced, and any call
+		// it had open was abandoned; one still running (another editor's
+		// server) keeps its calls.
+		lw.closeGone(ts)
 		p = &watchProc{}
 		lw.procs[pid] = p
 		lw.order = append(lw.order, pid)
@@ -125,7 +125,7 @@ func (lw *logWatcher) handleLine(line string, now time.Time) {
 	switch {
 	case strings.Contains(msg, "CallToolRequest"):
 		lw.sum.Calls++
-		p.open = append(p.open, &watchCall{received: now, logTime: ts})
+		p.open = append(p.open, &watchCall{received: now, logTime: ts, at: parseLogTime(ts)})
 		lw.printf("%s  → tool call received (server pid %d)", clock(ts), pid)
 	case strings.Contains(logger, "mcp.server") && strings.Contains(msg, "Processing request of type"):
 		// Other request types (initialize, tools/list) add only noise.
@@ -157,11 +157,11 @@ func (lw *logWatcher) toolDone(p *watchProc, pid int, ts, tool, secsText, msg st
 		lw.sum.Slowest, lw.sum.SlowestTool = secs, tool
 	}
 	note := ""
-	if len(p.open) > 0 {
-		if p.open[0].stuck {
+	if i := matchOpenCall(p.open, parseLogTime(ts), secs); i >= 0 {
+		if p.open[i].stuck {
 			note = " (it had been reported as stuck)"
 		}
-		p.open = p.open[1:]
+		p.open = append(p.open[:i], p.open[i+1:]...)
 	}
 	if strings.HasPrefix(strings.TrimPrefix(msg, "tool "+tool+" "), "ok") {
 		lw.printf("%s  ← %s ok in %.2fs%s", clock(ts), tool, secs, note)
@@ -170,6 +170,64 @@ func (lw *logWatcher) toolDone(p *watchProc, pid int, ts, tool, secsText, msg st
 	lw.sum.Failed++
 	lw.inProblem = true
 	lw.printf("%s  ← %s FAILED after %.2fs%s: %s", clock(ts), tool, secs, note, msg)
+}
+
+// logTimeLayout is the server_log timestamp format.
+const logTimeLayout = "2006-01-02 15:04:05,000"
+
+// parseLogTime parses a log timestamp, returning the zero time if it can't.
+func parseLogTime(ts string) time.Time {
+	t, err := time.Parse(logTimeLayout, ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// matchOpenCall picks which open call a finished call belongs to. The log line
+// for a finished call carries no request id, only how long the call took, so
+// the match is the open call received closest to (finish time - duration).
+// That keeps a fast call finishing from closing a slower one still stuck. It
+// falls back to the oldest open call when the times can't be compared, and
+// returns -1 when nothing is open.
+func matchOpenCall(open []*watchCall, doneAt time.Time, secs float64) int {
+	if len(open) == 0 {
+		return -1
+	}
+	if doneAt.IsZero() {
+		return 0
+	}
+	started := doneAt.Add(-time.Duration(secs * float64(time.Second)))
+	best, bestGap := 0, time.Duration(-1)
+	for i, c := range open {
+		if c.at.IsZero() {
+			return 0
+		}
+		gap := c.at.Sub(started).Abs()
+		if bestGap < 0 || gap < bestGap {
+			best, bestGap = i, gap
+		}
+	}
+	return best
+}
+
+// closeGone closes the open calls of earlier server processes that are no
+// longer running.
+func (lw *logWatcher) closeGone(ts string) {
+	var live map[int]bool
+	listed := false
+	for _, prev := range lw.order {
+		if p := lw.procs[prev]; p == nil || len(p.open) == 0 {
+			continue
+		}
+		if !listed {
+			live, listed = livePIDs(), true
+		}
+		if live[prev] {
+			continue
+		}
+		lw.closeProc(prev, ts, "replaced by a new server process")
+	}
 }
 
 // closeProc reports calls still open when a server process ends.

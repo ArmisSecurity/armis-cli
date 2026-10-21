@@ -98,6 +98,7 @@ const customerServerLog = `2026-10-21 14:24:44,526 INFO [45020] appsec-mcp: Star
 `
 
 func TestAnalyzeServerLog(t *testing.T) {
+	stubProcesses(t, []procInfo{{PID: 48228, PPID: 1}}, nil) // the last server still runs
 	st := analyzeServerLog(strings.ReplaceAll(customerServerLog, "\n", "\r\n"))
 	if st.calls != 4 || st.unfinished != 1 || st.slowDiag != 2 || st.maxDiag != 5.06 {
 		t.Errorf("stats = %+v, want 4 calls, 1 unfinished (the last process may still run), 2 slow at 5.06s", st)
@@ -114,7 +115,39 @@ func TestAnalyzeServerLog(t *testing.T) {
 	}
 }
 
+func TestAnalyzeServerLogLiveness(t *testing.T) {
+	// Two editors, each with a server mid-call: neither is unfinished while both run.
+	both := "2026-10-21 14:37:34,174 INFO [10] mcp.server.lowlevel.server: Processing request of type CallToolRequest\n" +
+		"2026-10-21 14:37:35,000 INFO [20] appsec-mcp: Starting Armis AppSec MCP server 1.4.1 (python 3)\n" +
+		"2026-10-21 14:37:36,000 INFO [20] mcp.server.lowlevel.server: Processing request of type CallToolRequest\n"
+	stubProcesses(t, []procInfo{{PID: 10}, {PID: 20}}, nil)
+	if st := analyzeServerLog(both); st.unfinished != 0 {
+		t.Errorf("running servers counted as unfinished: %+v", st)
+	}
+	// The older server is gone: its call never finished; the running one's isn't counted.
+	stubProcesses(t, []procInfo{{PID: 20}}, nil)
+	if st := analyzeServerLog(both); st.unfinished != 1 || st.lastStuck != "2026-10-21 14:37:34,174" {
+		t.Errorf("want the dead server's call only: %+v", st)
+	}
+	// No process table: a later server means the earlier one was replaced.
+	stubProcesses(t, nil, errors.New("no ps"))
+	if st := analyzeServerLog(both); st.unfinished != 1 {
+		t.Errorf("fallback: %+v", st)
+	}
+}
+
+func TestAnalyzeServerLogSkipsDoctorProbes(t *testing.T) {
+	stubProcesses(t, nil, nil)
+	recordProbePID(31337)
+	log := "2026-10-21 14:37:34,174 INFO [31337] mcp.server.lowlevel.server: Processing request of type CallToolRequest\n" +
+		"2026-10-21 14:37:35,000 INFO [999] mcp.server.lowlevel.server: Processing request of type CallToolRequest\n"
+	if st := analyzeServerLog(log); st.calls != 1 || st.unfinished != 1 {
+		t.Errorf("probe pid should be ignored: %+v", st)
+	}
+}
+
 func TestCheckServerLogToolCalls(t *testing.T) {
+	stubProcesses(t, []procInfo{{PID: 48228, PPID: 1}}, nil)
 	stubGOOS(t, osWindows)
 	d := newDoctorRun(DoctorOptions{})
 	checkServerLogToolCalls(d, "scanner", customerServerLog, "1.4.1")

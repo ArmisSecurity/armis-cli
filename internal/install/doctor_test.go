@@ -26,7 +26,16 @@ func TestMain(m *testing.M) {
 	// Keep the suite off the network; tests of the version check stub this.
 	latestPluginVersion = func() (string, error) { return "", errors.New("offline") }
 	abortDumpWait = 20 * time.Millisecond
-	os.Exit(m.Run())
+	// Keep the suite from writing the real user cache.
+	dir, err := os.MkdirTemp("", "armis-doctor-test-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	probePIDsPath = func() string { return filepath.Join(dir, "doctor-probe-pids") }
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // runMCPHelperProcess acts as a fake MCP stdio server. It answers each
