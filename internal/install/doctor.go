@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,6 +281,9 @@ type doctorRun struct {
 	// manifestConfigs are config files already covered by manifest checks,
 	// so VS Code discovery doesn't report them twice.
 	manifestConfigs map[string]bool
+	// scannerVersion is the installed scanner plugin version, used to match
+	// known bugs when a spawned server doesn't report its own.
+	scannerVersion string
 }
 
 // workspaceDir returns opts.WorkspaceDir, defaulting to the current directory.
@@ -294,6 +298,9 @@ func (d *doctorRun) workspaceDir() string {
 type probeOutcome struct {
 	component, name string // the check that ran it
 	ok              bool
+	// failure is the failing check's name and detail, so a launch reported by
+	// reference says why it fails instead of only that it does.
+	failure string
 }
 
 func newDoctorRun(opts DoctorOptions) *doctorRun {
@@ -348,7 +355,26 @@ func RunDoctor(opts DoctorOptions) *DoctorReport {
 	_, hasVSCode := manifest.Editors[EditorVSCode]
 	checkVSCode(d, ei.PluginDir(), hasVSCode)
 
+	report.dedupeRemediations()
 	return report
+}
+
+// dedupeRemediations keeps a long hint shared by several problem checks (one
+// root cause seen from the version, the log, and the live probe) in full on
+// the first only, and points the rest back to it. Fix actions are untouched.
+func (r *DoctorReport) dedupeRemediations() {
+	first := make(map[string]string)
+	for i := range r.Checks {
+		c := &r.Checks[i]
+		if c.Remediation == "" || c.Status == StatusOK || c.Status == StatusInfo || len(c.Remediation) < 120 {
+			continue
+		}
+		if name, ok := first[c.Remediation]; ok {
+			c.Remediation = "Same cause and fix as the " + strconv.Quote(name) + " check above."
+			continue
+		}
+		first[c.Remediation] = c.Name
+	}
 }
 
 // checkScannerPlugin verifies the scanner's files, venv, and credentials and,
@@ -359,22 +385,19 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 	pythonPath := venvPython(ei.PluginDir())
 	serverPy := filepath.Join(ei.PluginDir(), "server.py")
 
-	if v := ei.GetInstalledVersion(); v == "" {
-		report.add(component, "plugin version", StatusWarn, "no installed version recorded").
-			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
-	} else {
-		report.add(component, "plugin version", StatusOK, "v"+v).short("v" + v)
-	}
+	d.scannerVersion = ei.GetInstalledVersion()
+	checkPluginVersion(d, component, d.scannerVersion)
 
 	if !isExecutableFile(pythonPath) {
 		report.add(component, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath)).
 			fix(FixReinstall, "Rebuild the venv: armis-cli mcp doctor --fix")
 		return
 	}
-	if !checkVenvBase(report, component, filepath.Join(ei.PluginDir(), ".venv")) {
+	pyVersion, ok := checkVenvBase(report, component, filepath.Join(ei.PluginDir(), ".venv"))
+	if !ok {
 		return
 	}
-	report.add(component, "python venv", StatusOK, pythonPath)
+	report.add(component, "python venv", StatusOK, withPythonVersion(pythonPath, pyVersion))
 
 	if _, err := os.Stat(serverPy); err != nil {
 		report.add(component, "server script", StatusFail, fmt.Sprintf("missing: %s", serverPy)).
@@ -388,7 +411,9 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 	// Plugin versions that keep their own log write it here; include the
 	// recent part in the support bundle.
 	if b, err := readBoundedConfigFile(filepath.Join(ei.PluginDir(), "logs", "server.log")); err == nil && len(b) > 0 {
-		report.artifact("scanner/server.log", tail(string(b), 64<<10)+"\n")
+		log := tail(string(b), 64<<10)
+		report.artifact("scanner/server.log", log+"\n")
+		checkServerLogToolCalls(d, component, log, d.scannerVersion)
 	}
 
 	if d.opts.Handshake {
@@ -405,31 +430,46 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 // exists. A venv's python.exe on Windows is a thin launcher that execs the
 // base interpreter recorded in pyvenv.cfg; uninstalling or upgrading that
 // Python leaves a venv whose python.exe exists but can't start ("No Python
-// at ..."). Returns false after reporting a failure.
-func checkVenvBase(report *DoctorReport, component, venvDir string) bool {
+// at ..."). Returns false after reporting a failure, and the Python version
+// pyvenv.cfg records ("" if none).
+func checkVenvBase(report *DoctorReport, component, venvDir string) (string, bool) {
 	cfgPath := filepath.Join(venvDir, "pyvenv.cfg")
 	b, err := readBoundedConfigFile(cfgPath)
 	if err != nil {
-		return true // older/unusual venvs may lack it; the handshake still catches a broken one
+		return "", true // older/unusual venvs may lack it; the handshake still catches a broken one
 	}
 	report.artifact(sanitizeArtifactName(component)+"/pyvenv.cfg", string(b))
+	var version string
 	for _, line := range strings.Split(string(b), "\n") {
 		k, v, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(k) != "home" {
+		if !ok {
 			continue
 		}
-		home := strings.TrimSpace(v)
-		if home == "" {
-			return true
-		}
-		if _, err := os.Stat(home); err != nil {
-			report.add(component, "python venv", StatusFail,
-				fmt.Sprintf("the venv's base Python (%s) no longer exists — Python was likely uninstalled or upgraded", home)).
-				fix(FixReinstall, "Rebuild the venv against a current Python: armis-cli mcp doctor --fix")
-			return false
+		switch strings.TrimSpace(k) {
+		case "version", "version_info":
+			version = strings.TrimSpace(v)
+		case "home":
+			home := strings.TrimSpace(v)
+			if home == "" {
+				continue
+			}
+			if _, err := os.Stat(home); err != nil {
+				report.add(component, "python venv", StatusFail,
+					fmt.Sprintf("the venv's base Python (%s) no longer exists — Python was likely uninstalled or upgraded", home)).
+					fix(FixReinstall, "Rebuild the venv against a current Python: armis-cli mcp doctor --fix")
+				return version, false
+			}
 		}
 	}
-	return true
+	return version, true
+}
+
+// withPythonVersion appends the venv's Python version to its path, if known.
+func withPythonVersion(pythonPath, version string) string {
+	if version == "" {
+		return pythonPath
+	}
+	return pythonPath + " (Python " + version + ")"
 }
 
 func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
@@ -469,10 +509,11 @@ func checkKnowledgePlugin(d *doctorRun, k *ManifestKnowledge) {
 				fix(FixReinstall, "Rebuild the venv: armis-cli mcp doctor --fix")
 			continue
 		}
-		if !checkVenvBase(report, subComponent, filepath.Join(envDir, ".venv")) {
+		pyVersion, ok := checkVenvBase(report, subComponent, filepath.Join(envDir, ".venv"))
+		if !ok {
 			continue
 		}
-		report.add(subComponent, "python venv", StatusOK, pythonPath)
+		report.add(subComponent, "python venv", StatusOK, withPythonVersion(pythonPath, pyVersion))
 
 		envFile := filepath.Join(envDir, ".env")
 		env := checkCredentials(report, subComponent, envFile)
@@ -571,6 +612,17 @@ func checkCredentials(report *DoctorReport, component, envFile string) map[strin
 // they're valid for this tenant before the user ever reaches a tool call.
 func checkAuth(d *doctorRun, component string, env map[string]string) {
 	if d.opts.AuthCheck == nil || env["ARMIS_CLIENT_ID"] == "" || env["ARMIS_CLIENT_SECRET"] == "" {
+		return
+	}
+	// Mirrors auth.init_auth: an explicit SSO opt-in makes the server ignore
+	// client credentials, so validating them would report on unused config.
+	if method := firstNonEmpty(env["ARMIS_DEFAULT_AUTH_METHOD"], os.Getenv("ARMIS_DEFAULT_AUTH_METHOD")); strings.EqualFold(strings.TrimSpace(method), "sso") {
+		source := "in .env"
+		if env["ARMIS_DEFAULT_AUTH_METHOD"] == "" {
+			source = "in this shell only, which editors don't inherit"
+		}
+		d.report.add(component, "authentication", StatusInfo,
+			"ARMIS_DEFAULT_AUTH_METHOD=sso is set "+source+": the server ignores the client ID and secret and signs in with the armis-cli login (SSO)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), networkProbeTimeout)
@@ -685,23 +737,28 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 
 	key := launch.key()
 	if prev, ok := d.probes[key]; ok {
-		status := StatusOK
-		if !prev.ok {
-			status = StatusFail
-		}
 		ref := prev.name
 		if prev.component != component {
 			ref = prev.component + " " + ref
 		}
-		add("launch", status, fmt.Sprintf("same launch command as the %q check above", ref))
+		if prev.ok {
+			add("launch", StatusOK, fmt.Sprintf("same launch command as the %q check above", ref))
+		} else {
+			add("launch", StatusFail, fmt.Sprintf("same launch command as above, so it fails the same way: %s", prev.failure)).
+				hint("See the " + strconv.Quote(ref) + " check above for the fix.")
+		}
 		return
 	}
 	outcome := &probeOutcome{component: component, name: named("live handshake")}
 	d.probes[key] = outcome
+	fail := func(name, detail string) *DoctorCheck {
+		outcome.ok = false
+		outcome.name = named(name)
+		outcome.failure = named(name) + ": " + truncate(detail, 200)
+		return add(name, StatusFail, detail)
+	}
 
-	start := time.Now()
 	res, stderr, err := mcpHandshake(launch.Command, launch.Args, launch.Env, d.opts.Timeout)
-	elapsed := time.Since(start).Round(100 * time.Millisecond)
 	report := d.report
 	if stderr != "" {
 		report.artifact("stderr/"+sanitizeArtifactName(component+" "+named("live handshake"))+".txt",
@@ -713,48 +770,70 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 			detail += " — stderr: " + tail(stderr, 300)
 		}
 		hint, action := launchHint(err, stderr, launch)
-		add("live handshake", StatusFail, detail).fix(action, hint)
+		fail("live handshake", detail).fix(action, hint)
 		return
 	}
 	outcome.ok = true
 
+	// The plugin logs its own version on startup; serverInfo.version is the
+	// MCP SDK's on older plugins, which misleads anyone reading the report.
+	version := pluginVersionFromStderr(stderr)
+	if version == "" && component == "scanner" {
+		version = d.scannerVersion
+	}
 	detail := "responded to initialize"
 	if res.ServerName != "" {
 		detail = res.ServerName + " responded"
-		if res.ServerVersion != "" {
-			detail = fmt.Sprintf("%s v%s responded", res.ServerName, res.ServerVersion)
+		if v := firstNonEmpty(version, res.ServerVersion); v != "" {
+			detail = fmt.Sprintf("%s v%s responded", res.ServerName, v)
 		}
 	}
-	detail += " in " + elapsed.String()
-	if elapsed > slowStartThreshold {
+	started := res.StartElapsed.Round(100 * time.Millisecond)
+	detail += " in " + started.String()
+	if res.StartElapsed > slowStartThreshold {
 		add("live handshake", StatusWarn, detail+" (slow start)").
 			hint("Slow starts are usually antivirus scanning the venv. If your editor gives up before the server is ready, ask IT to exclude " + filepath.Dir(filepath.Dir(filepath.Dir(launch.Command))) + " from real-time scanning.")
 	} else {
-		short(add("live handshake", StatusOK, detail), "starts in "+elapsed.String())
+		short(add("live handshake", StatusOK, detail), "starts in "+started.String())
 	}
 
 	switch {
 	case res.ToolsErr != nil:
-		outcome.ok = false
-		add("tools", StatusFail, "tools/list failed: "+res.ToolsErr.Error()).
+		fail("tools", "tools/list failed: "+res.ToolsErr.Error()).
 			hint(launchHintText(res.ToolsErr, stderr, launch))
 	case len(res.Tools) == 0:
-		outcome.ok = false
-		add("tools", StatusFail, "server started but exposes no tools").
+		fail("tools", "server started but exposes no tools").
 			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 	default:
 		short(add("tools", StatusOK, fmt.Sprintf("%d tools: %s", len(res.Tools), strings.Join(res.Tools, ", "))),
 			fmt.Sprintf("%d tools", len(res.Tools)))
 	}
 
+	took := res.CallElapsed.Round(10 * time.Millisecond)
 	switch {
+	case isTimeout(res.DebugErr):
+		// The server started and listed its tools, so a timeout here is a
+		// hang inside the tool, not a cold start or antivirus.
+		detail := fmt.Sprintf("%s never answered (gave up after %s), although the server started in %s and listed its tools",
+			debugConfigTool, took, started)
+		if receivedToolCall(stderr) {
+			detail += "; its log shows it received the call"
+		}
+		hint, action := stuckToolCallHint(component, version)
+		fail("tool call", detail).fix(action, hint)
 	case res.DebugErr != nil:
-		outcome.ok = false
-		add("tool call", StatusFail, debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
+		fail("tool call", debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
 			hint(launchHintText(res.DebugErr, stderr, launch))
 	case res.DebugConfig != "":
 		report.artifact(sanitizeArtifactName(component)+"/debug_config.txt", res.DebugConfig+"\n")
-		add("tool call", StatusOK, debugConfigTool+" succeeded — "+summarizeDebugConfig(res.DebugConfig))
+		summary := summarizeDebugConfig(res.DebugConfig)
+		if res.CallElapsed > slowToolCallThreshold {
+			hint, action := stuckToolCallHint(component, version)
+			add("tool call", StatusWarn, fmt.Sprintf("%s took %s (should be well under a second) — %s", debugConfigTool, took, summary)).
+				fix(action, hint)
+		} else {
+			add("tool call", StatusOK, debugConfigTool+" succeeded in "+took.String()+" — "+summary)
+		}
 	}
 }
 
@@ -768,7 +847,7 @@ func launchHintText(err error, stderr string, launch serverLaunch) string {
 func summarizeDebugConfig(out string) string {
 	var parts []string
 	for _, line := range strings.Split(out, "\n") {
-		for _, p := range []string{"Auth method:", "API URL:", "Env:"} {
+		for _, p := range []string{"Auth method:", "API URL:", "Env:", "Git:"} {
 			if strings.HasPrefix(strings.TrimSpace(line), p) {
 				parts = append(parts, strings.TrimSpace(line))
 			}

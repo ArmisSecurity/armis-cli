@@ -19,10 +19,22 @@ import (
 // keeps for the support bundle (CWE-770).
 const maxStderrCapture = 64 << 10 // 64 KB
 
-// slowStartThreshold is the handshake latency above which the doctor warns
-// that the server starts slowly — typically real-time antivirus scanning the
-// venv on first launch.
+// slowStartThreshold is the time to answer initialize above which the doctor
+// warns that the server starts slowly — typically real-time antivirus scanning
+// the venv on first launch.
 const slowStartThreshold = 5 * time.Second
+
+// slowToolCallThreshold is the debug_config latency above which the doctor
+// warns. debug_config makes no network calls, so anything this slow means a
+// local step (a git subprocess, a file read) is stalling, and every scan will
+// stall the same way.
+// A var so tests can shorten it.
+var slowToolCallThreshold = 2 * time.Second
+
+// toolCallTimeout bounds tools/list and the debug_config call, each on its
+// own budget so a slow start can't eat into the tool call's time and a hung
+// tool call can't pass for a slow start. A var so tests can shorten it.
+var toolCallTimeout = 20 * time.Second
 
 // debugConfigTool is the scanner's diagnostic tool; calling it proves the
 // server executes tool calls end to end, not just the handshake.
@@ -79,6 +91,10 @@ type probeResult struct {
 	ToolsErr      error
 	DebugConfig   string
 	DebugErr      error
+	// StartElapsed runs from process start to the initialize response;
+	// CallElapsed is the debug_config round trip alone.
+	StartElapsed time.Duration
+	CallElapsed  time.Duration
 }
 
 type mcpInitResult struct {
@@ -92,7 +108,8 @@ type mcpInitResult struct {
 // initialize, then tools/list, then (when the server offers it) a
 // debug_config tool call. Only the initialize step decides the returned
 // error; later steps report their own errors on the result so the caller can
-// tell "won't start" apart from "starts but tools are broken".
+// tell "won't start" apart from "starts but tools are broken". timeout bounds
+// initialize; tools/list and the tool call each get toolCallTimeout.
 //
 // The process is always killed and waited-on before returning, so stderr can
 // be read back safely (os/exec only finishes copying stderr into the buffer
@@ -160,13 +177,11 @@ type rpcMessage struct {
 	} `json:"error"`
 }
 
-// mcpSession drives JSON-RPC over the server's stdio. Every read shares one
-// deadline so a hung server can't stretch the doctor past its timeout.
+// mcpSession drives JSON-RPC over the server's stdio.
 type mcpSession struct {
-	stdin    io.Writer
-	lines    chan []byte
-	readErr  chan error
-	deadline time.Time
+	stdin   io.Writer
+	lines   chan []byte
+	readErr chan error
 }
 
 func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Duration) (*probeResult, error) {
@@ -177,10 +192,10 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 		// bursts many log/notification lines right after answering one
 		// call could otherwise block the reader goroutine until the next
 		// call starts draining.
-		lines:    make(chan []byte, 256),
-		readErr:  make(chan error, 1),
-		deadline: time.Now().Add(timeout),
+		lines:   make(chan []byte, 256),
+		readErr: make(chan error, 1),
 	}
+	start := time.Now()
 	// done unblocks the reader once the session is over, so a server that
 	// keeps writing after the last call can't park the goroutine on a full
 	// channel forever. Dropping lines instead could drop the response itself.
@@ -211,14 +226,14 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 	if err := json.Unmarshal(initRaw, &init); err != nil {
 		return nil, fmt.Errorf("invalid initialize result: %w", err)
 	}
-	res := &probeResult{ServerName: init.ServerInfo.Name, ServerVersion: init.ServerInfo.Version}
+	res := &probeResult{ServerName: init.ServerInfo.Name, ServerVersion: init.ServerInfo.Version, StartElapsed: time.Since(start)}
 
 	if err := s.notify("notifications/initialized"); err != nil {
 		res.ToolsErr = err
 		return res, nil
 	}
 
-	toolsRaw, err := s.call(2, "tools/list", map[string]interface{}{}, timeout)
+	toolsRaw, err := s.call(2, "tools/list", map[string]interface{}{}, toolCallTimeout)
 	if err != nil {
 		res.ToolsErr = err
 		return res, nil
@@ -240,10 +255,12 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 		if name != debugConfigTool {
 			continue
 		}
+		callStart := time.Now()
 		callRaw, err := s.call(3, "tools/call", map[string]interface{}{
 			jsonKeyName: debugConfigTool,
 			"arguments": map[string]interface{}{},
-		}, timeout)
+		}, toolCallTimeout)
+		res.CallElapsed = time.Since(callStart)
 		if err != nil {
 			res.DebugErr = err
 			break
@@ -280,10 +297,7 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 		return nil, fmt.Errorf("writing %s request: %w", method, err)
 	}
 
-	wait := time.Until(s.deadline)
-	if wait < 0 {
-		wait = 0
-	}
+	wait := max(timeout, 0)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {

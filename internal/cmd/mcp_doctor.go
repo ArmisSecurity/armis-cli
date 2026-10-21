@@ -82,7 +82,7 @@ func init() {
 	mcpCmd.AddCommand(mcpDoctorCmd)
 	mcpDoctorCmd.Flags().StringVarP(&mcpDoctorFormat, "format", "f", agentFormatPlain, "Output format: plain, json")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorNoHandshake, "no-handshake", false, "Skip spawning MCP servers and the network checks")
-	mcpDoctorCmd.Flags().DurationVar(&mcpDoctorTimeout, "timeout", install.DefaultHandshakeTimeout, "Timeout for each live handshake")
+	mcpDoctorCmd.Flags().DurationVar(&mcpDoctorTimeout, "timeout", install.DefaultHandshakeTimeout, "How long each server may take to start and answer initialize (tool calls get their own limit)")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorFix, "fix", false, "Repair fixable problems (re-register editors, rebuild the venv), then re-check")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorBundle, "bundle", false, "Write a support bundle zip (credentials removed) for Armis support")
 	mcpDoctorCmd.Flags().StringVar(&mcpDoctorBundlePath, "bundle-path", "", "Where to write the support bundle (implies --bundle; default: ./armis-mcp-doctor-<timestamp>.zip)")

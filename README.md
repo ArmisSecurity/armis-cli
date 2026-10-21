@@ -694,8 +694,9 @@ armis-cli mcp doctor     # diagnose why an editor doesn't see or can't use the s
 
 `mcp doctor` checks the whole path from install to a working tool call, and prints a `→` line with the fix under every check that fails:
 
-- plugin files, the Python venv (including a base Python that was uninstalled or upgraded), and credentials
-- every editor config: the entry still exists, its command and envFile exist, and the server starts **exactly as that editor launches it** and answers `initialize`, `tools/list`, and a diagnostic tool call
+- the plugin version against the latest release, plugin files, the Python venv (including a base Python that was uninstalled or upgraded), and credentials
+- every editor config: the entry still exists, its command and envFile exist, and the server starts **exactly as that editor launches it** and answers `initialize`, `tools/list`, and a diagnostic tool call, each timed separately, so a server that starts fine but hangs in a tool call isn't reported as a slow start
+- the scanner's `server.log`: tool calls from real editor sessions that never finished or were unusually slow
 - that the credentials are accepted, and that the server's own Python runtime can reach the Armis API (proxy and TLS-inspection problems often affect it and not the CLI)
 - VS Code / Copilot: VS Code Insiders and VSCodium, per-profile and workspace configs, duplicate or stale entries, settings and Windows Group Policy that disable MCP or Agent mode, and the last error in VS Code's own MCP log for the server
 
