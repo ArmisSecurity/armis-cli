@@ -83,7 +83,7 @@ function Verify-Checksums {
     }
 
     $cosignPath = Get-Command cosign -ErrorAction SilentlyContinue
-    $hasBundle = $ChecksumsBundle -and (Test-Path $ChecksumsBundle)
+    $hasBundle = $ChecksumsBundle -and (Test-Path $ChecksumsBundle) -and ((Get-Item $ChecksumsBundle).Length -gt 0)
     if ($cosignPath -and $hasBundle) {
         Write-Host "🔐 Verifying signature with cosign..."
         # cosign is a native command: failure shows up in $LASTEXITCODE, not as an exception.
@@ -224,6 +224,7 @@ function Main {
         try {
             Download-File -Url "$baseUrl/armis-cli-checksums.txt.bundle" -Output $checksumsBundle
         } catch {
+            Remove-Item -Path $checksumsBundle -Force -ErrorAction SilentlyContinue
             Write-Host "⚠️  Signature bundle not found, skipping signature verification" -ForegroundColor Yellow
         }
 
