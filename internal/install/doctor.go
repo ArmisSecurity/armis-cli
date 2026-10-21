@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -266,6 +267,11 @@ type DoctorOptions struct {
 	// credentials against the Armis API. Injected by the caller so this
 	// package stays independent of the auth client.
 	AuthCheck func(ctx context.Context, clientID, clientSecret string) error
+	// Deep, when true (and Handshake is true), also calls the scanner's
+	// scan_file on a small throwaway file. Unlike debug_config that runs git
+	// and calls the Armis API, so it finds stalls on the real scan path. It
+	// sends the file's content (a trivial snippet) to the Armis API.
+	Deep bool
 	// WorkspaceDir is where a workspace-level .vscode/mcp.json is looked for.
 	// Defaults to the current directory.
 	WorkspaceDir string
@@ -284,6 +290,49 @@ type doctorRun struct {
 	// scannerVersion is the installed scanner plugin version, used to match
 	// known bugs when a spawned server doesn't report its own.
 	scannerVersion string
+	// deepDir and deepFile are the throwaway scan target, created on first use.
+	deepDir, deepFile string
+}
+
+// deepProbeFile returns the file the deep probe scans, creating it on first
+// use, or "" when Deep is off or the file can't be made. It lives under the
+// home directory because the scanner only accepts paths under home or /tmp,
+// and the OS temp dir (e.g. /var/folders on macOS) is neither. It is a git
+// repository so the scan exercises the server's git calls.
+func (d *doctorRun) deepProbeFile() string {
+	if !d.opts.Deep {
+		return ""
+	}
+	if d.deepFile != "" {
+		return d.deepFile
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		d.deepDir, err = os.MkdirTemp(home, ".armis-doctor-")
+	}
+	if err != nil {
+		d.report.add("scanner", "deep probe", StatusWarn, "could not create a scratch file for the scan call: "+err.Error())
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Best effort: without git the scan simply takes the no-repository path.
+	// armis:ignore cwe:78 reason:deepDir is a directory this process just created
+	_ = exec.CommandContext(ctx, "git", "init", "-q", d.deepDir).Run() //nolint:gosec // deepDir is a directory this process just created
+	file := filepath.Join(d.deepDir, "armis_doctor_probe.py")
+	if err := os.WriteFile(file, []byte("def add(a, b):\n    return a + b\n"), 0o600); err != nil {
+		d.report.add("scanner", "deep probe", StatusWarn, "could not create a scratch file for the scan call: "+err.Error())
+		return ""
+	}
+	d.deepFile = file
+	return file
+}
+
+// close removes the deep probe's scratch directory.
+func (d *doctorRun) close() {
+	if d.deepDir != "" {
+		_ = os.RemoveAll(d.deepDir)
+	}
 }
 
 // workspaceDir returns opts.WorkspaceDir, defaulting to the current directory.
@@ -321,6 +370,7 @@ func newDoctorRun(opts DoctorOptions) *doctorRun {
 // support has the most ways to silently not load a server.
 func RunDoctor(opts DoctorOptions) *DoctorReport {
 	d := newDoctorRun(opts)
+	defer d.close()
 	report := d.report
 
 	ei := NewEditorInstaller()
@@ -758,17 +808,29 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 		return add(name, StatusFail, detail)
 	}
 
-	res, stderr, err := mcpHandshake(launch.Command, launch.Args, launch.Env, d.opts.Timeout)
+	hs := runHandshake(handshakeRequest{
+		Command: launch.Command, Args: launch.Args, Env: launch.Env,
+		Timeout: d.opts.Timeout, DeepFile: d.deepProbeFile(),
+	})
+	res, stderr, err := hs.Result, hs.Stderr, hs.Err
 	report := d.report
+	artifactName := sanitizeArtifactName(component + " " + named("live handshake"))
 	if stderr != "" {
-		report.artifact("stderr/"+sanitizeArtifactName(component+" "+named("live handshake"))+".txt",
-			"$ "+launch.commandLine()+"\n\n"+stderr+"\n")
+		report.artifact("stderr/"+artifactName+".txt", "$ "+launch.commandLine()+"\n\n"+stderr+"\n")
+	}
+	if hs.Transcript != "" {
+		header := "$ " + launch.commandLine() + "\n" + timingLine(res) + "\n"
+		report.artifact("transcripts/"+artifactName+".txt", header+hs.Transcript)
+	}
+	if hs.Stall != nil {
+		report.artifact("stalls/"+artifactName+".txt", hs.Stall.text()+stackDumpText(stderr))
 	}
 	if err != nil {
 		detail := err.Error()
 		if stderr != "" {
 			detail += " — stderr: " + tail(stderr, 300)
 		}
+		detail += stallDetail(hs.Stall, stderr)
 		hint, action := launchHint(err, stderr, launch)
 		fail("live handshake", detail).fix(action, hint)
 		return
@@ -819,7 +881,8 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 		if receivedToolCall(stderr) {
 			detail += "; its log shows it received the call"
 		}
-		hint, action := stuckToolCallHint(component, version)
+		detail += stallDetail(hs.Stall, stderr)
+		hint, action := stallHint(component, version, hs.Stall)
 		fail("tool call", detail).fix(action, hint)
 	case res.DebugErr != nil:
 		fail("tool call", debugConfigTool+" failed: "+truncate(res.DebugErr.Error(), 300)).
@@ -827,14 +890,96 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 	case res.DebugConfig != "":
 		report.artifact(sanitizeArtifactName(component)+"/debug_config.txt", res.DebugConfig+"\n")
 		summary := summarizeDebugConfig(res.DebugConfig)
+		repeat := ""
+		if res.RepeatElapsed > 0 {
+			repeat = fmt.Sprintf(" (second call %s)", res.RepeatElapsed.Round(10*time.Millisecond))
+		}
 		if res.CallElapsed > slowToolCallThreshold {
 			hint, action := stuckToolCallHint(component, version)
-			add("tool call", StatusWarn, fmt.Sprintf("%s took %s (should be well under a second) — %s", debugConfigTool, took, summary)).
+			add("tool call", StatusWarn, fmt.Sprintf("%s took %s%s (should be well under a second) — %s", debugConfigTool, took, repeat, summary)).
 				fix(action, hint)
 		} else {
-			add("tool call", StatusOK, debugConfigTool+" succeeded in "+took.String()+" — "+summary)
+			add("tool call", StatusOK, debugConfigTool+" succeeded in "+took.String()+repeat+" — "+summary)
 		}
 	}
+
+	if res.DeepRan {
+		d.reportDeepCall(component, version, res, hs, add, short)
+	}
+}
+
+// reportDeepCall reports the deep scan_file call.
+func (d *doctorRun) reportDeepCall(component, version string, res *probeResult, hs handshakeOutcome,
+	add func(string, CheckStatus, string) *DoctorCheck, short func(*DoctorCheck, string)) {
+	took := res.DeepElapsed.Round(10 * time.Millisecond)
+	switch {
+	case isTimeout(res.DeepErr):
+		detail := fmt.Sprintf("%s never answered (gave up after %s), although debug_config answered in %s%s",
+			scanFileTool, took, res.CallElapsed.Round(10*time.Millisecond), stallDetail(hs.Stall, hs.Stderr))
+		hint, action := stallHint(component, version, hs.Stall)
+		add("scan call", StatusFail, detail).fix(action, hint)
+	case res.DeepErr != nil:
+		add("scan call", StatusFail, scanFileTool+" failed: "+truncate(res.DeepErr.Error(), 300)).
+			hint(launchHintText(res.DeepErr, hs.Stderr, serverLaunch{}))
+	case res.DeepElapsed > deepSlowThreshold:
+		add("scan call", StatusWarn, fmt.Sprintf("%s succeeded but took %s", scanFileTool, took)).
+			hint("The server works but scans are slow. Compare with the 'server network' check; if the API is reachable quickly, the time is going to the scan itself. The bundle's transcripts/ folder has the timings.")
+	default:
+		short(add("scan call", StatusOK, fmt.Sprintf("%s succeeded in %s (debug_config took %s)",
+			scanFileTool, took, res.CallElapsed.Round(10*time.Millisecond))), "scan works ("+took.String()+")")
+	}
+}
+
+// deepSlowThreshold is the scan_file latency above which the doctor warns.
+const deepSlowThreshold = 30 * time.Second
+
+// timingLine renders the per-request timings of a session for the transcript.
+func timingLine(res *probeResult) string {
+	if res == nil {
+		return "timings: initialize did not complete"
+	}
+	parts := []string{
+		"initialize " + res.StartElapsed.Round(time.Millisecond).String(),
+		"tools/list " + res.ListElapsed.Round(time.Millisecond).String(),
+	}
+	if res.CallElapsed > 0 {
+		parts = append(parts, debugConfigTool+" "+res.CallElapsed.Round(time.Millisecond).String())
+	}
+	if res.RepeatElapsed > 0 {
+		parts = append(parts, debugConfigTool+" (repeat) "+res.RepeatElapsed.Round(time.Millisecond).String())
+	}
+	if res.DeepRan {
+		parts = append(parts, scanFileTool+" "+res.DeepElapsed.Round(time.Millisecond).String())
+	}
+	return "timings: " + strings.Join(parts, ", ")
+}
+
+// stallDetail renders what the doctor saw when a request stopped answering, as
+// a suffix for a check's detail.
+func stallDetail(st *stallInfo, stderr string) string {
+	if st == nil {
+		return ""
+	}
+	var parts []string
+	if s := st.summary(); s != "" {
+		parts = append(parts, s)
+	}
+	if tops := pythonThreadTops(stderr); len(tops) > 0 {
+		parts = append(parts, "its threads were at "+strings.Join(tops[:min(len(tops), 4)], "; "))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " — " + strings.Join(parts, "; ")
+}
+
+// stackDumpText returns the thread dump in stderr, for the stall artifact.
+func stackDumpText(stderr string) string {
+	i := pyFatalRe.FindStringIndex(stderr)
+	if i == nil {
+		return ""
+	}
+	return "\nThread dump (SIGABRT with PYTHONFAULTHANDLER=1):\n" + stderr[i[0]:] + "\n"
 }
 
 func launchHintText(err error, stderr string, launch serverLaunch) string {

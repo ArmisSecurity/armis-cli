@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -24,6 +25,7 @@ func TestMain(m *testing.M) {
 	}
 	// Keep the suite off the network; tests of the version check stub this.
 	latestPluginVersion = func() (string, error) { return "", errors.New("offline") }
+	abortDumpWait = 20 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -43,6 +45,9 @@ func runMCPHelperProcess(mode string) {
 		var req struct {
 			ID     *int   `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(line, &req) != nil || req.ID == nil {
 			continue // notification
@@ -57,7 +62,7 @@ func runMCPHelperProcess(mode string) {
 		case mode == "error":
 			reply(`"error":{"code":-1,"message":"boom"}`)
 			return
-		case req.Method == "initialize" && (mode == "toolhang" || mode == "toolslow"):
+		case req.Method == "initialize" && (mode == "toolhang" || mode == "toolslow" || mode == "toolhang-child"):
 			// What the scanner logs on startup; serverInfo carries the SDK version.
 			_, _ = fmt.Fprintln(os.Stderr, "INFO appsec-mcp: Starting Armis AppSec MCP server 1.4.1 (python 3.14.4)")
 			reply(`"result":{"serverInfo":{"name":"Armis AppSec Scanner","version":"1.25.0"}}`)
@@ -70,8 +75,19 @@ func runMCPHelperProcess(mode string) {
 			return
 		case req.Method == "tools/list" && mode == "notools":
 			reply(`"result":{"tools":[]}`)
+		case req.Method == "tools/list" && strings.HasPrefix(mode, "deep"):
+			reply(`"result":{"tools":[{"name":"scan_file"},{"name":"debug_config"}]}`)
 		case req.Method == "tools/list":
 			reply(`"result":{"tools":[{"name":"scan_code"},{"name":"debug_config"}]}`)
+		case req.Method == "tools/call" && mode == "toolhang-child":
+			// Block on a child process, as the scanner does on a stuck git.
+			child := exec.Command("sleep", "10")
+			_ = child.Start()
+			select {}
+		case req.Method == "tools/call" && req.Params.Name == "scan_file" && mode == "deephang":
+			select {}
+		case req.Method == "tools/call" && req.Params.Name == "scan_file":
+			reply(`"result":{"content":[{"type":"text","text":"No vulnerabilities found."}]}`)
 		case req.Method == "tools/call" && mode == "toolhang":
 			_, _ = fmt.Fprintln(os.Stderr, "INFO mcp.server.lowlevel.server: Processing request of type CallToolRequest")
 			select {}

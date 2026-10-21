@@ -25,6 +25,9 @@ var (
 	mcpDoctorBundle      bool
 	mcpDoctorBundlePath  string
 	mcpDoctorVerbose     bool
+	mcpDoctorDeep        bool
+	mcpDoctorWatch       bool
+	mcpDoctorStuckAfter  time.Duration
 )
 
 var mcpDoctorCmd = &cobra.Command{
@@ -56,6 +59,18 @@ isn't using) and re-runs the checks.
 --bundle writes a zip with the full diagnostics, credentials removed, to send
 to support.
 
+--deep also calls the scanner's scan_file on a small throwaway file. That is the
+path a real scan takes (git, then the Armis API), so it finds stalls that the
+diagnostic call misses. It sends that file's content, a two-line function, to
+the Armis API. When a call stops answering, the doctor records which child
+process the server was waiting on and, for Python servers on macOS and Linux,
+a stack dump.
+
+--watch does not run the checks. It follows the scanner's server.log and prints
+each tool call as it happens, so you can reproduce the problem in your editor.
+A call that stays open longer than --watch-stuck-after is reported along with
+the processes the server is waiting on.
+
 Exits non-zero if any check fails.`,
 	Example: `  # Full diagnostic, including live handshake
   armis-cli mcp doctor
@@ -72,6 +87,12 @@ Exits non-zero if any check fails.`,
   # Structural checks only, skip spawning servers and network checks
   armis-cli mcp doctor --no-handshake
 
+  # Also run a real scan call to find stalls on the scan path
+  armis-cli mcp doctor --deep
+
+  # Follow the server log while you reproduce the problem in your editor
+  armis-cli mcp doctor --watch
+
   # Machine-readable output
   armis-cli mcp doctor --format json`,
 	Args: cobra.NoArgs,
@@ -86,6 +107,9 @@ func init() {
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorFix, "fix", false, "Repair fixable problems (re-register editors, rebuild the venv), then re-check")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorBundle, "bundle", false, "Write a support bundle zip (credentials removed) for Armis support")
 	mcpDoctorCmd.Flags().StringVar(&mcpDoctorBundlePath, "bundle-path", "", "Where to write the support bundle (implies --bundle; default: ./armis-mcp-doctor-<timestamp>.zip)")
+	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorDeep, "deep", false, "Also call scan_file on a throwaway file to test the real scan path (sends a two-line snippet to the Armis API)")
+	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorWatch, "watch", false, "Follow the scanner's server.log and flag tool calls that stay open, instead of running the checks")
+	mcpDoctorCmd.Flags().DurationVar(&mcpDoctorStuckAfter, "watch-stuck-after", install.DefaultWatchStuckAfter, "With --watch: how long a tool call may stay open before it is reported as stuck")
 	mcpDoctorCmd.Flags().BoolVarP(&mcpDoctorVerbose, "verbose", "v", false, "List every check, including passing ones and informational notes")
 }
 
@@ -96,8 +120,16 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid --format value %q: must be plain or json", mcpDoctorFormat)
 	}
 
+	if mcpDoctorWatch {
+		return runMCPDoctorWatch(cmd)
+	}
+	if mcpDoctorDeep && mcpDoctorNoHandshake {
+		return fmt.Errorf("--deep needs the live session; remove --no-handshake")
+	}
+
 	opts := install.DoctorOptions{
 		Handshake: !mcpDoctorNoHandshake,
+		Deep:      mcpDoctorDeep,
 		Timeout:   mcpDoctorTimeout,
 		AuthCheck: doctorAuthCheck,
 	}
@@ -143,6 +175,19 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("mcp doctor found failing checks — see output above")
 	}
 	return nil
+}
+
+// runMCPDoctorWatch follows the scanner's server.log until interrupted.
+func runMCPDoctorWatch(cmd *cobra.Command) error {
+	if mcpDoctorFix || mcpDoctorBundle || mcpDoctorBundlePath != "" || mcpDoctorDeep || mcpDoctorFormat != agentFormatPlain {
+		return fmt.Errorf("--watch only follows the log; it can't be combined with --fix, --bundle, --deep, or --format")
+	}
+	ctx, stop := NewSignalContext()
+	defer stop()
+	stderr := cmd.ErrOrStderr()
+	sum, err := install.WatchServerLog(ctx, stderr, install.WatchOptions{StuckAfter: mcpDoctorStuckAfter})
+	_, _ = fmt.Fprintln(stderr, "\n"+install.FormatWatchSummary(sum))
+	return err
 }
 
 // doctorAuthCheck exchanges client credentials for a token against the same

@@ -80,6 +80,23 @@ func stuckToolCallHint(component, version string) (string, FixAction) {
 		"Send a support bundle (armis-cli mcp doctor --bundle): scanner/server.log and the stderr files show the last thing the server did.", FixNone
 }
 
+// stallHint explains a tool call that never answered, using what the doctor
+// saw at the moment it gave up. A child process the server was waiting on is
+// a more specific lead than the generic hint.
+func stallHint(component, version string, st *stallInfo) (string, FixAction) {
+	if hasWindowsToolHang(component, version) {
+		return windowsToolHangHint, FixReinstall
+	}
+	if st == nil || st.Snapshot.Err != nil || len(st.Snapshot.Children) == 0 {
+		return stuckToolCallHint(component, version)
+	}
+	h := "The server is blocked waiting on a process it started (" + st.summary() + "). That process is what to investigate: run the same command by hand and see whether it hangs too."
+	if st.waitingOn("git") {
+		h += " A hanging git usually means a credential helper or hook waiting for input, a repository on a network drive, or a slow fsmonitor; try 'git status' in the repository."
+	}
+	return h + " The bundle (armis-cli mcp doctor --bundle) has the full process list and the server's stack dump.", FixNone
+}
+
 // isTimeout reports whether a session error is the doctor giving up waiting.
 func isTimeout(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "timed out")
