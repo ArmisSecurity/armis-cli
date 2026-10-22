@@ -3,15 +3,23 @@ package install
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// mcpHandshake runs runHandshake and returns the pieces the tests assert on.
+func mcpHandshake(command string, args []string, env map[string]string, timeout time.Duration) (*probeResult, string, error) {
+	o := runHandshake(handshakeRequest{Command: command, Args: args, Env: env, Timeout: timeout})
+	return o.Result, o.Stderr, o.Err
+}
 
 // TestMain intercepts re-exec calls used by the mcpHandshake tests: when
 // ARMIS_TEST_MCP_HELPER is set, this process acts as a fake MCP stdio server
@@ -21,7 +29,19 @@ func TestMain(m *testing.M) {
 		runMCPHelperProcess(mode)
 		return
 	}
-	os.Exit(m.Run())
+	// Keep the suite off the network; tests of the version check stub this.
+	latestPluginVersion = func() (string, error) { return "", errors.New("offline") }
+	abortDumpWait = 20 * time.Millisecond
+	// Keep the suite from writing the real user cache.
+	dir, err := os.MkdirTemp("", "armis-doctor-test-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	probePIDsPath = func() string { return filepath.Join(dir, "doctor-probe-pids") }
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // runMCPHelperProcess acts as a fake MCP stdio server. It answers each
@@ -40,6 +60,9 @@ func runMCPHelperProcess(mode string) {
 		var req struct {
 			ID     *int   `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(line, &req) != nil || req.ID == nil {
 			continue // notification
@@ -54,6 +77,10 @@ func runMCPHelperProcess(mode string) {
 		case mode == "error":
 			reply(`"error":{"code":-1,"message":"boom"}`)
 			return
+		case req.Method == "initialize" && (mode == "toolhang" || mode == "toolslow" || mode == "toolhang-child"):
+			// What the scanner logs on startup; serverInfo carries the SDK version.
+			_, _ = fmt.Fprintln(os.Stderr, "INFO appsec-mcp: Starting Armis AppSec MCP server 1.4.1 (python 3.14.4)")
+			reply(`"result":{"serverInfo":{"name":"Armis AppSec Scanner","version":"1.25.0"}}`)
 		case req.Method == "initialize":
 			// A log notification before the response must be skipped.
 			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"notifications/message","params":{}}`)
@@ -63,8 +90,25 @@ func runMCPHelperProcess(mode string) {
 			return
 		case req.Method == "tools/list" && mode == "notools":
 			reply(`"result":{"tools":[]}`)
+		case req.Method == "tools/list" && strings.HasPrefix(mode, "deep"):
+			reply(`"result":{"tools":[{"name":"scan_file"},{"name":"debug_config"}]}`)
 		case req.Method == "tools/list":
 			reply(`"result":{"tools":[{"name":"scan_code"},{"name":"debug_config"}]}`)
+		case req.Method == "tools/call" && mode == "toolhang-child":
+			// Block on a child process, as the scanner does on a stuck git.
+			child := exec.Command("sleep", "10")
+			_ = child.Start()
+			select {}
+		case req.Method == "tools/call" && req.Params.Name == "scan_file" && mode == "deephang":
+			select {}
+		case req.Method == "tools/call" && req.Params.Name == "scan_file":
+			reply(`"result":{"content":[{"type":"text","text":"No vulnerabilities found."}]}`)
+		case req.Method == "tools/call" && mode == "toolhang":
+			_, _ = fmt.Fprintln(os.Stderr, "INFO mcp.server.lowlevel.server: Processing request of type CallToolRequest")
+			select {}
+		case req.Method == "tools/call" && mode == "toolslow":
+			time.Sleep(200 * time.Millisecond)
+			reply(`"result":{"content":[{"type":"text","text":"Auth method: client-credentials"}]}`)
 		case req.Method == "tools/call" && mode == "toolerror":
 			reply(`"result":{"content":[{"type":"text","text":"config broken"}],"isError":true}`)
 		case req.Method == "tools/call":
@@ -119,18 +163,15 @@ func TestMCPHandshakeInvalidResponseAfterInit(t *testing.T) {
 	}
 }
 
-// TestMCPSessionCallClampsNegativeWait pins that a deadline already in the
-// past (because earlier steps in the same session consumed the whole
-// timeout) produces a sensible "after 0s"-style message, not a confusing
-// negative duration.
+// TestMCPSessionCallClampsNegativeWait pins that a negative budget produces a
+// sensible "after 0s"-style message, not a confusing negative duration.
 func TestMCPSessionCallClampsNegativeWait(t *testing.T) {
 	s := &mcpSession{
-		stdin:    io.Discard,
-		lines:    make(chan []byte, 1),
-		readErr:  make(chan error, 1),
-		deadline: time.Now().Add(-time.Second),
+		stdin:   io.Discard,
+		lines:   make(chan []byte, 1),
+		readErr: make(chan error, 1),
 	}
-	_, err := s.call(1, "initialize", map[string]interface{}{}, time.Second)
+	_, err := s.call(1, "initialize", map[string]interface{}{}, -time.Second)
 	if err == nil {
 		t.Fatal("call() error = nil, want a timeout error")
 	}

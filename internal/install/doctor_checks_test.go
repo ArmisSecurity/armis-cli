@@ -291,17 +291,21 @@ func TestServerAPIURL(t *testing.T) {
 func TestCheckVenvBase(t *testing.T) {
 	dir := t.TempDir()
 	report := &DoctorReport{}
-	if !checkVenvBase(report, "scanner", dir) {
+	if _, ok := checkVenvBase(report, "scanner", dir); !ok {
 		t.Error("checkVenvBase() without pyvenv.cfg = false, want true")
 	}
 
 	mustWrite(t, filepath.Join(dir, "pyvenv.cfg"), "home = "+dir+"\nversion = 3.12\n")
-	if !checkVenvBase(report, "scanner", dir) {
+	version, ok := checkVenvBase(report, "scanner", dir)
+	if !ok {
 		t.Error("checkVenvBase() with existing home = false, want true")
+	}
+	if version != "3.12" {
+		t.Errorf("checkVenvBase() version = %q, want 3.12", version)
 	}
 
 	mustWrite(t, filepath.Join(dir, "pyvenv.cfg"), "home = "+filepath.Join(dir, "gone")+"\n")
-	if checkVenvBase(report, "scanner", dir) {
+	if _, ok := checkVenvBase(report, "scanner", dir); ok {
 		t.Error("checkVenvBase() with missing home = true, want false")
 	}
 	if len(report.Checks) != 1 || report.Checks[0].Status != StatusFail || report.Checks[0].Fix != FixReinstall {

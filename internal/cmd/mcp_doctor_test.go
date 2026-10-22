@@ -257,3 +257,30 @@ func TestPrintMCPDoctorPlainCompactShowsPinnedGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPDoctorRejectsIgnoredWatchFlags(t *testing.T) {
+	set := func(name, value string) {
+		t.Helper()
+		if err := mcpDoctorCmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			f := mcpDoctorCmd.Flags().Lookup(name)
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		})
+	}
+
+	set("watch-stuck-after", "3s")
+	err := runMCPDoctor(mcpDoctorCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "--watch-stuck-after only applies with --watch") {
+		t.Errorf("without --watch: err = %v", err)
+	}
+
+	set("watch", "true")
+	set("verbose", "true")
+	err = runMCPDoctor(mcpDoctorCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "--verbose") {
+		t.Errorf("--watch with --verbose: err = %v", err)
+	}
+}

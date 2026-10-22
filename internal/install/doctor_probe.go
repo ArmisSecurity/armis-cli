@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,14 +20,35 @@ import (
 // keeps for the support bundle (CWE-770).
 const maxStderrCapture = 64 << 10 // 64 KB
 
-// slowStartThreshold is the handshake latency above which the doctor warns
-// that the server starts slowly — typically real-time antivirus scanning the
-// venv on first launch.
+// slowStartThreshold is the time to answer initialize above which the doctor
+// warns that the server starts slowly — typically real-time antivirus scanning
+// the venv on first launch.
 const slowStartThreshold = 5 * time.Second
+
+// slowToolCallThreshold is the debug_config latency above which the doctor
+// warns. debug_config makes no network calls, so anything this slow means a
+// local step (a git subprocess, a file read) is stalling, and every scan will
+// stall the same way.
+// A var so tests can shorten it.
+var slowToolCallThreshold = 2 * time.Second
+
+// toolCallTimeout bounds tools/list and the debug_config call, each on its
+// own budget so a slow start can't eat into the tool call's time and a hung
+// tool call can't pass for a slow start. A var so tests can shorten it.
+var toolCallTimeout = 20 * time.Second
+
+// deepCallTimeout bounds the deep scan_file call, which makes real API calls
+// and so legitimately takes longer than debug_config. A var so tests can
+// shorten it.
+var deepCallTimeout = 90 * time.Second
 
 // debugConfigTool is the scanner's diagnostic tool; calling it proves the
 // server executes tool calls end to end, not just the handshake.
 const debugConfigTool = "debug_config"
+
+// scanFileTool is the scanner tool the deep probe calls: it reads a file,
+// runs git, and calls the Armis API, the same path a real scan takes.
+const scanFileTool = "scan_file"
 
 // serverLaunch is everything needed to start an MCP stdio server the way an
 // editor would: the command, its arguments, and the environment the editor
@@ -79,6 +101,21 @@ type probeResult struct {
 	ToolsErr      error
 	DebugConfig   string
 	DebugErr      error
+	// StartElapsed runs from process start to the initialize response;
+	// CallElapsed is the debug_config round trip alone.
+	StartElapsed time.Duration
+	ListElapsed  time.Duration
+	CallElapsed  time.Duration
+	// RepeatElapsed is a second debug_config call on the same session, which
+	// tells a slow first call (cold start) from a slow every call.
+	RepeatElapsed time.Duration
+	// RepeatErr is set when the second debug_config call failed or timed out.
+	RepeatErr error
+	// DeepRan is true when the deep scan_file call was attempted.
+	DeepRan     bool
+	DeepElapsed time.Duration
+	DeepText    string
+	DeepErr     error
 }
 
 type mcpInitResult struct {
@@ -88,35 +125,66 @@ type mcpInitResult struct {
 	} `json:"serverInfo"`
 }
 
-// mcpHandshake spawns command as an MCP stdio server and runs a short session:
+// handshakeRequest describes one live session.
+type handshakeRequest struct {
+	Command string
+	Args    []string
+	Env     map[string]string
+	// Timeout bounds initialize; tools/list and each tool call get their own
+	// budget. Defaults to DefaultHandshakeTimeout.
+	Timeout time.Duration
+	// DeepFile, when set and the server offers scan_file, is scanned after the
+	// debug_config calls.
+	DeepFile string
+}
+
+// handshakeOutcome is everything a live session produced.
+type handshakeOutcome struct {
+	Result     *probeResult // nil when initialize failed
+	Stderr     string
+	Err        error // the initialize error
+	Transcript string
+	// Stall is set when a request timed out: what the server was doing then.
+	Stall *stallInfo
+}
+
+// runHandshake spawns command as an MCP stdio server and runs a short session:
 // initialize, then tools/list, then (when the server offers it) a
 // debug_config tool call. Only the initialize step decides the returned
 // error; later steps report their own errors on the result so the caller can
-// tell "won't start" apart from "starts but tools are broken".
+// tell "won't start" apart from "starts but tools are broken". timeout bounds
+// initialize; tools/list and the tool call each get toolCallTimeout.
 //
 // The process is always killed and waited-on before returning, so stderr can
 // be read back safely (os/exec only finishes copying stderr into the buffer
-// once Wait returns). The returned string is the full (capped) stderr.
-func mcpHandshake(command string, args []string, env map[string]string, timeout time.Duration) (*probeResult, string, error) {
+// once Wait returns). Alongside the result it keeps a transcript of the
+// exchange and, when a request times out, a snapshot of the server's child
+// processes and (for Python servers on unix) a thread dump in stderr.
+func runHandshake(req handshakeRequest) handshakeOutcome {
+	timeout := req.Timeout
 	if timeout <= 0 {
 		timeout = DefaultHandshakeTimeout
 	}
 
 	// armis:ignore cwe:78 cwe:88 reason:command/args come from the CLI's own recorded install paths or the user's own editor config, not remote input
-	cmd := exec.Command(command, args...) //nolint:gosec // command/args are the CLI's own recorded install paths / user's editor config
+	cmd := exec.Command(req.Command, req.Args...) //nolint:gosec // command/args are the CLI's own recorded install paths / user's editor config
 	cmd.Env = os.Environ()
-	for k, v := range env {
+	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	// Lets a stalled Python server dump every thread's stack on SIGABRT.
+	if _, set := req.Env["PYTHONFAULTHANDLER"]; !set && os.Getenv("PYTHONFAULTHANDLER") == "" {
+		cmd.Env = append(cmd.Env, "PYTHONFAULTHANDLER=1")
 	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, "", fmt.Errorf("opening stdin: %w", err)
+		return handshakeOutcome{Err: fmt.Errorf("opening stdin: %w", err)}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return nil, "", fmt.Errorf("opening stdout: %w", err)
+		return handshakeOutcome{Err: fmt.Errorf("opening stdout: %w", err)}
 	}
 	stderrBuf := &cappedBuffer{max: maxStderrCapture}
 	cmd.Stderr = stderrBuf
@@ -127,13 +195,33 @@ func mcpHandshake(command string, args []string, env map[string]string, timeout 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return nil, "", fmt.Errorf("starting process: %w", err)
+		return handshakeOutcome{Err: fmt.Errorf("starting process: %w", err)}
 	}
 
-	result, opErr := runMCPSession(stdin, stdout, timeout)
+	trace := newTraceLog()
+	var stall *stallInfo
+	result, opErr := runMCPSession(stdin, stdout, sessionConfig{
+		Timeout:  timeout,
+		DeepFile: req.DeepFile,
+		Trace:    trace,
+		OnStall: func(method string) {
+			if stall == nil {
+				stall = captureStall(cmd.Process, method)
+			}
+		},
+	})
 
 	// armis:ignore cwe:404 reason:best-effort cleanup of a short-lived diagnostic subprocess we just spawned
 	_ = cmd.Process.Kill()
+	if stall != nil {
+		stall.killDescendants()
+		recordProbePID(cmd.Process.Pid)
+		// A wrapper (uv run, a shell script) means the pid server.log shows is a
+		// child's, not the one the doctor started.
+		for _, c := range stall.Snapshot.Children {
+			recordProbePID(c.PID)
+		}
+	}
 	// On the timeout path, the session's reader goroutine may still be
 	// blocked reading stdout when we get here. os/exec's docs warn it is
 	// "incorrect to call Wait before all reads from the pipe have completed"
@@ -144,11 +232,17 @@ func mcpHandshake(command string, args []string, env map[string]string, timeout 
 	_ = stdin.Close()
 	_ = cmd.Wait()
 
-	stderr := strings.TrimSpace(stderrBuf.String())
-	if opErr != nil {
-		return nil, stderr, opErr
+	out := handshakeOutcome{
+		Stderr:     strings.TrimSpace(stderrBuf.String()),
+		Transcript: trace.String(),
+		Stall:      stall,
 	}
-	return result, stderr, nil
+	if opErr != nil {
+		out.Err = opErr
+		return out
+	}
+	out.Result = result
+	return out
 }
 
 // rpcMessage is a JSON-RPC response or notification read from the server.
@@ -160,27 +254,40 @@ type rpcMessage struct {
 	} `json:"error"`
 }
 
-// mcpSession drives JSON-RPC over the server's stdio. Every read shares one
-// deadline so a hung server can't stretch the doctor past its timeout.
+// mcpSession drives JSON-RPC over the server's stdio.
 type mcpSession struct {
-	stdin    io.Writer
-	lines    chan []byte
-	readErr  chan error
-	deadline time.Time
+	stdin   io.Writer
+	lines   chan []byte
+	readErr chan error
+	trace   *traceLog
+	onStall func(method string)
 }
 
-func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Duration) (*probeResult, error) {
+// sessionConfig is what runMCPSession needs beyond the pipes.
+type sessionConfig struct {
+	Timeout  time.Duration
+	DeepFile string
+	Trace    *traceLog
+	// OnStall runs once, when a request times out and before the caller kills
+	// the process, to capture what the server was doing.
+	OnStall func(method string)
+}
+
+func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, cfg sessionConfig) (*probeResult, error) {
+	timeout := cfg.Timeout
 	s := &mcpSession{
-		stdin: stdin,
+		trace:   cfg.Trace,
+		onStall: cfg.OnStall,
+		stdin:   stdin,
 		// Buffered generously: nothing drains this channel between the
 		// synchronous call()/notify() invocations below, so a server that
 		// bursts many log/notification lines right after answering one
 		// call could otherwise block the reader goroutine until the next
 		// call starts draining.
-		lines:    make(chan []byte, 256),
-		readErr:  make(chan error, 1),
-		deadline: time.Now().Add(timeout),
+		lines:   make(chan []byte, 256),
+		readErr: make(chan error, 1),
 	}
+	start := time.Now()
 	// done unblocks the reader once the session is over, so a server that
 	// keeps writing after the last call can't park the goroutine on a full
 	// channel forever. Dropping lines instead could drop the response itself.
@@ -211,14 +318,16 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 	if err := json.Unmarshal(initRaw, &init); err != nil {
 		return nil, fmt.Errorf("invalid initialize result: %w", err)
 	}
-	res := &probeResult{ServerName: init.ServerInfo.Name, ServerVersion: init.ServerInfo.Version}
+	res := &probeResult{ServerName: init.ServerInfo.Name, ServerVersion: init.ServerInfo.Version, StartElapsed: time.Since(start)}
 
 	if err := s.notify("notifications/initialized"); err != nil {
 		res.ToolsErr = err
 		return res, nil
 	}
 
-	toolsRaw, err := s.call(2, "tools/list", map[string]interface{}{}, timeout)
+	listStart := time.Now()
+	toolsRaw, err := s.call(2, "tools/list", map[string]interface{}{}, toolCallTimeout)
+	res.ListElapsed = time.Since(listStart)
 	if err != nil {
 		res.ToolsErr = err
 		return res, nil
@@ -236,26 +345,58 @@ func runMCPSession(stdin io.WriteCloser, stdout io.ReadCloser, timeout time.Dura
 		res.Tools = append(res.Tools, t.Name)
 	}
 
-	for _, name := range res.Tools {
-		if name != debugConfigTool {
-			continue
-		}
-		callRaw, err := s.call(3, "tools/call", map[string]interface{}{
-			jsonKeyName: debugConfigTool,
-			"arguments": map[string]interface{}{},
-		}, timeout)
+	if hasTool(res.Tools, debugConfigTool) {
+		callStart := time.Now()
+		callRaw, err := s.call(3, "tools/call", toolCallParams(debugConfigTool, nil), toolCallTimeout)
+		res.CallElapsed = time.Since(callStart)
 		if err != nil {
 			res.DebugErr = err
-			break
+			return res, nil // timed out or the server is gone; the deep call would only repeat the failure
+		} else {
+			text, isErr := toolCallText(callRaw)
+			if isErr {
+				res.DebugErr = fmt.Errorf("tool returned an error: %s", text)
+			}
+			res.DebugConfig = text
+			// A second call on the same session: slow first and fast second is
+			// a cold start; slow both times is something blocking every call.
+			repeatStart := time.Now()
+			_, err := s.call(4, "tools/call", toolCallParams(debugConfigTool, nil), toolCallTimeout)
+			res.RepeatElapsed = time.Since(repeatStart)
+			if err != nil {
+				res.RepeatErr = err
+				if isTimeout(err) {
+					return res, nil
+				}
+			}
 		}
-		text, isErr := toolCallText(callRaw)
-		if isErr {
-			res.DebugErr = fmt.Errorf("tool returned an error: %s", text)
+	}
+
+	if cfg.DeepFile != "" && hasTool(res.Tools, scanFileTool) {
+		res.DeepRan = true
+		deepStart := time.Now()
+		raw, err := s.call(5, "tools/call", toolCallParams(scanFileTool, map[string]interface{}{"file_path": cfg.DeepFile}), deepCallTimeout)
+		res.DeepElapsed = time.Since(deepStart)
+		if err != nil {
+			res.DeepErr = err
+		} else {
+			text, isErr := toolCallText(raw)
+			if isErr {
+				res.DeepErr = fmt.Errorf("tool returned an error: %s", text)
+			}
+			res.DeepText = text
 		}
-		res.DebugConfig = text
-		break
 	}
 	return res, nil
+}
+
+func hasTool(tools []string, name string) bool { return slices.Contains(tools, name) }
+
+func toolCallParams(name string, args map[string]interface{}) map[string]interface{} {
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	return map[string]interface{}{jsonKeyName: name, "arguments": args}
 }
 
 func (s *mcpSession) notify(method string) error {
@@ -263,6 +404,7 @@ func (s *mcpSession) notify(method string) error {
 	if err != nil {
 		return err
 	}
+	s.trace.add("->", b)
 	if _, err := s.stdin.Write(append(b, '\n')); err != nil {
 		return fmt.Errorf("writing %s: %w", method, err)
 	}
@@ -276,20 +418,22 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 	if err != nil {
 		return nil, err
 	}
+	s.trace.add("->", b)
 	if _, err := s.stdin.Write(append(b, '\n')); err != nil {
 		return nil, fmt.Errorf("writing %s request: %w", method, err)
 	}
 
-	wait := time.Until(s.deadline)
-	if wait < 0 {
-		wait = 0
-	}
+	wait := max(timeout, 0)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
 		select {
 		case <-timer.C:
-			return nil, fmt.Errorf("timed out waiting for %s response after %s", method, wait.Round(time.Millisecond))
+			s.trace.note(fmt.Sprintf("timed out waiting for the %s response after %s", method, wait.Round(time.Millisecond)))
+			if s.onStall != nil {
+				s.onStall(method)
+			}
+			return nil, fmt.Errorf("%w waiting for %s response after %s", errCallTimeout, method, wait.Round(time.Millisecond))
 		case err := <-s.readErr:
 			s.readErr <- err // keep it for any later call
 			if errors.Is(err, bufio.ErrTooLong) {
@@ -300,6 +444,7 @@ func (s *mcpSession) call(id int, method string, params interface{}, timeout tim
 			}
 			return nil, fmt.Errorf("no response to %s: server exited", method)
 		case line := <-s.lines:
+			s.trace.add("<-", line)
 			var msg rpcMessage
 			if err := json.Unmarshal(line, &msg); err != nil {
 				// Anything but JSON on stdout means the server (or a wrapper
