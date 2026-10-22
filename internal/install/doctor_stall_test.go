@@ -23,9 +23,9 @@ func TestParseProcessList(t *testing.T) {
 		t.Errorf("command = %q", got[0].Command)
 	}
 
-	win := "200 4 C:\\Python\\python.exe server.py\r\n201 200 git status\r\n"
+	win := "200 4 1700000000000 C:\\Python\\python.exe server.py\r\n201 200 1700000005000 git status\r\n"
 	got = parseProcessList(win, false)
-	if len(got) != 2 || got[1].Command != "git status" || got[1].Elapsed != "" {
+	if len(got) != 2 || got[1].Command != "git status" || got[1].Elapsed != "" || got[1].Created != 1700000005000 {
 		t.Fatalf("windows parse = %+v", got)
 	}
 }
@@ -42,6 +42,24 @@ func TestDescendants(t *testing.T) {
 	}
 	if len(pids) != 2 || pids[0] != 11 || pids[1] != 12 {
 		t.Errorf("descendants(10) = %v, want [11 12]", pids)
+	}
+}
+
+func TestDescendantsDropsPidReuseOrphans(t *testing.T) {
+	all := []procInfo{
+		{PID: 50, PPID: 4, Created: 2000},  // the server, which reused pid 50
+		{PID: 60, PPID: 50, Created: 2500}, // real child
+		{PID: 70, PPID: 60, Created: 3000}, // real grandchild
+		{PID: 80, PPID: 50, Created: 1000}, // orphan of the dead former owner of pid 50
+		{PID: 90, PPID: 80, Created: 1500}, // and its own child
+		{PID: 100, PPID: 50},               // no start time: kept
+	}
+	var pids []int
+	for _, p := range descendants(all, 50) {
+		pids = append(pids, p.PID)
+	}
+	if len(pids) != 3 || pids[0] != 60 || pids[1] != 100 || pids[2] != 70 {
+		t.Errorf("descendants(50) = %v, want [60 100 70]", pids)
 	}
 }
 

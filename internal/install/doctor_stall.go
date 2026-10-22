@@ -69,7 +69,11 @@ func (t *traceLog) String() string {
 type procInfo struct {
 	PID, PPID int
 	Elapsed   string // "" where the OS listing has no run time (Windows)
-	Command   string
+	// Created is the start time in Unix milliseconds, 0 when the listing has
+	// none. Windows keeps a dead parent's pid on its orphans and reuses pids,
+	// so descendants() compares start times to tell real children from them.
+	Created int64
+	Command string
 }
 
 // listProcesses returns the OS process table. A var so tests can stub it.
@@ -80,7 +84,7 @@ func osListProcesses() ([]procInfo, error) {
 	defer cancel()
 	if runtime.GOOS == osWindows {
 		out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
-			`Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }`).Output()
+			`Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $(([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()) $($_.CommandLine)" }`).Output()
 		if err != nil {
 			return nil, fmt.Errorf("listing processes: %w", err)
 		}
@@ -93,12 +97,10 @@ func osListProcesses() ([]procInfo, error) {
 	return parseProcessList(string(out), true), nil
 }
 
-// parseProcessList parses "pid ppid [etime] command" lines.
+// parseProcessList parses "pid ppid etime command" lines (withElapsed) or
+// "pid ppid created-unix-ms command" lines.
 func parseProcessList(out string, withElapsed bool) []procInfo {
-	want := 2
-	if withElapsed {
-		want = 3
-	}
+	const want = 3
 	var procs []procInfo
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -118,6 +120,8 @@ func parseProcessList(out string, withElapsed bool) []procInfo {
 		}
 		if withElapsed {
 			p.Elapsed = fields[2]
+		} else if created, err := strconv.ParseInt(fields[2], 10, 64); err == nil && created > 0 {
+			p.Created = created
 		}
 		p.Command = rest
 		procs = append(procs, p)
@@ -125,11 +129,16 @@ func parseProcessList(out string, withElapsed bool) []procInfo {
 	return procs
 }
 
-// descendants returns every process below root, parents before children.
+// descendants returns every process below root, parents before children. A
+// process that started before the process it names as parent is not a child:
+// its real parent died and the pid was reused (Windows does not reparent
+// orphans).
 func descendants(all []procInfo, root int) []procInfo {
 	byParent := make(map[int][]procInfo)
+	created := make(map[int]int64)
 	for _, p := range all {
 		byParent[p.PPID] = append(byParent[p.PPID], p)
+		created[p.PID] = p.Created
 	}
 	var out []procInfo
 	seen := map[int]bool{root: true}
@@ -139,6 +148,9 @@ func descendants(all []procInfo, root int) []procInfo {
 		queue = queue[1:]
 		for _, c := range byParent[cur] {
 			if seen[c.PID] {
+				continue
+			}
+			if c.Created != 0 && created[cur] != 0 && c.Created < created[cur] {
 				continue
 			}
 			seen[c.PID] = true
