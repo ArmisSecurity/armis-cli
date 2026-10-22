@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -49,10 +48,6 @@ type WatchSummary struct {
 	SlowestTool string
 	Slowest     float64 // seconds
 }
-
-// watchLineRe matches a server_log line: date, time, level, [pid], logger,
-// message.
-var watchLineRe = regexp.MustCompile(`^(\S+ \S+) (\w+) \[(\d+)\] ([^:]+): (.*)$`)
 
 type watchCall struct {
 	received time.Time
@@ -99,7 +94,7 @@ func clock(ts string) string {
 // handleLine processes one complete log line read at time now.
 func (lw *logWatcher) handleLine(line string, now time.Time) {
 	line = strings.TrimRight(line, "\r")
-	m := watchLineRe.FindStringSubmatch(line)
+	m := serverLogLineRe.FindStringSubmatch(line)
 	if m == nil {
 		// A traceback line continues the previous warning or error.
 		if lw.inProblem && strings.TrimSpace(line) != "" {

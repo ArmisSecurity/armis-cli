@@ -118,8 +118,8 @@ func receivedToolCall(stderr string) bool {
 // --- server.log analysis ---
 
 // serverLogLineRe matches a server_log line: date, time, level, [pid], logger,
-// message.
-var serverLogLineRe = regexp.MustCompile(`^(\S+ \S+) \w+ \[(\d+)\] [^:]+: (.*)$`)
+// message. Groups: timestamp, level, pid, logger, message.
+var serverLogLineRe = regexp.MustCompile(`^(\S+ \S+) (\w+) \[(\d+)\] ([^:]+): (.*)$`)
 
 // toolDoneRe matches the scanner's per-call log line from @_logged_tool.
 var toolDoneRe = regexp.MustCompile(`^tool (\w+) (?:ok|failed|crashed) in ([\d.]+)s`)
@@ -163,7 +163,7 @@ func analyzeServerLog(log string) toolLogStats {
 		if m == nil {
 			continue
 		}
-		ts, pidText, msg := m[1], m[2], m[3]
+		ts, pidText, msg := m[1], m[3], m[5]
 		pid, _ := strconv.Atoi(pidText)
 		if probes[pid] {
 			continue
@@ -244,20 +244,43 @@ func checkServerLogToolCalls(d *doctorRun, component, log, version string) {
 	d.report.add(component, "recent tool calls", StatusWarn, detail).fix(action, hint)
 }
 
-// checkPluginVersion reports the installed scanner version, and when the
-// network checks are on, whether a newer release exists. Being out of date is
-// the first thing support asks about, and the answer for known bugs.
-func checkPluginVersion(d *doctorRun, component, installed string) {
+// lookupLatestPlugin starts the release lookup in the background when the
+// network checks are on. The returned func waits for it and yields "" when the
+// checks are off or the lookup failed.
+func lookupLatestPlugin(d *doctorRun) func() string {
+	if !d.opts.Handshake {
+		return func() string { return "" }
+	}
+	ch := make(chan string, 1)
+	go func() {
+		v, err := latestPluginVersion()
+		if err != nil {
+			v = ""
+		}
+		ch <- v
+	}()
+	return func() string { return <-ch }
+}
+
+// refreshPluginVersion redoes the "plugin version" check at row idx once the
+// latest release is known, so the lookup doesn't hold up the other checks.
+func refreshPluginVersion(d *doctorRun, component string, idx int, installed, latest string) {
+	if installed == "" || latest == "" {
+		return
+	}
+	scratch := &doctorRun{report: &DoctorReport{}, opts: d.opts}
+	checkPluginVersion(scratch, component, installed, latest)
+	d.report.Checks[idx] = scratch.report.Checks[0]
+}
+
+// checkPluginVersion reports the installed scanner version, and when latest is
+// known, whether a newer release exists. Being out of date is the first thing
+// support asks about, and the answer for known bugs.
+func checkPluginVersion(d *doctorRun, component, installed, latest string) {
 	if installed == "" {
 		d.report.add(component, "plugin version", StatusWarn, "no installed version recorded").
 			fix(FixReinstall, "Reinstall the plugin: armis-cli mcp doctor --fix")
 		return
-	}
-	latest := ""
-	if d.opts.Handshake {
-		if v, err := latestPluginVersion(); err == nil {
-			latest = v
-		}
 	}
 	switch {
 	case hasWindowsToolHang(component, installed):

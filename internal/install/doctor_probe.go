@@ -148,7 +148,7 @@ type handshakeOutcome struct {
 	Stall *stallInfo
 }
 
-// mcpHandshake spawns command as an MCP stdio server and runs a short session:
+// runHandshake spawns command as an MCP stdio server and runs a short session:
 // initialize, then tools/list, then (when the server offers it) a
 // debug_config tool call. Only the initialize step decides the returned
 // error; later steps report their own errors on the result so the caller can
@@ -157,16 +157,9 @@ type handshakeOutcome struct {
 //
 // The process is always killed and waited-on before returning, so stderr can
 // be read back safely (os/exec only finishes copying stderr into the buffer
-// once Wait returns). The returned string is the full (capped) stderr.
-func mcpHandshake(command string, args []string, env map[string]string, timeout time.Duration) (*probeResult, string, error) {
-	o := runHandshake(handshakeRequest{Command: command, Args: args, Env: env, Timeout: timeout})
-	return o.Result, o.Stderr, o.Err
-}
-
-// runHandshake is mcpHandshake plus the evidence the doctor keeps: a
-// transcript of the exchange and, when a request times out, a snapshot of the
-// server's child processes and (for Python servers on unix) a thread dump in
-// stderr.
+// once Wait returns). Alongside the result it keeps a transcript of the
+// exchange and, when a request times out, a snapshot of the server's child
+// processes and (for Python servers on unix) a thread dump in stderr.
 func runHandshake(req handshakeRequest) handshakeOutcome {
 	timeout := req.Timeout
 	if timeout <= 0 {

@@ -183,12 +183,8 @@ func TestCheckPluginVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stubGOOS(t, tt.goos)
-			orig := latestPluginVersion
-			latestPluginVersion = func() (string, error) { return tt.latest, tt.latestErr }
-			t.Cleanup(func() { latestPluginVersion = orig })
-
 			d := newDoctorRun(DoctorOptions{Handshake: true})
-			checkPluginVersion(d, "scanner", tt.installed)
+			checkPluginVersion(d, "scanner", tt.installed, tt.latest)
 			c := wantStatus(t, checkMap(d.report), "scanner/plugin version", tt.want)
 			if c.Fix != tt.wantFix {
 				t.Errorf("fix = %q, want %q", c.Fix, tt.wantFix)

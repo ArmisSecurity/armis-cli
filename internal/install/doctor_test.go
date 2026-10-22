@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// mcpHandshake runs runHandshake and returns the pieces the tests assert on.
+func mcpHandshake(command string, args []string, env map[string]string, timeout time.Duration) (*probeResult, string, error) {
+	o := runHandshake(handshakeRequest{Command: command, Args: args, Env: env, Timeout: timeout})
+	return o.Result, o.Stderr, o.Err
+}
+
 // TestMain intercepts re-exec calls used by the mcpHandshake tests: when
 // ARMIS_TEST_MCP_HELPER is set, this process acts as a fake MCP stdio server
 // instead of running the test suite.

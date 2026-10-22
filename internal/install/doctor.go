@@ -442,7 +442,10 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 	serverPy := filepath.Join(ei.PluginDir(), "server.py")
 
 	d.scannerVersion = ei.GetInstalledVersion()
-	checkPluginVersion(d, component, d.scannerVersion)
+	versionRow := len(report.Checks)
+	checkPluginVersion(d, component, d.scannerVersion, "")
+	awaitLatest := lookupLatestPlugin(d)
+	defer func() { refreshPluginVersion(d, component, versionRow, d.scannerVersion, awaitLatest()) }()
 
 	if !isExecutableFile(pythonPath) {
 		report.add(component, "python venv", StatusFail, fmt.Sprintf("missing or not executable: %s", pythonPath)).
