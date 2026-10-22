@@ -252,7 +252,7 @@ choose_install_dir() {
 verify_checksums() {
     local archive_file="$1"
     local checksums_file="$2"
-    local checksums_sig="$3"
+    local checksums_bundle="$3"
 
     # armis:ignore cwe:494 reason:VERIFY defaults to true; explicit opt-out for environments without cosign/sha256sum
     # armis:ignore cwe:347 reason:VERIFY defaults to true; when true, cosign or sha256sum verifies authenticity below
@@ -261,17 +261,21 @@ verify_checksums() {
         return 0
     fi
 
-    if command -v cosign > /dev/null 2>&1; then
+    if command -v cosign > /dev/null 2>&1 && [ -s "$checksums_bundle" ]; then
         echo "🔐 Verifying signature with cosign..."
-        if cosign verify-blob \
+        local cosign_output
+        if cosign_output=$(cosign verify-blob \
             --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --signature "$checksums_sig" \
-            "$checksums_file" > /dev/null 2>&1; then
+            --bundle "$checksums_bundle" \
+            "$checksums_file" 2>&1); then
             echo "✓ Signature verified successfully"
         else
-            echo "⚠️  Signature verification failed, falling back to checksum verification"
+            fail "Signature verification failed:
+$cosign_output"
         fi
+    elif command -v cosign > /dev/null 2>&1; then
+        echo "ℹ️  No signature bundle available, verifying checksums only"
     else
         echo "ℹ️  cosign not found, verifying checksums only"
         echo "   Install cosign for full signature verification: https://docs.sigstore.dev/cosign/installation/"
@@ -346,18 +350,21 @@ main() {
 
     ARCHIVE_FILE="$TMP_DIR/$ARCHIVE_NAME"
     CHECKSUMS_FILE="$TMP_DIR/${BINARY_NAME}-checksums.txt"
-    CHECKSUMS_SIG="$TMP_DIR/${BINARY_NAME}-checksums.txt.sig"
+    CHECKSUMS_BUNDLE="$TMP_DIR/${BINARY_NAME}-checksums.txt.bundle"
 
     echo "📦 Downloading $ARCHIVE_NAME..."
     download_file "$BASE_URL/$ARCHIVE_NAME" "$ARCHIVE_FILE"
 
     echo "📥 Downloading checksums..."
     download_file "$BASE_URL/${BINARY_NAME}-checksums.txt" "$CHECKSUMS_FILE"
-    download_file "$BASE_URL/${BINARY_NAME}-checksums.txt.sig" "$CHECKSUMS_SIG" || true
+    if ! download_file "$BASE_URL/${BINARY_NAME}-checksums.txt.bundle" "$CHECKSUMS_BUNDLE" 2>/dev/null; then
+        rm -f "$CHECKSUMS_BUNDLE"
+        echo "⚠️  Signature bundle not found, skipping signature verification"
+    fi
 
     echo ""
     # armis:ignore cwe:253 reason:verify_checksums calls fail() on any error; non-zero exit propagates via set -e
-    verify_checksums "$ARCHIVE_FILE" "$CHECKSUMS_FILE" "$CHECKSUMS_SIG"
+    verify_checksums "$ARCHIVE_FILE" "$CHECKSUMS_FILE" "$CHECKSUMS_BUNDLE"
     echo ""
 
     echo "📂 Extracting archive..."

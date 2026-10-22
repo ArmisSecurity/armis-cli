@@ -47,12 +47,10 @@ function Get-Architecture {
     switch ($arch) {
         "AMD64" { return "amd64" }
         "ARM64" {
-            Write-Error "Windows ARM64 is not currently supported by this installer. Please use an x64 (AMD64) environment."
-            exit 1
+            throw "Windows ARM64 is not currently supported by this installer. Please use an x64 (AMD64) environment."
         }
         default {
-            Write-Error "Unsupported architecture: $arch"
-            exit 1
+            throw "Unsupported architecture: $arch"
         }
     }
 }
@@ -67,8 +65,7 @@ function Download-File {
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Output -UseBasicParsing
     } catch {
-        Write-Error "Failed to download: $_"
-        exit 1
+        throw "Failed to download $Url`: $_"
     }
 }
 
@@ -76,7 +73,7 @@ function Verify-Checksums {
     param(
         [string]$ArchiveFile,
         [string]$ChecksumsFile,
-        [string]$ChecksumsSig
+        [string]$ChecksumsBundle
     )
 
     # armis:ignore cwe:494 reason:$Verify defaults true; explicit opt-out for environments without cosign (documented flag)
@@ -86,18 +83,29 @@ function Verify-Checksums {
     }
 
     $cosignPath = Get-Command cosign -ErrorAction SilentlyContinue
-    if ($cosignPath) {
+    $hasBundle = $ChecksumsBundle -and (Test-Path $ChecksumsBundle) -and ((Get-Item $ChecksumsBundle).Length -gt 0)
+    if ($cosignPath -and $hasBundle) {
         Write-Host "🔐 Verifying signature with cosign..."
+        # cosign is a native command: failure shows up in $LASTEXITCODE, not as an exception.
+        # It also writes progress to stderr, which would throw under -ErrorAction Stop on PS 5.1.
+        $prevPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
         try {
-            & cosign verify-blob `
+            $cosignOutput = & cosign verify-blob `
                 --certificate-identity-regexp 'https://github.com/ArmisSecurity/armis-cli/.github/workflows/release.yml@refs/tags/.*' `
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com `
-                --signature $ChecksumsSig `
-                $ChecksumsFile 2>&1 | Out-Null
-            Write-Host "✓ Signature verified successfully" -ForegroundColor Green
-        } catch {
-            Write-Host "⚠️  Signature verification failed, falling back to checksum verification" -ForegroundColor Yellow
+                --bundle $ChecksumsBundle `
+                $ChecksumsFile 2>&1
+            $cosignExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevPreference
         }
+        if ($cosignExit -ne 0) {
+            throw "Signature verification failed (cosign exit code $cosignExit):`n$($cosignOutput | Out-String)"
+        }
+        Write-Host "✓ Signature verified successfully" -ForegroundColor Green
+    } elseif ($cosignPath) {
+        Write-Host "ℹ️  No signature bundle available, verifying checksums only"
     } else {
         Write-Host "ℹ️  cosign not found, verifying checksums only"
         Write-Host "   Install cosign for full signature verification: https://docs.sigstore.dev/cosign/installation/"
@@ -105,19 +113,21 @@ function Verify-Checksums {
 
     Write-Host "🔍 Verifying checksums..."
     $archiveName = Split-Path $ArchiveFile -Leaf
-    $checksumContent = Get-Content $ChecksumsFile | Where-Object { $_ -match $archiveName }
+    # Exact match on the filename column (like install.sh), not a regex over the whole line.
+    $checksumContent = @(Get-Content $ChecksumsFile | Where-Object {
+        $fields = $_.Trim() -split '\s+'
+        $fields.Count -ge 2 -and $fields[-1].TrimStart('*') -eq $archiveName
+    }) | Select-Object -First 1
 
     if (-not $checksumContent) {
-        Write-Error "Checksum not found for $archiveName"
-        exit 1
+        throw "Checksum not found for $archiveName"
     }
 
-    $expectedHash = ($checksumContent -split '\s+')[0]
+    $expectedHash = ($checksumContent.Trim() -split '\s+')[0].ToLower()
     $actualHash = (Get-FileHash -Path $ArchiveFile -Algorithm SHA256).Hash.ToLower()
 
     if ($expectedHash -ne $actualHash) {
-        Write-Error "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
-        exit 1
+        throw "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
     }
 
     Write-Host "✓ Checksums verified successfully" -ForegroundColor Green
@@ -159,6 +169,10 @@ function Main {
     Write-Host "Installing Armis CLI..." -ForegroundColor Cyan
     Write-Host ""
 
+    # Windows PowerShell 5.1: the Invoke-WebRequest progress bar slows large downloads
+    # dramatically. Main is a function, so this assignment is local to it and cannot leak.
+    $ProgressPreference = "SilentlyContinue"
+
     # Validate InstallDir to prevent path traversal attacks
     # First normalize the path to resolve any relative segments (like ..\..),
     # then validate the normalized result for defense-in-depth
@@ -166,14 +180,12 @@ function Main {
 
     # armis:ignore cwe:22 reason:this IS the path traversal prevention check; rejects paths with ".." segments
     if ($InstallDir -match '(^|\\)\.\.($|\\)') {
-        Write-Error "Invalid install directory: path traversal detected after normalization"
-        exit 1
+        throw "Invalid install directory: path traversal detected after normalization"
     }
 
     # Validate Version format (except for the special 'latest' value)
     if ($Version -ne "latest" -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[0-9A-Za-z\.-]+)?$') {
-        Write-Error "Invalid version format: '$Version'. Expected formats like 'v1.2.3' or '1.2.3' (optionally with suffix like -beta.1), or 'latest'."
-        exit 1
+        throw "Invalid version format: '$Version'. Expected formats like 'v1.2.3' or '1.2.3' (optionally with suffix like -beta.1), or 'latest'."
     }
 
     $arch = Get-Architecture
@@ -191,10 +203,18 @@ function Main {
     $tmpDir = Join-Path $env:TEMP "armis-cli-install-$([guid]::NewGuid().ToString())"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
+    # Windows PowerShell 5.1 can default to protocols GitHub no longer accepts. Enable TLS 1.2
+    # for the download only and restore the caller's setting afterwards (irm | iex runs in-session).
+    $prevSecurityProtocol = $null
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $prevSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+        [Net.ServicePointManager]::SecurityProtocol = $prevSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+
     try {
         $archiveFile = Join-Path $tmpDir $archiveName
         $checksumsFile = Join-Path $tmpDir "armis-cli-checksums.txt"
-        $checksumsSig = Join-Path $tmpDir "armis-cli-checksums.txt.sig"
+        $checksumsBundle = Join-Path $tmpDir "armis-cli-checksums.txt.bundle"
 
         Write-Host "📦 Downloading $archiveName..."
         Download-File -Url "$baseUrl/$archiveName" -Output $archiveFile
@@ -202,17 +222,14 @@ function Main {
         Write-Host "📥 Downloading checksums..."
         Download-File -Url "$baseUrl/armis-cli-checksums.txt" -Output $checksumsFile
         try {
-            Download-File -Url "$baseUrl/armis-cli-checksums.txt.sig" -Output $checksumsSig
+            Download-File -Url "$baseUrl/armis-cli-checksums.txt.bundle" -Output $checksumsBundle
         } catch {
-            Write-Host "⚠️  Signature file not found, skipping signature verification" -ForegroundColor Yellow
+            Remove-Item -Path $checksumsBundle -Force -ErrorAction SilentlyContinue
+            Write-Host "⚠️  Signature bundle not found, skipping signature verification" -ForegroundColor Yellow
         }
 
         Write-Host ""
-        if (Test-Path $checksumsSig) {
-            Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsSig $checksumsSig
-        } else {
-            Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsSig ""
-        }
+        Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsBundle $checksumsBundle
         Write-Host ""
 
         Write-Host "📂 Extracting archive..."
@@ -245,7 +262,26 @@ function Main {
             }
         }
 
-        Copy-Item -Path $binarySource -Destination $binaryDest -Force
+        # A running exe (e.g. an editor-launched MCP server) can't be overwritten but can be
+        # renamed, so move it aside first. The aside name is unique because an earlier .old may
+        # still be locked by a process that is running. Leftovers are swept best-effort.
+        Get-ChildItem -Path "$binaryDest.old*" -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+        $oldBinary = "$binaryDest.old.$([guid]::NewGuid().ToString('N'))"
+        $movedAside = $false
+        if (Test-Path $binaryDest) {
+            Move-Item -Path $binaryDest -Destination $oldBinary -Force
+            $movedAside = $true
+        }
+        try {
+            Copy-Item -Path $binarySource -Destination $binaryDest -Force
+        } catch {
+            if ($movedAside) {
+                Move-Item -Path $oldBinary -Destination $binaryDest -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
+        Remove-Item -Path $oldBinary -Force -ErrorAction SilentlyContinue
 
         # Add to PATH (skip persistent changes in CI environments where PATH is ephemeral)
         if (-not (Test-CIEnvironment)) {
@@ -292,6 +328,9 @@ function Main {
         Write-Host ""
 
     } finally {
+        if ($null -ne $prevSecurityProtocol) {
+            [Net.ServicePointManager]::SecurityProtocol = $prevSecurityProtocol
+        }
         if (Test-Path $tmpDir) {
             Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
         }
