@@ -919,22 +919,23 @@ func (d *doctorRun) probe(component, label string, launch serverLaunch) {
 	}
 
 	if res.DeepRan {
-		d.reportDeepCall(component, version, res, hs, add, short)
+		d.reportDeepCall(component, version, res, hs, add, fail, short)
 	}
 }
 
 // reportDeepCall reports the deep scan_file call.
 func (d *doctorRun) reportDeepCall(component, version string, res *probeResult, hs handshakeOutcome,
-	add func(string, CheckStatus, string) *DoctorCheck, short func(*DoctorCheck, string)) {
+	add func(string, CheckStatus, string) *DoctorCheck, fail func(string, string) *DoctorCheck,
+	short func(*DoctorCheck, string)) {
 	took := res.DeepElapsed.Round(10 * time.Millisecond)
 	switch {
 	case isTimeout(res.DeepErr):
 		detail := fmt.Sprintf("%s never answered (gave up after %s), although debug_config answered in %s%s",
 			scanFileTool, took, res.CallElapsed.Round(10*time.Millisecond), stallDetail(hs.Stall, hs.Stderr))
 		hint, action := stallHint(component, version, hs.Stall)
-		add("scan call", StatusFail, detail).fix(action, hint)
+		fail("scan call", detail).fix(action, hint)
 	case res.DeepErr != nil:
-		add("scan call", StatusFail, scanFileTool+" failed: "+truncate(res.DeepErr.Error(), 300)).
+		fail("scan call", scanFileTool+" failed: "+truncate(res.DeepErr.Error(), 300)).
 			hint(launchHintText(res.DeepErr, hs.Stderr, serverLaunch{}))
 	case res.DeepElapsed > deepSlowThreshold:
 		add("scan call", StatusWarn, fmt.Sprintf("%s succeeded but took %s", scanFileTool, took)).

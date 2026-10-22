@@ -174,11 +174,17 @@ func TestProbeDeepScanHang(t *testing.T) {
 	d := newDoctorRun(DoctorOptions{Handshake: true, Deep: true, Timeout: 10 * time.Second})
 	d.deepFile = "/tmp/probe.py"
 	d.probe("scanner", "", helperLaunch("deephang"))
+	d.probe("scanner", "Cursor", helperLaunch("deephang"))
 	checks := checkMap(d.report)
 	wantStatus(t, checks, "scanner/tool call", StatusOK)
 	scan := wantStatus(t, checks, "scanner/scan call", StatusFail)
 	if !strings.Contains(scan.Detail, "never answered") || !strings.Contains(scan.Detail, "debug_config answered") {
 		t.Errorf("scan call = %+v", scan)
+	}
+	// A second editor sharing the launch must inherit the scan_file failure.
+	dup := wantStatus(t, checks, "scanner/Cursor launch", StatusFail)
+	if !strings.Contains(dup.Detail, "scan call") {
+		t.Errorf("duplicate launch detail = %q, want the scan call failure", dup.Detail)
 	}
 	if _, ok := d.report.Artifacts["stalls/scanner-live-handshake.txt"]; !ok {
 		t.Error("stall artifact missing")
