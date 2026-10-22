@@ -268,9 +268,9 @@ type DoctorOptions struct {
 	// package stays independent of the auth client.
 	AuthCheck func(ctx context.Context, clientID, clientSecret string) error
 	// Deep, when true (and Handshake is true), also calls the scanner's
-	// scan_file on a small throwaway file. Unlike debug_config that runs git
-	// and calls the Armis API, so it finds stalls on the real scan path. It
-	// sends the file's content (a trivial snippet) to the Armis API.
+	// scan_file on a small throwaway file. Unlike debug_config, scan_file runs
+	// git and calls the Armis API, so it finds stalls on the real scan path.
+	// It sends the file's content (a trivial snippet) to the Armis API.
 	Deep bool
 	// WorkspaceDir is where a workspace-level .vscode/mcp.json is looked for.
 	// Defaults to the current directory.
