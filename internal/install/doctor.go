@@ -298,7 +298,8 @@ type doctorRun struct {
 // use, or "" when Deep is off or the file can't be made. It lives under the
 // home directory because the scanner only accepts paths under home or /tmp,
 // and the OS temp dir (e.g. /var/folders on macOS) is neither. It is a git
-// repository so the scan exercises the server's git calls.
+// repository whose committed copy is empty, so the server's `git diff HEAD`
+// succeeds and returns changed lines, as it does for a file edited in a real repo.
 func (d *doctorRun) deepProbeFile() string {
 	if !d.opts.Deep {
 		return ""
@@ -314,18 +315,47 @@ func (d *doctorRun) deepProbeFile() string {
 		d.report.add("scanner", "deep probe", StatusWarn, "could not create a scratch file for the scan call: "+err.Error())
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	// Best effort: without git the scan simply takes the no-repository path.
-	// armis:ignore cwe:78 reason:deepDir is a directory this process just created
-	_ = exec.CommandContext(ctx, "git", "init", "-q", d.deepDir).Run() //nolint:gosec // deepDir is a directory this process just created
-	file := filepath.Join(d.deepDir, "armis_doctor_probe.py")
+	file := filepath.Join(d.deepDir, deepProbeName)
+	initDeepProbeRepo(d.deepDir, file)
 	if err := os.WriteFile(file, []byte("def add(a, b):\n    return a + b\n"), 0o600); err != nil {
 		d.report.add("scanner", "deep probe", StatusWarn, "could not create a scratch file for the scan call: "+err.Error())
 		return ""
 	}
 	d.deepFile = file
 	return file
+}
+
+const deepProbeName = "armis_doctor_probe.py"
+
+// initDeepProbeRepo makes dir a git repository with an empty file committed
+// at file. Best effort: if git is missing or a step fails, the scan takes the
+// no-repository or no-HEAD path instead.
+func initDeepProbeRepo(dir, file string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	git := func(args ...string) error {
+		// armis:ignore cwe:78 reason:fixed git subcommands run in a directory this process just created
+		return exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Run() //nolint:gosec // fixed subcommands in our own scratch dir
+	}
+	if err := git("init", "-q"); err != nil {
+		return
+	}
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		return
+	}
+	if err := git("add", "--", deepProbeName); err != nil {
+		return
+	}
+	// The user's git config may lack an identity, require signing, or set
+	// global hooks (possibly an Armis scan hook); none of that should apply
+	// to a scratch commit.
+	_ = git(
+		"-c", "user.name=armis-cli mcp doctor",
+		"-c", "user.email=mcp-doctor@armis.invalid",
+		"-c", "commit.gpgsign=false",
+		"-c", "core.hooksPath="+filepath.Join(dir, ".git", "no-hooks"),
+		"commit", "-q", "--no-verify", "-m", "mcp doctor probe",
+	)
 }
 
 // close removes the deep probe's scratch directory.
