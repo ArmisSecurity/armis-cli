@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mcp doctor` compares the scanner plugin version to the latest release, flags known bugs for the installed version (the Windows tool-call hang before plugin v1.4.2), and reads the scanner's `server.log` for tool calls from real editor sessions that never finished or were slow
-- `mcp doctor --deep` also calls the scanner's `scan_file` on a throwaway file to test the real scan path, and records the child processes (and, for Python servers on macOS and Linux, a thread dump) when a call stops answering
-- `mcp doctor --watch` follows the scanner's `server.log`, prints each tool call, and reports calls that stay open longer than `--watch-stuck-after` along with the processes the server is waiting on
-
 ### Changed
 
 ### Deprecated
@@ -21,10 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `mcp doctor` no longer reports a server that hangs in a tool call as a "slow start" with antivirus advice: startup, `tools/list`, and the diagnostic tool call are timed and time-limited separately, and a hung or slow tool call gets its own diagnosis
-- `mcp doctor` shows the scanner plugin's version instead of the MCP SDK's, says why a launch shared with another editor fails, and doesn't validate client credentials the server ignores under `ARMIS_DEFAULT_AUTH_METHOD=sso`
-
 ### Security
+
+---
+
+## [1.25.1] - 2026-10-25
+
+### Added
+
+- `mcp doctor` compares the scanner plugin version to the latest release, flags known bugs for the installed version (the Windows tool-call hang before plugin v1.4.2), and reads the scanner's `server.log` for tool calls from real editor sessions that never finished or were slow (#346)
+- `mcp doctor --deep` also calls the scanner's `scan_file` on a throwaway file to test the real scan path, and records the child processes (and, for Python servers on macOS and Linux, a thread dump) when a call stops answering (#346)
+- `mcp doctor --watch` follows the scanner's `server.log`, prints each tool call, and reports calls that stay open longer than `--watch-stuck-after` along with the processes the server is waiting on (#346)
+
+### Changed
+
+- `install.ps1` and `install.sh` verify signatures with the cosign bundle file and abort the install if verification fails instead of falling back to a checksum-only check; a missing bundle still falls back. `install.ps1` matches the checksum by exact filename, renames a running `armis-cli.exe` aside so upgrades work while an editor-launched MCP server holds the binary, and throws instead of calling `exit` so a failure under `irm | iex` no longer closes the caller's shell. CI now tests `install.ps1` on Windows PowerShell 5.1 and 7 (#345)
+- Bumped `github.com/mattn/go-runewidth` to 0.0.31 and `goreleaser/goreleaser-action` to 7.3.0 (#338, #342)
+
+### Fixed
+
+- `mcp doctor` no longer reports a server that hangs in a tool call as a "slow start" with antivirus advice: startup, `tools/list`, and the diagnostic tool call are timed and time-limited separately, and a hung or slow tool call gets its own diagnosis (#346)
+- `mcp doctor` shows the scanner plugin's version instead of the MCP SDK's, says why a launch shared with another editor fails, and doesn't validate client credentials the server ignores under `ARMIS_DEFAULT_AUTH_METHOD=sso` (#346)
+- `mcp doctor --deep` commits its probe file in the scratch repo so the scanner's `git diff HEAD` no longer fails with "bad revision 'HEAD'" and the changed-line scan path is exercised (#347)
 
 ---
 
@@ -786,7 +800,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...HEAD
+[1.25.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...v1.25.1
 [1.25.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.0...v1.24.1
 [1.24.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.23.0...v1.24.0
