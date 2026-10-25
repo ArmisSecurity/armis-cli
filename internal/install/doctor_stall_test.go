@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -147,6 +148,49 @@ func TestHandshakeStallRecordsChildProcess(t *testing.T) {
 	}
 	if !strings.Contains(out.Transcript, `"method":"tools/call"`) || !strings.Contains(out.Transcript, "timed out waiting") {
 		t.Errorf("transcript = %q, want the request and the timeout", out.Transcript)
+	}
+}
+
+func TestDeepProbeFileDiffsAgainstHEAD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// A global config that would break a naive commit: signing required and
+	// a pre-commit hook that always fails.
+	hooks := filepath.Join(home, "hooks")
+	if err := os.MkdirAll(hooks, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // test hook must be executable
+		t.Fatal(err)
+	}
+	global := filepath.Join(home, "gitconfig")
+	cfg := "[commit]\n\tgpgsign = true\n[core]\n\thooksPath = " + filepath.ToSlash(hooks) + "\n"
+	if err := os.WriteFile(global, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	d := newDoctorRun(DoctorOptions{Deep: true})
+	file := d.deepProbeFile()
+	if file == "" {
+		t.Fatalf("no probe file; report: %+v", d.report.Checks)
+	}
+	out, err := exec.Command("git", "-C", d.deepDir, "diff", "HEAD", "-U0", "--", deepProbeName).CombinedOutput() //nolint:gosec // test-owned dir
+	if err != nil {
+		t.Fatalf("git diff HEAD failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "+def add(a, b):") {
+		t.Errorf("diff = %q, want the probe content as added lines", out)
+	}
+
+	d.close()
+	if _, err := os.Stat(d.deepDir); !os.IsNotExist(err) {
+		t.Errorf("probe dir %s still exists after close (err=%v)", d.deepDir, err)
 	}
 }
 
