@@ -313,6 +313,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 			// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host (default registry.npmjs.org/pypi.org or a config-load-validated custom upstream), not a per-request attacker-controlled value
 			pr.SetURL(upstreamURL)
 			if h := p.buildAuthHeader(); h != "" {
+				// armis:ignore cwe:522 cwe:319 cwe:200 reason:upstreamURL is https-only (default https constants, or a custom upstream rejected by ValidateRegistryURL unless https and re-validated in supply-chain wrap); the upstream client's CheckRedirect refuses cross-host hops, so the credential never leaves TLS to the configured host
 				pr.Out.Header.Set("Authorization", h)
 			}
 		},
