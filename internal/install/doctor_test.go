@@ -44,12 +44,22 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// hangForever blocks without returning. A bare select {} is not enough: with no
+// timers or other goroutines the runtime's deadlock detector kills the process,
+// which the doctor then reports as "server exited" instead of a hang.
+func hangForever() {
+	// armis:ignore cwe:835 cwe:400 reason:test-only fake MCP server that must hang so the doctor's timeout path runs; the doctor kills the process
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
 // runMCPHelperProcess acts as a fake MCP stdio server. It answers each
 // request line by method so the doctor's full session (initialize,
 // tools/list, tools/call) can be exercised.
 func runMCPHelperProcess(mode string) {
 	if mode == "hang" {
-		select {}
+		hangForever()
 	}
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -98,14 +108,14 @@ func runMCPHelperProcess(mode string) {
 			// Block on a child process, as the scanner does on a stuck git.
 			child := exec.Command("sleep", "10")
 			_ = child.Start()
-			select {}
+			hangForever()
 		case req.Method == "tools/call" && req.Params.Name == "scan_file" && mode == "deephang":
-			select {}
+			hangForever()
 		case req.Method == "tools/call" && req.Params.Name == "scan_file":
 			reply(`"result":{"content":[{"type":"text","text":"No vulnerabilities found."}]}`)
 		case req.Method == "tools/call" && mode == "toolhang":
 			_, _ = fmt.Fprintln(os.Stderr, "INFO mcp.server.lowlevel.server: Processing request of type CallToolRequest")
-			select {}
+			hangForever()
 		case req.Method == "tools/call" && mode == "toolslow":
 			time.Sleep(200 * time.Millisecond)
 			reply(`"result":{"content":[{"type":"text","text":"Auth method: client-credentials"}]}`)

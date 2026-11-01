@@ -239,6 +239,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	// cwe:918 suppressions on the forwarding sinks reflect this ("validated at
 	// config-load"). Re-validating here would reject every test's httptest
 	// upstream.
+	// armis:ignore cwe:918 cwe:20 reason:upstream is the https default constant or a custom upstream already validated by ValidateRegistryURL at config-load and again in supply-chain wrap before NewProxy is called
 	upstreamURL, err := url.Parse(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("parsing upstream URL: %w", err)
@@ -280,7 +281,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		return nil, err
 	}
 
-	// Construct p before the reverse proxy: the Director closure captures p so it
+	// Construct p before the reverse proxy: the Rewrite closure captures p so it
 	// can inject the auth header per request (p.buildAuthHeader). revProxy is
 	// assigned onto p once it is built, below.
 	p := &Proxy{
@@ -299,30 +300,26 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		removedVersions:            make(map[string][]string),
 	}
 
-	// NewSingleHostReverseProxy rewrites the request URL's scheme/host but
-	// deliberately does NOT rewrite the Host header (see its doc comment). Left
-	// as-is, tarball passthrough requests reach the upstream registry carrying
-	// the local proxy's Host (e.g. "127.0.0.1:61396"). registry.npmjs.org is
-	// fronted by a CDN that routes on Host, so an unknown value returns 403 —
-	// the metadata check passes but the actual .tgz download fails. Wrap the
-	// Director to point Host at the upstream registry so passthrough works, and
-	// inject the auth header so private-repo tarballs (a separate request from
-	// metadata — confirmed by the PPSC-994 prototype) authenticate too.
+	// SetURL also clears the outbound Host so it becomes the upstream's.
+	// registry.npmjs.org is fronted by a CDN that routes on Host, so forwarding
+	// the local proxy's Host (e.g. "127.0.0.1:61396") returns 403 and the .tgz
+	// download fails even though the metadata check passed. The auth header is
+	// injected here too because private-repo tarballs are a separate request
+	// from metadata and need the same credential.
 	// upstreamURL is the default registry.npmjs.org/pypi.org constant or a custom
 	// upstream validated by ValidateRegistryURL at config-load — not a per-request
 	// attacker-controlled value (matches the CWE-918 suppressions in reverseProxy).
-	// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host (default registry.npmjs.org/pypi.org or a config-load-validated custom upstream), not a per-request attacker-controlled value
-	revProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
-	baseDirector := revProxy.Director
-	revProxy.Director = func(req *http.Request) {
-		baseDirector(req)
-		// armis:ignore cwe:918 reason:upstreamURL.Host is the startup-configured trusted upstream (default registry.npmjs.org/pypi.org); setting the outbound Host to it is required for CDN routing and is not attacker-controlled
-		req.Host = upstreamURL.Host
-		if h := p.buildAuthHeader(); h != "" {
-			req.Header.Set("Authorization", h)
-		}
+	revProxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			// armis:ignore cwe:918 reason:upstreamURL is a startup-configured trusted host (default registry.npmjs.org/pypi.org or a config-load-validated custom upstream), not a per-request attacker-controlled value
+			pr.SetURL(upstreamURL)
+			if h := p.buildAuthHeader(); h != "" {
+				// armis:ignore cwe:522 cwe:319 cwe:200 reason:upstreamURL is https-only (default https constants, or a custom upstream rejected by ValidateRegistryURL unless https and re-validated in supply-chain wrap); the upstream client's CheckRedirect refuses cross-host hops, so the credential never leaves TLS to the configured host
+				pr.Out.Header.Set("Authorization", h)
+			}
+		},
+		Transport: httpClient.Transport,
 	}
-	revProxy.Transport = httpClient.Transport
 	// When a custom upstream is configured, a 4xx from it must NOT carry the
 	// upstream's WWW-Authenticate realm back to the package manager: npm would
 	// honor the realm and re-authenticate DIRECTLY against the upstream host,
@@ -337,7 +334,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 // buildAuthHeader returns the Authorization header value to attach to upstream
 // requests, or "" when no credential is configured. It is the SINGLE seam the
 // design mandates: both handleMetadataFiltering (the explicit forward) and the
-// reverse-proxy Director (tarballs, RPC) call it, so the metadata and tarball
+// reverse-proxy Rewrite hook (tarballs, RPC) call it, so the metadata and tarball
 // legs authenticate identically. The PPSC-994 prototype proved both legs hit a
 // private repo and both need the credential.
 func (p *Proxy) buildAuthHeader() string {
@@ -624,11 +621,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 // joinUpstreamURL concatenates a base upstream URL and a request-URI path,
 // collapsing exactly one slash at the boundary so a trailing slash on the base
 // and a leading slash on the path do not produce a "//" in the result. It
-// mirrors httputil.NewSingleHostReverseProxy's internal singleJoiningSlash so
-// the metadata leg and the tarball (Director) leg build byte-identical upstream
+// mirrors the path join httputil's ProxyRequest.SetURL applies, so
+// the metadata leg and the tarball (Rewrite) leg build byte-identical upstream
 // URLs. Both inputs are trusted at this point (see handleMetadataFiltering's
 // cwe:918 note); this is a formatting fix, not a security boundary.
-// armis:ignore cwe:628 cwe:22 cwe:73 cwe:918 reason:base is the proxy's own validated upstream URL (constant default or ValidateRegistryURL-checked config); requestURI is the local wrapped-install client's own request path/query (r.URL.RequestURI() at the sole call site in handleMetadataFiltering), which the proxy is intentionally forwarding — this function only collapses a boundary slash, it introduces no new traversal beyond what the client already requested of itself, and httputil's reverse-proxy Director performs the identical unsanitized join for the tarball leg
+// armis:ignore cwe:628 cwe:22 cwe:73 cwe:918 reason:base is the proxy's own validated upstream URL (constant default or ValidateRegistryURL-checked config); requestURI is the local wrapped-install client's own request path/query (r.URL.RequestURI() at the sole call site in handleMetadataFiltering), which the proxy is intentionally forwarding — this function only collapses a boundary slash, it introduces no new traversal beyond what the client already requested of itself, and httputil's reverse-proxy Rewrite hook performs the identical unsanitized join for the tarball leg
 func joinUpstreamURL(base, requestURI string) string {
 	baseSlash := strings.HasSuffix(base, "/")
 	uriSlash := strings.HasPrefix(requestURI, "/")
@@ -649,7 +646,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	// joinUpstreamURL collapses the boundary slash so a configured upstream with a
 	// trailing slash (e.g. "https://nexus.corp/") does not produce a "//lodash"
 	// double-slash path that many registries 404 on — the same single-slash join
-	// the reverse-proxy Director (tarball leg) already applies via httputil, so
+	// the reverse-proxy Rewrite hook (tarball leg) already applies via httputil, so
 	// both legs build identical URLs.
 	// armis:ignore cwe:918 cwe:73 cwe:22 reason:p.upstreamURL is the default npmjs.org/pypi.org constant or a custom upstream validated by ValidateRegistryURL at config-load (https-only, no userinfo, rejects loopback/RFC1918/link-local); r.URL.RequestURI() is the path/query from the local proxy client and cannot change the host — joinUpstreamURL only collapses a boundary slash, it does not accept a caller-chosen path outside that request, so no traversal beyond the client's own request is possible
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, joinUpstreamURL(p.upstreamURL.String(), r.URL.RequestURI()), nil) //nolint:gosec // upstream URL is a constant default or config-load-validated; path is from the local proxy
@@ -665,7 +662,7 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
 	// Inject the developer's upstream credential on the metadata leg via the
-	// SAME seam the tarball Director uses, so both authenticate identically.
+	// SAME seam the tarball Rewrite hook uses, so both authenticate identically.
 	if h := p.buildAuthHeader(); h != "" {
 		upstreamReq.Header.Set("Authorization", h)
 	}

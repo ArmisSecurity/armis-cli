@@ -531,10 +531,10 @@ func TestProxyTarballPassThrough(t *testing.T) {
 }
 
 // TestProxyPassThroughRewritesHost guards the fix for tarball downloads failing
-// with 403. NewSingleHostReverseProxy does not rewrite the Host header, so
-// without the Director wrapper the upstream registry receives the local proxy's
-// Host (e.g. 127.0.0.1:PORT) and a CDN that routes on Host rejects it. Assert
-// the passed-through request carries the upstream host, not the proxy's.
+// with 403. If the outbound Host is not rewritten, the upstream registry
+// receives the local proxy's Host (e.g. 127.0.0.1:PORT) and a CDN that
+// routes on Host rejects it. Assert the passed-through request carries the
+// upstream host, not the proxy's.
 func TestProxyPassThroughRewritesHost(t *testing.T) {
 	var gotHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

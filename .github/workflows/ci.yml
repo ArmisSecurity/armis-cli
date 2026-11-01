@@ -32,7 +32,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25"
+          go-version: "1.27"
           cache: true
 
       - name: Install gotestsum
@@ -76,12 +76,15 @@ jobs:
       fail-fast: false
       matrix:
         shell: [powershell, pwsh]
+    # A step's shell: cannot read matrix; the job-level default can.
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fresh install, then upgrade over it
-        shell: ${{ matrix.shell }}
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "armis-cli-install-test"
           .\scripts\install.ps1 -Version $env:INSTALL_TEST_VERSION -InstallDir $dir
@@ -94,7 +97,6 @@ jobs:
           if (Test-Path "$dir\armis-cli.exe.old*") { throw "stale armis-cli.exe.old left behind" }
 
       - name: Invalid version is rejected without closing the shell
-        shell: ${{ matrix.shell }}
         run: |
           $message = $null
           try { .\scripts\install.ps1 -Version "not-a-version" } catch { $message = $_.Exception.Message }
