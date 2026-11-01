@@ -446,7 +446,7 @@ const (
 // TerminalWidth detects the current terminal width with fallbacks.
 // Returns BoxWidth if detection fails (non-TTY, pipe, etc.)
 func TerminalWidth() int {
-	w, _, err := term.GetSize(int(os.Stderr.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms
+	w, _, err := term.GetSize(int(os.Stderr.Fd())) //nolint:gosec // G115: Fd() returns uintptr which fits in int on all supported platforms armis:ignore cwe:190 cwe:191 reason:only linux/darwin/windows amd64/arm64 are built (Makefile); int is 64-bit on all of them
 	if err != nil || w <= 0 {
 		return BoxWidth
 	}
