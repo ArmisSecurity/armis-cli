@@ -105,7 +105,7 @@ func TestProxyInjectsAuthMetadata(t *testing.T) {
 }
 
 // TestProxyAuthBothLegs is test-plan case #3: buildAuthHeader() is used by BOTH
-// the metadata path AND the reverse-proxy Director (tarball passthrough), so a
+// the metadata path AND the reverse-proxy Rewrite hook (tarball passthrough), so a
 // 401-gated upstream authenticates on both. This is the prototype's headline
 // finding turned into a regression guard.
 func TestProxyAuthBothLegs(t *testing.T) {
@@ -143,12 +143,12 @@ func TestProxyAuthBothLegs(t *testing.T) {
 	if mresp.StatusCode != http.StatusOK {
 		t.Fatalf("metadata status = %d, want 200", mresp.StatusCode)
 	}
-	// Tarball leg (passthrough via Director — contains "/-/").
+	// Tarball leg (passthrough via Rewrite — contains "/-/").
 	tresp := getThrough(t, addr, "/express/-/express-4.18.2.tgz")
 	body, _ := io.ReadAll(tresp.Body)
 	tresp.Body.Close() //nolint:errcheck,gosec
 	if tresp.StatusCode != http.StatusOK {
-		t.Fatalf("tarball status = %d, want 200 (Director must inject auth too)", tresp.StatusCode)
+		t.Fatalf("tarball status = %d, want 200 (Rewrite must inject auth too)", tresp.StatusCode)
 	}
 	if string(body) != "tarball-bytes" {
 		t.Errorf("tarball body = %q", body)

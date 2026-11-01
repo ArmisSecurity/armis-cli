@@ -13,7 +13,7 @@ The pipeline consists of two jobs:
 ### 1. Build & Unit Tests
 
 - Runs on every push and pull request
-- Sets up Go 1.21
+- Sets up Go 1.27
 - Downloads dependencies
 - Runs all unit tests
 - Builds the CLI binary
