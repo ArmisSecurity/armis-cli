@@ -61,7 +61,7 @@ function Download-File {
         [string]$Output
     )
 
-    Write-Host "📥 Downloading from: $Url"
+    Write-Host "Downloading from: $Url"
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Output -UseBasicParsing
     } catch {
@@ -78,14 +78,14 @@ function Verify-Checksums {
 
     # armis:ignore cwe:494 reason:$Verify defaults true; explicit opt-out for environments without cosign (documented flag)
     if (-not $Verify) {
-        Write-Host "⚠️  Skipping verification (-Verify:`$false)"
+        Write-Host "WARNING: Skipping verification (-Verify:`$false)"
         return
     }
 
     $cosignPath = Get-Command cosign -ErrorAction SilentlyContinue
     $hasBundle = $ChecksumsBundle -and (Test-Path $ChecksumsBundle) -and ((Get-Item $ChecksumsBundle).Length -gt 0)
     if ($cosignPath -and $hasBundle) {
-        Write-Host "🔐 Verifying signature with cosign..."
+        Write-Host "Verifying signature with cosign..."
         # cosign is a native command: failure shows up in $LASTEXITCODE, not as an exception.
         # It also writes progress to stderr, which would throw under -ErrorAction Stop on PS 5.1.
         $prevPreference = $ErrorActionPreference
@@ -103,15 +103,15 @@ function Verify-Checksums {
         if ($cosignExit -ne 0) {
             throw "Signature verification failed (cosign exit code $cosignExit):`n$($cosignOutput | Out-String)"
         }
-        Write-Host "✓ Signature verified successfully" -ForegroundColor Green
+        Write-Host "Signature verified successfully" -ForegroundColor Green
     } elseif ($cosignPath) {
-        Write-Host "ℹ️  No signature bundle available, verifying checksums only"
+        Write-Host "No signature bundle available, verifying checksums only"
     } else {
-        Write-Host "ℹ️  cosign not found, verifying checksums only"
+        Write-Host "cosign not found, verifying checksums only"
         Write-Host "   Install cosign for full signature verification: https://docs.sigstore.dev/cosign/installation/"
     }
 
-    Write-Host "🔍 Verifying checksums..."
+    Write-Host "Verifying checksums..."
     $archiveName = Split-Path $ArchiveFile -Leaf
     # Exact match on the filename column (like install.sh), not a regex over the whole line.
     $checksumContent = @(Get-Content $ChecksumsFile | Where-Object {
@@ -130,7 +130,7 @@ function Verify-Checksums {
         throw "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
     }
 
-    Write-Host "✓ Checksums verified successfully" -ForegroundColor Green
+    Write-Host "Checksums verified successfully" -ForegroundColor Green
 }
 
 function Add-DirectoryToPath {
@@ -216,28 +216,28 @@ function Main {
         $checksumsFile = Join-Path $tmpDir "armis-cli-checksums.txt"
         $checksumsBundle = Join-Path $tmpDir "armis-cli-checksums.txt.bundle"
 
-        Write-Host "📦 Downloading $archiveName..."
+        Write-Host "Downloading $archiveName..."
         Download-File -Url "$baseUrl/$archiveName" -Output $archiveFile
 
-        Write-Host "📥 Downloading checksums..."
+        Write-Host "Downloading checksums..."
         Download-File -Url "$baseUrl/armis-cli-checksums.txt" -Output $checksumsFile
         try {
             Download-File -Url "$baseUrl/armis-cli-checksums.txt.bundle" -Output $checksumsBundle
         } catch {
             Remove-Item -Path $checksumsBundle -Force -ErrorAction SilentlyContinue
-            Write-Host "⚠️  Signature bundle not found, skipping signature verification" -ForegroundColor Yellow
+            Write-Host "WARNING: Signature bundle not found, skipping signature verification" -ForegroundColor Yellow
         }
 
         Write-Host ""
         Verify-Checksums -ArchiveFile $archiveFile -ChecksumsFile $checksumsFile -ChecksumsBundle $checksumsBundle
         Write-Host ""
 
-        Write-Host "📂 Extracting archive..."
+        Write-Host "Extracting archive..."
         # armis:ignore cwe:22 reason:archiveFile downloaded from verified GitHub release with checksum validation above; tmpDir is a temp directory created by New-TemporaryFile
         Expand-Archive -Path $archiveFile -DestinationPath $tmpDir -Force
         # armis:ignore cwe:22 reason:extracted content from verified GitHub release archive (checksum + signature validated)
 
-        Write-Host "📥 Installing to $InstallDir..."
+        Write-Host "Installing to $InstallDir..."
         if (-not (Test-Path $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
