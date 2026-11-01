@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.25.2] - 2026-11-01
+
+### Changed
+
+- Build with Go 1.27 and bump `golang.org/x/net` to 0.62.0 and `golang.org/x/text` to 0.41.0 (#351, #350)
+- Dependabot waits out a cooldown period before proposing dependency updates (#350)
+- Bumped `anchore/sbom-action/download-syft` and `actions/upload-artifact` to 7.0.2 in CI workflows (#330, #340)
+
+### Fixed
+
+- `hook init` no longer trusts a relative plugin directory when installing the pre-commit hook. A relative path would resolve inside the repository being hooked, so the repository could supply the script the hook runs; the hook now falls back to the direct `armis-cli` scan instead (#352)
+- `armis:ignore` directives in the hook installer and `install.sh` use the supported multi-CWE syntax and cover the CWEs the scanner reports (#352)
+- Lockfile normalization for the supply-chain proxy reads the file through a single open handle, so the size check and the read always see the same file, and it rejects non-regular files and files that grow past the size limit while being read (#352)
+
+---
+
 ## [1.25.1] - 2026-10-25
 
 ### Added
@@ -800,7 +816,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...HEAD
+[1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
 [1.25.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...v1.25.1
 [1.25.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.0...v1.24.1
