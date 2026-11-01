@@ -212,9 +212,11 @@ func buildPreCommitSection(pluginDir string, opts PreCommitOpts) string {
 	sb.WriteString(preCommitMarkerStart)
 	sb.WriteString("\n")
 
-	// Check if the plugin ships a pre-commit script
+	// A relative pluginDir (HOME unresolvable) would resolve inside the repo
+	// being hooked, so a repo could ship the script the hook runs. Treat it as
+	// no plugin and use the direct-scan fallback.
 	pluginPreCommit := filepath.Join(pluginDir, "git-hooks", "pre-commit")
-	if _, err := os.Stat(pluginPreCommit); err == nil {
+	if _, err := os.Stat(pluginPreCommit); err == nil && filepath.IsAbs(pluginDir) {
 		// Use the plugin's pre-commit script (handles .scan-pass verification)
 		if opts.FailOpen {
 			sb.WriteString("# Armis AppSec: security scan verification (fail-open mode)\n")
