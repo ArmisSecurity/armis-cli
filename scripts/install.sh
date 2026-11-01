@@ -255,7 +255,7 @@ verify_checksums() {
     local checksums_bundle="$3"
 
     # armis:ignore cwe:494 reason:VERIFY defaults to true; explicit opt-out for environments without cosign/sha256sum
-    # armis:ignore cwe:347 reason:VERIFY defaults to true; when true, cosign or sha256sum verifies authenticity below
+    # armis:ignore cwe:347 cwe:295 reason:VERIFY defaults to true; when true, cosign or sha256sum verifies authenticity below. VERIFY=false is a documented explicit opt-out; whoever sets the installer environment can already run arbitrary code
     if [ "$VERIFY" != "true" ]; then
         echo "⚠️  Skipping verification (VERIFY=false)"
         return 0

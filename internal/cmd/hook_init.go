@@ -78,6 +78,7 @@ func runHookInit(cmd *cobra.Command, _ []string) error {
 	}
 
 	opts := install.PreCommitOpts{FailOpen: failOpen}
+	// armis:ignore cwe:628 reason:pluginDir is never empty; a missing or non-absolute plugin dir makes buildPreCommitSection fall back to the direct armis-cli scan hook
 	if err := install.InstallPreCommit(repoRoot, pluginDir, opts); err != nil {
 		return err
 	}

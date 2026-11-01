@@ -265,3 +265,27 @@ func setupFakePluginDirWithPreCommit(t *testing.T) string {
 	}
 	return dir
 }
+
+// When HOME cannot be resolved the plugin dir is relative, and hook init runs
+// inside the repo. A script the repo ships at that relative path must not
+// become the pre-commit hook.
+func TestBuildPreCommitSectionIgnoresRelativePluginDir(t *testing.T) {
+	repo := t.TempDir()
+	rel := filepath.Join(".armis", "plugins", "armis-appsec-mcp")
+	planted := filepath.Join(repo, rel, "git-hooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(planted), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planted, []byte("#!/bin/sh\necho pwned\n"), 0o755); err != nil { //nolint:gosec // executable hook for test
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	section := buildPreCommitSection(rel, PreCommitOpts{})
+	if strings.Contains(section, "git-hooks/pre-commit") || strings.Contains(section, `git-hooks\pre-commit`) {
+		t.Errorf("hook runs the repo-relative plugin script:\n%s", section)
+	}
+	if !strings.Contains(section, "armis-cli scan repo") {
+		t.Errorf("hook should fall back to the direct scan:\n%s", section)
+	}
+}

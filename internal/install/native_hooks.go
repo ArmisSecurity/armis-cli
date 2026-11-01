@@ -112,11 +112,11 @@ func hookConfigPath(id HookClientID, defaultFn func() string) string {
 // InstallNativeHook writes the hook config for a client, pointing to the
 // Python adapter in the plugin directory.
 func InstallNativeHook(client HookClient, pluginDir string) error {
-	// armis:ignore cwe:78,cwe:22 reason:pluginDir is resolved from known install location, not user input
+	// armis:ignore cwe:78 cwe:22 reason:pluginDir is resolved from known install location, not user input
 	if !filepath.IsAbs(pluginDir) {
 		return fmt.Errorf("plugin directory must be an absolute path: %s", pluginDir)
 	}
-	// armis:ignore cwe:22 reason:pluginDir validated as absolute above; "hooks" and AdapterPy are compile-time constants
+	// armis:ignore cwe:22 cwe:78 reason:pluginDir validated as absolute above; "hooks" and AdapterPy are compile-time constants; this only writes a config path pointing at the adapter, nothing is executed here
 	adapterPath := filepath.Join(pluginDir, "hooks", client.AdapterPy)
 	if _, err := os.Stat(adapterPath); os.IsNotExist(err) {
 		return fmt.Errorf("hook adapter not found: %s (is the MCP server installed?)", adapterPath)

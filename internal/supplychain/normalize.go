@@ -3,6 +3,7 @@ package supplychain
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -52,17 +53,14 @@ func NormalizeArtifact(path, proxyOrigin, upstreamOrigin string) (bool, error) {
 		}
 		return false, fmt.Errorf("stat %s: %w", path, err)
 	}
+	// Checked before opening: opening a FIFO would block.
 	if !info.Mode().IsRegular() {
 		return false, nil
 	}
-	if info.Size() > maxNormalizeFileSize {
-		return false, fmt.Errorf("%s is too large to normalize (%d bytes)", path, info.Size())
-	}
 
-	// armis:ignore cwe:22 cwe:23 cwe:73 reason:same path as the stat above; the read is size-bounded by the check preceding it
-	data, err := os.ReadFile(path) //nolint:gosec // path is a well-known lockfile leaf in the user's own tree
+	data, err := readBoundedRegular(path, maxNormalizeFileSize)
 	if err != nil {
-		return false, fmt.Errorf("reading %s: %w", path, err)
+		return false, err
 	}
 	if !bytes.Contains(data, []byte(proxyOrigin)) {
 		return false, nil
@@ -164,4 +162,36 @@ func FileContainsString(path, needle string) bool {
 		return false
 	}
 	return bytes.Contains(data, []byte(needle))
+}
+
+// readBoundedRegular reads path through a single open file descriptor, so the
+// size check and the read cannot see two different files if path is swapped
+// in between.
+func readBoundedRegular(path string, limit int64) ([]byte, error) {
+	// armis:ignore cwe:22 cwe:23 cwe:73 reason:same well-known lockfile leaf as NormalizeArtifact's stat; local CLI reading the user's own project file
+	f, err := os.Open(path) //nolint:gosec // path is a well-known lockfile leaf in the user's own tree
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck // read-only handle
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > limit {
+		return nil, fmt.Errorf("%s is too large to normalize (%d bytes)", path, info.Size())
+	}
+
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s is too large to normalize (grew past %d bytes while reading)", path, limit)
+	}
+	return data, nil
 }

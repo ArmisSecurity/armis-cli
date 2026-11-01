@@ -257,3 +257,19 @@ func TestFindUpwardRejectsNonLeafNames(t *testing.T) {
 		}
 	}
 }
+
+func TestReadBoundedRegular(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "bun.lock")
+	if err := os.WriteFile(p, []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readBoundedRegular(p, 10); err != nil || string(got) != "0123456789" {
+		t.Fatalf("at the limit: got %q, %v", got, err)
+	}
+	if _, err := readBoundedRegular(p, 9); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("over the limit: err = %v, want too large", err)
+	}
+	if _, err := readBoundedRegular(t.TempDir(), 10); err == nil {
+		t.Fatal("directory: want an error")
+	}
+}
