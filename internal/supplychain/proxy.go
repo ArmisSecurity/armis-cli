@@ -239,6 +239,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	// cwe:918 suppressions on the forwarding sinks reflect this ("validated at
 	// config-load"). Re-validating here would reject every test's httptest
 	// upstream.
+	// armis:ignore cwe:918 cwe:20 reason:upstream is the https default constant or a custom upstream already validated by ValidateRegistryURL at config-load and again in supply-chain wrap before NewProxy is called
 	upstreamURL, err := url.Parse(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("parsing upstream URL: %w", err)
