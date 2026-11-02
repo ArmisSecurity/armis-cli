@@ -30,7 +30,7 @@ func TestDegradeOnMissingTimestampsPyPI(t *testing.T) {
 		customUpstream:             true,
 	}
 	body := pypiDocNoTimestamps("requests-2.30.0-py3-none-any.whl")
-	filtered, blocked := p.filterPyPISimple(body, "requests")
+	filtered, blocked, _ := p.filterPyPISimple(body, "requests")
 	if len(blocked) != 0 {
 		t.Fatalf("degrade-on: undatable file should NOT be blocked, got %d blocked", len(blocked))
 	}
@@ -58,7 +58,7 @@ func TestFailClosedOnMissingTimestampsPyPI(t *testing.T) {
 		// degradeOnMissingTimestamps: false (default)
 	}
 	body := pypiDocNoTimestamps("requests-2.30.0-py3-none-any.whl")
-	filtered, blocked := p.filterPyPISimple(body, "requests")
+	filtered, blocked, _ := p.filterPyPISimple(body, "requests")
 	if len(blocked) != 1 {
 		t.Fatalf("fail-closed: undatable file MUST be blocked, got %d blocked", len(blocked))
 	}
@@ -92,7 +92,7 @@ func TestDegradeDoesNotAffectDatableFiles(t *testing.T) {
 		upstreamURL:                mustParseURL(t, "https://nexus.corp/simple/"),
 		customUpstream:             true,
 	}
-	_, blocked := p.filterPyPISimple(body, "requests")
+	_, blocked, _ := p.filterPyPISimple(body, "requests")
 	if len(blocked) != 1 {
 		t.Errorf("a datable too-young file must still be blocked even under degrade, got %d", len(blocked))
 	}
@@ -118,7 +118,7 @@ func TestDegradeNPMMissingTimeMap(t *testing.T) {
 		upstreamURL:                mustParseURL(t, "https://nexus.corp/repository/npm-group/"),
 		customUpstream:             true,
 	}
-	filtered, blocked := p.filterMetadata(body, "leftpad")
+	filtered, blocked, _ := p.filterMetadata(body, "leftpad")
 	if len(blocked) != 0 {
 		t.Errorf("npm missing time map should not block, got %d", len(blocked))
 	}
