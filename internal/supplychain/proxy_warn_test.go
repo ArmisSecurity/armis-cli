@@ -29,7 +29,7 @@ func TestWarnPolicy_TransitiveAllowedThrough(t *testing.T) {
 		map[string]time.Duration{"4.3.9": 100 * 24 * time.Hour, "4.4.0": time.Hour},
 		nil,
 	)
-	_, blocked := p.filterMetadata(body, "debug")
+	_, blocked, _ := p.filterMetadata(body, "debug")
 
 	if len(blocked) != 0 {
 		t.Errorf("a young transitive must not be blocked under warn; got blocked=%#v", blocked)
@@ -49,7 +49,7 @@ func TestWarnPolicy_DirectStillBlocked(t *testing.T) {
 		map[string]time.Duration{"4.18.0": 100 * 24 * time.Hour, "4.19.0": time.Hour},
 		nil,
 	)
-	_, blocked := p.filterMetadata(body, "express")
+	_, blocked, _ := p.filterMetadata(body, "express")
 
 	if len(blocked) != 1 || blocked[0].Version != "4.19.0" {
 		t.Errorf("a young DIRECT dep must still be blocked under warn; got blocked=%#v", blocked)
@@ -69,7 +69,7 @@ func TestWarnPolicy_UndeterminableDirectSetFailsSafe(t *testing.T) {
 		map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour, "2.0.0": time.Hour},
 		nil,
 	)
-	_, blocked := p.filterMetadata(body, "anything")
+	_, blocked, _ := p.filterMetadata(body, "anything")
 
 	if len(blocked) != 1 {
 		t.Errorf("undeterminable direct set must fail safe → block; got blocked=%#v", blocked)
@@ -95,7 +95,7 @@ func TestBlockPolicy_NoWarnThrough(t *testing.T) {
 		map[string]time.Duration{"4.3.9": 100 * 24 * time.Hour, "4.4.0": time.Hour},
 		nil,
 	)
-	_, blocked := p.filterMetadata(body, "debug")
+	_, blocked, _ := p.filterMetadata(body, "debug")
 
 	if len(blocked) != 1 {
 		t.Errorf("block policy must filter a young transitive; got blocked=%#v", blocked)

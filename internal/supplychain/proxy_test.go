@@ -38,7 +38,7 @@ func TestProxyFilterMetadata(t *testing.T) {
 	policy := Policy{MinReleaseAge: 72 * time.Hour}
 	proxy := &Proxy{policy: policy}
 
-	filtered, blocked := proxy.filterMetadata(body, "express")
+	filtered, blocked, _ := proxy.filterMetadata(body, "express")
 
 	if len(blocked) != 1 {
 		t.Fatalf("expected 1 blocked, got %d", len(blocked))
@@ -93,7 +93,7 @@ func TestProxyFilterMetadata_AllOld(t *testing.T) {
 
 	proxy := &Proxy{policy: Policy{MinReleaseAge: 72 * time.Hour}}
 
-	filtered, blocked := proxy.filterMetadata(body, "lodash")
+	filtered, blocked, _ := proxy.filterMetadata(body, "lodash")
 
 	if len(blocked) != 0 {
 		t.Errorf("expected no blocked, got %d", len(blocked))
@@ -107,13 +107,13 @@ func TestProxyFilterMetadata_InvalidJSON(t *testing.T) {
 	proxy := &Proxy{policy: Policy{MinReleaseAge: 72 * time.Hour}}
 
 	body := []byte(`not json`)
-	filtered, blocked := proxy.filterMetadata(body, "test")
+	filtered, blocked, err := proxy.filterMetadata(body, "test")
 
-	if blocked != nil {
-		t.Error("expected nil blocked for invalid JSON")
+	if err == nil {
+		t.Error("expected an error for invalid JSON")
 	}
-	if string(filtered) != string(body) {
-		t.Error("invalid JSON should be returned as-is")
+	if blocked != nil || filtered != nil {
+		t.Error("expected no body and no blocked list for invalid JSON")
 	}
 }
 
@@ -703,7 +703,7 @@ func TestProxyFilterMetadata_DistTagsUpdated(t *testing.T) {
 		allowed: make(map[string]allowedVersion),
 	}
 
-	filtered, blocked := proxy.filterMetadata(body, "express")
+	filtered, blocked, _ := proxy.filterMetadata(body, "express")
 
 	if len(blocked) != 2 {
 		t.Fatalf("expected 2 blocked, got %d", len(blocked))
@@ -767,7 +767,7 @@ func TestProxyFilterMetadata_UnblockedChannelTagPreserved(t *testing.T) {
 		allowed: make(map[string]allowedVersion),
 	}
 
-	filtered, blocked := proxy.filterMetadata(body, "express")
+	filtered, blocked, _ := proxy.filterMetadata(body, "express")
 	if len(blocked) != 1 {
 		t.Fatalf("expected 1 blocked, got %d", len(blocked))
 	}
@@ -813,7 +813,7 @@ func TestProxyFilterMetadata_AllBlocked(t *testing.T) {
 		allowed: make(map[string]allowedVersion),
 	}
 
-	filtered, blocked := proxy.filterMetadata(body, "evil-pkg")
+	filtered, blocked, _ := proxy.filterMetadata(body, "evil-pkg")
 
 	if len(blocked) != 1 {
 		t.Fatalf("expected 1 blocked, got %d", len(blocked))
@@ -1081,7 +1081,7 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 			{"requests-2.31.0-py3-none-any.whl", old},
 			{"requests-2.32.0-py3-none-any.whl", young},
 		})
-		filtered, blocked := p.filterPyPISimple([]byte(body), "requests")
+		filtered, blocked, _ := p.filterPyPISimple([]byte(body), "requests")
 		names := pypiFilenames(t, filtered)
 		if len(names) != 1 || names[0] != "requests-2.31.0-py3-none-any.whl" {
 			t.Errorf("kept files = %v, want only the old wheel", names)
@@ -1096,7 +1096,7 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 			{"flask-3.0.0-py3-none-any.whl", old},
 			{"flask-3.0.0.tar.gz", old},
 		})
-		filtered, blocked := p.filterPyPISimple([]byte(body), "flask")
+		filtered, blocked, _ := p.filterPyPISimple([]byte(body), "flask")
 		if blocked != nil {
 			t.Errorf("expected no blocked files, got %+v", blocked)
 		}
@@ -1112,7 +1112,7 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 			{"mystery-1.0.0-py3-none-any.whl", ""},
 			{"mystery-0.9.0-py3-none-any.whl", old},
 		})
-		filtered, blocked := p.filterPyPISimple([]byte(body), "mystery")
+		filtered, blocked, _ := p.filterPyPISimple([]byte(body), "mystery")
 		names := pypiFilenames(t, filtered)
 		if len(names) != 1 || names[0] != "mystery-0.9.0-py3-none-any.whl" {
 			t.Errorf("kept files = %v, want only the datable old wheel", names)
@@ -1127,7 +1127,7 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 			{"requests-2.31.0-py3-none-any.whl", old},
 			{"requests-2.32.0-py3-none-any.whl", young},
 		})
-		filtered, _ := p.filterPyPISimple([]byte(body), "requests")
+		filtered, _, _ := p.filterPyPISimple([]byte(body), "requests")
 		// The surviving file must retain its url and hashes verbatim.
 		if !strings.Contains(string(filtered), `"url":"https://files.pythonhosted.org/packages/requests-2.31.0-py3-none-any.whl"`) {
 			t.Errorf("surviving file lost its url field: %s", filtered)
@@ -1141,19 +1141,28 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid JSON returned as-is", func(t *testing.T) {
-		body := []byte(`not json`)
-		filtered, blocked := p.filterPyPISimple(body, "x")
-		if blocked != nil || string(filtered) != string(body) {
-			t.Errorf("invalid JSON should pass through untouched")
-		}
-	})
+	for name, body := range map[string]string{
+		"invalid JSON":       `not json`,
+		"no files key":       `{"meta":{"api-version":"1.1"},"name":"x"}`,
+		"files not an array": `{"name":"x","files":{"a":1}}`,
+		"files not objects":  `{"name":"x","files":["a"]}`,
+		"HTML index":         `<!DOCTYPE html><html><body><a href="x-1.0.tar.gz">x-1.0.tar.gz</a></body></html>`,
+	} {
+		t.Run(name+" returns an error", func(t *testing.T) {
+			filtered, blocked, err := p.filterPyPISimple([]byte(body), "x")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if filtered != nil || blocked != nil {
+				t.Errorf("expected no body and no blocked list, got %q / %v", filtered, blocked)
+			}
+		})
+	}
 
-	t.Run("no files key returned as-is", func(t *testing.T) {
-		body := []byte(`{"meta":{"api-version":"1.1"},"name":"x"}`)
-		filtered, blocked := p.filterPyPISimple(body, "x")
-		if blocked != nil || string(filtered) != string(body) {
-			t.Errorf("body without files should pass through untouched")
+	t.Run("null files is an empty list", func(t *testing.T) {
+		body := []byte(`{"name":"x","files":null}`)
+		if _, _, err := p.filterPyPISimple(body, "x"); err != nil {
+			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
@@ -1164,7 +1173,7 @@ func TestProxyFilterPyPISimple(t *testing.T) {
 		body := pypiSimpleBody("pkg", []struct{ filename, uploadTime string }{
 			{"pkg-1.0.0.tar.gz", oldNoZone},
 		})
-		_, blocked := p.filterPyPISimple([]byte(body), "pkg")
+		_, blocked, _ := p.filterPyPISimple([]byte(body), "pkg")
 		if blocked != nil {
 			t.Errorf("no-timezone old file should pass, got blocked %+v", blocked)
 		}
@@ -1190,7 +1199,7 @@ func TestProxyFilterPyPISimple_AllowedPopulated(t *testing.T) {
 		{"requests-2.31.0-py3-none-any.whl", old2},
 		{"requests-2.32.0-py3-none-any.whl", young},
 	})
-	_, blocked := p.filterPyPISimple([]byte(body), "requests")
+	_, blocked, _ := p.filterPyPISimple([]byte(body), "requests")
 	if len(blocked) != 1 {
 		t.Fatalf("expected 1 blocked file, got %d: %+v", len(blocked), blocked)
 	}
@@ -1222,7 +1231,7 @@ func TestProxyFilterPyPISimple_SkipsPEP440PrereleaseFallback(t *testing.T) {
 		{"widget-1.1.0rc1-py3-none-any.whl", oldRC},
 		{"widget-1.2.0-py3-none-any.whl", young},
 	})
-	if _, blocked := p.filterPyPISimple([]byte(body), "widget"); len(blocked) != 1 {
+	if _, blocked, _ := p.filterPyPISimple([]byte(body), "widget"); len(blocked) != 1 {
 		t.Fatalf("expected 1 blocked file, got %d: %+v", len(blocked), blocked)
 	}
 

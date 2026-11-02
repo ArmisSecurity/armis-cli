@@ -746,14 +746,19 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 
 	var filtered []byte
 	var blocked []BlockedPackage
+	var filterErr error
 	contentType := "application/json"
 	if p.mode == ModePyPI {
-		filtered, blocked = p.filterPyPISimple(body, pkgName)
+		filtered, blocked, filterErr = p.filterPyPISimple(body, pkgName)
 		// Echo the PEP 691 JSON content type so pip/uv parse the body as the
 		// Simple API JSON representation rather than guessing.
 		contentType = pypiSimpleJSONAccept
 	} else {
-		filtered, blocked = p.filterMetadata(body, pkgName)
+		filtered, blocked, filterErr = p.filterMetadata(body, pkgName)
+	}
+	if filterErr != nil {
+		p.handleUnparseableIndex(w, r, pkgName, filterErr)
+		return
 	}
 	if blocked != nil {
 		p.blockedMu.Lock()
@@ -768,10 +773,30 @@ func (p *Proxy) handleMetadataFiltering(w http.ResponseWriter, r *http.Request, 
 	// refer to upstream's original bytes, not our re-marshaled body, and forwarding
 	// unvalidated upstream header values verbatim is an HTTP-response-splitting
 	// vector (CWE-93). copyCacheHeaders sanitizes each value before writing it.
+	// armis:ignore cwe:93 cwe:113 reason:copyCacheHeaders forwards only an allowlist of cache headers and passes every value through sanitizeHeaderValue, which strips all CR and LF bytes before the header writer, so upstream values cannot split the response
 	copyCacheHeaders(w.Header(), resp.Header, blocked != nil)
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	w.Write(filtered) //nolint:errcheck,gosec
+}
+
+// handleUnparseableIndex handles an upstream metadata body the filter could not
+// parse. DegradeOnMissingTimestamps is deliberately not consulted: it covers a
+// valid document with stripped timestamps, and honoring it here would forward
+// the upstream's own Content-Type and let the client parse an unfiltered index.
+func (p *Proxy) handleUnparseableIndex(w http.ResponseWriter, r *http.Request, pkgName string, cause error) {
+	if p.policy.FailOpen {
+		fmt.Fprintf(os.Stderr, "[armis] supply-chain: age check unavailable for %s, allowing (fail-open): %v\n", pkgName, cause)
+		p.reverseProxy(w, r)
+		return
+	}
+	what := "metadata that is not valid JSON"
+	if p.mode == ModePyPI {
+		what = "an index that is not a PEP 691 JSON document"
+	}
+	p.markVerifyFailed()
+	fmt.Fprintf(os.Stderr, "[armis] supply-chain: upstream %s returned %s for %s; release age cannot be verified, blocking: %v\n", p.upstreamURL.Host, what, pkgName, cause)
+	http.Error(w, fmt.Sprintf("[armis] supply-chain: upstream returned %s for %s; release age cannot be verified", what, pkgName), http.StatusBadGateway)
 }
 
 // cacheHeaderAllowlist is the set of upstream response headers safe to forward
@@ -848,7 +873,11 @@ func (p *Proxy) warnDegradedEnforcement() {
 	fmt.Fprintf(os.Stderr, "[armis] supply-chain: age policy could not be enforced against %s (no publish timestamps) — installs pass through; rely on `supply-chain check` in CI for age enforcement\n", p.upstreamURL.Host)
 }
 
-func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPackage) {
+// filterMetadata strips young versions from an npm packument. A body that is
+// not valid JSON returns an error and the caller blocks (or allows only under
+// FailOpen). A valid document with no usable "time" map passes through; degrade
+// applies only to that case.
+func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPackage, error) {
 	// body is already bounded to maxProxyResponseSize (20MB) by the io.LimitReader
 	// at the sole production call site; oversize upstream responses are rejected
 	// with a 502 before they ever reach this function, so these unmarshals operate
@@ -856,7 +885,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	var metadata map[string]json.RawMessage
 	// armis:ignore cwe:770 reason:input body is capped at maxProxyResponseSize (20MB) by io.LimitReader at the caller before filterMetadata runs; larger responses are rejected with 502, so this unmarshal is not an unbounded allocation
 	if err := json.Unmarshal(body, &metadata); err != nil {
-		return body, nil
+		return nil, nil, fmt.Errorf("parse metadata: %w", err)
 	}
 
 	timeRaw, ok := metadata["time"]
@@ -870,7 +899,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		if p.degradeOnMissingTimestamps {
 			p.warnDegradedEnforcement()
 		}
-		return body, nil
+		return body, nil, nil
 	}
 
 	var timeMap map[string]string
@@ -879,7 +908,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 		if p.degradeOnMissingTimestamps {
 			p.warnDegradedEnforcement()
 		}
-		return body, nil
+		return body, nil, nil
 	}
 
 	now := time.Now()
@@ -941,7 +970,7 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 	}
 
 	if len(versionsToRemove) == 0 {
-		return body, nil
+		return body, nil, nil
 	}
 
 	// Remove blocked versions from the time map
@@ -1044,9 +1073,9 @@ func (p *Proxy) filterMetadata(body []byte, pkgName string) ([]byte, []BlockedPa
 
 	result, err := json.Marshal(metadata)
 	if err != nil {
-		return body, blocked
+		return body, blocked, nil
 	}
-	return result, blocked
+	return result, blocked, nil
 }
 
 // recordConstraintData harvests the two WS2 accumulators from one package's npm
@@ -1197,25 +1226,28 @@ func (p *Proxy) recordWarned(youngWarned []WarnedPackage) {
 // verbatim; only "upload-time" is inspected.
 //
 // Fail-closed posture: a file with a missing or unparseable "upload-time" is
-// REMOVED, not kept. The whole point of this control is age verification, so an
-// undatable file (e.g. an HTML response slipping through, or a registry that
-// omits PEP 700 timestamps) must not be silently installable. The version label
-// in BlockedPackage is the filename, which is what the user sees and what makes
-// the block actionable.
-func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []BlockedPackage) {
+// REMOVED, not kept, so an undatable file must not be silently installable. The
+// version label in BlockedPackage is the filename, which is what the user sees
+// and what makes the block actionable.
+//
+// An index that cannot be parsed (not JSON, no "files" key, or "files" not an
+// array of objects) returns an error and the caller blocks the request, or
+// allows it only under FailOpen. Degrade applies only to a valid document whose
+// files lack timestamps.
+func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []BlockedPackage, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return body, nil
+		return nil, nil, fmt.Errorf("parse index: %w", err)
 	}
 
 	filesRaw, ok := doc["files"]
 	if !ok {
-		return body, nil
+		return nil, nil, errors.New("index has no files key")
 	}
 
 	var files []map[string]json.RawMessage
 	if err := json.Unmarshal(filesRaw, &files); err != nil {
-		return body, nil
+		return nil, nil, fmt.Errorf("parse index files: %w", err)
 	}
 
 	now := time.Now()
@@ -1264,7 +1296,7 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 	}
 
 	if len(blocked) == 0 {
-		return body, nil
+		return body, nil, nil
 	}
 
 	// Populate the allowed map with the newest safe version so the wrap summary
@@ -1301,7 +1333,7 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 
 	newFiles, err := json.Marshal(kept)
 	if err != nil {
-		return body, blocked
+		return body, blocked, nil
 	}
 	doc["files"] = newFiles
 
@@ -1313,9 +1345,9 @@ func (p *Proxy) filterPyPISimple(body []byte, pkgName string) ([]byte, []Blocked
 
 	result, err := json.Marshal(doc)
 	if err != nil {
-		return body, blocked
+		return body, blocked, nil
 	}
-	return result, blocked
+	return result, blocked, nil
 }
 
 // pypiFileAge parses a PEP 700 "upload-time" raw JSON value and returns the age

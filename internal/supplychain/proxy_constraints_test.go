@@ -45,13 +45,13 @@ func TestEvaluateConstraints_KeptSatisfiesNoConflict(t *testing.T) {
 	p := newConstraintProxy()
 
 	// express: one old version (kept), declaring a dependency on debug ^4.3.0.
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour},
 		map[string]map[string]string{"1.0.0": {"debug": "^4.3.0"}},
 	), "express")
 
 	// debug: 4.3.9 old (kept), 4.4.0 fresh (removed).
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"4.3.9": 100 * 24 * time.Hour, "4.4.0": time.Hour},
 		nil,
 	), "debug")
@@ -68,12 +68,12 @@ func TestEvaluateConstraints_EverySatisfyingVersionFilteredConflict(t *testing.T
 	// ^0.24.0. That is the canonical transitive break → a conflict.
 	p := newConstraintProxy()
 
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"18.0.0": 100 * 24 * time.Hour},
 		map[string]map[string]string{"18.0.0": {"scheduler": "^0.24.0"}},
 	), "react-dom")
 
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"0.23.0": 100 * 24 * time.Hour, "0.24.0": time.Hour},
 		nil,
 	), "scheduler")
@@ -94,13 +94,13 @@ func TestEvaluateConstraints_RangeNeverSatisfiedNotOurDoing(t *testing.T) {
 	// falsely blame ourselves for a pre-existing broken dependency.
 	p := newConstraintProxy()
 
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour},
 		map[string]map[string]string{"1.0.0": {"ghost": "^99.0.0"}},
 	), "parent")
 
 	// ghost: only old + young versions far below 99.x.
-	p.filterMetadata(npmMetadata(
+	_, _, _ = p.filterMetadata(npmMetadata(
 		map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour, "1.1.0": time.Hour},
 		nil,
 	), "ghost")
@@ -127,13 +127,13 @@ func TestEvaluateConstraints_ParseFailureFailOpen(t *testing.T) {
 	for _, spec := range specs {
 		t.Run(spec, func(t *testing.T) {
 			p := newConstraintProxy()
-			p.filterMetadata(npmMetadata(
+			_, _, _ = p.filterMetadata(npmMetadata(
 				map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour},
 				map[string]map[string]string{"1.0.0": {"weird": spec}},
 			), "parent")
 			// weird: all versions fresh (removed), so a parseable range with no
 			// survivor would conflict — but an unparseable spec must not.
-			p.filterMetadata(npmMetadata(
+			_, _, _ = p.filterMetadata(npmMetadata(
 				map[string]time.Duration{"1.0.0": time.Hour},
 				nil,
 			), "weird")
@@ -155,25 +155,25 @@ func TestEvaluateConstraints_DeterministicUnderShuffle(t *testing.T) {
 		p := newConstraintProxy()
 		feed := map[string]func(){
 			"react-dom": func() {
-				p.filterMetadata(npmMetadata(
+				_, _, _ = p.filterMetadata(npmMetadata(
 					map[string]time.Duration{"18.0.0": 100 * 24 * time.Hour},
 					map[string]map[string]string{"18.0.0": {"scheduler": "^0.24.0"}},
 				), "react-dom")
 			},
 			"scheduler": func() {
-				p.filterMetadata(npmMetadata(
+				_, _, _ = p.filterMetadata(npmMetadata(
 					map[string]time.Duration{"0.23.0": 100 * 24 * time.Hour, "0.24.0": time.Hour},
 					nil,
 				), "scheduler")
 			},
 			"vue": func() {
-				p.filterMetadata(npmMetadata(
+				_, _, _ = p.filterMetadata(npmMetadata(
 					map[string]time.Duration{"3.0.0": 100 * 24 * time.Hour},
 					map[string]map[string]string{"3.0.0": {"reactivity": "~2.5.0"}},
 				), "vue")
 			},
 			"reactivity": func() {
-				p.filterMetadata(npmMetadata(
+				_, _, _ = p.filterMetadata(npmMetadata(
 					map[string]time.Duration{"2.4.0": 100 * 24 * time.Hour, "2.5.0": time.Hour},
 					nil,
 				), "reactivity")
@@ -209,7 +209,7 @@ func TestRecordConstraintData_RaceFreeUnderConcurrentFiltering(t *testing.T) {
 			defer wg.Done()
 			pkg := fmt.Sprintf("pkg%d", i)
 			dep := fmt.Sprintf("dep%d", i%8)
-			p.filterMetadata(npmMetadata(
+			_, _, _ = p.filterMetadata(npmMetadata(
 				map[string]time.Duration{"1.0.0": 100 * 24 * time.Hour, "2.0.0": time.Hour},
 				map[string]map[string]string{"1.0.0": {dep: "^3.0.0"}},
 			), pkg)
