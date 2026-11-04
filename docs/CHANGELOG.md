@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.26.0] - 2026-11-04
+
+### Added
+
+- `mcp doctor --network` reports the proxy in use and where it comes from, DNS, TCP connect, TLS handshake and the certificate issuer. When a proxy is in use it also tries a direct connection to show whether the proxy is the cause. No credentials are sent. The regular `mcp doctor` gains a "CLI network" row running the same check (#355)
+- `ARMIS_NO_SYSTEM_PROXY` ignores OS proxy settings, and `ARMIS_TLS_HANDSHAKE_TIMEOUT` raises the 10s TLS handshake limit (capped at 5m) for slow inspecting proxies (#355)
+
+### Changed
+
+- Auth, device and IdP call errors now explain "TLS handshake timeout", "proxyconnect", untrusted certificate and client-certificate-required failures. Each message names the proxy and its source and gives the matching fix, such as installing the organization's root CA, `NO_PROXY`, or asking the network team for an exemption (#355)
+
+### Security
+
+- The supply-chain proxy no longer passes an unparseable package index through. A PyPI index that is not valid JSON, or has no `files` array, now returns 502 unless fail-open is set (#354)
+
+---
+
 ## [1.25.2] - 2026-11-01
 
 ### Changed
@@ -816,7 +833,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...HEAD
+[1.26.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...v1.26.0
 [1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
 [1.25.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...v1.25.1
 [1.25.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.24.1...v1.25.0
