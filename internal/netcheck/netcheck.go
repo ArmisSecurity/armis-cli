@@ -6,6 +6,7 @@ package netcheck
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
@@ -37,6 +39,9 @@ type attempt struct {
 	status int
 	took   time.Duration
 	tls    *tls.ConnectionState
+	// untrusted holds the certificate chain presented on a connection whose
+	// certificate this machine does not trust.
+	untrusted []*x509.Certificate
 }
 
 // Run checks the connection and writes a report to opts.Out. It returns true
@@ -161,6 +166,9 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	a.took = time.Since(start)
 	if err != nil {
 		a.err = err
+		if strings.Contains(err.Error(), "x509:") {
+			a.untrusted = presentedChain(ctx, tr, target)
+		}
 		return a
 	}
 	defer resp.Body.Close() //nolint:errcheck // body is not read
@@ -169,12 +177,50 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	return a
 }
 
+// presentedChain reads the certificates a server presents without trusting
+// them, so the report can name the authority that signed them. The handshake
+// is abandoned as soon as the chain is read and no request is sent.
+func presentedChain(ctx context.Context, tr *http.Transport, target *url.URL) []*x509.Certificate {
+	probeTr := tr.Clone()
+	// armis:ignore cwe:295 reason:diagnostic only; the connection is cancelled right after the handshake and no request or credentials are sent
+	probeTr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} //nolint:gosec // G402: read the presented chain only
+	ctx, cancel := context.WithTimeout(ctx, attemptTimeout)
+	defer cancel()
+
+	var mu sync.Mutex
+	var certs []*x509.Certificate
+	trace := &httptrace.ClientTrace{
+		TLSHandshakeDone: func(cs tls.ConnectionState, err error) {
+			if err == nil {
+				mu.Lock()
+				certs = cs.PeerCertificates
+				mu.Unlock()
+			}
+			cancel()
+		},
+	}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := (&http.Client{Transport: probeTr}).Do(req) //nolint:gosec // G704: URL is the configured Armis API base URL
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return certs
+}
+
 func report(out io.Writer, a attempt) {
 	for _, e := range a.events {
 		_, _ = fmt.Fprintf(out, "  %s\n", e)
 	}
 	if a.err != nil {
 		_, _ = fmt.Fprintf(out, "  FAILED after %s: %v\n", fmtDur(a.took), a.err)
+		for i, c := range a.untrusted {
+			_, _ = fmt.Fprintf(out, "  certificate %d (not trusted by this machine): subject %q, issued by %q\n", i, c.Subject.String(), c.Issuer.String())
+		}
 		return
 	}
 	_, _ = fmt.Fprintf(out, "  OK: HTTP %d in %s\n", a.status, fmtDur(a.took))
@@ -187,6 +233,9 @@ func report(out io.Writer, a attempt) {
 
 func verdictDirectOnly(out io.Writer, a attempt) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
+	if untrustedNote(out, a) {
+		return
+	}
 	if a.err == nil {
 		_, _ = fmt.Fprintf(out, "  The API is reachable. HTTP %d without credentials is the expected answer.\n", a.status)
 		certNote(out, a)
@@ -198,6 +247,9 @@ func verdictDirectOnly(out io.Writer, a attempt) {
 
 func verdictProxied(out io.Writer, used, direct attempt, host string) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
+	if untrustedNote(out, used) {
+		return
+	}
 	switch {
 	case used.err == nil:
 		_, _ = fmt.Fprintf(out, "  The API is reachable through the proxy. HTTP %d without credentials is the expected answer.\n", used.status)
@@ -216,6 +268,21 @@ func verdictProxied(out io.Writer, used, direct attempt, host string) {
 		_, _ = fmt.Fprintf(out, "  Neither the proxy path nor the direct connection reaches the API.\n")
 		_, _ = fmt.Fprintf(out, "  Look at the last step in each section that did not finish. A VPN, firewall or security agent may be involved.\n")
 	}
+}
+
+// untrustedNote explains a connection that failed because its certificate is
+// not trusted, and reports whether it did.
+func untrustedNote(out io.Writer, a attempt) bool {
+	if a.err == nil || !strings.Contains(a.err.Error(), "x509:") {
+		return false
+	}
+	if len(a.untrusted) > 0 {
+		_, _ = fmt.Fprintf(out, "  This machine does not trust the certificate presented on this path. It was issued by %q.\n", a.untrusted[0].Issuer.String())
+	} else {
+		_, _ = fmt.Fprintf(out, "  This machine does not trust the certificate presented on this path.\n")
+	}
+	_, _ = fmt.Fprintf(out, "  %s\n", httpclient.TrustStoreAdvice())
+	return true
 }
 
 func certNote(out io.Writer, a attempt) {

@@ -186,3 +186,35 @@ func TestRunDeadProxyBlamesTheProxy(t *testing.T) {
 		t.Errorf("unexpected verdict:\n%s", report)
 	}
 }
+
+func TestRunUntrustedCertificateNamesTheIssuer(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	ok := Run(context.Background(), Options{
+		BaseURL:   srv.URL,
+		Out:       &out,
+		proxyFor:  func(*url.URL) (*url.URL, string, error) { return nil, "test", nil },
+		transport: func(bool) *http.Transport { return &http.Transport{} },
+	})
+	if ok {
+		t.Fatal("a certificate from an unknown authority must fail")
+	}
+	report := out.String()
+	for _, want := range []string{
+		"x509:",
+		"not trusted by this machine",
+		"does not trust the certificate presented on this path",
+		"Acme Co",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report should contain %q:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "The direct connection works") || strings.Contains(report, "TLS inspection.") {
+		t.Errorf("a trust problem must not be reported as a proxy stall:\n%s", report)
+	}
+}

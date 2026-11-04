@@ -131,4 +131,22 @@ func TestExplainTransportError(t *testing.T) {
 			t.Errorf("unexpected message %q", msg)
 		}
 	})
+
+	t.Run("untrusted certificate says how to trust the issuing authority", func(t *testing.T) {
+		proxyChoices.Store(target.Host, proxyChoice{url: &url.URL{Scheme: "http", Host: "proxy.corp:8080"}})
+		untrusted := errors.New(`Post "https://api.example.com/path": tls: failed to verify certificate: x509: certificate signed by unknown authority`)
+		got := ExplainTransportError(untrusted, target)
+		msg := got.Error()
+		for _, want := range []string{"does not trust the certificate", "proxy.corp:8080", "root CA", "mcp doctor --network"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("message %q should contain %q", msg, want)
+			}
+		}
+		if strings.Contains(msg, EnvNoSystemProxy) {
+			t.Errorf("bypassing the proxy does not fix a trust problem, message %q", msg)
+		}
+		if !errors.Is(got, untrusted) {
+			t.Error("the original error must stay in the chain")
+		}
+	})
 }
