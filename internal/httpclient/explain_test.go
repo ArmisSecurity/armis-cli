@@ -185,4 +185,22 @@ func TestExplainTransportError(t *testing.T) {
 			t.Error("the original error must stay in the chain")
 		}
 	})
+
+	t.Run("required client certificate explains the CLI cannot present one", func(t *testing.T) {
+		proxyChoices.Store(target.Host, proxyChoice{url: &url.URL{Scheme: "http", Host: "proxy.corp:8080"}})
+		required := errors.New(`Post "https://api.example.com/path": remote error: tls: certificate required`)
+		got := ExplainTransportError(required, target)
+		msg := got.Error()
+		for _, want := range []string{"asked for a client certificate", "cannot present", "Windows TLS stack", "proxy.corp:8080", "mcp doctor --network"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("message %q should contain %q", msg, want)
+			}
+		}
+		if strings.Contains(msg, EnvNoSystemProxy) {
+			t.Errorf("skipping the proxy is not the fix here, message %q", msg)
+		}
+		if !errors.Is(got, required) {
+			t.Error("the original error must stay in the chain")
+		}
+	})
 }

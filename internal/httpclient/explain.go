@@ -44,7 +44,8 @@ func ExplainTransportError(err error, target *url.URL) error {
 	handshake := strings.Contains(msg, "TLS handshake timeout")
 	proxyConnect := strings.Contains(msg, "proxyconnect")
 	untrusted := strings.Contains(msg, "x509:")
-	if !handshake && !proxyConnect && !untrusted {
+	clientCert := strings.Contains(msg, "tls: certificate required") || strings.Contains(msg, "tls: bad certificate")
+	if !handshake && !proxyConnect && !untrusted && !clientCert {
 		return err
 	}
 
@@ -58,6 +59,14 @@ func ExplainTransportError(err error, target *url.URL) error {
 
 	var hint string
 	switch {
+	case clientCert:
+		hint = fmt.Sprintf("the server or a proxy on the path to %s asked for a client certificate, or rejected the one offered. "+
+			"The CLI cannot present a client certificate; it does not use certificates from the operating system's store. "+
+			"Browsers and tools built on the Windows TLS stack (PowerShell, curl.exe) can, which is why they may work. "+
+			"Ask your network team to exempt %s from the client-certificate requirement", host, host)
+		if proxy != nil {
+			hint += fmt.Sprintf(" (the connection went through the proxy %s)", DescribeProxy(proxy))
+		}
 	case untrusted:
 		hint = fmt.Sprintf("this machine does not trust the certificate presented for %s", host)
 		if proxy != nil {
@@ -76,7 +85,7 @@ func ExplainTransportError(err error, target *url.URL) error {
 	default:
 		return err
 	}
-	if proxy != nil && !untrusted {
+	if proxy != nil && !untrusted && !clientCert {
 		hint += ". " + BypassProxyAdvice(host)
 	}
 	hint += ". Run 'armis-cli mcp doctor --network' for a step-by-step report"

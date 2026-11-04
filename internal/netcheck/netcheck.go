@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +44,10 @@ type attempt struct {
 	// untrusted holds the certificate chain presented on a connection whose
 	// certificate this machine does not trust.
 	untrusted []*x509.Certificate
+	// clientCertAsked is set when the server (or a proxy decrypting the
+	// connection) requested a client certificate, which the CLI cannot send.
+	clientCertAsked   bool
+	clientCertIssuers []string
 }
 
 // Run checks the connection and writes a report to opts.Out. It returns true
@@ -136,6 +142,8 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 		return append([]string(nil), events...)
 	}
 
+	asked := observeClientCertRequest(tr)
+
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(i httptrace.DNSStartInfo) { mark("looking up %s", i.Host) },
 		DNSDone: func(i httptrace.DNSDoneInfo) {
@@ -183,6 +191,7 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	}
 	resp, err := client.Do(req) //nolint:gosec // G704: URL is the configured Armis API base URL
 	a.took = time.Since(start)
+	a.clientCertAsked, a.clientCertIssuers = asked()
 	if err != nil {
 		a.err = err
 		if strings.Contains(err.Error(), "x509:") {
@@ -196,6 +205,49 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	a.tls = resp.TLS
 	a.events = snapshot()
 	return a
+}
+
+// observeClientCertRequest records when the server asks for a client
+// certificate. The transport still answers with none, which is what it would
+// do without this hook.
+func observeClientCertRequest(tr *http.Transport) func() (bool, []string) {
+	var mu sync.Mutex
+	asked := false
+	var issuers []string
+
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if tr.TLSClientConfig != nil {
+		cfg = tr.TLSClientConfig.Clone()
+	}
+	prev := cfg.GetClientCertificate
+	cfg.GetClientCertificate = func(info *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		mu.Lock()
+		asked = true
+		for _, name := range info.AcceptableCAs {
+			issuers = append(issuers, subjectString(name))
+		}
+		mu.Unlock()
+		if prev != nil {
+			return prev(info)
+		}
+		return &tls.Certificate{}, nil
+	}
+	tr.TLSClientConfig = cfg
+	return func() (bool, []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		return asked, issuers
+	}
+}
+
+func subjectString(rawDN []byte) string {
+	var rdn pkix.RDNSequence
+	if _, err := asn1.Unmarshal(rawDN, &rdn); err != nil {
+		return "(unreadable)"
+	}
+	var name pkix.Name
+	name.FillFromRDNSequence(&rdn)
+	return name.String()
 }
 
 // presentedChain reads the certificates a server presents without trusting
@@ -240,6 +292,13 @@ func report(out io.Writer, a attempt) {
 	}
 	if a.err != nil {
 		_, _ = fmt.Fprintf(out, "  FAILED after %s: %v\n", fmtDur(a.took), a.err)
+		if a.clientCertAsked {
+			line := "  the server (or a proxy decrypting the connection) asked for a client certificate; the CLI sent none"
+			if len(a.clientCertIssuers) > 0 {
+				line += "; it accepts certificates issued by: " + strings.Join(a.clientCertIssuers, "; ")
+			}
+			_, _ = fmt.Fprintln(out, line)
+		}
 		for i, c := range a.untrusted {
 			_, _ = fmt.Fprintf(out, "  certificate %d (not trusted by this machine): subject %q, issued by %q\n", i, c.Subject.String(), c.Issuer.String())
 		}
@@ -255,7 +314,7 @@ func report(out io.Writer, a attempt) {
 
 func verdictDirectOnly(out io.Writer, a attempt) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
-	if untrustedNote(out, a) {
+	if untrustedNote(out, a) || clientCertNote(out, a) {
 		return
 	}
 	if a.err == nil {
@@ -269,7 +328,7 @@ func verdictDirectOnly(out io.Writer, a attempt) {
 
 func verdictProxied(out io.Writer, used, direct attempt, host string) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
-	if untrustedNote(out, used) {
+	if untrustedNote(out, used) || clientCertNote(out, used) {
 		return
 	}
 	switch {
@@ -289,6 +348,18 @@ func verdictProxied(out io.Writer, used, direct attempt, host string) {
 		_, _ = fmt.Fprintf(out, "  Neither the proxy path nor the direct connection reaches the API.\n")
 		_, _ = fmt.Fprintf(out, "  Look at the last step in each section that did not finish. A VPN, firewall or security agent may be involved.\n")
 	}
+}
+
+// clientCertNote explains a connection that failed because a client
+// certificate was required, and reports whether it did.
+func clientCertNote(out io.Writer, a attempt) bool {
+	if a.err == nil || !a.clientCertAsked {
+		return false
+	}
+	_, _ = fmt.Fprintf(out, "  A client certificate is required on this path and the CLI cannot present one.\n")
+	_, _ = fmt.Fprintf(out, "  The CLI does not use certificates from the operating system's store. Tools built on the Windows TLS stack (PowerShell, curl.exe) can, which is why they may work.\n")
+	_, _ = fmt.Fprintf(out, "  Ask your network team to exempt this host from the client-certificate requirement.\n")
+	return true
 }
 
 // untrustedNote explains a connection that failed because its certificate is

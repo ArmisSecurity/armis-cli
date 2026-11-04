@@ -232,3 +232,32 @@ func TestRunUntrustedCertificateNamesTheIssuer(t *testing.T) {
 		t.Errorf("a trust problem must not be reported as a proxy stall:\n%s", report)
 	}
 }
+
+func TestRunClientCertificateRequired(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	defer srv.Close()
+
+	var out bytes.Buffer
+	ok := Run(context.Background(), Options{
+		BaseURL:   srv.URL,
+		Out:       &out,
+		proxyFor:  func(*url.URL) (*url.URL, string, error) { return nil, "test", nil },
+		transport: func(bool) *http.Transport { return serverTransport(srv) },
+	})
+	if ok {
+		t.Fatal("a server that requires a client certificate must fail")
+	}
+	report := out.String()
+	for _, want := range []string{
+		"asked for a client certificate; the CLI sent none",
+		"A client certificate is required on this path and the CLI cannot present one",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report should contain %q:\n%s", want, report)
+		}
+	}
+}
