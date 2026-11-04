@@ -118,7 +118,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		err = backoff.Retry(operation, backoff.WithContext(b, ctx))
 	}
 	if err != nil {
-		return nil, ExplainTransportError(err, req.URL)
+		return nil, err
 	}
 
 	// Defensive check: resp should never be nil at this point since operation

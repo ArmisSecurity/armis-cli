@@ -51,6 +51,9 @@ func Run(ctx context.Context, opts Options) bool {
 		ctx = context.Background()
 	}
 	out := opts.Out
+	if out == nil {
+		out = io.Discard
+	}
 	target, err := url.Parse(opts.BaseURL)
 	if err != nil || target.Host == "" {
 		_, _ = fmt.Fprintf(out, "Cannot check %q: not a valid URL\n", opts.BaseURL)
@@ -112,10 +115,25 @@ func defaultTransport(direct bool) *http.Transport {
 }
 
 func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
+	defer tr.CloseIdleConnections()
+
 	var a attempt
 	start := time.Now()
+
+	// httptrace hooks can run on several goroutines at once (parallel dials),
+	// and one can fire after Do returns.
+	var mu sync.Mutex
+	var events []string
 	mark := func(format string, args ...any) {
-		a.events = append(a.events, fmt.Sprintf("%7s  %s", fmtDur(time.Since(start)), fmt.Sprintf(format, args...)))
+		line := fmt.Sprintf("%7s  %s", fmtDur(time.Since(start)), fmt.Sprintf(format, args...))
+		mu.Lock()
+		events = append(events, line)
+		mu.Unlock()
+	}
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), events...)
 	}
 
 	trace := &httptrace.ClientTrace{
@@ -156,6 +174,7 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
 	if err != nil {
 		a.err = err
+		a.events = snapshot()
 		return a
 	}
 	client := &http.Client{
@@ -169,11 +188,13 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 		if strings.Contains(err.Error(), "x509:") {
 			a.untrusted = presentedChain(ctx, tr, target)
 		}
+		a.events = snapshot()
 		return a
 	}
 	defer resp.Body.Close() //nolint:errcheck // body is not read
 	a.status = resp.StatusCode
 	a.tls = resp.TLS
+	a.events = snapshot()
 	return a
 }
 
@@ -182,6 +203,7 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 // is abandoned as soon as the chain is read and no request is sent.
 func presentedChain(ctx context.Context, tr *http.Transport, target *url.URL) []*x509.Certificate {
 	probeTr := tr.Clone()
+	defer probeTr.CloseIdleConnections()
 	// armis:ignore cwe:295 reason:diagnostic only; the connection is cancelled right after the handshake and no request or credentials are sent
 	probeTr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} //nolint:gosec // G402: read the presented chain only
 	ctx, cancel := context.WithTimeout(ctx, attemptTimeout)
@@ -262,8 +284,7 @@ func verdictProxied(out io.Writer, used, direct attempt, host string) {
 		} else {
 			_, _ = fmt.Fprintf(out, "  Ask your network team to allow %s through the proxy or exclude it from TLS inspection.\n", host)
 		}
-		_, _ = fmt.Fprintf(out, "  If policy allows a direct connection, set %s=1 to ignore the system proxy settings,\n", httpclient.EnvNoSystemProxy)
-		_, _ = fmt.Fprintf(out, "  or set HTTPS_PROXY to a working proxy and NO_PROXY=%s.\n", host)
+		_, _ = fmt.Fprintf(out, "  If policy allows a direct connection: %s.\n", httpclient.BypassProxyAdvice(host))
 	default:
 		_, _ = fmt.Fprintf(out, "  Neither the proxy path nor the direct connection reaches the API.\n")
 		_, _ = fmt.Fprintf(out, "  Look at the last step in each section that did not finish. A VPN, firewall or security agent may be involved.\n")
@@ -298,10 +319,29 @@ func envValue(name string) string {
 	if v == "" {
 		return "(not set)"
 	}
-	if u, err := url.Parse(v); err == nil && u.User != nil {
-		return u.Redacted()
+	return redactCredentials(v)
+}
+
+// redactCredentials hides the password in user:password@host, with or without a
+// scheme. url.Parse reads "user:pass@host:8080" as a scheme and keeps no user.
+func redactCredentials(v string) string {
+	scheme, rest := "", v
+	if i := strings.Index(v, "://"); i >= 0 {
+		scheme, rest = v[:i+3], v[i+3:]
 	}
-	return v
+	authority, tail := rest, ""
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authority, tail = rest[:i], rest[i:]
+	}
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return v
+	}
+	user := authority[:at]
+	if i := strings.Index(user, ":"); i >= 0 {
+		user = user[:i] + ":xxxxx"
+	}
+	return scheme + user + authority[at:] + tail
 }
 
 func fmtDur(d time.Duration) string {

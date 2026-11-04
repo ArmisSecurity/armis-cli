@@ -50,8 +50,10 @@ func ExplainTransportError(err error, target *url.URL) error {
 
 	host := target.Hostname()
 	var proxy *url.URL
+	var source string
 	if v, ok := proxyChoices.Load(target.Host); ok {
-		proxy = v.(proxyChoice).url
+		choice := v.(proxyChoice)
+		proxy, source = choice.url, choice.source
 	}
 
 	var hint string
@@ -64,10 +66,10 @@ func ExplainTransportError(err error, target *url.URL) error {
 		hint += ". " + TrustStoreAdvice()
 	case proxy != nil && proxyConnect:
 		hint = fmt.Sprintf("the CLI tried to reach %s through the proxy %s, taken from %s, and could not connect to that proxy. "+
-			"Check the proxy address. If your PAC file lists several proxies, only the first one is used", host, DescribeProxy(proxy), ProxySource())
+			"Check the proxy address. If your PAC file lists several proxies, only the first one is used", host, DescribeProxy(proxy), source)
 	case proxy != nil:
 		hint = fmt.Sprintf("the connection to %s went through the proxy %s, taken from %s, and the TLS handshake did not finish within %s. "+
-			"Ask your network team to allow %s through the proxy or exclude it from TLS inspection", host, DescribeProxy(proxy), ProxySource(), TLSHandshakeTimeout(), host)
+			"Ask your network team to allow %s through the proxy or exclude it from TLS inspection", host, DescribeProxy(proxy), source, TLSHandshakeTimeout(), host)
 	case handshake:
 		hint = fmt.Sprintf("the CLI connected to %s directly (no proxy is configured for it) and the TLS handshake did not finish within %s. "+
 			"A firewall, VPN or security agent may be blocking or delaying the connection. If your network requires a proxy, set HTTPS_PROXY", host, TLSHandshakeTimeout())
@@ -75,7 +77,7 @@ func ExplainTransportError(err error, target *url.URL) error {
 		return err
 	}
 	if proxy != nil && !untrusted {
-		hint += fmt.Sprintf(". To try without the system proxy, set %s=1 (or set HTTPS_PROXY to a working proxy and NO_PROXY=%s)", EnvNoSystemProxy, host)
+		hint += ". " + BypassProxyAdvice(host)
 	}
 	hint += ". Run 'armis-cli mcp doctor --network' for a step-by-step report"
 	return fmt.Errorf("%w (%s)", err, hint)

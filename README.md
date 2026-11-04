@@ -238,14 +238,14 @@ This works without any MCP install. It connects to the Armis API the way the CLI
 How the CLI chooses a proxy:
 
 - If `HTTPS_PROXY` or `HTTP_PROXY` is set, the CLI uses it, and `NO_PROXY` exempts hosts.
-- Otherwise on Windows it uses the system proxy settings, including a PAC file. If a PAC file lists several proxies, only the first one is used. On macOS and Linux it uses only the environment variables.
+- Otherwise on Windows it uses the system proxy settings, including a PAC file. If a PAC file lists several proxies, only the first one is used. On macOS and Linux it uses only the environment variables. A macOS build compiled with cgo also reads the macOS system proxy settings; the released binaries are built without cgo.
 
 Options:
 
 | Variable | Effect |
 |---|---|
-| `ARMIS_NO_SYSTEM_PROXY=1` | Ignore the operating system's proxy settings and use only `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`. Use it only where a direct connection is allowed. |
-| `ARMIS_TLS_HANDSHAKE_TIMEOUT=30s` | Wait longer than the default 10 seconds for the TLS handshake (a Go duration, or a number of seconds). Useful when a proxy inspects traffic slowly. |
+| `ARMIS_NO_SYSTEM_PROXY=1` | Ignore the operating system's proxy settings and use only `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`. It does not bypass a proxy that comes from `HTTPS_PROXY` or `HTTP_PROXY`; to do that, unset them or add the host to `NO_PROXY`. Use it only where a direct connection is allowed. |
+| `ARMIS_TLS_HANDSHAKE_TIMEOUT=30s` | Wait longer than the default 10 seconds for the TLS handshake (a Go duration, or a number of seconds, up to 5 minutes; larger values are capped and invalid values are reported and ignored). Useful when a proxy inspects traffic slowly. |
 
 ### Shell Completion
 

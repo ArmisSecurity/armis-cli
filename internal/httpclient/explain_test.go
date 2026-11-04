@@ -21,7 +21,10 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 		{"garbage falls back", "soon", 10 * time.Second},
 		{"zero falls back", "0", 10 * time.Second},
 		{"negative falls back", "-5s", 10 * time.Second},
-		{"over the cap falls back", "10m", 10 * time.Second},
+		{"over the cap is clamped", "10m", 5 * time.Minute},
+		{"seconds over the cap are clamped", "600", 5 * time.Minute},
+		{"huge seconds do not overflow", "10000000000", 5 * time.Minute},
+		{"unit typo falls back", "30sec", 10 * time.Second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,6 +37,39 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTLSHandshakeTimeoutWarnsOnceOnBadValue(t *testing.T) {
+	var buf strings.Builder
+	oldW := warnWriter
+	warnWriter = &buf
+	warnedValues.Delete("30sec-test")
+	t.Cleanup(func() { warnWriter = oldW })
+	t.Setenv(EnvTLSHandshakeTimeout, "30sec-test")
+
+	TLSHandshakeTimeout()
+	TLSHandshakeTimeout()
+	if n := strings.Count(buf.String(), "ignoring "+EnvTLSHandshakeTimeout); n != 1 {
+		t.Errorf("warned %d times, want 1: %q", n, buf.String())
+	}
+}
+
+func TestBypassProxyAdvice(t *testing.T) {
+	t.Run("proxy from the environment is not fixed by the system-proxy switch", func(t *testing.T) {
+		t.Setenv("HTTPS_PROXY", "http://bad:8080")
+		got := BypassProxyAdvice("api.example.com")
+		if strings.Contains(got, EnvNoSystemProxy) || !strings.Contains(got, "NO_PROXY=api.example.com") {
+			t.Errorf("unexpected advice %q", got)
+		}
+	})
+	t.Run("system proxy points at the switch", func(t *testing.T) {
+		for _, n := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+			t.Setenv(n, "")
+		}
+		if got := BypassProxyAdvice("api.example.com"); !strings.Contains(got, EnvNoSystemProxy) {
+			t.Errorf("unexpected advice %q", got)
+		}
+	})
 }
 
 func TestNoSystemProxyUsesEnvironmentOnly(t *testing.T) {

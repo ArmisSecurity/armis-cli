@@ -146,11 +146,25 @@ func TestRunRejectsBadURL(t *testing.T) {
 }
 
 func TestEnvValueHidesCredentials(t *testing.T) {
-	t.Setenv("HTTPS_PROXY", "http://user:secret@proxy.corp:8080")
-	got := envValue("HTTPS_PROXY")
-	if strings.Contains(got, "secret") {
-		t.Errorf("credentials leaked: %q", got)
+	for _, v := range []string{
+		"http://user:secret@proxy.corp:8080",
+		"user:secret@proxy.corp:8080",
+		"http://user:secret@proxy.corp:8080/path",
+	} {
+		t.Setenv("HTTPS_PROXY", v)
+		got := envValue("HTTPS_PROXY")
+		if strings.Contains(got, "secret") || !strings.Contains(got, "proxy.corp:8080") {
+			t.Errorf("envValue(%q) = %q", v, got)
+		}
 	}
+	t.Setenv("SSL_CERT_FILE", "/home/a@b/ca.pem")
+	if got := envValue("SSL_CERT_FILE"); got != "/home/a@b/ca.pem" {
+		t.Errorf("path was altered: %q", got)
+	}
+}
+
+func TestRunNilOutDoesNotPanic(t *testing.T) {
+	Run(context.Background(), Options{BaseURL: "not a url"})
 }
 
 func TestRunDeadProxyBlamesTheProxy(t *testing.T) {

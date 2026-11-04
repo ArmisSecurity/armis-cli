@@ -512,15 +512,20 @@ func statusSymbol(s install.CheckStatus, accessible bool) string {
 // MCP install, because the failures it finds (proxy, TLS inspection, firewall)
 // break logins and scans as well.
 func runMCPDoctorNetwork(cmd *cobra.Command) error {
-	for name, set := range map[string]bool{
-		"--watch":        mcpDoctorWatch,
-		"--fix":          mcpDoctorFix,
-		"--bundle":       mcpDoctorBundle || mcpDoctorBundlePath != "",
-		"--deep":         mcpDoctorDeep,
-		"--no-handshake": mcpDoctorNoHandshake,
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"--watch", mcpDoctorWatch},
+		{"--fix", mcpDoctorFix},
+		{"--bundle", mcpDoctorBundle || mcpDoctorBundlePath != ""},
+		{"--deep", mcpDoctorDeep},
+		{"--no-handshake", mcpDoctorNoHandshake},
+		{"--timeout", cmd.Flags().Changed("timeout")},
+		{"--verbose", cmd.Flags().Changed("verbose")},
 	} {
-		if set {
-			return fmt.Errorf("--network runs on its own; remove %s", name)
+		if f.set {
+			return fmt.Errorf("--network runs on its own; remove %s", f.name)
 		}
 	}
 	if mcpDoctorFormat != agentFormatPlain {
