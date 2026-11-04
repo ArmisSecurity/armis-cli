@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -194,8 +195,9 @@ func probe(ctx context.Context, tr *http.Transport, target *url.URL) attempt {
 	a.clientCertAsked, a.clientCertIssuers = asked()
 	if err != nil {
 		a.err = err
-		if strings.Contains(err.Error(), "x509:") {
-			a.untrusted = presentedChain(ctx, tr, target)
+		var verr *tls.CertificateVerificationError
+		if errors.As(err, &verr) {
+			a.untrusted = verr.UnverifiedCertificates
 		}
 		a.events = snapshot()
 		return a
@@ -248,42 +250,6 @@ func subjectString(rawDN []byte) string {
 	var name pkix.Name
 	name.FillFromRDNSequence(&rdn)
 	return name.String()
-}
-
-// presentedChain reads the certificates a server presents without trusting
-// them, so the report can name the authority that signed them. The handshake
-// is abandoned as soon as the chain is read and no request is sent.
-func presentedChain(ctx context.Context, tr *http.Transport, target *url.URL) []*x509.Certificate {
-	probeTr := tr.Clone()
-	defer probeTr.CloseIdleConnections()
-	// armis:ignore cwe:295 reason:diagnostic only; the connection is cancelled right after the handshake and no request or credentials are sent
-	probeTr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} //nolint:gosec // G402: read the presented chain only
-	ctx, cancel := context.WithTimeout(ctx, attemptTimeout)
-	defer cancel()
-
-	var mu sync.Mutex
-	var certs []*x509.Certificate
-	trace := &httptrace.ClientTrace{
-		TLSHandshakeDone: func(cs tls.ConnectionState, err error) {
-			if err == nil {
-				mu.Lock()
-				certs = cs.PeerCertificates
-				mu.Unlock()
-			}
-			cancel()
-		},
-	}
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
-	if err != nil {
-		return nil
-	}
-	resp, err := (&http.Client{Transport: probeTr}).Do(req) //nolint:gosec // G704: URL is the configured Armis API base URL
-	if err == nil {
-		_ = resp.Body.Close()
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	return certs
 }
 
 func report(out io.Writer, a attempt) {
