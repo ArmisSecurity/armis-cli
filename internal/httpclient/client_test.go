@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -310,5 +312,27 @@ func TestClientDo_RetryWithBody(t *testing.T) {
 		if body != expectedBody {
 			t.Errorf("Attempt %d: expected body %q, got %q", i+1, expectedBody, body)
 		}
+	}
+}
+
+func TestClientDo_ServerErrorBodyIsNotExplainedAsProxyFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream connect error: TLS handshake timeout, proxyconnect"))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{DisableRetry: true, Timeout: 5 * time.Second})
+	req, err := http.NewRequest("GET", server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	proxyChoices.Store(req.URL.Host, proxyChoice{url: &url.URL{Scheme: "http", Host: "proxy.corp:8080"}})
+	_, err = client.Do(req)
+	if err == nil || !strings.Contains(err.Error(), "server error: 502") {
+		t.Fatalf("want a server error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "mcp doctor --network") {
+		t.Errorf("5xx body was explained as a transport failure: %v", err)
 	}
 }

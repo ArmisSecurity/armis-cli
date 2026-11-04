@@ -225,6 +225,28 @@ If you see "command not found" after installation:
    & "$env:LOCALAPPDATA\armis-cli\armis-cli.exe" --help
    ```
 
+### Troubleshooting: timeouts, "EOF" or TLS errors behind a proxy
+
+If a login or scan fails with `TLS handshake timeout`, `EOF`, or `proxyconnect`, run:
+
+```bash
+armis-cli mcp doctor --network
+```
+
+This works without any MCP install. It connects to the Armis API the way the CLI does and prints each step with timings: the proxy in use and where that setting comes from, DNS, the TCP connection, the TLS handshake, and who issued the server certificate. When a proxy is in use it also tries a direct connection, so you can see whether the proxy is the problem. No credentials are sent. Plain `armis-cli mcp doctor` runs the same check as its "CLI network" row. Include the output when you ask for help.
+
+How the CLI chooses a proxy:
+
+- If `HTTPS_PROXY` or `HTTP_PROXY` is set, the CLI uses it, and `NO_PROXY` exempts hosts.
+- Otherwise on Windows it uses the system proxy settings, including a PAC file. If a PAC file lists several proxies, only the first one is used. On macOS and Linux it uses only the environment variables. A macOS build compiled with cgo also reads the macOS system proxy settings; the released binaries are built without cgo.
+
+Options:
+
+| Variable | Effect |
+|---|---|
+| `ARMIS_NO_SYSTEM_PROXY=1` | Ignore the operating system's proxy settings and use only `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`. It does not bypass a proxy that comes from `HTTPS_PROXY` or `HTTP_PROXY`; to do that, unset them or add the host to `NO_PROXY`. Use it only where a direct connection is allowed. |
+| `ARMIS_TLS_HANDSHAKE_TIMEOUT=30s` | Wait longer than the default 10 seconds for the TLS handshake (a Go duration, or a number of seconds, up to 5 minutes; larger values are capped and invalid values are reported and ignored). Useful when a proxy inspects traffic slowly. |
+
 ### Shell Completion
 
 `armis-cli` ships tab-completion for commands, subcommands, and flag values (e.g.
@@ -1180,6 +1202,8 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 | `ARMIS_PAGE_LIMIT` | Results pagination size (default: 500) |
 | `ARMIS_THEME` | Terminal background theme: auto, dark, light (default: auto) |
 | `ARMIS_NO_UPDATE_CHECK` | Disable automatic update checking |
+| `ARMIS_NO_SYSTEM_PROXY` | Ignore the operating system's proxy settings (see [timeouts behind a proxy](#troubleshooting-timeouts-eof-or-tls-errors-behind-a-proxy)) |
+| `ARMIS_TLS_HANDSHAKE_TIMEOUT` | TLS handshake limit, default 10s (Go duration or seconds) |
 
 ---
 

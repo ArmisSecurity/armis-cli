@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -267,6 +268,11 @@ type DoctorOptions struct {
 	// credentials against the Armis API. Injected by the caller so this
 	// package stays independent of the auth client.
 	AuthCheck func(ctx context.Context, clientID, clientSecret string) error
+	// NetCheck, when set and Handshake is true, checks the connection to the
+	// Armis API with the CLI's own HTTP stack and writes the step-by-step
+	// report to w. It returns whether the API was reachable. Injected by the
+	// caller so this package stays independent of the transport.
+	NetCheck func(ctx context.Context, url string, w io.Writer) bool
 	// Deep, when true (and Handshake is true), also calls the scanner's
 	// scan_file on a small throwaway file. Unlike debug_config, scan_file runs
 	// git and calls the Armis API, so it finds stalls on the real scan path.
@@ -511,8 +517,30 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 		// loading .env itself, which it does from its own directory.
 		d.probe(component, "", serverLaunch{Command: pythonPath, Args: []string{serverPy}, EnvFile: ei.EnvFilePath(), Env: env})
 		checkServerNetwork(d, component, pythonPath, env, ei.EnvFilePath(), serverAPIURL(env), false)
+		checkCLINetwork(d, component, serverAPIURL(env))
 		checkAuth(d, component, env)
 	}
+}
+
+// checkCLINetwork runs the same connection check as 'armis-cli mcp doctor --network'. The
+// server's Python runtime and the CLI resolve proxies differently (the CLI
+// follows the Windows system proxy and PAC file, Python does not), so one can
+// reach the API while the other cannot.
+func checkCLINetwork(d *doctorRun, component, url string) {
+	if d.opts.NetCheck == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*networkProbeTimeout+5*time.Second)
+	defer cancel()
+	var report bytes.Buffer
+	ok := d.opts.NetCheck(ctx, url, &report)
+	d.report.artifact(sanitizeArtifactName(component)+"/cli-net-check.txt", report.String())
+	if !ok {
+		d.report.add(component, "CLI network", StatusFail, url+" is not reachable with the CLI's network settings").
+			hint("Run 'armis-cli mcp doctor --network' for the step-by-step report: which proxy the CLI uses, where the TLS handshake stops, and whether a direct connection works. The same report is in the support bundle.")
+		return
+	}
+	d.report.add(component, "CLI network", StatusOK, url+" reachable from the CLI").short("CLI reaches API")
 }
 
 // checkVenvBase verifies the interpreter a venv was created from still
@@ -726,6 +754,8 @@ func checkAuth(d *doctorRun, component string, env map[string]string) {
 			c.hint("The client ID/secret were rejected. They may be revoked, expired, or for another tenant. " + credentialsHint)
 		case strings.Contains(lower, "x509") || strings.Contains(lower, "certificate"):
 			c.hint("TLS verification failed. Your network may be intercepting HTTPS; ask IT for the corporate root CA to be installed in the Windows certificate store.")
+		case strings.Contains(lower, "tls handshake timeout") || strings.Contains(lower, "proxyconnect"):
+			c.hint("The CLI's connection to the API stalled at a proxy or firewall. Run 'armis-cli mcp doctor --network' to see which proxy the CLI uses and whether a direct connection works.")
 		default:
 			c.hint("Check network access to the Armis API from this machine (proxy, firewall, VPN).")
 		}
