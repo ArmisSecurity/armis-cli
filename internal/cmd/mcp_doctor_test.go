@@ -284,3 +284,54 @@ func TestMCPDoctorRejectsIgnoredWatchFlags(t *testing.T) {
 		t.Errorf("--watch with --verbose: err = %v", err)
 	}
 }
+
+func TestMCPDoctorNetworkFlag(t *testing.T) {
+	if f := mcpDoctorCmd.Flags().Lookup("network"); f == nil || f.DefValue != "false" {
+		t.Fatalf("mcp doctor needs a --network flag defaulting to false, got %v", f)
+	}
+
+	set := func(t *testing.T, name, value string) {
+		t.Helper()
+		if err := mcpDoctorCmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			f := mcpDoctorCmd.Flags().Lookup(name)
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		})
+	}
+
+	t.Run("cannot be combined with other modes", func(t *testing.T) {
+		set(t, "network", "true")
+		set(t, "fix", "true")
+		err := runMCPDoctor(mcpDoctorCmd, nil)
+		if err == nil || !strings.Contains(err.Error(), "remove --fix") {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("prints a plain report only", func(t *testing.T) {
+		set(t, "network", "true")
+		set(t, "format", "json")
+		err := runMCPDoctor(mcpDoctorCmd, nil)
+		if err == nil || !strings.Contains(err.Error(), "plain-text report") {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("reports an unreachable API without needing an install", func(t *testing.T) {
+		t.Setenv("ARMIS_API_URL", "https://127.0.0.1:1")
+		set(t, "network", "true")
+		var out strings.Builder
+		mcpDoctorCmd.SetErr(&out)
+		t.Cleanup(func() { mcpDoctorCmd.SetErr(nil) })
+		err := runMCPDoctor(mcpDoctorCmd, nil)
+		if err == nil || !strings.Contains(err.Error(), "could not be reached") {
+			t.Errorf("err = %v", err)
+		}
+		if !strings.Contains(out.String(), "Armis connectivity check") || !strings.Contains(out.String(), "The API is not reachable") {
+			t.Errorf("report = %q", out.String())
+		}
+	})
+}

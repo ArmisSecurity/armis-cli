@@ -13,6 +13,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/install"
+	"github.com/ArmisSecurity/armis-cli/internal/netcheck"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +28,7 @@ var (
 	mcpDoctorVerbose     bool
 	mcpDoctorDeep        bool
 	mcpDoctorWatch       bool
+	mcpDoctorNetwork     bool
 	mcpDoctorStuckAfter  time.Duration
 )
 
@@ -44,6 +46,9 @@ Unless --no-handshake is set, it also:
   - checks that the client credentials are accepted by the Armis API
   - checks that the server's own Python runtime can reach the Armis API,
     which catches proxy and TLS-inspection problems the CLI itself doesn't hit
+  - checks that the CLI can reach the Armis API. The CLI follows the Windows
+    system proxy and PAC file; the server's Python runtime does not, so one
+    can work while the other fails
 
 For VS Code (GitHub Copilot) it additionally checks VS Code Insiders and
 VSCodium, per-profile and workspace configs, duplicate entries, settings and
@@ -65,6 +70,14 @@ diagnostic call misses. It sends that file's content, a two-line function, to
 the Armis API. When a call stops answering, the doctor records which child
 process the server was waiting on and, for Python servers on macOS and Linux,
 a stack dump.
+
+--network runs only the CLI's connection check, with no MCP install needed. It
+connects to the Armis API the way the CLI does and reports each step with
+timings: which proxy is used and where that setting comes from, DNS, the TCP
+connection, the TLS handshake, and who issued the server certificate. When a
+proxy is in use it also tries a direct connection, so you can see whether the
+proxy is the problem. No credentials are sent. Use it when logins or scans fail
+with timeouts, "EOF", or TLS errors.
 
 --watch does not run the checks. It follows the scanner's server.log and prints
 each tool call as it happens, so you can reproduce the problem in your editor.
@@ -90,6 +103,9 @@ Exits non-zero if any check fails.`,
   # Also run a real scan call to find stalls on the scan path
   armis-cli mcp doctor --deep
 
+  # Only check how the CLI reaches the Armis API (proxy, TLS, certificates)
+  armis-cli mcp doctor --network
+
   # Follow the server log while you reproduce the problem in your editor
   armis-cli mcp doctor --watch
 
@@ -109,6 +125,7 @@ func init() {
 	mcpDoctorCmd.Flags().StringVar(&mcpDoctorBundlePath, "bundle-path", "", "Where to write the support bundle (implies --bundle; default: ./armis-mcp-doctor-<timestamp>.zip)")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorDeep, "deep", false, "Also call scan_file on a throwaway file to test the real scan path (sends a two-line snippet to the Armis API)")
 	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorWatch, "watch", false, "Follow the scanner's server.log and flag tool calls that stay open, instead of running the checks")
+	mcpDoctorCmd.Flags().BoolVar(&mcpDoctorNetwork, "network", false, "Only check how the CLI reaches the Armis API (proxy, TLS handshake, certificates); no MCP install needed")
 	mcpDoctorCmd.Flags().DurationVar(&mcpDoctorStuckAfter, "watch-stuck-after", install.DefaultWatchStuckAfter, "With --watch: how long a tool call may stay open before it is reported as stuck")
 	mcpDoctorCmd.Flags().BoolVarP(&mcpDoctorVerbose, "verbose", "v", false, "List every check, including passing ones and informational notes")
 }
@@ -120,6 +137,9 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid --format value %q: must be plain or json", mcpDoctorFormat)
 	}
 
+	if mcpDoctorNetwork {
+		return runMCPDoctorNetwork(cmd)
+	}
 	if mcpDoctorWatch {
 		return runMCPDoctorWatch(cmd)
 	}
@@ -135,6 +155,9 @@ func runMCPDoctor(cmd *cobra.Command, _ []string) error {
 		Deep:      mcpDoctorDeep,
 		Timeout:   mcpDoctorTimeout,
 		AuthCheck: doctorAuthCheck,
+		NetCheck: func(ctx context.Context, url string, w io.Writer) bool {
+			return netcheck.Run(ctx, netcheck.Options{BaseURL: url, Out: w})
+		},
 	}
 	stderr := cmd.ErrOrStderr()
 
@@ -483,4 +506,28 @@ func statusSymbol(s install.CheckStatus, accessible bool) string {
 	default:
 		return lipgloss.NewStyle().Foreground(cmdutil.BrandError).Render("✗")
 	}
+}
+
+// runMCPDoctorNetwork runs only the CLI connection check. It does not need an
+// MCP install, because the failures it finds (proxy, TLS inspection, firewall)
+// break logins and scans as well.
+func runMCPDoctorNetwork(cmd *cobra.Command) error {
+	for name, set := range map[string]bool{
+		"--watch":        mcpDoctorWatch,
+		"--fix":          mcpDoctorFix,
+		"--bundle":       mcpDoctorBundle || mcpDoctorBundlePath != "",
+		"--deep":         mcpDoctorDeep,
+		"--no-handshake": mcpDoctorNoHandshake,
+	} {
+		if set {
+			return fmt.Errorf("--network runs on its own; remove %s", name)
+		}
+	}
+	if mcpDoctorFormat != agentFormatPlain {
+		return fmt.Errorf("--network prints a plain-text report; remove --format")
+	}
+	if !netcheck.Run(cmd.Context(), netcheck.Options{BaseURL: getAPIBaseURL(), Out: cmd.ErrOrStderr()}) {
+		return fmt.Errorf("the Armis API could not be reached with the current network settings")
+	}
+	return nil
 }

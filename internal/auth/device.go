@@ -289,7 +289,7 @@ func (c *DeviceClient) postForm(ctx context.Context, path string, form url.Value
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // endpoint built from validated config, not user input
 	if err != nil {
-		return nil, 0, fmt.Errorf("request failed: %w", annotateTransportError(err))
+		return nil, 0, fmt.Errorf("request failed: %w", annotateTransportError(httpclient.ExplainTransportError(err, req.URL)))
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 

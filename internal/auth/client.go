@@ -191,9 +191,9 @@ func (c *AuthClient) Authenticate(ctx context.Context, clientID, clientSecret st
 		// so log it here when debugging. The URL is non-sensitive; the request
 		// body (which carries credentials) is intentionally never logged.
 		if c.debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Auth transport error to %s: %v\n", authEndpoint, err)
+			fmt.Fprintf(os.Stderr, "[DEBUG] Auth transport error to %s (%s): %v\n", authEndpoint, httpclient.ProxyUsedFor(req.URL.Host), err)
 		}
-		return nil, fmt.Errorf("authentication request failed: %w", annotateTransportError(err))
+		return nil, fmt.Errorf("authentication request failed: %w", annotateTransportError(httpclient.ExplainTransportError(err, req.URL)))
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 

@@ -197,7 +197,7 @@ func (c *IdpConfigClient) send(ctx context.Context, method, path string, body an
 
 	resp, err := c.httpClient.Do(httpReq) //nolint:gosec // endpoint built from validated config, not user input
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", annotateTransportError(err))
+		return nil, fmt.Errorf("request failed: %w", annotateTransportError(httpclient.ExplainTransportError(err, httpReq.URL)))
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 

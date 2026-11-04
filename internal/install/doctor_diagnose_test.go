@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +237,54 @@ func TestDedupeRemediations(t *testing.T) {
 	}
 	if r.Checks[3].Remediation != "Run: x" {
 		t.Error("short hints should stay as they are")
+	}
+}
+
+func TestCheckCLINetwork(t *testing.T) {
+	t.Run("skipped without a NetCheck hook", func(t *testing.T) {
+		d := newDoctorRun(DoctorOptions{Handshake: true})
+		checkCLINetwork(d, "scanner", "https://moose.armis.com/api/v1")
+		if len(d.report.Checks) != 0 || len(d.report.Artifacts) != 0 {
+			t.Errorf("expected no output, got %+v", d.report)
+		}
+	})
+
+	t.Run("reachable", func(t *testing.T) {
+		d := newDoctorRun(DoctorOptions{Handshake: true, NetCheck: func(_ context.Context, _ string, w io.Writer) bool {
+			_, _ = io.WriteString(w, "report text")
+			return true
+		}})
+		checkCLINetwork(d, "scanner", "https://moose.armis.com/api/v1")
+		wantStatus(t, checkMap(d.report), "scanner/CLI network", StatusOK)
+		if got := d.report.Artifacts["scanner/cli-net-check.txt"]; got != "report text" {
+			t.Errorf("artifact = %q", got)
+		}
+	})
+
+	t.Run("unreachable points at the network flag and keeps the report", func(t *testing.T) {
+		d := newDoctorRun(DoctorOptions{Handshake: true, NetCheck: func(_ context.Context, _ string, w io.Writer) bool {
+			_, _ = io.WriteString(w, "TLS handshake timeout")
+			return false
+		}})
+		checkCLINetwork(d, "scanner", "https://moose.armis.com/api/v1")
+		c := wantStatus(t, checkMap(d.report), "scanner/CLI network", StatusFail)
+		if !strings.Contains(c.Remediation, "armis-cli mcp doctor --network") {
+			t.Errorf("remediation = %q", c.Remediation)
+		}
+		if d.report.Artifacts["scanner/cli-net-check.txt"] != "TLS handshake timeout" {
+			t.Errorf("artifacts = %v", d.report.Artifacts)
+		}
+	})
+}
+
+func TestCheckAuthHintsAtNetworkCheckOnHandshakeTimeout(t *testing.T) {
+	t.Setenv("ARMIS_DEFAULT_AUTH_METHOD", "")
+	d := newDoctorRun(DoctorOptions{Handshake: true, AuthCheck: func(context.Context, string, string) error {
+		return errors.New(`Post "https://moose.armis.com/api/v1/auth/token": net/http: TLS handshake timeout`)
+	}})
+	checkAuth(d, "scanner", map[string]string{"ARMIS_CLIENT_ID": "id", "ARMIS_CLIENT_SECRET": "s"})
+	c := wantStatus(t, checkMap(d.report), "scanner/authentication", StatusFail)
+	if !strings.Contains(c.Remediation, "armis-cli mcp doctor --network") {
+		t.Errorf("remediation = %q", c.Remediation)
 	}
 }
