@@ -400,6 +400,61 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("forwards project_id and trigger to /scan when publishing", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if req.ProjectID != "p_123" {
+			t.Errorf("project_id = %q, want %q", req.ProjectID, "p_123")
+		}
+		if req.Trigger != "cli_ci" {
+			t.Errorf("trigger = %q, want %q", req.Trigger, "cli_ci")
+		}
+	})
+
+	t.Run("omits project_id and trigger for a local scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		// A scan that is not published must send exactly the pre-PPSC-1589 shape.
+		for _, key := range []string{"project_id", "trigger"} {
+			if strings.Contains(string(body), key) {
+				t.Errorf("expected %s to be omitted, got body: %s", key, body)
+			}
+		}
+	})
+
 	t.Run("upload error: /presigned-url 4xx", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)

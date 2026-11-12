@@ -167,6 +167,11 @@ type IngestScanStartRequest struct {
 	RepoName  string `json:"repo_name,omitempty"`
 	GitSHA    string `json:"git_sha,omitempty"`
 	OriginSHA string `json:"origin_sha,omitempty"`
+	// ProjectID records the scan as a run of this AppSec project, and Trigger
+	// stamps the run ("cli_ci" or "cli_dev", PPSC-1589). Both are omitted
+	// unless the scan is published, so a local scan's request is unchanged.
+	ProjectID string `json:"project_id,omitempty"`
+	Trigger   string `json:"trigger,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.
