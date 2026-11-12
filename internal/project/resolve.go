@@ -92,8 +92,13 @@ func (e *CaseMismatchError) Error() string {
 // which the API labels with source "cli" — so a folder that is not a git
 // repository gets the same kind of project as one that is.
 //
-// The name must already have passed ValidateName.
+// The name is validated with ValidateName first, whatever the caller already
+// checked, so nothing invalid is ever looked up or created.
 func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolution, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+
 	found, err := lookup(ctx, client, tenantID, name)
 	if err != nil {
 		return nil, explain(err, tenantID, "look up")

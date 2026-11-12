@@ -216,9 +216,11 @@ func IsValidProjectID(id string) bool {
 }
 
 // appSecURL builds the URL of an AppSec API call on the configured base URL.
-// The path must be one of the allowlisted routes, and the result is checked to
-// stay on the base URL's scheme and host, so no path can send the request (or
-// its credentials) anywhere else: a path starting "@evil.example", say, would
+// The path must be one of the allowlisted routes, the URL must use HTTPS
+// (every AppSec call carries credentials; loopback is allowed for local
+// development and tests, as everywhere in this client), and the result must
+// stay on the base URL's scheme and host. No path can send the request, or its
+// credentials, anywhere else: a path starting "@evil.example", say, would
 // otherwise turn the base host into userinfo.
 func (c *Client) appSecURL(path string, params url.Values) (string, error) {
 	if !appSecPathPattern.MatchString(path) {
@@ -231,6 +233,9 @@ func (c *Client) appSecURL(path string, params url.Values) (string, error) {
 	u, err := url.Parse(strings.TrimSuffix(c.baseURL, "/") + path)
 	if err != nil {
 		return "", fmt.Errorf("invalid AppSec API URL: %w", err)
+	}
+	if !strings.EqualFold(u.Scheme, schemeHTTPS) && !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("refusing to call the AppSec API over %q: HTTPS is required to protect credentials", u.Scheme)
 	}
 	if u.Scheme != base.Scheme || u.Host != base.Host || u.User != nil {
 		return "", fmt.Errorf("AppSec API URL %q does not stay on the API host %q", u.Redacted(), base.Host)

@@ -338,6 +338,21 @@ func TestResolve_IncompleteLookupFallsBackToCreate(t *testing.T) {
 	})
 }
 
+// TestResolve_ValidatesTheName: Resolve checks the name itself, so a caller
+// that skipped ValidateName still cannot look up or create an invalid project.
+func TestResolve_ValidatesTheName(t *testing.T) {
+	for _, name := range []string{"", "my project", "--sync", "null", strings.Repeat("a", 65)} {
+		f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+		_, err := Resolve(context.Background(), f, testTenant, name)
+		if !errors.Is(err, ErrInvalidName) {
+			t.Errorf("Resolve(%q) err = %v, want ErrInvalidName", name, err)
+		}
+		if len(f.listCalls)+len(f.createCalls)+len(f.getCalls) != 0 {
+			t.Errorf("Resolve(%q) must not call the API", name)
+		}
+	}
+}
+
 func TestResolve_ExplainsAPIFailures(t *testing.T) {
 	tests := []struct {
 		name      string

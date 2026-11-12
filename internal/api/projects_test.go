@@ -352,6 +352,23 @@ func TestAppSecURL_StaysOnTheAPIHost(t *testing.T) {
 	}
 }
 
+// TestAppSecURL_RequiresHTTPS: credentials ride on every AppSec call, so a
+// plain-HTTP base URL is refused (loopback stays allowed for tests). NewClient
+// already rejects one; this guards the client built any other way.
+func TestAppSecURL_RequiresHTTPS(t *testing.T) {
+	t.Parallel()
+	insecure := &Client{baseURL: "http://moose.example.com"}
+	if got, err := insecure.appSecURL(projectsPath, nil); err == nil || !strings.Contains(err.Error(), "HTTPS is required") {
+		t.Errorf("appSecURL over plain HTTP = %q, %v; want an HTTPS error", got, err)
+	}
+	for _, base := range []string{"http://127.0.0.1:8080", "http://localhost:9000", "https://moose.example.com"} {
+		c := &Client{baseURL: base}
+		if _, err := c.appSecURL(projectsPath, nil); err != nil {
+			t.Errorf("appSecURL on %s: %v", base, err)
+		}
+	}
+}
+
 func TestIsValidProjectID(t *testing.T) {
 	t.Parallel()
 	for id, want := range map[string]bool{
