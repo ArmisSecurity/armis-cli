@@ -149,6 +149,7 @@ func (c *Client) GetProject(ctx context.Context, tenantID, projectID string) (*m
 // doAppSec sends one AppSec API request and decodes a wantStatus response into
 // out. Any other status is returned as an *AppSecError.
 func (c *Client) doAppSec(ctx context.Context, method, path string, params url.Values, body any, wantStatus int, out any) error {
+	// armis:ignore cwe:918 reason:baseURL is operator config (ARMIS_API_URL/--dev/--region) validated in NewClient, as for every client.go endpoint; appSecURL pins HTTPS, the host and an allowlisted route
 	endpoint, err := c.appSecURL(path, params)
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func (c *Client) doAppSec(ctx context.Context, method, path string, params url.V
 		reqBody = bytes.NewReader(bodyBytes)
 	}
 
-	// armis:ignore cwe:918 reason:baseURL validated in NewClient (HTTPS enforced); path is a constant plus a PathEscaped id
+	// armis:ignore cwe:918 reason:endpoint built by appSecURL from the NewClient-validated baseURL, pinned to HTTPS, the API host and an allowlisted route with a validated project id
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
