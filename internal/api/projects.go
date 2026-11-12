@@ -201,7 +201,7 @@ func (c *Client) doAppSec(ctx context.Context, method, path string, params url.V
 	return nil
 }
 
-// projectIDPattern matches an AppSec project id. Ids are opaque ("p_6af5..."),
+// projectIDPattern matches an AppSec project id. Ids are opaque ("p_507f..."),
 // so this allows any id the API mints while keeping path syntax ('/', '.',
 // '?', '%', '#') out of the URL.
 var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)

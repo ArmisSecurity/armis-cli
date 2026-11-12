@@ -670,10 +670,10 @@ downloaded. With `--format json` it writes a record of the accepted scan:
 
 ```json
 {
-  "scan_id": "6af55e7e4ce8618327fdf6ac",
+  "scan_id": "507f1f77bcf86cd799439011",
   "status": "accepted",
   "project": {
-    "project_id": "p_6af55c114ce8618327fdf6a7",
+    "project_id": "p_507f1f77bcf86cd799439012",
     "name": "checkout-service",
     "created": false,
     "trigger": "cli_ci"

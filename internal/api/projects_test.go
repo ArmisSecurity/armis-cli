@@ -355,7 +355,7 @@ func TestAppSecURL_StaysOnTheAPIHost(t *testing.T) {
 func TestIsValidProjectID(t *testing.T) {
 	t.Parallel()
 	for id, want := range map[string]bool{
-		"p_6af55c114ce8618327fdf6a7": true,
+		"p_507f1f77bcf86cd799439012": true,
 		"p-1":                        true,
 		"":                           false,
 		"..":                         false,
