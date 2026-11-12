@@ -13,6 +13,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/image"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -225,13 +226,15 @@ func runScanShorthand(cmd *cobra.Command, args []string) error {
 	// A target the repository scan cannot find is most likely a mistyped
 	// subcommand or an image reference, so say which. Any lookup failure but a
 	// permission error counts: on Windows the ':' of an image reference makes
-	// the name invalid rather than missing.
+	// the name invalid rather than missing. Only a tag or digest ("nginx:1.27")
+	// that really parses as an image reference gets the image hint, so a
+	// missing folder or a Windows path (`C:\code\app`) does not.
 	var targetErr *scanTargetError
 	if errors.As(err, &targetErr) && !os.IsPermission(targetErr.Err) {
 		if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
 			return fmt.Errorf("%w (did you mean 'armis-cli scan %s'?)", err, suggestions[0])
 		}
-		if strings.ContainsAny(args[0], ":@") {
+		if strings.ContainsAny(args[0], ":@") && image.IsImageReference(args[0]) {
 			return fmt.Errorf("%w (to scan a container image, use 'armis-cli scan image %s')", err, args[0])
 		}
 	}

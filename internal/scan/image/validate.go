@@ -8,6 +8,14 @@ import (
 	"github.com/distribution/reference"
 )
 
+// IsImageReference reports whether raw is a container image reference that
+// `scan image` would accept (for example "nginx:1.27"). A filesystem path such
+// as `C:\code\app` is not one.
+func IsImageReference(raw string) bool {
+	_, err := validateImageName(raw)
+	return err == nil
+}
+
 func validateImageName(raw string) (string, error) {
 	for _, r := range raw {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {

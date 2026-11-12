@@ -687,6 +687,18 @@ func TestScanShorthand(t *testing.T) {
 		}
 	})
 
+	// A Windows drive path has a ':' but is not an image reference (found by
+	// CI on windows-latest, where t.TempDir() paths start with "C:\").
+	t.Run("a missing Windows path gets no image hint", func(t *testing.T) {
+		setupProjectScan(t, testutil.MockAPIConfig{})
+		for _, p := range []string{`C:\no\such\dir`, `c:/no/such/dir`} {
+			err := scanCmd.RunE(scanCmd, []string{p})
+			if err == nil || strings.Contains(err.Error(), "scan image") {
+				t.Errorf("RunE(%q) err = %v, want no image hint", p, err)
+			}
+		}
+	})
+
 	t.Run("image reference gets a hint", func(t *testing.T) {
 		setupProjectScan(t, testutil.MockAPIConfig{})
 		err := scanCmd.RunE(scanCmd, []string{"nginx:1.27"})
