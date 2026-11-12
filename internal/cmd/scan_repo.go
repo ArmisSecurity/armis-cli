@@ -98,6 +98,23 @@ func addRepoScanFlags(cmd *cobra.Command) {
 	cmd.MarkFlagsMutuallyExclusive("sync", "async")
 }
 
+// scanTargetError is a scan target that could not be looked up. Its message is
+// what the repository scan has always printed; the type lets the `scan <path>`
+// shorthand add a hint about subcommands and image references.
+type scanTargetError struct {
+	Path string
+	Err  error
+}
+
+func (e *scanTargetError) Error() string {
+	if os.IsNotExist(e.Err) {
+		return "path does not exist: " + e.Path
+	}
+	return fmt.Sprintf("cannot access path %s: %v", e.Path, e.Err)
+}
+
+func (e *scanTargetError) Unwrap() error { return e.Err }
+
 // runRepoScan is the RunE of `scan repo` and of the `scan <path>` shorthand.
 func runRepoScan(cmd *cobra.Command, args []string) error {
 	repoPath := "."
@@ -116,10 +133,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
 	info, err := os.Stat(repoPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("path does not exist: %s", repoPath)
-		}
-		return fmt.Errorf("cannot access path %s: %w", repoPath, err)
+		return &scanTargetError{Path: repoPath, Err: err}
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("path is not a directory: %s", repoPath)

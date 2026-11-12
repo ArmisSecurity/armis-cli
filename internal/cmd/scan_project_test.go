@@ -667,11 +667,20 @@ func TestScanShorthand(t *testing.T) {
 		}
 	})
 
-	t.Run("a path with .. is rejected before any request", func(t *testing.T) {
+	t.Run("a missing path fails as scan repo does, before any request", func(t *testing.T) {
 		env := setupProjectScan(t, testutil.MockAPIConfig{})
-		err := scanCmd.RunE(scanCmd, []string{"../elsewhere"})
-		if err == nil || !strings.Contains(err.Error(), "invalid repository path") {
-			t.Fatalf("err = %v, want an invalid-path error", err)
+		missing := filepath.Join(t.TempDir(), "missing")
+		shortErr := scanCmd.RunE(scanCmd, []string{missing})
+		repoErr := scanRepoCmd.RunE(scanRepoCmd, []string{missing})
+		if shortErr == nil || repoErr == nil || shortErr.Error() != repoErr.Error() {
+			t.Fatalf("shorthand err = %v, scan repo err = %v; want the same error", shortErr, repoErr)
+		}
+		if !strings.Contains(shortErr.Error(), "path does not exist: "+missing) {
+			t.Errorf("err = %v", shortErr)
+		}
+		var targetErr *scanTargetError
+		if !errors.As(shortErr, &targetErr) || !errors.Is(shortErr, os.ErrNotExist) {
+			t.Errorf("err should be a scanTargetError wrapping os.ErrNotExist: %v", shortErr)
 		}
 		if reqs := env.rec.Requests(); len(reqs) != 0 {
 			t.Errorf("no request should be made: %d", len(reqs))

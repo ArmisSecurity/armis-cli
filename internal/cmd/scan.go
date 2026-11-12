@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
-	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -220,28 +220,22 @@ func runScanShorthand(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	// Validate the target as the repository scan will (util.SanitizePath
-	// rejects ".." segments), failing before any authentication.
-	target, err := util.SanitizePath(args[0])
-	if err != nil {
-		return fmt.Errorf("invalid repository path: %w", err)
-	}
+	err := runRepoScan(cmd, args)
 
-	// A target that is not a path is most likely a mistyped subcommand or an
-	// image reference, so say which rather than only "path does not exist".
-	// Any failure but a permission error counts: on Windows the ':' of an
-	// image reference makes the name invalid rather than missing.
-	// armis:ignore cwe:22 reason:read-only existence check on a CLI argument already validated by util.SanitizePath
-	if _, err := os.Stat(target); err != nil && !os.IsPermission(err) {
+	// A target the repository scan cannot find is most likely a mistyped
+	// subcommand or an image reference, so say which. Any lookup failure but a
+	// permission error counts: on Windows the ':' of an image reference makes
+	// the name invalid rather than missing.
+	var targetErr *scanTargetError
+	if errors.As(err, &targetErr) && !os.IsPermission(targetErr.Err) {
 		if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
-			return fmt.Errorf("path does not exist: %s (did you mean 'armis-cli scan %s'?)", args[0], suggestions[0])
+			return fmt.Errorf("%w (did you mean 'armis-cli scan %s'?)", err, suggestions[0])
 		}
 		if strings.ContainsAny(args[0], ":@") {
-			return fmt.Errorf("path does not exist: %s (to scan a container image, use 'armis-cli scan image %s')",
-				args[0], args[0])
+			return fmt.Errorf("%w (to scan a container image, use 'armis-cli scan image %s')", err, args[0])
 		}
 	}
-	return runRepoScan(cmd, args)
+	return err
 }
 
 // anyFlagChanged reports whether any flag of cmd (including inherited ones)
