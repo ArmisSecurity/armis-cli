@@ -12,6 +12,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -219,10 +220,19 @@ func runScanShorthand(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
+	// Validate the target as the repository scan will (util.SanitizePath
+	// rejects ".." segments), failing before any authentication.
+	target, err := util.SanitizePath(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid repository path: %w", err)
+	}
+
 	// A target that is not a path is most likely a mistyped subcommand or an
 	// image reference, so say which rather than only "path does not exist".
-	// armis:ignore cwe:22 reason:read-only existence check on a direct CLI argument
-	if _, err := os.Stat(args[0]); os.IsNotExist(err) {
+	// Any failure but a permission error counts: on Windows the ':' of an
+	// image reference makes the name invalid rather than missing.
+	// armis:ignore cwe:22 reason:read-only existence check on a CLI argument already validated by util.SanitizePath
+	if _, err := os.Stat(target); err != nil && !os.IsPermission(err) {
 		if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
 			return fmt.Errorf("path does not exist: %s (did you mean 'armis-cli scan %s'?)", args[0], suggestions[0])
 		}

@@ -667,6 +667,17 @@ func TestScanShorthand(t *testing.T) {
 		}
 	})
 
+	t.Run("a path with .. is rejected before any request", func(t *testing.T) {
+		env := setupProjectScan(t, testutil.MockAPIConfig{})
+		err := scanCmd.RunE(scanCmd, []string{"../elsewhere"})
+		if err == nil || !strings.Contains(err.Error(), "invalid repository path") {
+			t.Fatalf("err = %v, want an invalid-path error", err)
+		}
+		if reqs := env.rec.Requests(); len(reqs) != 0 {
+			t.Errorf("no request should be made: %d", len(reqs))
+		}
+	})
+
 	t.Run("image reference gets a hint", func(t *testing.T) {
 		setupProjectScan(t, testutil.MockAPIConfig{})
 		err := scanCmd.RunE(scanCmd, []string{"nginx:1.27"})
