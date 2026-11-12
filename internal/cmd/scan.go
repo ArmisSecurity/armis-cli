@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -56,10 +58,21 @@ var validSBOMFormats = []string{scan.SBOMFormatCycloneDX, scan.SBOMFormatSPDX}
 func defaultFailOn() []string { return []string{"CRITICAL"} }
 
 var scanCmd = &cobra.Command{
-	Use:   "scan",
+	Use:   "scan [path]",
 	Short: "Scan artifacts for security vulnerabilities",
-	Long:  `Scan repositories and container images for security vulnerabilities, secrets, and license risks.`,
-	Example: `  # Scan a repository
+	Long: `Scan repositories and container images for security vulnerabilities, secrets, and license risks.
+
+'armis-cli scan <path>' scans a folder: it is a shorthand for 'armis-cli scan repo <path>'
+and takes the same flags. Without --project the scan is local-only (findings and a
+--fail-on exit code, nothing published); with --project a CI run is published to
+that project, and a developer-machine run is published only with --report.`,
+	Example: `  # Scan the current folder (shorthand for 'scan repo .')
+  armis-cli scan .
+
+  # Publish a CI scan to a project, created on first use
+  armis-cli scan . --project checkout-service
+
+  # Scan a repository
   armis-cli scan repo /path/to/repo
 
   # Scan a container image
@@ -193,7 +206,65 @@ func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io
 	return output.CheckExit(result, failOnSeverities, exitCode)
 }
 
+// runScanShorthand runs `armis-cli scan <path>` exactly as `armis-cli scan repo
+// <path>`. With no path it prints the help, as `scan` always has, unless flags
+// were given: then it fails, so a CI step like `armis-cli scan --project x`
+// cannot pass without scanning anything.
+func runScanShorthand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		if anyFlagChanged(cmd) {
+			return fmt.Errorf("missing scan target: name the folder to scan (for example 'armis-cli scan .'), " +
+				"or use 'armis-cli scan repo|image|sbom|status'")
+		}
+		return cmd.Help()
+	}
+
+	// A target that is not a path is most likely a mistyped subcommand or an
+	// image reference, so say which rather than only "path does not exist".
+	// armis:ignore cwe:22 reason:read-only existence check on a direct CLI argument
+	if _, err := os.Stat(args[0]); os.IsNotExist(err) {
+		if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
+			return fmt.Errorf("path does not exist: %s (did you mean 'armis-cli scan %s'?)", args[0], suggestions[0])
+		}
+		if strings.ContainsAny(args[0], ":@") {
+			return fmt.Errorf("path does not exist: %s (to scan a container image, use 'armis-cli scan image %s')",
+				args[0], args[0])
+		}
+	}
+	return runRepoScan(cmd, args)
+}
+
+// anyFlagChanged reports whether any flag of cmd (including inherited ones)
+// was set on the command line. Values that came from environment-derived
+// defaults do not count.
+func anyFlagChanged(cmd *cobra.Command) bool {
+	changed := false
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			changed = true
+		}
+	})
+	return changed
+}
+
 func init() {
+	// `scan <path>` is a repository scan; see runScanShorthand. Wired here
+	// rather than in the literal, which would make scanCmd's initializer
+	// depend on functions that reference it.
+	scanCmd.Args = cobra.MaximumNArgs(1)
+	scanCmd.RunE = runScanShorthand
+	// cobra only applies its default distance (2) on its own unknown-command
+	// path; runScanShorthand calls SuggestionsFor directly, so set it here.
+	scanCmd.SuggestionsMinimumDistance = 2
+	// Complete folders alongside the subcommand names for `scan <TAB>`.
+	scanCmd.ValidArgsFunction = func(_ *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveFilterDirs
+	}
+	addRepoScanFlags(scanCmd)
+
 	// Scan-output flags. These were previously root persistent flags but only
 	// apply to the scan subtree, so they are scoped here to keep them out of the
 	// --help of non-scan commands (hook, supply-chain, install, agent-detection).

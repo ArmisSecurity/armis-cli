@@ -22,8 +22,9 @@ func TestScanCmd(t *testing.T) {
 		if scanCmd == nil {
 			t.Fatal("scanCmd should not be nil")
 		}
-		if scanCmd.Use != "scan" {
-			t.Errorf("Expected Use 'scan', got %s", scanCmd.Use)
+		// `scan <path>` is a shorthand for `scan repo <path>` (PPSC-1589).
+		if scanCmd.Use != "scan [path]" {
+			t.Errorf("Expected Use 'scan [path]', got %s", scanCmd.Use)
 		}
 	})
 
@@ -684,7 +685,8 @@ func TestRootCmd(t *testing.T) {
 	t.Run("root command has scan subcommand", func(t *testing.T) {
 		found := false
 		for _, cmd := range rootCmd.Commands() {
-			if cmd.Use == "scan" {
+			// Name(), not Use: Use carries the "[path]" argument.
+			if cmd.Name() == "scan" {
 				found = true
 				break
 			}
