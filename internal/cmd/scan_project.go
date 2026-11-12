@@ -57,18 +57,24 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 	return decision, nil
 }
 
-// announceProject tells the user which project the scan is published to.
+// announceProject tells the user which project the scan is published to. A
+// paused or archived project does not record runs, so it is announced as
+// found, with a warning, rather than as published to.
 func announceProject(res *project.Resolution, decision project.Decision) {
 	styles := output.GetStyles()
 	name := styles.Bold.Render(res.Project.Name)
 	detail := styles.MutedText.Render(fmt.Sprintf("(%s; %s)", res.Project.ProjectID, decision.Reason))
-	if res.Created {
-		fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render("Created project"), name, detail)
-	} else {
-		fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render("Publishing to project"), name, detail)
+	warning := res.StatusWarning()
+	verb := "Publishing to project"
+	switch {
+	case res.Created:
+		verb = "Created project"
+	case warning != "":
+		verb = "Found project"
 	}
-	if w := res.StatusWarning(); w != "" {
-		cli.PrintWarning(w)
+	fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render(verb), name, detail)
+	if warning != "" {
+		cli.PrintWarning(warning)
 	}
 }
 

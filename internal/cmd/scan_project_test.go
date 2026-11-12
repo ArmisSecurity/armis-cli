@@ -604,6 +604,10 @@ func TestProjectScan_ArchivedProjectWarns(t *testing.T) {
 	if !strings.Contains(stderr, "is archived") {
 		t.Errorf("stderr should warn about the archived project:\n%s", stderr)
 	}
+	// A project that will not record the run is "found", not "published to".
+	if !strings.Contains(stderr, "Found project") || strings.Contains(stderr, "Publishing to project") {
+		t.Errorf("stderr should announce the archived project as found:\n%s", stderr)
+	}
 	if creates := env.rec.Matching(http.MethodPost, projectsPathPart); len(creates) != 0 {
 		t.Error("an archived project holds its name and must not be re-created")
 	}

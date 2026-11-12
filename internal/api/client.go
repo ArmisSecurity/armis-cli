@@ -554,6 +554,10 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		ProjectID:    opts.ProjectID,
 		Trigger:      opts.Trigger,
 	}
+	if c.debug && (opts.ProjectID != "" || opts.Trigger != "") {
+		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s\n",
+			scanID, opts.ProjectID, opts.Trigger)
+	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
