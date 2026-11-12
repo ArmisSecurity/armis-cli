@@ -192,21 +192,21 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 // explain turns a projects API failure into an actionable error.
 func explain(err error, tenantID, action string) error {
 	var apiErr *api.AppSecError
-	if !errors.As(err, &apiErr) {
-		return fmt.Errorf("could not %s the project: %w", action, err)
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.StatusCode == http.StatusUnauthorized:
+			return fmt.Errorf("%w (401); check the credentials or run 'armis-cli auth login': %w",
+				ErrProjectsUnauthorized, err)
+		case apiErr.StatusCode == http.StatusForbidden:
+			return fmt.Errorf("%w: finding or creating a project needs the admin or developer role, "+
+				"so use credentials with one of them, or drop --project to scan without publishing: %w",
+				ErrProjectsForbidden, err)
+		case apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "":
+			return fmt.Errorf("%w (tenant %s): the AppSec UI is not enabled for it, so there is nothing to publish to; "+
+				"drop --project to scan without publishing: %w", ErrProjectsUnavailable, tenantID, err)
+		}
 	}
-	switch {
-	case apiErr.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("%w (401); check the credentials or run 'armis-cli auth login': %w",
-			ErrProjectsUnauthorized, err)
-	case apiErr.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("%w: finding or creating a project needs the admin or developer role, "+
-			"so use credentials with one of them, or drop --project to scan without publishing: %w",
-			ErrProjectsForbidden, err)
-	case apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "":
-		return fmt.Errorf("%w (tenant %s): the AppSec UI is not enabled for it, so there is nothing to publish to; "+
-			"drop --project to scan without publishing: %w", ErrProjectsUnavailable, tenantID, err)
-	default:
-		return fmt.Errorf("could not %s the project: %w", action, err)
-	}
+	// Anything else keeps the underlying error so the operator can diagnose it.
+	// armis:ignore cwe:209 reason:err is a client-side failure (transport, auth, decode), the retrying client's 5xx summary or the API's error detail, wrapped with %w as on every client.go call; shown only to the CLI's operator, secret-masked by cli.PrintError
+	return fmt.Errorf("could not %s the project: %w", action, err)
 }
