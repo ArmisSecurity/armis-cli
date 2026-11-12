@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,26 +29,68 @@ const (
 	cursorShow = "\033[?25h"
 )
 
-// IsCI returns true if running in a CI environment.
-func IsCI() bool {
-	ciEnvVars := []string{
-		"CI",
-		"CONTINUOUS_INTEGRATION",
-		"GITHUB_ACTIONS",
-		"GITLAB_CI",
-		"CIRCLECI",
-		"JENKINS_URL",
-		"TRAVIS",
-		"BITBUCKET_BUILD_NUMBER",
-		"AZURE_PIPELINES",
-	}
+// ciGenericEnvVars are the provider-neutral CI markers. They mark a CI run
+// unless set to a false boolean ("false", "0", "f", ...), so `CI=false` opts a
+// run out of CI behavior. Any other non-empty value counts.
+var ciGenericEnvVars = []string{
+	"CI",
+	"CONTINUOUS_INTEGRATION",
+}
 
-	for _, envVar := range ciEnvVars {
-		if os.Getenv(envVar) != "" {
-			return true
+// ciVendorEnvVars are set by specific CI providers. Any non-empty value marks a
+// CI run. Several providers (Azure Pipelines, AWS CodeBuild, TeamCity, Bamboo,
+// GoCD) do not set CI at all, so they have to be recognized here.
+var ciVendorEnvVars = []string{
+	"GITHUB_ACTIONS",         // GitHub Actions
+	"GITLAB_CI",              // GitLab CI/CD
+	"CIRCLECI",               // CircleCI
+	"JENKINS_URL",            // Jenkins
+	"TRAVIS",                 // Travis CI
+	"BITBUCKET_BUILD_NUMBER", // Bitbucket Pipelines
+	"TF_BUILD",               // Azure Pipelines (sets TF_BUILD=True, not CI)
+	"AZURE_PIPELINES",        // kept for compatibility: earlier releases checked it
+	"CODEBUILD_BUILD_ID",     // AWS CodeBuild
+	"TEAMCITY_VERSION",       // TeamCity
+	"BUILDKITE",              // Buildkite
+	"bamboo_buildKey",        // Atlassian Bamboo
+	"DRONE",                  // Drone
+	"SEMAPHORE",              // Semaphore
+	"APPVEYOR",               // AppVeyor
+	"BITRISE_IO",             // Bitrise
+	"GO_PIPELINE_NAME",       // GoCD
+}
+
+// CIEnvVars returns every environment variable DetectCI consults, so tests can
+// clear them all to simulate a developer machine.
+func CIEnvVars() []string {
+	vars := make([]string, 0, len(ciGenericEnvVars)+len(ciVendorEnvVars))
+	vars = append(vars, ciGenericEnvVars...)
+	return append(vars, ciVendorEnvVars...)
+}
+
+// DetectCI reports whether the process runs in a CI environment and, if so,
+// the environment variable that gave it away (for "why was this treated as
+// CI?" messages).
+func DetectCI() (bool, string) {
+	for _, envVar := range ciGenericEnvVars {
+		if v := os.Getenv(envVar); v != "" {
+			if b, err := strconv.ParseBool(v); err != nil || b {
+				return true, envVar
+			}
 		}
 	}
-	return false
+	for _, envVar := range ciVendorEnvVars {
+		if os.Getenv(envVar) != "" {
+			return true, envVar
+		}
+	}
+	return false, ""
+}
+
+// IsCI returns true if running in a CI environment.
+func IsCI() bool {
+	ci, _ := DetectCI()
+	return ci
 }
 
 // fdWriter is an interface for writers that can provide a file descriptor.

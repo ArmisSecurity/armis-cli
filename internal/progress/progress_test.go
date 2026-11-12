@@ -12,22 +12,13 @@ import (
 )
 
 func TestIsCI(t *testing.T) {
-	ciEnvVars := []string{
-		"CI",
-		"CONTINUOUS_INTEGRATION",
-		"GITHUB_ACTIONS",
-		"GITLAB_CI",
-		"CIRCLECI",
-		"JENKINS_URL",
-		"TRAVIS",
-		"BITBUCKET_BUILD_NUMBER",
-		"AZURE_PIPELINES",
-	}
+	ciEnvVars := CIEnvVars()
 
 	tests := []struct {
 		name     string
 		envVars  map[string]string
 		expected bool
+		wantVar  string // DetectCI's reported variable; "" when not CI
 	}{
 		{
 			name:     "no CI env vars",
@@ -69,6 +60,49 @@ func TestIsCI(t *testing.T) {
 			},
 			expected: true,
 		},
+		// Azure Pipelines sets TF_BUILD=True and not CI; it used to go undetected.
+		{
+			name:     "TF_BUILD (Azure Pipelines) env var set",
+			envVars:  map[string]string{"TF_BUILD": "True"},
+			expected: true,
+			wantVar:  "TF_BUILD",
+		},
+		{
+			name:     "CODEBUILD_BUILD_ID (AWS CodeBuild) env var set",
+			envVars:  map[string]string{"CODEBUILD_BUILD_ID": "proj:123"},
+			expected: true,
+			wantVar:  "CODEBUILD_BUILD_ID",
+		},
+		// CI=false (or 0) is an explicit opt-out, not a CI marker.
+		{
+			name:     "CI=false is not CI",
+			envVars:  map[string]string{"CI": "false"},
+			expected: false,
+		},
+		{
+			name:     "CI=0 is not CI",
+			envVars:  map[string]string{"CI": "0"},
+			expected: false,
+		},
+		{
+			name:     "CONTINUOUS_INTEGRATION=FALSE is not CI",
+			envVars:  map[string]string{"CONTINUOUS_INTEGRATION": "FALSE"},
+			expected: false,
+		},
+		// A non-boolean value (some CI systems put their name in CI) still counts.
+		{
+			name:     "CI with a non-boolean value is CI",
+			envVars:  map[string]string{"CI": "woodpecker"},
+			expected: true,
+			wantVar:  "CI",
+		},
+		// A vendor marker wins over a generic opt-out.
+		{
+			name:     "CI=false does not mask GITHUB_ACTIONS",
+			envVars:  map[string]string{"CI": "false", "GITHUB_ACTIONS": "true"},
+			expected: true,
+			wantVar:  "GITHUB_ACTIONS",
+		},
 	}
 
 	for _, tt := range tests {
@@ -97,6 +131,17 @@ func TestIsCI(t *testing.T) {
 			result := IsCI()
 			if result != tt.expected {
 				t.Errorf("IsCI() = %v, want %v", result, tt.expected)
+			}
+
+			gotCI, gotVar := DetectCI()
+			if gotCI != tt.expected {
+				t.Errorf("DetectCI() ci = %v, want %v", gotCI, tt.expected)
+			}
+			if tt.wantVar != "" && gotVar != tt.wantVar {
+				t.Errorf("DetectCI() var = %q, want %q", gotVar, tt.wantVar)
+			}
+			if !tt.expected && gotVar != "" {
+				t.Errorf("DetectCI() var = %q, want empty when not CI", gotVar)
 			}
 		})
 	}
