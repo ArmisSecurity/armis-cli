@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs append to the same project. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
+- `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
+- `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
+- `armis-cli scan <path>` is a shorthand for `armis-cli scan repo <path>` and takes the same flags. (PPSC-1589)
+- The GitHub Action has a `project` input. (PPSC-1589)
+
 ### Changed
+
+- `armis-cli scan <path>` now scans the folder. It used to print help and exit 0 without scanning, which passed CI steps silently. `armis-cli scan` given flags but no path now fails instead of exiting 0. (PPSC-1589)
+- CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI=false` as not CI. (PPSC-1589)
 
 ### Deprecated
 

@@ -35,8 +35,9 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `cmd/armis-cli/main.go` - Entry point. Sets version info, initializes colors via `cli.InitColors()`, calls `cmd.Execute()`.
 - `internal/cmd/` - Cobra command definitions:
   - `root.go` - Root command with global flags. `PersistentPreRunE` initializes color mode, syncs output styles, and starts background update check. `getAuthProvider()` delegates to `auth.NewAuthProvider()`.
-  - `scan.go` - Parent scan command with shared flags. Its `PersistentPreRunE` manually chains to `rootCmd.PersistentPreRunE` (Cobra does not auto-chain when a child also defines `PersistentPreRunE`).
-  - `scan_repo.go` - Repository scanning subcommand
+  - `scan.go` - Parent scan command with shared flags. Its `PersistentPreRunE` manually chains to `rootCmd.PersistentPreRunE` (Cobra does not auto-chain when a child also defines `PersistentPreRunE`). `scan <path>` is a shorthand that runs the same `runRepoScan` as `scan repo` (bare `scan` with no args/flags still prints help).
+  - `scan_repo.go` - Repository scanning subcommand. `addRepoScanFlags()` registers its flags on both `scan repo` and `scan` (shared package vars).
+  - `scan_project.go` - `--project`/`--report`/`--sync`/`--async` validation (before any I/O), project announcement, and the `--async` acceptance record (PPSC-1589)
   - `scan_image.go` - Container image scanning subcommand (`--tarball` flag for pre-exported images)
   - `auth.go` - Standalone `auth` command for testing JWT authentication (prints raw token)
   - `context.go` - Signal handling: `NewSignalContext()` creates context canceled on SIGINT/SIGTERM
@@ -48,7 +49,8 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/model/` - Data structures: `Finding` (23 fields), `ScanResult`, `Summary`, `Fix`, `FindingValidation` (with taint/reachability analysis), API response types (`NormalizedFinding`, pagination).
 - `internal/output/` - Output formatters (human, json, sarif, junit) implementing the `Formatter` interface. `styles.go` defines ~50 lipgloss styles using Tailwind CSS color palette. `icons.go` defines Unicode constants (severity dots, box-drawing chars). `SyncColors()` switches between full-color and plain styles based on `cli.ColorsEnabled()`.
 - `internal/cli/` - Centralized color state management. `InitColors(mode)` resolves `--color` flag (auto/always/never) with `NO_COLOR` env, `TERM=dumb`, and TTY detection on stderr. `PrintError()`/`PrintWarning()` parse JSON `{"detail":"..."}` from API errors for clean display.
-- `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`.
+- `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`, `WithProject()`, `WithAsync()`.
+- `internal/project/` - AppSec projects (PPSC-1589): `ValidateName()` (1-64 chars `[A-Za-z0-9._/-]`, alphanumeric at both ends, reserved words; never trims/renames), `Decide()` (publish = `--project` && (CI || `--report`); trigger `cli_ci`/`cli_dev`), `Resolve()` (exact-name lookup via the paginated case-insensitive `q` search, refuses case-only matches, creates a `ci_cd` project on a miss, recovers from a create race via the 409's `conflicting_project_id`). Client methods live in `internal/api/projects.go` (`AppSecError` parses the AppSec error envelope and FastAPI 422 lists).
 - `internal/scan/image/` - Image scanner: validates image names via `distribution/reference`, uses docker/podman to export, then uploads. Also supports direct tarball scanning.
 - `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX from presigned S3 URLs).
 - `internal/progress/` - Braille-dot spinner with timer display, lipgloss styling, cursor hiding, CI detection (auto-disables animation). Context-aware with configurable timeout (default 30min). Upload progress via `NewReader()`/`NewWriter()` wrappers.
@@ -63,17 +65,18 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 ### Scan Flow
 
-1. Scanner creates compressed archive (repo tar.gz with `.armisignore` filtering) or exports image to tarball via docker/podman
-2. For user-supplied tarballs (`scan image --tarball`), client validates extension + magic bytes before upload (`internal/scan/validate.go`)
-3. API client runs the **split-flow ingest** (PPSC-894/895):
+1. `scan repo`/`scan <path>` only: if the scan is published (`--project` in CI, or with `--report`), the project is looked up or created via `/api/v1/appsec/projects` before the upload, and its `project_id` + `trigger` are sent on `/ingest/scan`. Unpublished scans never call the projects API and send neither field.
+2. Scanner creates compressed archive (repo tar.gz with `.armisignore` filtering) or exports image to tarball via docker/podman
+3. For user-supplied tarballs (`scan image --tarball`), client validates extension + magic bytes before upload (`internal/scan/validate.go`)
+4. API client runs the **split-flow ingest** (PPSC-894/895):
    - `POST /api/v1/ingest/presigned-url` — reserves a `scan_id`, returns a pre-signed S3 POST whose policy carries a `content-length-range` cap up to `MAX_UPLOAD_SIZE_MB`.
    - Multipart-POST the tarball directly to S3 using the returned `presigned_url` + `fields`. The CLI never sets an Authorization header on the S3 request — the signed `policy` field is the credential.
    - `POST /api/v1/ingest/scan` — the API head_objects the upload, transitions PENDING_UPLOAD → INITIATED, and dispatches to Prefect or SQS.
-4. Client polls `/api/v1/ingest/status/` with spinner status updates until scan completes
-5. Client fetches paginated results from `/api/v1/ingest/normalized-results` (cursor-based)
-6. `NormalizedFinding` converted to internal `model.Finding` (type classification, secret masking, code location extraction)
-7. Results formatted for output; SBOM/VEX downloaded from presigned S3 URLs if requested
-8. `ExitIfNeeded()` checks findings against `--fail-on` severity levels
+5. Client polls `/api/v1/ingest/status/` with spinner status updates until scan completes
+6. Client fetches paginated results from `/api/v1/ingest/normalized-results` (cursor-based)
+7. `NormalizedFinding` converted to internal `model.Finding` (type classification, secret masking, code location extraction)
+8. Results formatted for output; SBOM/VEX downloaded from presigned S3 URLs if requested
+9. `ExitIfNeeded()` checks findings against `--fail-on` severity levels
 
 ### Key Constants
 
@@ -128,6 +131,12 @@ Tests use table-driven patterns. Mock HTTP responses with `internal/testutil/htt
 - **Real S3 requires `Content-Length` on POST.** `internal/api/client.go::buildMultipartEnvelope` precomputes the total length so the HTTP client can set it; do not add a streaming-body variant without preserving this. Real S3 returns 411 otherwise. The `testutil.AssertValidS3Upload` helper asserts the contract on every fake-S3 handler.
 - **Race detector runs only on Linux** (`.github/workflows/ci.yml::matrix`). The orchestrator reads `PresignedUploadResponse` fields after kicking off the multipart writer; today everything is read-only post-hand-off. If anyone caches the response across goroutines or mutates `Fields`, ensure the race build still passes — better yet, add a `-race` job to the macOS/Windows matrix.
 - **Per-leg timing is currently coarse.** `StartIngest` reports total elapsed; the three legs (`/presigned-url`, S3 multipart POST, `/scan`) are not measured separately. If you add upload-time telemetry, instrument each leg so a regression in any one is attributable.
+
+### PPSC-1589 projects — gotchas worth remembering
+
+- **The backend does not attach CLI runs yet.** `/ingest/scan` accepts (and ignores) `project_id`/`trigger` — verified on dev. Until the backend records them, a published scan creates/resolves the project but its run does not show up under it.
+- **CI detection drives publishing.** `progress.DetectCI()` is the single source of truth (vendor vars incl. `TF_BUILD`; `CI=false`/`0` is not CI). Command tests must clear every var in `progress.CIEnvVars()` — CI itself sets `CI`/`GITHUB_ACTIONS`, so a test that forgets would publish.
+- **Flag `Changed` bits leak between `cmd` tests** (globals + shared `*cobra.Command`s). Tests that depend on whether a flag was "set" should use `setupProjectScan` (clears and restores every `Changed` bit) — run `go test -shuffle=on ./internal/cmd/` to catch leaks.
 
 ## Linting
 

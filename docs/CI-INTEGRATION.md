@@ -12,6 +12,7 @@ Integrate Armis security scanning into your CI/CD pipeline to automatically dete
   - [Option 2: GitHub Action](#option-2-github-action)
   - [Option 3: Manual Installation](#option-3-manual-installation)
 - [Advanced Patterns](#advanced-patterns)
+  - [Publish Scans to a Project](#publish-scans-to-a-project)
   - [PR Scanning with Changed Files](#pr-scanning-with-changed-files)
   - [Scheduled Repository Scans](#scheduled-repository-scans)
   - [SBOM and VEX Generation](#sbom-and-vex-generation)
@@ -251,6 +252,7 @@ jobs:
 | `output-file` | No | | File path for results |
 | `scan-timeout` | No | `60` | Timeout in minutes |
 | `include-files` | No | | Comma-separated file paths to scan |
+| `project` | No | | Publish the scan to this Armis project, created on first use (repo scans only; see [Publish Scans to a Project](#publish-scans-to-a-project)) |
 | `build-from-source` | No | `false` | Build from source (testing) |
 
 \* One authentication method is required: either `client-id` + `client-secret` (recommended) or `api-token` + `tenant-id` (legacy).
@@ -305,6 +307,60 @@ jobs:
 ---
 
 ## Advanced Patterns
+
+### Publish Scans to a Project
+
+A scan without `--project` only gates the pipeline. Its findings and exit code
+stay in the job and nothing is published to the Armis UI. Add
+`--project <name>` to record each CI scan as a run of an Armis AppSec project.
+The first run creates the project and later runs append to it. In CI no other
+flag is needed, because the CLI detects the CI environment. Any folder works,
+including a non-git codebase or a monorepo subfolder, and the project is listed
+with source `cli`.
+
+```yaml
+# GitHub Actions: gate on HIGH/CRITICAL and publish to "checkout-service"
+- name: Armis scan
+  run: armis-cli scan . --project checkout-service --fail-on HIGH,CRITICAL
+  env:
+    ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+    ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
+```
+
+With the GitHub Action, set the `project` input:
+
+```yaml
+- uses: ArmisSecurity/armis-cli@v1
+  with:
+    scan-type: repo
+    project: checkout-service
+    client-id: ${{ secrets.ARMIS_CLIENT_ID }}
+    client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
+```
+
+To publish without blocking the pipeline, use `--async`. The command returns
+once the scan is accepted and exits `0` without evaluating `--fail-on`. Pair it
+with `--format json` to capture the scan ID:
+
+```bash
+SCAN_ID=$(armis-cli scan . --project checkout-service --async --format json | jq -r .scan_id)
+armis-cli scan status "$SCAN_ID"
+```
+
+Notes:
+
+- Credentials must carry the `admin` or `developer` role to find or create
+  projects. Use client credentials from VIPR's External API Credentials screen.
+- Partial scans (`--changed`, `--include-files`) cannot be published, since
+  they would under-report the project's findings. Run them without `--project`
+  for PR gating, and publish a full scan from your default branch.
+- An invalid project name fails the step before anything is uploaded. The
+  error names the rule it broke and shows a valid example. A missing CI
+  variable that renders as an empty value or `null` is caught the same way.
+- Runs on a developer machine are not published unless `--report` is passed.
+  CI is detected from `CI` and provider variables. That includes
+  `TF_BUILD`, so Azure Pipelines is recognized even though it does not set
+  `CI`.
 
 ### PR Scanning with Changed Files
 
