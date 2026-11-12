@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// fakePythonScript stands in for python3.13: it answers the version probe,
+// fakePythonScript stands in for every Python candidate: it answers the version probe,
 // "-m venv" (copying itself in as the venv interpreter) and "-m pip". The
 // FAKE_* variables select failure modes.
 const fakePythonScript = `#!/bin/sh
@@ -38,10 +38,23 @@ func setupFakeVenvEnv(t *testing.T) (pluginDir, oldMarker string) {
 		t.Skip("fake interpreter is a shell script")
 	}
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.13"), []byte(fakePythonScript), 0o700); err != nil { //nolint:gosec // test stub
-		t.Fatal(err)
+	// Shadow every name findPython tries, not just one: on a runner whose
+	// /usr/bin holds a newer real interpreter (python3.14 is tried before
+	// python3.13), that interpreter would otherwise be picked and its real
+	// pip would fail on the dummy requirement.
+	for _, name := range pythonCandidates {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(fakePythonScript), 0o700); err != nil { //nolint:gosec // test stub
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+":/bin:/usr/bin")
+	realBin, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findPython(); filepath.Dir(got) != realBin {
+		t.Fatalf("findPython() = %q, want the fake interpreter in %s", got, realBin)
+	}
 
 	pluginDir = t.TempDir()
 	if err := os.WriteFile(filepath.Join(pluginDir, "requirements.txt"), []byte("x\n"), 0o600); err != nil {
