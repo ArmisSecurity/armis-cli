@@ -25,6 +25,12 @@ const maxListedChars = 5
 // pasted blob does not flood the terminal.
 const maxDisplayedNameRunes = 80
 
+// maxInspectedBytes caps how much of a name the character rules and the
+// suggested example look at. It is far more than any valid name (64
+// characters of at most 4 bytes), so a valid name is always inspected whole,
+// while rejecting a huge pasted value costs no more than rejecting 1 KiB.
+const maxInspectedBytes = 1024
+
 // ErrInvalidName is matched (via errors.Is) by every *NameError.
 var ErrInvalidName = errors.New("invalid project name")
 
@@ -202,9 +208,25 @@ func looksLikeFlag(name string) bool {
 	return strings.HasPrefix(name, "--") || (len(name) == 2 && name[0] == '-' && isAlnum(rune(name[1])))
 }
 
-// disallowedChars returns the distinct disallowed runes of name, in order of
-// first appearance. An invalid UTF-8 byte is reported as U+FFFD.
+// inspectedPrefix returns at most maxInspectedBytes of name, cut on a rune
+// boundary (stepping back at most utf8.UTFMax-1 bytes, so input that is not
+// UTF-8 still yields a non-empty prefix).
+func inspectedPrefix(name string) string {
+	if len(name) <= maxInspectedBytes {
+		return name
+	}
+	cut := maxInspectedBytes
+	for i := 0; i < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(name[cut]); i++ {
+		cut--
+	}
+	return name[:cut]
+}
+
+// disallowedChars returns the distinct disallowed runes of name (of its first
+// maxInspectedBytes), in order of first appearance. An invalid UTF-8 byte is
+// reported as U+FFFD.
 func disallowedChars(name string) []rune {
+	name = inspectedPrefix(name)
 	var bad []rune
 	seen := map[rune]bool{}
 	for _, r := range name {
@@ -238,11 +260,13 @@ func listChars(runes []rune) string {
 // become '-', the edges are trimmed to a letter or digit, and the result is cut
 // to MaxNameLength. When nothing usable remains (or the input looked like a
 // flag, which carries no real name), it falls back to fallbackExample. The
-// result always passes ValidateName.
+// result always passes ValidateName. Only the first maxInspectedBytes of name
+// are used, so the work is bounded whatever its length.
 func suggestName(name string) string {
 	if looksLikeFlag(name) {
 		return fallbackExample
 	}
+	name = inspectedPrefix(name)
 
 	// Disallowed runs become a single '-', merged with any adjacent '-'.
 	var b strings.Builder

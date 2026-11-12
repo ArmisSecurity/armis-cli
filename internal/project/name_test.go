@@ -2,6 +2,7 @@ package project
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -259,6 +260,42 @@ func TestValidateName_LongInputIsShortenedInMessage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `..." `) && !strings.Contains(err.Error(), `...:`) {
 		t.Errorf("message should mark the name as shortened, got %q", err.Error())
+	}
+}
+
+// TestValidateName_HugeInputIsBounded: a pasted multi-megabyte value is
+// rejected with its real length, a bounded message and a valid example, while
+// the character rules only look at its first maxInspectedBytes.
+func TestValidateName_HugeInputIsBounded(t *testing.T) {
+	huge := strings.Repeat("a", 4<<20) + "!"
+	err := ValidateName(huge)
+	var nameErr *NameError
+	if !errors.As(err, &nameErr) || !nameErr.Broken(RuleTooLong) {
+		t.Fatalf("err = %v, want a too-long error", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("it is %d characters long", 4<<20+1)) {
+		t.Errorf("the real length should be reported: %.200s", err.Error())
+	}
+	if nameErr.Broken(RuleCharset) {
+		t.Error("a disallowed character past maxInspectedBytes should not be looked for")
+	}
+	if len(err.Error()) > 1024 || nameErr.Example != strings.Repeat("a", MaxNameLength) {
+		t.Errorf("message length %d, example %q", len(err.Error()), nameErr.Example)
+	}
+}
+
+func TestInspectedPrefix(t *testing.T) {
+	if got := inspectedPrefix("short"); got != "short" {
+		t.Errorf("short input changed: %q", got)
+	}
+	// A 4-byte rune straddling the cut is dropped whole, not split.
+	s := strings.Repeat("a", maxInspectedBytes-2) + "😀" + "tail"
+	if got := inspectedPrefix(s); got != strings.Repeat("a", maxInspectedBytes-2) || !utf8.ValidString(got) {
+		t.Errorf("prefix = %.20q (len %d), want the runes before the cut", got, len(got))
+	}
+	// Input that is not UTF-8 still yields a non-empty prefix.
+	if got := inspectedPrefix(strings.Repeat("\x80", 2*maxInspectedBytes)); len(got) == 0 || len(got) > maxInspectedBytes {
+		t.Errorf("non-UTF-8 prefix length = %d", len(got))
 	}
 }
 
