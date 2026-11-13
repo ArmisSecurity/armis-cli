@@ -643,8 +643,26 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	return &result, nil
 }
 
+// maxConsecutivePollErrors bounds how many status polls in a row may fail
+// before WaitForIngest gives up. A failed poll is not a failed scan: the server
+// finishes the scan either way, and on dev a single status call that outlived
+// the client timeout used to fail a scan that then completed.
+const maxConsecutivePollErrors = 5
+
+// isTransientPollError reports whether a failed status poll is worth repeating:
+// a transport error, a timeout, a server error or rate limiting. Any other API
+// answer (bad credentials, unknown scan) will not change on the next poll.
+func isTransientPollError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= http.StatusInternalServerError || apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	return true
+}
+
 // WaitForIngest polls until the ingestion is complete or times out.
 // If onStatus is non-nil, it is called on each poll with the current status.
+// Up to maxConsecutivePollErrors transient poll failures in a row are retried.
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration, onStatus StatusCallback) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
@@ -656,18 +674,37 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	// doneErr is the result once timeoutCtx is done: the scan timed out or the
+	// caller cancelled.
+	doneErr := func() error {
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("scan %s (tenant %s) timed out after %v", scanID, tenantID, timeout)
+		}
+		return timeoutCtx.Err()
+	}
+
+	failedPolls := 0
 	for {
 		select {
 		case <-timeoutCtx.Done():
-			if timeoutCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("scan %s (tenant %s) timed out after %v", scanID, tenantID, timeout)
-			}
-			return nil, timeoutCtx.Err()
+			return nil, doneErr()
 		case <-ticker.C:
 			statusResp, err := c.GetIngestStatus(timeoutCtx, tenantID, scanID)
 			if err != nil {
+				if timeoutCtx.Err() != nil {
+					return nil, doneErr()
+				}
+				failedPolls++
+				if isTransientPollError(err) && failedPolls < maxConsecutivePollErrors {
+					if c.debug {
+						fmt.Fprintf(os.Stderr, "[DEBUG] status poll %d of %d for scan %s failed, polling again: %v\n",
+							failedPolls, maxConsecutivePollErrors, scanID, err)
+					}
+					continue
+				}
 				return nil, fmt.Errorf("failed to check scan status: %w", err)
 			}
+			failedPolls = 0
 
 			if len(statusResp.Data) == 0 {
 				return nil, fmt.Errorf("no status data returned for scan %s", scanID)

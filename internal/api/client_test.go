@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1713,6 +1714,53 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatal("Expected error for failed status check")
 		}
 	})
+
+	// A failed poll is not a failed scan (seen live on dev: one status call
+	// outlived the client timeout and the scan then completed).
+	pollTests := []struct {
+		name      string
+		failures  int // polls that fail before the scan reports COMPLETED
+		failWith  int // HTTP status of a failing poll
+		wantErr   bool
+		wantPolls int32
+	}{
+		{name: "polls through a few transient failures", failures: 3, failWith: http.StatusServiceUnavailable, wantPolls: 4},
+		{name: "polls through rate limiting", failures: 2, failWith: http.StatusTooManyRequests, wantPolls: 3},
+		{name: "gives up after too many failures in a row", failures: 100, failWith: http.StatusBadGateway, wantErr: true, wantPolls: maxConsecutivePollErrors},
+		{name: "fails at once on a client error", failures: 100, failWith: http.StatusUnauthorized, wantErr: true, wantPolls: 1},
+	}
+	for _, tt := range pollTests {
+		t.Run(tt.name, func(t *testing.T) {
+			var polls atomic.Int32
+			server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				if int(polls.Add(1)) <= tt.failures {
+					testutil.ErrorResponse(w, tt.failWith, "poll failed")
+					return
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "COMPLETED"}},
+				})
+			})
+			// No transport retries, so each poll is one request.
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: time.Second, DisableRetry: true})
+			client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient)) // armis:ignore cwe:798 reason:test fixture literal, not a real credential; matches existing tests in this file
+			if err != nil {
+				t.Fatalf("NewClient failed: %v", err)
+			}
+
+			status, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 5*time.Millisecond, 10*time.Second, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got status %+v", status)
+				}
+			} else if err != nil || status == nil || status.ScanStatus != "COMPLETED" {
+				t.Fatalf("WaitForIngest = %+v, %v; want COMPLETED", status, err)
+			}
+			if got := polls.Load(); got != tt.wantPolls {
+				t.Errorf("polled %d times, want %d", got, tt.wantPolls)
+			}
+		})
+	}
 
 	t.Run("lowercase status handling", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
