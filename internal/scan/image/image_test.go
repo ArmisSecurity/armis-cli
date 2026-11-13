@@ -694,7 +694,8 @@ func TestScanTarball(t *testing.T) {
 
 		// No WithSBOMVEXOptions call — mirrors a plain `scan image --tarball`
 		// with no --generate-sbom/--generate-vex flags.
-		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, false, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
 
 		stderrOut := testutil.CaptureStderr(t, func() {
 			if _, err := scanner.ScanTarball(context.Background(), tarballPath); err != nil {
@@ -909,7 +910,8 @@ func newSuccessfulIngestServer(t *testing.T) *httptest.Server {
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
 			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
-				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
+				// A clean scan still gets its own entry, as on the real API.
+				Data: model.NormalizedResultsData{TenantID: "tenant-456", ScanResults: []model.ScanResultData{{ScanID: "scan-123"}}},
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
 			w.WriteHeader(http.StatusNotFound)

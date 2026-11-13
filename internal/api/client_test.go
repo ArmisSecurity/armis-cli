@@ -890,6 +890,56 @@ func TestClient_FetchAllNormalizedResults(t *testing.T) {
 			t.Errorf("Expected 2 API calls, got %d", callCount)
 		}
 	})
+
+	// The two shapes the API returns for a completed scan with no findings,
+	// both seen live on dev.
+	results := func(entries ...model.ScanResultData) model.NormalizedResultsResponse {
+		return model.NormalizedResultsResponse{Data: model.NormalizedResultsData{ScanResults: entries}}
+	}
+	tests := []struct {
+		name    string
+		pages   []model.NormalizedResultsResponse
+		wantErr bool
+	}{
+		{
+			name:  "a clean scan has an entry with no findings",
+			pages: []model.NormalizedResultsResponse{results(model.ScanResultData{ScanID: "scan-456", Findings: []model.NormalizedFinding{}})},
+		},
+		{
+			name:    "no entry at all means the results are unavailable, not clean",
+			pages:   []model.NormalizedResultsResponse{results()},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				testutil.JSONResponse(t, w, http.StatusOK, tt.pages[0])
+			})
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+			client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+			if err != nil {
+				t.Fatalf("NewClient failed: %v", err)
+			}
+
+			findings, err := client.FetchAllNormalizedResults(context.Background(), "tenant-123", "scan-456", 100)
+			if tt.wantErr {
+				if !errors.Is(err, ErrNoScanResults) {
+					t.Fatalf("err = %v, want ErrNoScanResults", err)
+				}
+				if !strings.Contains(err.Error(), "scan-456") {
+					t.Errorf("the error should name the scan: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FetchAllNormalizedResults failed: %v", err)
+			}
+			if len(findings) != 0 {
+				t.Errorf("got %d findings, want 0", len(findings))
+			}
+		})
+	}
 }
 
 func TestFormatBytes(t *testing.T) {

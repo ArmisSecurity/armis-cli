@@ -751,10 +751,19 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	return &result, nil
 }
 
+// ErrNoScanResults means the results API returned no result entry at all for a
+// completed scan. A scan with no findings still gets an entry, with an empty
+// findings list, so an empty response means the results are unavailable and
+// must not be reported as a clean scan. Seen on dev when a newer scan of
+// identical content (same folder name and files) took over the results.
+var ErrNoScanResults = errors.New("the API returned no results for this scan")
+
 // FetchAllNormalizedResults retrieves all normalized scan results with pagination.
+// It returns ErrNoScanResults when no page holds a result entry for the scan.
 func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID string, pageLimit int) ([]model.NormalizedFinding, error) {
 	var allFindings []model.NormalizedFinding
 	cursor := ""
+	entries := 0
 
 	for {
 		page, err := c.FetchNormalizedResults(ctx, tenantID, scanID, pageLimit, cursor)
@@ -762,6 +771,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 			return nil, err
 		}
 
+		entries += len(page.Data.ScanResults)
 		for _, scanResult := range page.Data.ScanResults {
 			allFindings = append(allFindings, scanResult.Findings...)
 		}
@@ -773,6 +783,9 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 		cursor = *page.Pagination.NextCursor
 	}
 
+	if entries == 0 {
+		return nil, fmt.Errorf("%w (scan %s)", ErrNoScanResults, scanID)
+	}
 	return allFindings, nil
 }
 

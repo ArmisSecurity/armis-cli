@@ -60,7 +60,10 @@ func newIngestRecorderServer(t *testing.T) (*ingestRecorder, string) {
 			rec.mu.Lock()
 			rec.resultsCalls++
 			rec.mu.Unlock()
-			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{})
+			// A clean scan still gets its own entry, as on the real API.
+			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
+				Data: model.NormalizedResultsData{ScanResults: []model.ScanResultData{{ScanID: testScanID}}},
+			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
 			w.WriteHeader(http.StatusNotFound)
 		default:

@@ -333,7 +333,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			time.Sleep(s.fetchRetryInterval)
 		}
 	}
-	if err != nil {
+	// No result entry at all is decided once the skip reason is known: a
+	// skipped scanner explains it, anything else means the results are gone.
+	noResults := errors.Is(err, api.ErrNoScanResults)
+	if err != nil && !noResults {
 		fetchSpinner.Stop()
 		cli.PrintWarningf("Failed to retrieve results: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
@@ -351,6 +354,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	if err != nil {
 		// Log warning but don't fail the scan
 		cli.PrintWarningf("%v", err)
+	}
+	if noResults && skipReason == "" {
+		scan.WarnNoScanResults(scanID)
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
@@ -714,6 +721,10 @@ func isTestFile(name string) bool {
 // isRetryableError returns true for transient errors (timeouts, network errors,
 // 5xx server errors) and false for permanent errors (4xx, decode failures).
 func isRetryableError(err error) bool {
+	// Results may land a moment after the scan reports COMPLETED.
+	if errors.Is(err, api.ErrNoScanResults) {
+		return true
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode >= 500
