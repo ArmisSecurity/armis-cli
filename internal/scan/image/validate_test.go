@@ -133,3 +133,22 @@ func TestValidateImageNameNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestIsImageReference(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"nginx:1.27":                    true,
+		"ghcr.io/org/app:v1":            true,
+		"localhost:5000/team/app:dev":   true,
+		"alpine":                        true,
+		`C:\Users\runner\missing`:       false, // a Windows path, not an image
+		"c:/code/app":                   false,
+		"my folder":                     false,
+		"-flag":                         false,
+		"UPPER:case":                    false,
+		"ghcr.io/org/app@sha256:abc123": false, // not a valid digest
+	} {
+		if got := IsImageReference(raw); got != want {
+			t.Errorf("IsImageReference(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}

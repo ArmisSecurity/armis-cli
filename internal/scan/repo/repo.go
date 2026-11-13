@@ -27,6 +27,10 @@ import (
 // MaxRepoSize is the maximum allowed size for repositories.
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
 
+// StatusAccepted is the ScanResult status of an async scan: the upload landed
+// and the scan was triggered, but its results were not waited for.
+const StatusAccepted = "accepted"
+
 // Scanner scans repositories for security vulnerabilities.
 type Scanner struct {
 	client                *api.Client
@@ -41,6 +45,9 @@ type Scanner struct {
 	includeFiles          *FileList
 	sbomVEXOpts           *scan.SBOMVEXOptions
 	detectGitHints        bool
+	projectID             string
+	trigger               string
+	async                 bool
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -88,6 +95,23 @@ func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 // --include-files partial uploads, which are not faithful whole-repo snapshots.
 func (s *Scanner) WithGitHints() *Scanner {
 	s.detectGitHints = true
+	return s
+}
+
+// WithProject publishes the scan as a run of the AppSec project projectID,
+// stamped with trigger ("cli_ci" or "cli_dev"). Without it the scan is not
+// tied to any project (PPSC-1589).
+func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
+	s.projectID = projectID
+	s.trigger = trigger
+	return s
+}
+
+// WithAsync makes Scan return as soon as the scan is accepted (uploaded and
+// triggered) instead of waiting for its results. The returned ScanResult has
+// Status StatusAccepted and no findings.
+func (s *Scanner) WithAsync() *Scanner {
+	s.async = true
 	return s
 }
 
@@ -238,6 +262,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		ingestOpts.OriginSHA = hints.OriginSHA
 	}
 
+	// Only a published scan names a project; otherwise the request carries
+	// nothing project-related.
+	ingestOpts.ProjectID = s.projectID
+	ingestOpts.Trigger = s.trigger
+
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
@@ -260,6 +289,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
+
+	// Async: the scan is accepted once /ingest/scan succeeds. Its ID is in the
+	// scan history above, so `scan status` can follow it up.
+	if s.async {
+		return &model.ScanResult{ScanID: scanID, Status: StatusAccepted}, nil
+	}
 
 	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
 	analysisSpinner.Start()

@@ -355,7 +355,12 @@ $env:ARMIS_TENANT_ID = "your-tenant-id"
 
 ```bash
 armis-cli scan repo ./my-project
+
+# Shorthand for the same scan
+armis-cli scan ./my-project
 ```
+
+To publish CI scans to an Armis project, add `--project <name>`; see [Publish to a Project](#publish-to-a-project).
 
 ### Scan a container image
 
@@ -503,9 +508,14 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 ### Scan Repository
 
 Scans a local directory, creates a tarball, and uploads to Armis Cloud for analysis.
+The directory does not have to be a git repository. A non-git codebase or a
+subfolder of a monorepo works too.
 
 ```bash
 armis-cli scan repo [path]
+
+# Shorthand: `scan <path>` runs the same repository scan, with the same flags
+armis-cli scan [path]
 ```
 
 **Size Limit**: 2GB
@@ -596,6 +606,92 @@ Notes:
 - Hints are only sent for a full repository-root scan. They are intentionally
   skipped for `--changed` and `--include-files` partial uploads, and for
   subdirectory scans, since those are not faithful whole-repo snapshots.
+
+#### Publish to a Project
+
+By default a scan is **local-only**. It prints findings, `--fail-on` sets the
+exit code, and nothing is published to the Armis UI, much like a linter. To
+record a scan as a run of an Armis AppSec project, name the project:
+
+```bash
+# In CI: creates "checkout-service" on the first run, appends a run afterwards
+armis-cli scan . --project checkout-service
+
+# On a developer machine, publishing is opt-in
+armis-cli scan . --project checkout-service --report
+
+# Return as soon as the scan is accepted instead of waiting for results
+armis-cli scan . --project checkout-service --async
+```
+
+Whether a scan is published depends on where it runs:
+
+| Flags                       | In CI                        | On a developer machine                        |
+| --------------------------- | ---------------------------- | --------------------------------------------- |
+| *(no `--project`)*          | Not published                | Not published                                 |
+| `--project <name>`          | Published (trigger `cli_ci`) | Not published (a warning says how to publish) |
+| `--project <name> --report` | Published (trigger `cli_ci`) | Published (trigger `cli_dev`)                 |
+
+The CLI detects CI from the variables CI systems set: `CI`,
+`CONTINUOUS_INTEGRATION`, and provider markers such as `GITHUB_ACTIONS`,
+`GITLAB_CI`, `JENKINS_URL`, `CIRCLECI`, `TRAVIS`, `BITBUCKET_BUILD_NUMBER`,
+`TF_BUILD` (Azure Pipelines), `CODEBUILD_BUILD_ID`, `TEAMCITY_VERSION`,
+`BUILDKITE`, `bamboo_buildKey`, `DRONE`, `SEMAPHORE`, `APPVEYOR`, `BITRISE_IO`
+and `GO_PIPELINE_NAME`. Setting `CI=false` (or `0`) opts out of the generic
+markers.
+
+**Projects.** The first published scan with a new name creates the project.
+Later scans with the same name add runs to it and never create a duplicate.
+A CLI project has no git integration behind it. It is listed with source
+`cli`, whether you scanned a git repository, a plain folder or a monorepo
+subfolder. Names are case-sensitive. If the only existing project differs
+from your name by case (`Checkout-Service` vs `checkout-service`), the scan
+stops instead of creating a near-duplicate. A paused or archived project
+still gates the scan, but a warning says the run will not be recorded.
+Finding or creating a project needs credentials with the `admin` or
+`developer` role.
+
+**Project names** are checked before anything is uploaded. A name that breaks
+a rule fails the command with the rule it broke and a valid example. It is
+never trimmed, truncated or renamed:
+
+- 1 to 64 characters
+- only letters (`A-Z`, `a-z`), digits, `.`, `_`, `-` and `/`
+- starts and ends with a letter or digit, which catches a flag swallowed as
+  the value (`--project --sync`) and path-like values such as `.`
+- not a reserved word (`null`, `nil`, `none`, `undefined`), which usually
+  come from an unset CI variable
+
+**`--sync` and `--async`.** `--sync` is the default. The command waits for the
+results and exits non-zero when `--fail-on` triggers, so it can gate a
+pipeline. `--async` returns as soon as the scan is accepted and always exits
+`0` from then on. `--fail-on` is not evaluated, and SBOM/VEX files are not
+downloaded. With `--format json` it writes a record of the accepted scan:
+
+```json
+{
+  "scan_id": "507f1f77bcf86cd799439011",
+  "status": "accepted",
+  "project": {
+    "project_id": "p_507f1f77bcf86cd799439012",
+    "name": "checkout-service",
+    "created": false,
+    "trigger": "cli_ci"
+  }
+}
+```
+
+Other formats write nothing in async mode. An empty SARIF upload would close
+every open code-scanning alert. Follow up on an async scan with
+`armis-cli scan status <scan_id>`.
+
+Notes:
+
+- `--changed` and `--include-files` cannot be published. A run covering a few
+  files would under-report the project's findings. They still work for local
+  gating without `--project`.
+- `--project`, `--report`, `--sync` and `--async` are available on `scan repo`
+  and on the `scan <path>` shorthand.
 
 ### Scan Container Image
 
@@ -1247,8 +1343,8 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 
 ## Exit Codes
 
-- `0` - Scan completed successfully with no blocking findings
-- `1` - Scan found blocking findings (configurable with `--fail-on`)
+- `0` - Scan completed successfully with no blocking findings, or an `--async` scan was accepted
+- `1` - Scan found blocking findings (configurable with `--fail-on`), or the command failed (for example an invalid `--project` name)
 - `>1` - Error occurred during scan
 
 ---

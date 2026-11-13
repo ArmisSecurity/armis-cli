@@ -323,6 +323,10 @@ type IngestOptions struct {
 	RepoName  string
 	GitSHA    string
 	OriginSHA string
+	// ProjectID and Trigger publish the scan as a run of an AppSec project
+	// (PPSC-1589). Empty strings are omitted from the /scan request body.
+	ProjectID string
+	Trigger   string
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -547,6 +551,12 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		RepoName:     opts.RepoName,
 		GitSHA:       opts.GitSHA,
 		OriginSHA:    opts.OriginSHA,
+		ProjectID:    opts.ProjectID,
+		Trigger:      opts.Trigger,
+	}
+	if c.debug && (opts.ProjectID != "" || opts.Trigger != "") {
+		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s\n",
+			scanID, opts.ProjectID, opts.Trigger)
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

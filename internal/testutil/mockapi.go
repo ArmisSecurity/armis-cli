@@ -2,8 +2,14 @@
 package testutil
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -12,6 +18,9 @@ import (
 
 // mockTenantID is the tenant identifier returned by the mock API server.
 const mockTenantID = "test-tenant"
+
+// detailKey is the `detail` field of an API error body.
+const detailKey = "detail"
 
 // MockAPIConfig configures the mock API server behavior.
 type MockAPIConfig struct {
@@ -35,6 +44,174 @@ type MockAPIConfig struct {
 	// a sbom_spdx_results presigned URL serving this SPDX document. Mirrors the
 	// backend contract where SPDX lands under its own ref (PPSC-266).
 	SBOMSPDXContent string
+	// Projects seeds the AppSec projects store behind /api/v1/appsec/projects.
+	// The mock behaves like the API: GET filters with `q` as a case-insensitive
+	// substring of the name, POST creates a ci_cd project (source "cli") and
+	// answers 409 project_name_conflict for a name taken in any status, and
+	// names are case-sensitive.
+	Projects []model.Project
+	// ProjectsDisabled makes every /api/v1/appsec/projects call return the bare
+	// 404 the API sends when the AppSec UI is not enabled for the tenant.
+	ProjectsDisabled bool
+	// Recorder, when set, records every request the mock receives.
+	Recorder *RequestRecorder
+}
+
+// RecordedRequest is one request seen by the mock API.
+type RecordedRequest struct {
+	Method string
+	Path   string
+	Query  url.Values
+	// Body is recorded for /api/ requests only (not the S3 upload).
+	Body []byte
+}
+
+// RequestRecorder collects the requests a mock API receives.
+type RequestRecorder struct {
+	mu       sync.Mutex
+	requests []RecordedRequest
+}
+
+// Requests returns a copy of every recorded request, in arrival order.
+func (r *RequestRecorder) Requests() []RecordedRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]RecordedRequest(nil), r.requests...)
+}
+
+// Matching returns the recorded requests with the given method whose path
+// contains pathPart. An empty method matches any method.
+func (r *RequestRecorder) Matching(method, pathPart string) []RecordedRequest {
+	var out []RecordedRequest
+	for _, req := range r.Requests() {
+		if (method == "" || req.Method == method) && strings.Contains(req.Path, pathPart) {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
+func (r *RequestRecorder) record(req *http.Request) {
+	rec := RecordedRequest{Method: req.Method, Path: req.URL.Path, Query: req.URL.Query()}
+	if strings.HasPrefix(req.URL.Path, "/api/") && req.Body != nil {
+		body, _ := io.ReadAll(io.LimitReader(req.Body, 1<<20))
+		_ = req.Body.Close()
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		rec.Body = body
+	}
+	r.mu.Lock()
+	r.requests = append(r.requests, rec)
+	r.mu.Unlock()
+}
+
+// mockProjects is the mock's in-memory AppSec projects store.
+type mockProjects struct {
+	mu       sync.Mutex
+	projects []model.Project
+	nextID   int
+}
+
+func (m *mockProjects) list(q string, statuses []string) []model.Project {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(statuses) == 0 {
+		statuses = []string{model.ProjectStatusActive, model.ProjectStatusPaused}
+	}
+	var out []model.Project
+	for _, p := range m.projects {
+		if q != "" && !strings.Contains(strings.ToLower(p.Name), strings.ToLower(q)) {
+			continue
+		}
+		for _, s := range statuses {
+			if p.Status == s {
+				out = append(out, p)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (m *mockProjects) create(req model.ProjectCreateRequest) (model.Project, *model.Project) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.projects {
+		if m.projects[i].Name == req.Name {
+			return model.Project{}, &m.projects[i]
+		}
+	}
+	m.nextID++
+	source := "cli"
+	p := model.Project{
+		ProjectID:   "p_mock" + strconv.Itoa(m.nextID),
+		Name:        req.Name,
+		Slug:        strings.ToLower(req.Name),
+		ProjectType: req.ProjectType,
+		Status:      model.ProjectStatusActive,
+		Source:      &source,
+	}
+	m.projects = append(m.projects, p)
+	return p, nil
+}
+
+func (m *mockProjects) get(id string) (model.Project, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.projects {
+		if p.ProjectID == id {
+			return p, true
+		}
+	}
+	return model.Project{}, false
+}
+
+// handleProjects serves /api/v1/appsec/projects[/{id}] from store.
+func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store *mockProjects, disabled bool) {
+	t.Helper()
+	AssertHasAuthorization(t, r)
+	if disabled {
+		JSONResponse(t, w, http.StatusNotFound, map[string]string{detailKey: "Not Found"})
+		return
+	}
+	if r.URL.Query().Get("tenant_id") == "" {
+		JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]any{
+			detailKey: []map[string]any{{"loc": []string{"query", "tenant_id"}, "msg": "Field required"}},
+		})
+		return
+	}
+
+	id := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v1/appsec/projects"), "/")
+	switch {
+	case id == "" && r.Method == http.MethodGet:
+		JSONResponse(t, w, http.StatusOK, model.ProjectListResponse{
+			Data:       store.list(r.URL.Query().Get("q"), r.URL.Query()["status"]),
+			Pagination: model.ProjectListPagination{Limit: 200},
+		})
+	case id == "" && r.Method == http.MethodPost:
+		var req model.ProjectCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]string{detailKey: err.Error()})
+			return
+		}
+		created, existing := store.create(req)
+		if existing != nil {
+			JSONResponse(t, w, http.StatusConflict, map[string]any{
+				detailKey: "A project named \"" + req.Name + "\" already exists in this tenant.",
+				"error":   "project_name_conflict",
+				"context": map[string]string{"conflicting_project_id": existing.ProjectID},
+			})
+			return
+		}
+		JSONResponse(t, w, http.StatusCreated, created)
+	case id != "" && r.Method == http.MethodGet:
+		if p, ok := store.get(id); ok {
+			JSONResponse(t, w, http.StatusOK, p)
+			return
+		}
+		JSONResponse(t, w, http.StatusNotFound, map[string]string{detailKey: "No such project", "error": "project_not_found"})
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 // NewMockScanServer creates a mock Armis API server for integration testing.
@@ -83,8 +260,19 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 	}
 
 	var pollCount int32
+	projects := &mockProjects{projects: append([]model.Project(nil), config.Projects...)}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if config.Recorder != nil {
+			config.Recorder.record(r)
+		}
+
+		// AppSec projects: GET/POST /api/v1/appsec/projects, GET .../{id}.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/appsec/projects") {
+			handleProjects(t, w, r, projects, config.ProjectsDisabled)
+			return
+		}
+
 		// POST /api/v1/ingest/presigned-url — reserves scan_id, returns a
 		// presigned POST that points back at this same server's /_s3/... path.
 		// `host` is set when the handler runs since httptest's URL is

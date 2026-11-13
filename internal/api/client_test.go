@@ -400,6 +400,61 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("forwards project_id and trigger to /scan when publishing", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if req.ProjectID != "p_123" {
+			t.Errorf("project_id = %q, want %q", req.ProjectID, "p_123")
+		}
+		if req.Trigger != "cli_ci" {
+			t.Errorf("trigger = %q, want %q", req.Trigger, "cli_ci")
+		}
+	})
+
+	t.Run("omits project_id and trigger for a local scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		// A scan that is not published must send exactly the pre-PPSC-1589 shape.
+		for _, key := range []string{"project_id", "trigger"} {
+			if strings.Contains(string(body), key) {
+				t.Errorf("expected %s to be omitted, got body: %s", key, body)
+			}
+		}
+	})
+
 	t.Run("upload error: /presigned-url 4xx", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)
@@ -896,6 +951,41 @@ func TestClient_GetScanResult(t *testing.T) {
 			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
 		}
 	})
+}
+
+// TestClient_StartIngest_DebugLogsProjectFields: --debug shows whether a scan
+// was sent with a project, which is what a backend integration needs to see.
+// Not parallel: it captures the process-wide stderr.
+func TestClient_StartIngest_DebugLogsProjectFields(t *testing.T) {
+	srv, _ := newIngestFlowServer(t)
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	// The mock only checks that an Authorization header is present, so any
+	// placeholder value works; none is hard-coded.
+	client, err := NewClient(srv.URL, testutil.NewTestAuthProvider(t.Name()), true, time.Minute,
+		WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	ingest := func(projectID, trigger string) string {
+		return testutil.CaptureStderr(t, func() {
+			if _, err := client.StartIngest(context.Background(), IngestOptions{
+				TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+				Data: bytes.NewReader([]byte("test")), Size: 4,
+				ProjectID: projectID, Trigger: trigger,
+			}); err != nil {
+				t.Errorf("StartIngest failed: %v", err)
+			}
+		})
+	}
+
+	if out := ingest("p_123", "cli_ci"); !strings.Contains(out, "[DEBUG] /ingest/scan scan_id="+testScanID+" project_id=p_123 trigger=cli_ci") {
+		t.Errorf("debug output should name the project fields, got:\n%s", out)
+	}
+	if out := ingest("", ""); strings.Contains(out, "project_id=") {
+		t.Errorf("an unpublished scan should log no project fields, got:\n%s", out)
+	}
 }
 
 func TestClient_DebugMode(t *testing.T) {
