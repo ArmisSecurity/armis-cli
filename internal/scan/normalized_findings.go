@@ -86,7 +86,8 @@ func ConvertNormalizedFindings(
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+				// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, util.MaskForDebug(rawJSON))
 			}
 		}
 
