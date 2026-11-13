@@ -109,7 +109,7 @@ func isTerminalWriter(w io.Writer) bool {
 
 // NewReader wraps a reader with a progress bar.
 func NewReader(r io.Reader, size int64, description string, disabled bool) io.Reader {
-	if disabled || IsCI() {
+	if disabled || IsCI() || !isTerminalWriter(os.Stderr) {
 		return r
 	}
 
@@ -124,7 +124,7 @@ func NewReader(r io.Reader, size int64, description string, disabled bool) io.Re
 
 // NewWriter wraps a writer with a progress bar.
 func NewWriter(w io.Writer, size int64, description string, disabled bool) io.Writer {
-	if disabled || IsCI() {
+	if disabled || IsCI() || !isTerminalWriter(os.Stderr) {
 		return w
 	}
 
@@ -152,7 +152,13 @@ type Spinner struct {
 	cancel   context.CancelFunc // Internal cancel function
 	stopOnce sync.Once          // Ensures Stop() is idempotent
 	started  bool               // Tracks if Start() was called
-	timeout  time.Duration      // Maximum spinner lifetime (safety net)
+
+	// animating records whether Start launched the animation goroutine, so Stop
+	// acts on the same decision even if the environment changed in between.
+	animating bool
+	// forceAnimation draws frames even on a non-terminal writer (tests only).
+	forceAnimation bool
+	timeout        time.Duration // Maximum spinner lifetime (safety net)
 }
 
 // NewSpinner creates a new spinner with the given message.
@@ -217,9 +223,11 @@ func (s *Spinner) Start() {
 	// Capture values while holding mutex to avoid race conditions
 	startTime := s.startTime
 	message := s.message
+	s.animating = s.animated()
+	animating := s.animating
 	s.mu.Unlock()
 
-	if s.disabled || IsCI() {
+	if !animating {
 		// armis:ignore cwe:253 reason:fmt.Fprintf to stderr; return value not actionable for log-style output
 		_, _ = fmt.Fprintf(s.writer, "%s (started at %s)\n", message, startTime.Format("15:04:05"))
 		return
@@ -316,8 +324,11 @@ func (s *Spinner) Start() {
 // Stop is safe to call multiple times - subsequent calls are no-ops.
 // Stop is also safe to call if Start() was never called.
 func (s *Spinner) Stop() {
-	if s.disabled || IsCI() {
-		return
+	s.mu.RLock()
+	animating := s.animating
+	s.mu.RUnlock()
+	if !animating {
+		return // never started, or started without animation
 	}
 
 	s.stopOnce.Do(func() {
@@ -369,4 +380,15 @@ func formatDuration(d time.Duration) string {
 	minutes := int(d.Minutes())
 	seconds := int(d.Seconds()) % 60
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
+}
+
+// animated reports whether the spinner draws frames. It does not when it is
+// disabled, in CI, or when its writer is not a terminal (stderr redirected to a
+// file, or a CI system the CLI does not detect): there a frame per tick only
+// fills the log, so the spinner prints its message once instead.
+func (s *Spinner) animated() bool {
+	if s.disabled || IsCI() {
+		return false
+	}
+	return s.forceAnimation || isTerminalWriter(s.writer)
 }

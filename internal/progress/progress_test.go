@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -169,7 +170,10 @@ func TestNewReader(t *testing.T) {
 		}
 	})
 
-	t.Run("wraps reader when not disabled and not CI", func(t *testing.T) {
+	t.Run("draws no bar when stderr is not a terminal", func(t *testing.T) {
+		if isTerminalWriter(os.Stderr) {
+			t.Skip("stderr is a terminal")
+		}
 		for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI"} {
 			_ = os.Unsetenv(key)
 		}
@@ -182,8 +186,10 @@ func TestNewReader(t *testing.T) {
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", false)
 
-		if result == input {
-			t.Error("Expected wrapped reader when not disabled and not CI")
+		// A redirected stderr (here, go test's pipe) gets no progress bar: each
+		// redraw would be a line of noise in a log.
+		if result != input {
+			t.Error("expected the reader unwrapped when stderr is not a terminal")
 		}
 
 		data, err := io.ReadAll(result)
@@ -291,6 +297,7 @@ func TestSpinner(t *testing.T) {
 		var buf bytes.Buffer
 		spinner := NewSpinner("initial", false)
 		spinner.SetWriter(&buf)
+		spinner.forceAnimation = true // drive the animation goroutine on a test writer
 		spinner.Start()
 
 		// Concurrently update the message while the spinner is running
@@ -375,6 +382,7 @@ func TestSpinnerStopIdempotent(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Stop should not panic when called multiple times
@@ -405,6 +413,7 @@ func TestSpinnerWithContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	spinner := NewSpinnerWithContext(ctx, "test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Cancel the context
@@ -439,6 +448,7 @@ func TestSpinnerAutoTimeout(t *testing.T) {
 	// Use a very short timeout for testing
 	spinner := NewSpinnerWithTimeout("test", false, 200*time.Millisecond)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Wait for longer than the timeout
@@ -469,6 +479,7 @@ func TestSpinnerStopBeforeStart(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 
 	// Should not panic - Stop before Start should be safe
 	spinner.Stop()
@@ -495,6 +506,7 @@ func TestSpinnerDoubleStart(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 
 	spinner.Start()
 	spinner.Start() // Second start should be no-op
@@ -523,6 +535,7 @@ func TestSpinnerConcurrentStop(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	var wg sync.WaitGroup
@@ -563,6 +576,7 @@ func TestSpinnerNoGoroutineLeak(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		spinner := NewSpinnerWithTimeout("test", false, time.Second)
 		spinner.SetWriter(io.Discard)
+		spinner.forceAnimation = true // drive the animation goroutine on a test writer
 		spinner.Start()
 		time.Sleep(10 * time.Millisecond)
 		spinner.Stop()
@@ -604,6 +618,7 @@ func TestSpinnerWithContextDeadline(t *testing.T) {
 
 	spinner := NewSpinnerWithContext(ctx, "test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Wait for context deadline
@@ -669,6 +684,7 @@ func TestSpinnerNoCursorSequencesOnNonTTY(t *testing.T) {
 	var buf bytes.Buffer
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(&buf)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 	time.Sleep(150 * time.Millisecond)
 	spinner.Stop()
@@ -709,6 +725,7 @@ func TestSpinnerNoCursorSequencesOnPipe(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(w)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 	time.Sleep(150 * time.Millisecond)
 	spinner.Stop()
@@ -720,5 +737,33 @@ func TestSpinnerNoCursorSequencesOnPipe(t *testing.T) {
 	}
 	if bytes.Contains(output, []byte("\033[?25h")) {
 		t.Error("cursor show sequence should not be written to pipe")
+	}
+}
+
+// TestSpinnerStaticOnNonTerminal checks that, outside CI, a spinner whose
+// writer is not a terminal (stderr redirected to a file, or a CI system the
+// CLI does not detect) prints its message once and draws no frames: a frame
+// per tick would fill the log with carriage returns and line clears.
+func TestSpinnerStaticOnNonTerminal(t *testing.T) {
+	for _, v := range CIEnvVars() {
+		t.Setenv(v, "")
+	}
+
+	var buf bytes.Buffer
+	spinner := NewSpinner("Scanning", false)
+	spinner.SetWriter(&buf)
+	spinner.Start()
+	spinner.Update("Scanning (still)")
+	time.Sleep(3 * spinnerFrameDelay)
+	spinner.Stop()
+
+	out := buf.String()
+	if !strings.HasPrefix(out, "Scanning (started at ") || strings.Count(out, "\n") != 1 {
+		t.Errorf("want the message once, as a single line; got %q", out)
+	}
+	for _, frame := range []string{"\r", "\033[K", "⠋", "⠙"} {
+		if strings.Contains(out, frame) {
+			t.Errorf("a non-terminal writer got animation output %q: %q", frame, out)
+		}
 	}
 }
