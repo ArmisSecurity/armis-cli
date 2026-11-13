@@ -19,6 +19,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // APIError represents an HTTP API error with a status code, allowing callers
@@ -738,7 +739,8 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	}
 
 	if c.debug {
-		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", util.MaskForDebug(bodyBytes))
 	}
 
 	var result model.NormalizedResultsResponse
@@ -910,7 +912,8 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	}
 
 	if c.debug {
-		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", util.MaskForDebug(bodyBytes))
 	}
 
 	if resp.StatusCode != http.StatusOK {

@@ -988,6 +988,49 @@ func TestClient_StartIngest_DebugLogsProjectFields(t *testing.T) {
 	}
 }
 
+func TestClient_DebugModeRedactsPresignedURLs(t *testing.T) {
+	// The results API hands back presigned S3 URLs carrying a signature and a
+	// session token (seen on dev); --debug output can land in a CI log, so the
+	// dump must not let a reader fetch the results.
+	const signature, token = "EXAMPLEsignature%3D", "EXAMPLEsessiontoken%2F%2F" // #nosec G101 -- synthetic test fixture, not a credential
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		testutil.JSONResponse(t, w, http.StatusOK, ArtifactScanResultsResponse{
+			ScanStatus: "COMPLETED",
+			Results: map[string]string{
+				"all_results": "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=ASIAIOSFODNN7EXAMPLE&Signature=" + signature + "&x-amz-security-token=" + token + "&Expires=1794561080",
+			},
+		})
+	})
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), true, 0, WithHTTPClient(httpClient))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	var results *ArtifactScanResultsResponse
+	stderr := testutil.CaptureStderr(t, func() {
+		results, err = client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+	})
+	if err != nil {
+		t.Fatalf("FetchArtifactScanResults failed: %v", err)
+	}
+	if !strings.Contains(stderr, "Artifact Scan Results API Response") {
+		t.Fatalf("expected a debug dump, got:\n%s", stderr)
+	}
+	for _, leaked := range []string{signature, token, "ASIAIOSFODNN7EXAMPLE"} {
+		if strings.Contains(stderr, leaked) {
+			t.Errorf("debug output leaks %q:\n%s", leaked, stderr)
+		}
+	}
+	if !strings.Contains(stderr, "Signature=REDACTED") {
+		t.Errorf("debug output should show the redacted parameter:\n%s", stderr)
+	}
+	// Only the dump is redacted: the URL the CLI downloads from is intact.
+	if !strings.Contains(results.Results["all_results"], signature) {
+		t.Error("the parsed URL must keep its signature")
+	}
+}
+
 func TestClient_DebugMode(t *testing.T) {
 	t.Run("debug mode prints response", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
