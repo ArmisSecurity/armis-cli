@@ -43,7 +43,10 @@ func BuildScanResult(
 	}
 
 	return &model.ScanResult{
-		ScanID:   scanID,
+		ScanID: scanID,
+		// The results of a finished scan, as the repo and image builders say;
+		// without it `scan sbom` printed an empty "Status:" line.
+		Status:   "completed",
 		Findings: findings,
 		Summary:  summary,
 	}
