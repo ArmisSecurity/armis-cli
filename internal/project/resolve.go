@@ -202,8 +202,10 @@ func explain(err error, tenantID, action string) error {
 				"so use credentials with one of them, or drop --project to scan without publishing: %w",
 				ErrProjectsForbidden, err)
 		case apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "":
-			return fmt.Errorf("%w (tenant %s): the AppSec UI is not enabled for it, so there is nothing to publish to; "+
-				"drop --project to scan without publishing: %w", ErrProjectsUnavailable, tenantID, err)
+			// The API answers an unknown tenant and a tenant without AppSec with
+			// the same bare 404, so name both: a mistyped tenant ID is the likelier.
+			return fmt.Errorf("%w (tenant %s): either no tenant has this ID, or the AppSec UI is not enabled for it. "+
+				"Check the tenant ID, or drop --project to scan without publishing: %w", ErrProjectsUnavailable, tenantID, err)
 		}
 	}
 	// Anything else keeps the underlying error so the operator can diagnose it.

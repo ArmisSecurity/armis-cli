@@ -362,10 +362,12 @@ func TestResolve_ExplainsAPIFailures(t *testing.T) {
 		wantInMsg []string
 	}{
 		{
-			name:      "projects not enabled for the tenant",
+			// The API sends this same bare 404 for an unknown tenant id (seen live
+			// on dev) and for a tenant without AppSec, so both must be named.
+			name:      "unknown tenant or projects not enabled for it",
 			listErr:   &api.AppSecError{StatusCode: http.StatusNotFound, Detail: "Not Found"},
 			wantIs:    ErrProjectsUnavailable,
-			wantInMsg: []string{"tenant-1", "AppSec UI is not enabled", "drop --project"},
+			wantInMsg: []string{"tenant-1", "no tenant has this ID", "AppSec UI is not enabled", "Check the tenant ID", "drop --project"},
 		},
 		{
 			name:      "role cannot list projects",
