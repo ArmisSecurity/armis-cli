@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -528,5 +530,45 @@ func TestRepoScan_CancelDuringBOMDownload(t *testing.T) {
 	_ = testutil.CaptureStderr(t, func() { err = handleScanError(ctx, err) })
 	if !errors.Is(err, ErrScanCancelled) {
 		t.Errorf("handleScanError = %v, want ErrScanCancelled", err)
+	}
+}
+
+// TestScanHelpShowsBOMFlags renders `scan repo --help` and `scan image --help`:
+// the three flags are visible, say the feature must be on for the tenant, and
+// the examples show --bom.
+func TestScanHelpShowsBOMFlags(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+	const tenantNote = "BOM generation must be enabled for your tenant"
+
+	for _, c := range []*cobra.Command{scanRepoCmd, scanImageCmd} {
+		t.Run(c.Name(), func(t *testing.T) {
+			var buf bytes.Buffer
+			c.SetOut(&buf)
+			t.Cleanup(func() { c.SetOut(nil) })
+			c.HelpFunc()(c, nil)
+			help := buf.String()
+
+			for _, want := range []string{
+				"--bom strings", "--bom-format string", "--bom-output string",
+				`(default "cyclonedx-1.7")`, "sbom, aibom, cbom, all", "or - to write one BOM to stdout",
+				"armis-cli scan " + c.Name() + " ",
+			} {
+				if !strings.Contains(help, want) {
+					t.Errorf("help is missing %q:\n%s", want, help)
+				}
+			}
+			if n := strings.Count(help, tenantNote); n != 3 {
+				t.Errorf("help names the tenant requirement %d times, want once per flag", n)
+			}
+			for _, name := range []string{"bom", "bom-format", "bom-output"} {
+				if f := c.InheritedFlags().Lookup(name); f == nil || f.Hidden {
+					t.Errorf("--%s must be a visible flag", name)
+				}
+			}
+			if !strings.Contains(c.Example, "--bom ") {
+				t.Errorf("examples show no --bom:\n%s", c.Example)
+			}
+		})
 	}
 }

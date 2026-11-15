@@ -72,6 +72,9 @@ var scanCmd = &cobra.Command{
   # Scan with SBOM generation
   armis-cli scan repo . --sbom --sbom-output sbom.json
 
+  # Download an AI-BOM and a CBOM (BOM generation must be enabled for your tenant)
+  armis-cli scan repo . --bom aibom,cbom
+
   # Check the status of the last scan (or a specific 24-character scan_id)
   armis-cli scan status
   armis-cli scan status 507f1f77bcf86cd799439011`,
@@ -300,6 +303,20 @@ func init() {
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
 	scanCmd.PersistentFlags().StringSliceVar(&bomTypes, "bom", nil, "Download BOMs of these types, comma-separated or repeated: sbom, aibom, cbom, all (combined); BOM generation must be enabled for your tenant")
 	scanCmd.PersistentFlags().StringVar(&bomFormat, "bom-format", scan.BOMFormatCycloneDX17, "BOM format: cyclonedx-1.7, cyclonedx-1.6, spdx-2.3, spdx-3.0.1, or the aliases cyclonedx, spdx (requires --bom; BOM generation must be enabled for your tenant)")
+	_ = scanCmd.RegisterFlagCompletionFunc("bom", fixedCompletions(scan.BOMTypeOrder, map[string]string{
+		scan.BOMTypeSBOM:  "Software BOM",
+		scan.BOMTypeAIBOM: "AI BOM: models, AI services and MCP servers",
+		scan.BOMTypeCBOM:  "Cryptographic BOM",
+		scan.BOMTypeAll:   "Combined BOM of all types",
+	}))
+	_ = scanCmd.RegisterFlagCompletionFunc("bom-format", fixedCompletions(scan.BOMFormats, map[string]string{
+		scan.BOMFormatCycloneDX17: "CycloneDX 1.7 JSON (default)",
+		scan.BOMFormatCycloneDX16: "CycloneDX 1.6 JSON",
+		scan.BOMFormatSPDX23:      "SPDX 2.3 JSON, sbom only",
+		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom; not offered by the server yet",
+		scan.BOMFormatCycloneDX:   "Alias of cyclonedx-1.7",
+		scan.BOMFormatSPDX:        "Alias: spdx-2.3 for sbom, spdx-3.0.1 for aibom",
+	}))
 	scanCmd.PersistentFlags().StringVar(&bomOutput, "bom-output", "", "Directory for BOM files, or - to write one BOM to stdout (default: .armis; requires --bom; BOM generation must be enabled for your tenant)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")

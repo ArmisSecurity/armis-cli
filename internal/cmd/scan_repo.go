@@ -31,6 +31,8 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
   $ armis-cli scan repo . --sbom --sbom-output sbom.json
   $ armis-cli scan repo . --sbom --sbom-format spdx
+  $ armis-cli scan repo . --bom aibom,cbom
+  $ armis-cli scan repo . --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main`,

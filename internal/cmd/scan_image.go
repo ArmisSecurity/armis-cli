@@ -27,7 +27,9 @@ var scanImageCmd = &cobra.Command{
   $ armis-cli scan image myapp:v1.0 --format json
   $ armis-cli scan image --tarball ./image.tar
   $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL
-  $ armis-cli scan image alpine:3.18 --sbom --sbom-format spdx`,
+  $ armis-cli scan image alpine:3.18 --sbom --sbom-format spdx
+  $ armis-cli scan image python:3.12-slim --bom sbom --bom cbom
+  $ armis-cli scan image --tarball ./image.tar --bom cbom --bom-output -`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
