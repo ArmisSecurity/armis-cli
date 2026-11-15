@@ -143,12 +143,18 @@ func BOMResultKey(bomType, format string) string {
 	return stem + "_" + code + "_results"
 }
 
+// IsSPDXFormat reports whether a --bom-format value, alias or versioned, is
+// an SPDX format.
+func IsSPDXFormat(format string) bool {
+	return format == BOMFormatSPDX || format == BOMFormatSPDX23 || format == BOMFormatSPDX301
+}
+
 // BOMFileName returns the file name of a downloaded BOM, such as
 // repo-bom-cbom.json. SPDX formats end in .spdx.json, as the --sbom-format
 // spdx file does.
 func BOMFileName(artifact, bomType, format string) string {
 	ext := ".json"
-	if strings.HasPrefix(format, BOMFormatSPDX) {
+	if IsSPDXFormat(format) {
 		ext = ".spdx.json"
 	}
 	return artifact + "-bom-" + bomType + ext

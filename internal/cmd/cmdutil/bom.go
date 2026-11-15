@@ -72,12 +72,11 @@ func ValidateBOMFlags(types []string, format, output string) error {
 // export_format_unavailable. spdx-3.0.1, and spdx for aibom, pass here: the
 // server rejects them until it offers SPDX 3.0.1.
 func checkBOMPair(bomType, format string) error {
-	isSPDX := format == scan.BOMFormatSPDX || format == scan.BOMFormatSPDX23 || format == scan.BOMFormatSPDX301
 	switch {
 	case bomType == scan.BOMTypeAIBOM && format == scan.BOMFormatSPDX23:
 		return fmt.Errorf("--bom-format %s is not available for --bom %s: the %s's SPDX form is %s",
 			format, bomType, scan.BOMLabel(bomType), scan.BOMFormatSPDX301)
-	case (bomType == scan.BOMTypeCBOM || bomType == scan.BOMTypeAll) && isSPDX:
+	case (bomType == scan.BOMTypeCBOM || bomType == scan.BOMTypeAll) && scan.IsSPDXFormat(format):
 		return fmt.Errorf("--bom-format %s is not available for --bom %s: the %s has no SPDX form",
 			format, bomType, scan.BOMLabel(bomType))
 	}

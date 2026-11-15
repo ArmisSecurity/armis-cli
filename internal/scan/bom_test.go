@@ -76,6 +76,19 @@ func TestBOMResultKey(t *testing.T) {
 	}
 }
 
+func TestIsSPDXFormat(t *testing.T) {
+	want := map[string]bool{
+		"cyclonedx-1.7": false, "cyclonedx-1.6": false, "cyclonedx": false,
+		"spdx-2.3": true, "spdx-3.0.1": true, "spdx": true,
+		"spdx-9": false,
+	}
+	for format, w := range want {
+		if got := IsSPDXFormat(format); got != w {
+			t.Errorf("IsSPDXFormat(%q) = %v, want %v", format, got, w)
+		}
+	}
+}
+
 func TestBOMFileName(t *testing.T) {
 	for _, tt := range bomKeyCases {
 		if got := BOMFileName("repo", tt.bomType, tt.format); got != tt.file {
