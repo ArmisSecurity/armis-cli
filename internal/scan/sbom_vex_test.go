@@ -1043,6 +1043,48 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
 	})
 
+	t.Run("a type not offered names a file from an earlier run", func(t *testing.T) {
+		dir := t.TempDir()
+		old := filepath.Join(dir, "test-artifact-bom-cbom.json")
+		if err := os.WriteFile(old, []byte(cbomDoc), 0600); err != nil {
+			t.Fatalf("write earlier file: %v", err)
+		}
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"aibom": {Status: "generated", Formats: []string{"cyclonedx-1.7"}},
+				"cbom":  {Status: "too_large"},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("too_large must not fail, got: %v", err)
+		}
+		if !strings.Contains(stderr, old+" is from an earlier run, not this scan") {
+			t.Errorf("stderr = %q, want the earlier-run warning", stderr)
+		}
+		if strings.Contains(stderr, "test-artifact-bom-aibom.json is from an earlier run") {
+			t.Errorf("stderr = %q names the AI-BOM written this run", stderr)
+		}
+		if got, _ := os.ReadFile(old); string(got) != cbomDoc { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("earlier file = %q, want it left in place", got)
+		}
+	})
+
+	t.Run("a type not offered without an earlier file names none", func(t *testing.T) {
+		srv := &bomServer{docs: map[string]string{}}
+		client := srv.start(t)
+		_, stderr, _ := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		if strings.Contains(stderr, "earlier run") {
+			t.Errorf("stderr = %q, want no earlier-run warning", stderr)
+		}
+	})
+
 	t.Run("a format missing from formats warns and does not fail", func(t *testing.T) {
 		dir := t.TempDir()
 		srv := &bomServer{

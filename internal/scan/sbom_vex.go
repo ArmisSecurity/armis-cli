@@ -205,6 +205,7 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 		url := results.Results[key]
 		if url == "" {
 			warnBOMNotOffered(results.BOMSummary, bomType, format)
+			warnEarlierBOMFile(opts, artifact, bomType, format)
 			continue
 		}
 
@@ -308,11 +309,31 @@ func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format
 		_, _ = fmt.Fprintln(os.Stderr, styles.SuccessText.Render(label+" written to stdout"))
 		return nil
 	}
+	return d.saveArtifact(bomFilePath(opts, artifact, bomType, format), label, indentBOM(data), opts.Output == "")
+}
+
+// bomFilePath is the file of one BOM under the --bom-output directory, or
+// DefaultBOMDir when unset.
+func bomFilePath(opts *BOMOptions, artifact, bomType, format string) string {
 	dir := opts.Output
 	if dir == "" {
 		dir = DefaultBOMDir
 	}
-	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, indentBOM(data), opts.Output == "")
+	return filepath.Join(dir, BOMFileName(artifact, bomType, format))
+}
+
+// warnEarlierBOMFile warns when a BOM type gets no file this run but its
+// file path already holds one, which must then be from an earlier run. The
+// file is left in place.
+func warnEarlierBOMFile(opts *BOMOptions, artifact, bomType, format string) {
+	if opts.Output == BOMOutputStdout {
+		return
+	}
+	path := bomFilePath(opts, artifact, bomType, format)
+	// armis:ignore cwe:22 reason:read-only existence check; the path is the --bom-output directory joined with a fixed file name
+	if _, err := os.Lstat(path); err == nil {
+		cli.PrintWarningf("%s is from an earlier run, not this scan", path)
+	}
 }
 
 // downloadAndSave downloads from a URL and saves to a file. The output path
