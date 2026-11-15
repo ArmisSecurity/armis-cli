@@ -32,6 +32,12 @@ var scanImageCmd = &cobra.Command{
   $ armis-cli scan image --tarball ./image.tar --bom cbom --bom-output -`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The BOM type and format pairs and --bom-output fail before any
+		// network call; PersistentPreRunE has normalized the values.
+		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+			return err
+		}
+
 		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
 		// flag error rather than hiding behind an auth failure. This mirrors the
 		// allowlist in determinePullBehavior, which only runs after auth + the docker

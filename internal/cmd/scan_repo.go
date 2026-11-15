@@ -41,6 +41,12 @@ var scanRepoCmd = &cobra.Command{
 	// `scan image`'s arg handling.
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The BOM type and format pairs and --bom-output fail before any
+		// network call; PersistentPreRunE has normalized the values.
+		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+			return err
+		}
+
 		repoPath := "."
 		if len(args) > 0 {
 			repoPath = args[0]

@@ -112,11 +112,12 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("invalid --sbom-format value %q: must be one of %v", sbomFormat, validSBOMFormats)
 		}
 
-		// Validate --bom, --bom-format and --bom-output early, normalizing the
-		// types and the format in place, so a bad value or a type and format
-		// pair the server rejects surfaces before auth and upload.
+		// Validate the --bom and --bom-format values early, normalizing them in
+		// place, so a bad value surfaces before auth and upload. The type and
+		// format pairs and --bom-output are checked by scan repo and scan
+		// image only: scan status and scan sbom ignore the BOM flags.
 		bomFlag := cmd.Flag("bom")
-		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.ValidateBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat, bomOutput)
+		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.NormalizeBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat)
 		if err != nil {
 			return err
 		}

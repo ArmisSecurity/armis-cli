@@ -11,13 +11,14 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
-// ValidateBOMFlags checks --bom, --bom-format and --bom-output before any
-// network call. bomSet reports whether --bom was given at all, so that
-// "--bom=" is told apart from no --bom. It returns the BOM types lower-cased,
-// deduplicated and in scan.BOMTypeOrder (nil without --bom), and the lower-cased
-// format. --bom-format and --bom-output without --bom are not errors; the
-// caller warns about them.
-func ValidateBOMFlags(types []string, bomSet bool, format, output string) ([]string, string, error) {
+// NormalizeBOMFlags checks the --bom and --bom-format values before any
+// network call. Every scan subcommand runs it, as it does the --sbom-format
+// check. bomSet reports whether --bom was given at all, so that "--bom=" is
+// told apart from no --bom. It returns the BOM types lower-cased, deduplicated
+// and in scan.BOMTypeOrder (nil without --bom), and the lower-cased format.
+// --bom-format and --bom-output without --bom are not errors; the caller warns
+// about them.
+func NormalizeBOMFlags(types []string, bomSet bool, format string) ([]string, string, error) {
 	// The server's format values are case-sensitive, so normalize first, as
 	// --sbom-format is.
 	format = strings.ToLower(format)
@@ -48,17 +49,23 @@ func ValidateBOMFlags(types []string, bomSet bool, format, output string) ([]str
 			normalized = append(normalized, t)
 		}
 	}
+	return normalized, format, nil
+}
 
-	for _, t := range normalized {
+// ValidateBOMFlags checks what a BOM download needs, before any network call:
+// each type and format pair, and --bom-output. types and format come from
+// NormalizeBOMFlags; without types there is nothing to check. Only scan repo
+// and scan image run it, as the other scan subcommands ignore the BOM flags.
+func ValidateBOMFlags(types []string, format, output string) error {
+	if len(types) == 0 {
+		return nil
+	}
+	for _, t := range types {
 		if err := checkBOMPair(t, format); err != nil {
-			return nil, format, err
+			return err
 		}
 	}
-
-	if err := checkBOMOutput(output, normalized); err != nil {
-		return nil, format, err
-	}
-	return normalized, format, nil
+	return checkBOMOutput(output, types)
 }
 
 // checkBOMPair rejects the type and format pairs the server answers with 422

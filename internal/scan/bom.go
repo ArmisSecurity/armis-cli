@@ -52,7 +52,7 @@ const DefaultBOMDir = ".armis"
 // BOMOptions configures the BOM downloads of a scan (--bom, --bom-format,
 // --bom-output).
 type BOMOptions struct {
-	Types  []string  // normalized by cmdutil.ValidateBOMFlags, in BOMTypeOrder
+	Types  []string  // normalized by cmdutil.NormalizeBOMFlags, in BOMTypeOrder
 	Format string    // as typed, alias included; resolved per type
 	Output string    // directory, BOMOutputStdout, or "" for DefaultBOMDir
 	Target string    // the scan target as typed, for the empty-BOM line

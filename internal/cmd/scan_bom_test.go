@@ -178,6 +178,58 @@ func TestScanSBOMRunE_WarnsOnBOM(t *testing.T) {
 	}
 }
 
+// TestScanStatusAndSBOMIgnoreBOMChecks runs the real command line: scan
+// status and scan sbom share the scan PersistentPreRunE but build no BOMs, so
+// a type and format pair or a --bom-output that scan repo rejects only warns
+// there, and the command exits 0.
+func TestScanStatusAndSBOMIgnoreBOMChecks(t *testing.T) {
+	sbomPath := filepath.Join(t.TempDir(), "sbom.json")
+	if err := os.WriteFile(sbomPath, []byte(`{"bomFormat":"CycloneDX"}`), 0600); err != nil {
+		t.Fatalf("write sbom: %v", err)
+	}
+	const scanID = "507f1f77bcf86cd799439011"
+	statusURL := statusServer(t, "COMPLETED", nil)
+	sbomURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{ScanID: "sbom-scan-bom"})
+
+	rows := []struct {
+		name      string
+		serverURL string
+		args      []string
+		want      string
+	}{
+		{"status, aibom with spdx-2.3", statusURL,
+			[]string{"scan", "status", scanID, "--bom", "aibom", "--bom-format", "spdx-2.3"}, "--bom is ignored for `scan status`"},
+		{"status, stdout with two types", statusURL,
+			[]string{"scan", "status", scanID, "--bom", "aibom,cbom", "--bom-output", "-"}, "--bom is ignored for `scan status`"},
+		{"sbom, aibom with spdx-2.3", sbomURL,
+			[]string{"scan", "sbom", sbomPath, "--bom", "aibom", "--bom-format", "spdx-2.3"}, "--bom is ignored for `scan sbom`"},
+		{"sbom, stdout with two types", sbomURL,
+			[]string{"scan", "sbom", sbomPath, "--bom", "aibom,cbom", "--bom-output", "-"}, "--bom is ignored for `scan sbom`"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			setupScanRunEnv(t, row.serverURL)
+			t.Setenv("ARMIS_API_TOKEN", testToken)
+			t.Setenv("ARMIS_TENANT_ID", testTenantID)
+			t.Cleanup(func() {
+				for _, name := range []string{"bom", "bom-format", "bom-output"} {
+					resetParsedFlag(t, scanCmd.PersistentFlags(), name)
+				}
+				rootCmd.SetArgs(nil)
+			})
+			rootCmd.SetArgs(row.args)
+			var err error
+			stderr := testutil.CaptureStderr(t, func() { err = Execute() })
+			if err != nil {
+				t.Fatalf("error = %v, want nil (exit 0)", err)
+			}
+			if !strings.Contains(stderr, row.want) {
+				t.Errorf("stderr = %q, want %q", stderr, row.want)
+			}
+		})
+	}
+}
+
 // setupScanRunEnv points the scan commands at serverURL with Basic auth, as
 // the RunE tests of scan repo and scan sbom do, and restores every global it
 // touches, the BOM flags included.

@@ -588,10 +588,6 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		{"--bom= is rejected", []string{}, scan.BOMFormatCycloneDX17, "", "--bom requires a value: one of [sbom aibom cbom all]"},
 		{"unknown bom type", []string{"xbom"}, scan.BOMFormatCycloneDX17, "", `invalid --bom value "xbom"`},
 		{"unknown bom-format", []string{"aibom"}, "cyclonedx-1.5", "", `invalid --bom-format value "cyclonedx-1.5"`},
-		{"aibom with spdx-2.3", []string{"aibom"}, "spdx-2.3", "", "--bom-format spdx-2.3 is not available for --bom aibom: the AI-BOM's SPDX form is spdx-3.0.1"},
-		{"cbom with spdx", []string{"cbom"}, "SPDX", "", "--bom-format spdx is not available for --bom cbom: the CBOM has no SPDX form"},
-		{"stdout with two types", []string{"aibom", "cbom"}, scan.BOMFormatCycloneDX17, "-", "--bom-output - takes one BOM type, got 2: aibom,cbom"},
-		{"bom-output with ..", []string{"aibom"}, scan.BOMFormatCycloneDX17, "../out", "path traversal detected"},
 	}
 	for _, row := range bomErrorRows {
 		t.Run(row.name, func(t *testing.T) {
@@ -599,6 +595,29 @@ func TestScanPersistentPreRunE(t *testing.T) {
 			err := scanCmd.PersistentPreRunE(scanCmd, []string{})
 			if err == nil || !strings.Contains(err.Error(), row.wantErr) {
 				t.Fatalf("error = %v, want it to contain %q", err, row.wantErr)
+			}
+		})
+	}
+
+	// Pairs and --bom-output are checked by scan repo and scan image only
+	// (TestScanBOMFlagErrorsStopBeforeUpload); scan status and scan sbom
+	// share this hook and ignore them.
+	bomSubcommandRows := []struct {
+		name   string
+		types  []string
+		bomFmt string
+		output string
+	}{
+		{"aibom with spdx-2.3", []string{"aibom"}, "spdx-2.3", ""},
+		{"cbom with spdx", []string{"cbom"}, "SPDX", ""},
+		{"stdout with two types", []string{"aibom", "cbom"}, scan.BOMFormatCycloneDX17, "-"},
+		{"bom-output with ..", []string{"aibom"}, scan.BOMFormatCycloneDX17, "../out"},
+	}
+	for _, row := range bomSubcommandRows {
+		t.Run(row.name+" passes the shared hook", func(t *testing.T) {
+			setBOMFlag(t, row.types, row.bomFmt, row.output)
+			if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+				t.Fatalf("error = %v, want nil", err)
 			}
 		})
 	}
