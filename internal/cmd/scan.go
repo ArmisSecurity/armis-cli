@@ -116,7 +116,7 @@ var scanCmd = &cobra.Command{
 		// types and the format in place, so a bad value or a type and format
 		// pair the server rejects surfaces before auth and upload.
 		bomFlag := cmd.Flag("bom")
-		normalizedBOMTypes, normalizedBOMFormat, err := scan.ValidateBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat, bomOutput)
+		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.ValidateBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat, bomOutput)
 		if err != nil {
 			return err
 		}
