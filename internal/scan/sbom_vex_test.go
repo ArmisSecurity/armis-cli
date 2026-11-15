@@ -785,6 +785,10 @@ type bomServer struct {
 	summary     *api.BOMSummary
 	skipReason  *string
 	resultsCode int // non-zero: the results call answers this status
+	// refetchCode, when set, is the status of every results call after the
+	// first, with refetchBody as the body.
+	refetchCode int
+	refetchBody string
 	// downloadCode, when set, gives the status of the n-th download (from 1)
 	// of key; 0 serves the document.
 	downloadCode func(key string, n int) int
@@ -814,6 +818,11 @@ func (b *bomServer) start(t *testing.T) *api.Client {
 			b.resultsCalls++
 			if b.resultsCode != 0 {
 				w.WriteHeader(b.resultsCode)
+				return
+			}
+			if b.refetchCode != 0 && b.resultsCalls > 1 {
+				w.WriteHeader(b.refetchCode)
+				_, _ = io.WriteString(w, b.refetchBody)
 				return
 			}
 			results := map[string]string{}
@@ -1166,6 +1175,26 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		assertBOMFailed(t, err, []string{"aibom"}, "")
 		if results, downloads := srv.calls("aibom_results"); results != 2 || downloads != 2 {
 			t.Errorf("results calls = %d, downloads = %d; want 2 and 2", results, downloads)
+		}
+	})
+
+	t.Run("a failed refetch warns without control characters", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc},
+			downloadCode: func(string, int) int { return http.StatusForbidden },
+			refetchCode:  http.StatusBadRequest,
+			refetchBody:  "bad\x1b[2J\x1b]0;title\x07\u009b31m\r\nrequest",
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31mrequest") {
+			t.Errorf("stderr = %q, want the server text without control characters", stderr)
+		}
+		if strings.ContainsAny(stderr, "\x1b\x07\u009b\r") {
+			t.Errorf("stderr = %q holds a control character", stderr)
 		}
 	})
 

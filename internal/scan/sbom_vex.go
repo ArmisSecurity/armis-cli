@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -237,12 +239,30 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 func (d *SBOMVEXDownloader) refetchBOMURL(ctx context.Context, scanID, key, label string) (string, error) {
 	fresh, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
 	if err != nil {
-		return "", fmt.Errorf("failed to download %s: refetching expired link: %w", label, err)
+		return "", fmt.Errorf("failed to download %s: refetching expired link: %w", label, serverTextError{err})
 	}
 	if fresh == nil || fresh.Results[key] == "" {
 		return "", fmt.Errorf("failed to download %s: refetching expired link: no link in results", label)
 	}
 	return fresh.Results[key], nil
+}
+
+// serverTextError is an error that can carry a server response body, with C0
+// and C1 control characters, such as terminal escapes, stripped from its text.
+type serverTextError struct{ err error }
+
+func (e serverTextError) Error() string { return stripControl(e.err.Error()) }
+
+func (e serverTextError) Unwrap() error { return e.err }
+
+// stripControl removes C0 and C1 control characters from s.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // warnBOMNotOffered explains why a requested BOM type has no link. None of
