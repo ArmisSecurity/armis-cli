@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -32,11 +35,12 @@ const (
 
 // SBOMVEXOptions configures SBOM and VEX generation during scans.
 type SBOMVEXOptions struct {
-	GenerateSBOM bool   // Request SBOM generation
-	SBOMFormat   string // SBOM serialization: "cyclonedx" (default) | "spdx"
-	GenerateVEX  bool   // Request VEX generation
-	SBOMOutput   string // Output path for SBOM file (empty = default)
-	VEXOutput    string // Output path for VEX file (empty = default)
+	GenerateSBOM bool        // Request SBOM generation
+	SBOMFormat   string      // SBOM serialization: "cyclonedx" (default) | "spdx"
+	GenerateVEX  bool        // Request VEX generation
+	SBOMOutput   string      // Output path for SBOM file (empty = default)
+	VEXOutput    string      // Output path for VEX file (empty = default)
+	BOM          *BOMOptions // BOM downloads (--bom); nil when not requested
 }
 
 // SBOMVEXDownloader handles downloading SBOM and VEX artifacts from pre-signed URLs.
@@ -64,23 +68,42 @@ func NewSBOMVEXDownloader(client *api.Client, tenantID string, opts *SBOMVEXOpti
 // as SBOM/VEX download failures should not fail the overall scan.
 // The returned string is the backend's scanner-skip reason (empty if no scanner was skipped),
 // so callers can surface it in the final scan summary in addition to the warning printed here.
+// With BOM options set, the BOM types that could not be downloaded come back
+// as a *BOMDownloadError (every type when the results call fails or 404s);
+// unlike SBOM/VEX, a failed BOM download makes the scan exit 2.
 func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName string) (string, error) {
+	var bom *BOMOptions
+	if d.opts != nil {
+		bom = d.opts.BOM
+	}
+
 	// Sanitize artifact name to prevent path traversal
 	sanitizedName := filepath.Base(artifactName)
 	if sanitizedName == "." || sanitizedName == ".." || sanitizedName == string(filepath.Separator) || sanitizedName == "" {
-		return "", fmt.Errorf("invalid artifact name")
+		err := errors.New("invalid artifact name")
+		if bom != nil {
+			return "", &BOMDownloadError{Types: bom.Types, Err: err}
+		}
+		return "", err
 	}
 
 	results, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch artifact results: %w", err)
+		err = fmt.Errorf("failed to fetch artifact results: %w", err)
+		if bom != nil {
+			return "", &BOMDownloadError{Types: bom.Types, Err: err}
+		}
+		return "", err
 	}
 
 	if results == nil {
 		// Results not yet populated (404) is only an error if the caller
-		// actually asked for SBOM/VEX output; otherwise this call exists
+		// actually asked for SBOM/VEX/BOM output; otherwise this call exists
 		// solely to surface scanner-skip warnings, and staying silent avoids
 		// spurious "artifact results not available" noise on every scan.
+		if bom != nil {
+			return "", &BOMDownloadError{Types: bom.Types, Err: errors.New("artifact results not available")}
+		}
 		if d.opts != nil && (d.opts.GenerateSBOM || d.opts.GenerateVEX) {
 			return "", fmt.Errorf("artifact results not available")
 		}
@@ -91,10 +114,19 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		fmt.Fprintf(os.Stderr, "=== DEBUG: artifact scan error=%q ===\n", *results.Error)
 	}
 
+	// BOMs download before the scanner-skip return, so a skipped scanner
+	// does not hide BOMs that were built.
+	var bomErr error
+	if bom != nil {
+		if failed := d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
+			bomErr = &BOMDownloadError{Types: failed}
+		}
+	}
+
 	if msg, skipped := results.SkipMessage(); skipped {
 		cli.PrintWarningf("Scanner skipped: %s", msg)
 		fmt.Fprintln(os.Stderr)
-		return msg, nil
+		return msg, bomErr
 	}
 
 	if d.opts == nil {
@@ -141,35 +173,144 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		}
 	}
 
-	return "", nil
+	return "", bomErr
 }
 
-// downloadAndSave downloads from a URL and saves to a file.
-func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string) error {
-	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; outputPath from user flag then sanitized
-	sanitizedPath, err := util.SanitizePath(outputPath)
-	if err != nil {
-		return fmt.Errorf("invalid %s output path: %w", docType, err)
-	}
-	outputPath = sanitizedPath
+// downloadBOMs downloads each requested BOM type and returns the types that
+// failed. A type the server did not store (a key not offered, too_large, or a
+// format left out of bom_summary) only warns. A 403, likely a presigned link
+// past its 900 s expiry, refetches the results once and retries that type
+// once.
+func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (failed []string) {
+	opts := d.opts.BOM
+	for _, bomType := range opts.Types {
+		label := BOMLabel(bomType)
+		format, err := ResolveBOMFormat(bomType, opts.Format)
+		if err != nil {
+			cli.PrintWarningf("%s: %v", label, err)
+			failed = append(failed, bomType)
+			continue
+		}
+		key := BOMResultKey(bomType, format)
 
-	// Ensure parent directory exists
-	dir := filepath.Dir(outputPath)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0750); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		url := results.Results[key]
+		if url == "" {
+			warnBOMNotOffered(results.BOMSummary, bomType, format)
+			continue
+		}
+
+		data, err := d.fetchArtifact(ctx, url, label)
+		var statusErr *api.DownloadStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusForbidden {
+			url, err = d.refetchBOMURL(ctx, scanID, key, label)
+			if err == nil {
+				data, err = d.fetchArtifact(ctx, url, label)
+			}
+		}
+		if err != nil {
+			cli.PrintWarningf("%v", err)
+			failed = append(failed, bomType)
+			continue
+		}
+
+		if err := d.writeBOM(opts, artifact, bomType, format, data); err != nil {
+			cli.PrintWarningf("%v", err)
+			failed = append(failed, bomType)
+			continue
+		}
+		if isEmptyBOM(data, format) {
+			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}
+	return failed
+}
 
+// refetchBOMURL fetches the results again for a fresh presigned link to key.
+func (d *SBOMVEXDownloader) refetchBOMURL(ctx context.Context, scanID, key, label string) (string, error) {
+	fresh, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
+	if err != nil {
+		return "", fmt.Errorf("failed to download %s: refetching expired link: %w", label, err)
+	}
+	if fresh == nil || fresh.Results[key] == "" {
+		return "", fmt.Errorf("failed to download %s: refetching expired link: no link in results", label)
+	}
+	return fresh.Results[key], nil
+}
+
+// warnBOMNotOffered explains why a requested BOM type has no link. None of
+// these is a failure: the server built no such BOM, or does not offer BOMs.
+func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
+	label := BOMLabel(bomType)
+	st, ok := summary.TypeStatus(bomType)
+	switch {
+	case ok && st.Status == api.BOMStatusTooLarge:
+		cli.PrintWarningf("%s was larger than 50 MB and was not stored", label)
+	case ok && (st.Status == api.BOMStatusGenerated || st.Status == api.BOMStatusEmpty) &&
+		st.Formats != nil && !slices.Contains(st.Formats, format):
+		cli.PrintWarningf("%s is not available in %s", label, format)
+	default:
+		cli.PrintWarningf("%s was requested but not available in results", label)
+	}
+}
+
+// writeBOM writes one BOM to stdout, or to its file under the --bom-output
+// directory (DefaultBOMDir when unset).
+func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format string, data []byte) error {
+	label := BOMLabel(bomType)
+	if opts.Output == BOMOutputStdout {
+		w := opts.Stdout
+		if w == nil {
+			w = os.Stdout
+		}
+		if _, err := w.Write(data); err != nil {
+			return fmt.Errorf("failed to write %s to stdout: %w", label, err)
+		}
+		styles := output.GetStyles()
+		_, _ = fmt.Fprintln(os.Stderr, styles.SuccessText.Render(label+" written to stdout"))
+		return nil
+	}
+	dir := opts.Output
+	if dir == "" {
+		dir = DefaultBOMDir
+	}
+	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, data)
+}
+
+// downloadAndSave downloads from a URL and saves to a file. The output path
+// is checked before the download, so a bad path costs no request.
+func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string) error {
+	if _, err := prepareOutputPath(outputPath, docType); err != nil {
+		return err
+	}
+	data, err := d.fetchArtifact(ctx, url, docType)
+	if err != nil {
+		return err
+	}
+	return d.saveArtifact(outputPath, docType, data)
+}
+
+// fetchArtifact checks a presigned link and downloads it, within the client's
+// timeout and size cap. A non-200 answer wraps *api.DownloadStatusError.
+func (d *SBOMVEXDownloader) fetchArtifact(ctx context.Context, url, docType string) ([]byte, error) {
 	// armis:ignore cwe:918 reason:ValidatePresignedURL IS the SSRF prevention; enforces HTTPS + allowed S3 hosts
 	if err := d.client.ValidatePresignedURL(url); err != nil {
-		return fmt.Errorf("invalid %s URL: %w", docType, err)
+		return nil, fmt.Errorf("invalid %s URL: %w", docType, err)
 	}
 
 	// armis:ignore cwe:770 reason:DownloadFromPresignedURL enforces 100MB limit via io.LimitReader and 5min timeout
 	data, err := d.client.DownloadFromPresignedURL(ctx, url)
 	if err != nil {
-		return fmt.Errorf("failed to download %s: %w", docType, err)
+		return nil, fmt.Errorf("failed to download %s: %w", docType, err)
+	}
+	return data, nil
+}
+
+// saveArtifact writes a downloaded document, pretty-printed by IndentJSON, to
+// outputPath with mode 0600, creating its directory with mode 0750.
+func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, data []byte) error {
+	outputPath, err := prepareOutputPath(outputPath, docType)
+	if err != nil {
+		return err
 	}
 
 	// Write with secure permissions (owner read/write only)
@@ -182,6 +323,25 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 		styles.SuccessText.Render(fmt.Sprintf("%s saved to:", docType)),
 		styles.Bold.Render(outputPath))
 	return nil
+}
+
+// prepareOutputPath sanitizes an output path and creates its parent
+// directory.
+func prepareOutputPath(outputPath, docType string) (string, error) {
+	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; outputPath from user flag then sanitized
+	sanitizedPath, err := util.SanitizePath(outputPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid %s output path: %w", docType, err)
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(sanitizedPath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return "", fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+	return sanitizedPath, nil
 }
 
 // IndentJSON pretty-prints a JSON document. The backend serves SBOM/VEX

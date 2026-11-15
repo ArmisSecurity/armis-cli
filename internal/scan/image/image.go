@@ -183,6 +183,10 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM
 		ingestOpts.SBOMFormat = s.sbomVEXOpts.SBOMFormat
 		ingestOpts.GenerateVEX = s.sbomVEXOpts.GenerateVEX
+		if s.sbomVEXOpts.BOM != nil {
+			ingestOpts.BOMTypes = s.sbomVEXOpts.BOM.Types
+			ingestOpts.BOMFormat = s.sbomVEXOpts.BOM.Format
+		}
 	}
 
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
@@ -256,13 +260,20 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	}
 	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 	skipReason, err := downloader.Download(ctx, scanID, artifactName)
+	bomFailures, err := scan.SplitBOMError(err)
 	if err != nil {
 		// Log warning but don't fail the scan
 		cli.PrintWarningf("%v", err)
 	}
+	if len(bomFailures) > 0 && ctx.Err() != nil {
+		// Ctrl+C during the BOM downloads: exit as cancelled, not as a
+		// failed download.
+		return nil, ctx.Err()
+	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
 	result.Summary.ScannerSkipReason = skipReason
+	result.BOMFailures = bomFailures
 	return result, nil
 }
 

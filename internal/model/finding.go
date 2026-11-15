@@ -78,6 +78,10 @@ type ScanResult struct {
 	Summary   Summary   `json:"summary"`
 	StartedAt string    `json:"started_at"`
 	EndedAt   string    `json:"ended_at"`
+	// BOMFailures lists the --bom types that were offered or requested but
+	// could not be downloaded; a non-empty list makes the scan exit 2. Kept
+	// out of the JSON report.
+	BOMFailures []string `json:"-"`
 }
 
 // Summary provides aggregate statistics about scan findings.
@@ -167,6 +171,11 @@ type IngestScanStartRequest struct {
 	RepoName  string `json:"repo_name,omitempty"`
 	GitSHA    string `json:"git_sha,omitempty"`
 	OriginSHA string `json:"origin_sha,omitempty"`
+	// BOM types and format from --bom and --bom-format. The format is sent
+	// as typed, alias included. Omitted without --bom, so the body is the
+	// same as before for scans that request no BOM.
+	BOMTypes  []string `json:"bom_types,omitempty"`
+	BOMFormat string   `json:"bom_format,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -192,6 +193,42 @@ func warnOnUnusedBOMFlags() {
 	if bomOutput != "" {
 		cli.PrintWarning("--bom-output is ignored without --bom flag")
 	}
+}
+
+// bomOptions returns the BOM download options for a scan of target (as
+// typed), or nil without --bom.
+func bomOptions(target string) *scan.BOMOptions {
+	if len(bomTypes) == 0 {
+		return nil
+	}
+	return &scan.BOMOptions{Types: bomTypes, Format: bomFormat, Output: bomOutput, Target: target}
+}
+
+// reportWriter returns where the findings report goes: stderr when the BOM
+// is written to stdout (--bom-output -) and --output is not set, so the two
+// do not mix; w otherwise.
+func reportWriter(w io.Writer) io.Writer {
+	if len(bomTypes) > 0 && bomOutput == scan.BOMOutputStdout && outputFile == "" {
+		return os.Stderr
+	}
+	return w
+}
+
+// bomExit returns the scan's exit error: err from formatScanResult wins, a
+// --fail-on exit included; otherwise a failed BOM download gives
+// ErrBOMIncomplete, which exits 2.
+func bomExit(result *model.ScanResult, err error) error {
+	if err != nil {
+		return err
+	}
+	if result == nil || len(result.BOMFailures) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(result.BOMFailures))
+	for _, t := range result.BOMFailures {
+		labels = append(labels, scan.BOMLabel(t))
+	}
+	return &output.ErrBOMIncomplete{ScanID: result.ScanID, Labels: labels}
 }
 
 // formatScanResult writes result through formatter and returns the --fail-on

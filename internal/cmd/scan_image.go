@@ -118,14 +118,15 @@ var scanImageCmd = &cobra.Command{
 		warnOnUnusedSBOMVEXFlags()
 		warnOnUnusedBOMFlags()
 
-		// Configure SBOM/VEX options if any flags are set
-		if generateSBOM || generateVEX {
+		// Configure SBOM/VEX/BOM options if any flags are set
+		if generateSBOM || generateVEX || len(bomTypes) > 0 {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
 				GenerateSBOM: generateSBOM,
 				SBOMFormat:   sbomFormat,
 				GenerateVEX:  generateVEX,
 				SBOMOutput:   sbomOutput,
 				VEXOutput:    vexOutput,
+				BOM:          bomOptions(imageTarget(args)),
 			}
 			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 		}
@@ -179,8 +180,17 @@ var scanImageCmd = &cobra.Command{
 			FailOnSeverities: failOnSeverities,
 		}
 
-		return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
+		return bomExit(result, formatScanResult(formatter, result, reportWriter(outputCfg.Writer), opts, minSeverity, failOnSeverities))
 	},
+}
+
+// imageTarget returns the scan target as typed: the --tarball path, which
+// wins over an image name, else the image name.
+func imageTarget(args []string) string {
+	if tarballPath != "" || len(args) == 0 {
+		return tarballPath
+	}
+	return args[0]
 }
 
 func init() {

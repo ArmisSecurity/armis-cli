@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -213,5 +214,68 @@ func TestBOMLabel(t *testing.T) {
 		if got := BOMLabel(bomType); got != label {
 			t.Errorf("BOMLabel(%q) = %q, want %q", bomType, got, label)
 		}
+	}
+}
+
+func TestIsEmptyBOM(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   string
+		format string
+		want   bool
+	}{
+		{"CycloneDX without lists", `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", true},
+		{"CycloneDX with empty lists", `{"components":[],"services":[]}`, "cyclonedx-1.6", true},
+		{"CycloneDX with null components", `{"components":null}`, "cyclonedx-1.7", true},
+		{"CycloneDX with a component", `{"components":[{"name":"a"}]}`, "cyclonedx-1.7", false},
+		{"CycloneDX with only a service", `{"components":[],"services":[{"name":"s"}]}`, "cyclonedx-1.7", false},
+		{"SPDX 2.3 without packages", `{"spdxVersion":"SPDX-2.3"}`, "spdx-2.3", true},
+		{"SPDX 2.3 with empty packages", `{"packages":[]}`, "spdx-2.3", true},
+		{"SPDX 2.3 with a package", `{"packages":[{"name":"p"}]}`, "spdx-2.3", false},
+		{"SPDX 2.3 ignores components", `{"components":[{"name":"a"}]}`, "spdx-2.3", true},
+		{"SPDX 3.0.1 is not checked", `{"@graph":[]}`, "spdx-3.0.1", false},
+		{"not JSON", `<bom/>`, "cyclonedx-1.7", false},
+		{"a JSON array", `[]`, "cyclonedx-1.7", false},
+		{"components not a list", `{"components":{}}`, "cyclonedx-1.7", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEmptyBOM([]byte(tt.data), tt.format); got != tt.want {
+				t.Errorf("isEmptyBOM(%s, %s) = %v, want %v", tt.data, tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEmptyBOMMessage(t *testing.T) {
+	want := map[string]string{
+		"aibom": "No AI components found in .",
+		"cbom":  "No crypto components found in .",
+		"sbom":  "No packages found in .",
+		"all":   "No components found in .",
+	}
+	for bomType, msg := range want {
+		if got := emptyBOMMessage(bomType, "."); got != msg {
+			t.Errorf("emptyBOMMessage(%q) = %q, want %q", bomType, got, msg)
+		}
+	}
+}
+
+func TestSplitBOMError(t *testing.T) {
+	cause := errors.New("results call failed")
+	types, rest := SplitBOMError(fmt.Errorf("wrapped: %w", &BOMDownloadError{Types: []string{"cbom"}, Err: cause}))
+	if !reflect.DeepEqual(types, []string{"cbom"}) || rest != cause {
+		t.Errorf("SplitBOMError(BOMDownloadError) = %v, %v", types, rest)
+	}
+	types, rest = SplitBOMError(&BOMDownloadError{Types: []string{"aibom"}})
+	if !reflect.DeepEqual(types, []string{"aibom"}) || rest != nil {
+		t.Errorf("SplitBOMError without Err = %v, %v; want [aibom], nil", types, rest)
+	}
+	other := errors.New("other")
+	if types, rest = SplitBOMError(other); types != nil || rest != other {
+		t.Errorf("SplitBOMError(other) = %v, %v; want nil, other", types, rest)
+	}
+	if types, rest = SplitBOMError(nil); types != nil || rest != nil {
+		t.Errorf("SplitBOMError(nil) = %v, %v", types, rest)
 	}
 }

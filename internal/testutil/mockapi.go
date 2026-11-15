@@ -35,6 +35,18 @@ type MockAPIConfig struct {
 	// a sbom_spdx_results presigned URL serving this SPDX document. Mirrors the
 	// backend contract where SPDX lands under its own ref (PPSC-266).
 	SBOMSPDXContent string
+	// BOMContent maps BOM results keys (such as aibom_results or
+	// cbom_cdx16_results) to documents. GET /api/v1/ingest/results links
+	// each key to /_bom/<key>/<scan-id> on this server, which serves it.
+	BOMContent map[string]string
+	// BOMSummary, when non-nil, is returned as bom_summary beside results.
+	BOMSummary map[string]interface{}
+	// BOMDownloadStatus, when non-zero, makes every /_bom/ download answer
+	// with this status instead of the document.
+	BOMDownloadStatus int
+	// OnBOMDownload, when set, runs before a /_bom/ download is answered,
+	// such as to cancel the scan's context mid-download.
+	OnBOMDownload func(r *http.Request)
 }
 
 // NewMockScanServer creates a mock Armis API server for integration testing.
@@ -191,10 +203,37 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			if config.SBOMSPDXContent != "" {
 				results["sbom_spdx_results"] = SchemeFromRequest(r) + "://" + r.Host + "/_sbom_spdx/" + config.ScanID
 			}
-			JSONResponse(t, w, http.StatusOK, map[string]interface{}{
+			for key := range config.BOMContent {
+				results[key] = SchemeFromRequest(r) + "://" + r.Host + "/_bom/" + key + "/" + config.ScanID
+			}
+			body := map[string]interface{}{
 				"scan_status": "COMPLETED",
 				"results":     results,
-			})
+			}
+			if config.BOMSummary != nil {
+				body["bom_summary"] = config.BOMSummary
+			}
+			JSONResponse(t, w, http.StatusOK, body)
+			return
+		}
+
+		// Fake presigned-URL download endpoint for the BOM documents.
+		if strings.HasPrefix(r.URL.Path, "/_bom/") && r.Method == http.MethodGet {
+			if config.OnBOMDownload != nil {
+				config.OnBOMDownload(r)
+			}
+			if config.BOMDownloadStatus != 0 {
+				w.WriteHeader(config.BOMDownloadStatus)
+				return
+			}
+			key, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/_bom/"), "/")
+			content, ok := config.BOMContent[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(content))
 			return
 		}
 

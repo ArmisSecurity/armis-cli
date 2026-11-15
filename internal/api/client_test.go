@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -396,6 +397,81 @@ func TestClient_StartIngest(t *testing.T) {
 		for _, key := range []string{"repo_name", "git_sha", "origin_sha"} {
 			if strings.Contains(string(body), key) {
 				t.Errorf("expected %s to be omitted, got body: %s", key, body)
+			}
+		}
+	})
+
+	// scanBody decodes the /scan request body into a generic map, so the
+	// tests see the keys on the wire rather than the Go struct.
+	scanBody := func(t *testing.T, state *ingestFlowState) map[string]any {
+		t.Helper()
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+		var got map[string]any
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("failed to unmarshal /scan body %s: %v", body, err)
+		}
+		return got
+	}
+
+	t.Run("forwards bom_types and bom_format to /scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			BOMTypes: []string{"aibom", "cbom"}, BOMFormat: "cyclonedx-1.6",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		got := scanBody(t, state)
+		if types, _ := got["bom_types"].([]any); len(types) != 2 || types[0] != "aibom" || types[1] != "cbom" {
+			t.Errorf("bom_types = %v, want [aibom cbom]", got["bom_types"])
+		}
+		if got["bom_format"] != "cyclonedx-1.6" {
+			t.Errorf("bom_format = %v, want cyclonedx-1.6", got["bom_format"])
+		}
+	})
+
+	t.Run("sends a bom_format alias as typed", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			BOMTypes: []string{"sbom"}, BOMFormat: "spdx",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got := scanBody(t, state); got["bom_format"] != "spdx" {
+			t.Errorf("bom_format = %v, want spdx as typed", got["bom_format"])
+		}
+	})
+
+	t.Run("omits bom fields without --bom", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			GenerateSBOM: true,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		got := scanBody(t, state)
+		for _, key := range []string{"bom_types", "bom_format", "image_ref"} {
+			if _, ok := got[key]; ok {
+				t.Errorf("expected %s to be omitted, got body: %v", key, got)
 			}
 		}
 	})
@@ -1038,6 +1114,63 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 		}
 	})
 
+	t.Run("decodes bom_summary beside results", func(t *testing.T) {
+		// The shape GET /api/v1/ingest/results returns (BomSummary.to_document
+		// in Project-Moose), cut to the fields that matter here.
+		const body = `{"scan_status":"COMPLETED","results":{"aibom_cdx16_results":"https://bucket.s3.amazonaws.com/a"},` +
+			`"bom_summary":{"schema_version":1,"spec_version":"1.7","validation":"passed","types":{` +
+			`"aibom":{"status":"generated","components":4,"formats":["cyclonedx-1.7","cyclonedx-1.6"],"validation":"passed"},` +
+			`"cbom":{"status":"too_large","validation":"passed"}},"repairs":0,"drops":0,"failed_tools":[],"tools":[]},` +
+			`"skip_reason":null}`
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+		if err != nil {
+			t.Fatalf("FetchArtifactScanResults failed: %v", err)
+		}
+		aibom, ok := result.BOMSummary.TypeStatus("aibom")
+		if !ok || aibom.Status != BOMStatusGenerated || len(aibom.Formats) != 2 || aibom.Formats[1] != "cyclonedx-1.6" {
+			t.Errorf("aibom = %+v (listed %v), want generated with two formats", aibom, ok)
+		}
+		cbom, ok := result.BOMSummary.TypeStatus("cbom")
+		if !ok || cbom.Status != BOMStatusTooLarge || cbom.Formats != nil {
+			t.Errorf("cbom = %+v (listed %v), want too_large without formats", cbom, ok)
+		}
+		if _, ok := result.BOMSummary.TypeStatus("sbom"); ok {
+			t.Error("sbom should not be listed")
+		}
+	})
+
+	t.Run("bom_summary is nil when absent", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.JSONResponse(t, w, http.StatusOK, map[string]any{"scan_status": testStatusCompleted, "results": map[string]string{}})
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+		result, err := client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+		if err != nil {
+			t.Fatalf("FetchArtifactScanResults failed: %v", err)
+		}
+		if result.BOMSummary != nil {
+			t.Errorf("BOMSummary = %+v, want nil", result.BOMSummary)
+		}
+		if _, ok := result.BOMSummary.TypeStatus("aibom"); ok {
+			t.Error("a nil summary lists no type")
+		}
+	})
+
 	t.Run("returns nil for 404", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -1129,6 +1262,48 @@ func TestClient_DownloadFromPresignedURL(t *testing.T) {
 
 		if err == nil {
 			t.Error("Expected error for forbidden response")
+		}
+	})
+
+	t.Run("rejects a declared size over the cap before reading", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", strconv.FormatInt(MaxDownloadSize+1, 10))
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.DownloadFromPresignedURL(context.Background(), server.URL)
+		if err == nil || !strings.Contains(err.Error(), "download exceeds maximum allowed size") {
+			t.Fatalf("error = %v, want the size cap error", err)
+		}
+	})
+
+	t.Run("non-200 returns DownloadStatusError", func(t *testing.T) {
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := NewClient("https://api.example.com", testutil.NewTestAuthProvider("token123"), false, 0,
+			WithHTTPClient(httpClient), WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		_, err = client.DownloadFromPresignedURL(context.Background(), server.URL)
+		var statusErr *DownloadStatusError
+		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusForbidden {
+			t.Fatalf("error = %v, want a DownloadStatusError with 403", err)
+		}
+		if err.Error() != "download failed with status 403" {
+			t.Errorf("message = %q, want the existing wording", err.Error())
 		}
 	})
 

@@ -1,8 +1,10 @@
 package scan
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -44,6 +46,47 @@ var BOMTypeOrder = []string{BOMTypeSBOM, BOMTypeAIBOM, BOMTypeCBOM, BOMTypeAll}
 var BOMFormats = []string{
 	BOMFormatCycloneDX17, BOMFormatCycloneDX16, BOMFormatSPDX23, BOMFormatSPDX301,
 	BOMFormatCycloneDX, BOMFormatSPDX,
+}
+
+// DefaultBOMDir is where BOM files go without --bom-output.
+const DefaultBOMDir = ".armis"
+
+// BOMOptions configures the BOM downloads of a scan (--bom, --bom-format,
+// --bom-output).
+type BOMOptions struct {
+	Types  []string  // normalized by ValidateBOMFlags, in BOMTypeOrder
+	Format string    // as typed, alias included; resolved per type
+	Output string    // directory, BOMOutputStdout, or "" for DefaultBOMDir
+	Target string    // the scan target as typed, for the empty-BOM line
+	Stdout io.Writer // stdout mode destination; nil means os.Stdout
+}
+
+// BOMDownloadError lists the BOM types that could not be downloaded. Err is
+// the results-call error when that call failed for every type, else nil.
+type BOMDownloadError struct {
+	Types []string
+	Err   error
+}
+
+func (e *BOMDownloadError) Error() string {
+	msg := "could not download BOM types " + strings.Join(e.Types, ", ")
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *BOMDownloadError) Unwrap() error { return e.Err }
+
+// SplitBOMError separates the result of SBOMVEXDownloader.Download into the
+// BOM types that failed and the error left to print as a warning: the
+// results-call error of a *BOMDownloadError, or any other error unchanged.
+func SplitBOMError(err error) ([]string, error) {
+	var bomErr *BOMDownloadError
+	if errors.As(err, &bomErr) {
+		return bomErr.Types, bomErr.Err
+	}
+	return nil, err
 }
 
 // resultKeyStem and variantCode mirror results_key in Project-Moose
@@ -221,4 +264,47 @@ func BOMLabel(bomType string) string {
 		return "Combined BOM"
 	}
 	return bomType
+}
+
+// isEmptyBOM reports whether a BOM lists nothing: no components and no
+// services for CycloneDX, no packages for SPDX 2.3. Input that is not a JSON
+// object, and SPDX 3.0.1 (a JSON-LD graph without top-level lists), is not
+// called empty.
+func isEmptyBOM(data []byte, format string) bool {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	switch format {
+	case BOMFormatSPDX23:
+		return isEmptyList(doc["packages"])
+	case BOMFormatSPDX301:
+		return false
+	}
+	return isEmptyList(doc["components"]) && isEmptyList(doc["services"])
+}
+
+// isEmptyList reports whether a JSON value is absent, null or an empty array.
+func isEmptyList(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return false
+	}
+	return len(items) == 0
+}
+
+// emptyBOMMessage is the stderr line for an empty BOM of bomType.
+func emptyBOMMessage(bomType, target string) string {
+	switch bomType {
+	case BOMTypeAIBOM:
+		return "No AI components found in " + target
+	case BOMTypeCBOM:
+		return "No crypto components found in " + target
+	case BOMTypeSBOM:
+		return "No packages found in " + target
+	}
+	return "No components found in " + target
 }
