@@ -215,6 +215,11 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			failed = append(failed, bomType)
 			continue
 		}
+		if !json.Valid(data) {
+			cli.PrintWarningf("%s is not valid JSON", label)
+			failed = append(failed, bomType)
+			continue
+		}
 
 		if err := d.writeBOM(opts, artifact, bomType, format, data); err != nil {
 			cli.PrintWarningf("%v", err)
@@ -256,8 +261,9 @@ func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
 	}
 }
 
-// writeBOM writes one BOM to stdout, or to its file under the --bom-output
-// directory (DefaultBOMDir when unset).
+// writeBOM writes one BOM to stdout as fetched, or to its file under the
+// --bom-output directory (DefaultBOMDir when unset) pretty-printed by
+// indentBOM.
 func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format string, data []byte) error {
 	label := BOMLabel(bomType)
 	if opts.Output == BOMOutputStdout {
@@ -276,7 +282,7 @@ func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format
 	if dir == "" {
 		dir = DefaultBOMDir
 	}
-	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, data, opts.Output == "")
+	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, indentBOM(data), opts.Output == "")
 }
 
 // downloadAndSave downloads from a URL and saves to a file. The output path
@@ -289,7 +295,7 @@ func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath
 	if err != nil {
 		return err
 	}
-	return d.saveArtifact(outputPath, docType, data, defaultDir)
+	return d.saveArtifact(outputPath, docType, IndentJSON(data), defaultDir)
 }
 
 // fetchArtifact checks a presigned link and downloads it, within the client's
@@ -308,22 +314,22 @@ func (d *SBOMVEXDownloader) fetchArtifact(ctx context.Context, url, docType stri
 	return data, nil
 }
 
-// saveArtifact writes a downloaded document, pretty-printed by IndentJSON, to
-// outputPath, creating its directory with mode 0750. A path from an output
-// flag is the user's own and is written in place with mode 0600, as before, so
-// /dev/stdout, a FIFO or a device still work. A path the CLI picked itself
-// under .armis (defaultDir) goes through replaceInDefaultDir.
-func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, data []byte, defaultDir bool) error {
+// saveArtifact writes content to outputPath, creating its directory with
+// mode 0750. A path from an output flag is the user's own and is written in
+// place with mode 0600, as before, so /dev/stdout, a FIFO or a device still
+// work. A path the CLI picked itself under .armis (defaultDir) goes through
+// replaceInDefaultDir.
+func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, content []byte, defaultDir bool) error {
 	outputPath, err := prepareOutputPath(outputPath, docType, defaultDir)
 	if err != nil {
 		return err
 	}
 
 	if defaultDir {
-		err = replaceInDefaultDir(outputPath, IndentJSON(data))
+		err = replaceInDefaultDir(outputPath, content)
 	} else {
 		// Write with secure permissions (owner read/write only)
-		err = os.WriteFile(outputPath, IndentJSON(data), 0600)
+		err = os.WriteFile(outputPath, content, 0600)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to write %s to %s: %w", docType, outputPath, err)

@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -244,6 +245,43 @@ func TestIsEmptyBOM(t *testing.T) {
 				t.Errorf("isEmptyBOM(%s, %s) = %v, want %v", tt.data, tt.format, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJSONDepthAtMost(t *testing.T) {
+	tests := []struct {
+		name  string
+		data  string
+		limit int
+		want  bool
+	}{
+		{"a scalar", `1`, 0, true},
+		{"an object at the limit", `{"a":[1]}`, 2, true},
+		{"one level over", `{"a":[[1]]}`, 2, false},
+		{"siblings do not add up", `[[1],[2],{"a":3}]`, 2, true},
+		{"brackets in a string do not count", `{"a":"[[[{{{"}`, 1, true},
+		{"an escaped quote stays in the string", `{"a":"\"[[["}`, 1, true},
+		{"an escaped backslash ends before the quote", `{"a":"\\"}`, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := jsonDepthAtMost([]byte(tt.data), tt.limit); got != tt.want {
+				t.Errorf("jsonDepthAtMost(%s, %d) = %v, want %v", tt.data, tt.limit, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIndentBOM(t *testing.T) {
+	nested := func(depth int) []byte {
+		return []byte(strings.Repeat("[", depth) + strings.Repeat("]", depth))
+	}
+	if got, want := indentBOM(nested(maxIndentDepth)), IndentJSON(nested(maxIndentDepth)); !bytes.Equal(got, want) {
+		t.Errorf("depth %d is not pretty-printed", maxIndentDepth)
+	}
+	deep := nested(5000)
+	if got := indentBOM(deep); !bytes.Equal(got, deep) {
+		t.Errorf("depth 5000 grew to %d bytes, want it unchanged", len(got))
 	}
 }
 

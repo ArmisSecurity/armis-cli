@@ -266,6 +266,46 @@ func BOMLabel(bomType string) string {
 	return bomType
 }
 
+// maxIndentDepth is the deepest nesting indentBOM pretty-prints. Indenting
+// writes a line per value with its depth in spaces, so the output of a deep
+// document grows with the square of its depth.
+const maxIndentDepth = 64
+
+// indentBOM pretty-prints a valid BOM with IndentJSON when it nests at most
+// maxIndentDepth deep, and returns a deeper one unchanged.
+func indentBOM(data []byte) []byte {
+	if !jsonDepthAtMost(data, maxIndentDepth) {
+		return data
+	}
+	return IndentJSON(data)
+}
+
+// jsonDepthAtMost reports whether the objects and arrays of a valid JSON
+// document nest at most limit deep. Brackets inside strings do not count.
+func jsonDepthAtMost(data []byte, limit int) bool {
+	depth := 0
+	inString, escaped := false, false
+	for _, c := range data {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '{' || c == '[':
+			depth++
+			if depth > limit {
+				return false
+			}
+		case c == '}' || c == ']':
+			depth--
+		}
+	}
+	return true
+}
+
 // isEmptyBOM reports whether a BOM lists nothing: no components and no
 // services for CycloneDX, no packages for SPDX 2.3. Input that is not a JSON
 // object, and SPDX 3.0.1 (a JSON-LD graph without top-level lists), is not

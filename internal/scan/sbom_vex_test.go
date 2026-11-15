@@ -581,7 +581,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 	save := func(t *testing.T, path string, defaultDir bool) error {
 		t.Helper()
 		var err error
-		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", []byte(doc), defaultDir) })
+		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", IndentJSON([]byte(doc)), defaultDir) })
 		return err
 	}
 	defaultPath := filepath.Join(".armis", "repo-sbom.json")
@@ -1080,6 +1080,55 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 			t.Error("no file may be written for a download over the cap")
 		}
 		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("invalid JSON fails that type", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": `{"components":[`, "cbom_results": cbomDoc}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if !strings.Contains(stderr, "AI-BOM is not valid JSON") {
+			t.Errorf("stderr = %q, want the invalid JSON warning", stderr)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "test-artifact-bom-aibom.json")); statErr == nil {
+			t.Error("no file may be written for invalid JSON")
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("invalid JSON fails that type in stdout mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		srv := &bomServer{docs: map[string]string{"cbom_results": `<bom/>`}}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: "-", Stdout: &buf,
+		}})
+		assertBOMFailed(t, err, []string{"cbom"}, "")
+		if buf.Len() != 0 {
+			t.Errorf("stdout = %q, want nothing", buf.String())
+		}
+	})
+
+	t.Run("a deeply nested BOM is written unchanged", func(t *testing.T) {
+		deep := `{"components":` + strings.Repeat("[", 5000) + strings.Repeat("]", 5000) + `}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"cbom_results": deep}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "test-artifact-bom-cbom.json")) //nolint:gosec // test path from t.TempDir()
+		if err != nil {
+			t.Fatalf("read BOM file: %v", err)
+		}
+		if string(data) != deep {
+			t.Errorf("file is %d bytes, want the %d stored bytes unchanged", len(data), len(deep))
+		}
 	})
 
 	t.Run("a 403 refetches the results and retries once", func(t *testing.T) {
