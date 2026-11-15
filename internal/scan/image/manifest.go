@@ -47,8 +47,11 @@ func tarballImageRef(ctx context.Context, path string) string {
 			return ""
 		}
 		defer gz.Close() //nolint:errcheck // read-only
-		// Bound the decompressed bytes walked to the image size limit.
-		r = io.LimitReader(gz, MaxImageSize)
+		// Bound the decompressed bytes walked to the image size limit. tar
+		// skips an entry by reading it through, so one Next can decompress a
+		// whole layer; ctxReader stops it on Ctrl+C. A plain tar is not
+		// wrapped, so tar can still seek past entries in the file.
+		r = ctxReader{ctx: ctx, r: io.LimitReader(gz, MaxImageSize)}
 	}
 
 	tr := tar.NewReader(r)
@@ -72,6 +75,19 @@ func tarballImageRef(ctx context.Context, path string) string {
 		}
 		return firstRepoTag(data)
 	}
+}
+
+// ctxReader is r with each Read returning ctx.Err() once ctx is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // firstRepoTag returns the first RepoTags entry of a docker save manifest,

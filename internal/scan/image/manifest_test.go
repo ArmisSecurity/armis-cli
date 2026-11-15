@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -158,11 +159,54 @@ func TestTarballImageRef(t *testing.T) {
 		}
 	})
 
+	t.Run("Ctrl+C while a gzip layer decompresses stops the read", func(t *testing.T) {
+		// An 8 MiB layer, then manifest.json. The loop checks ctx once before
+		// each Next, two calls in all, and the Next that skips the layer
+		// decompresses all of it. Ctrl+C after those two checks is seen only
+		// by a Read inside that skip.
+		path := writeImageTar(t, "image.tar.gz", []tarEntry{
+			{name: "blobs/sha256/big", body: strings.Repeat("x", 8<<20)},
+			{name: "manifest.json", body: `[{"RepoTags":["python:3.12-slim"]}]`},
+		})
+		ctx := &cancelAfter{Context: context.Background(), after: 2}
+		if got := tarballImageRef(ctx, path); got != "" {
+			t.Errorf("tarballImageRef = %q, want empty after the cancel", got)
+		}
+	})
+
 	t.Run("a missing file", func(t *testing.T) {
 		if got := tarballImageRef(context.Background(), filepath.Join(t.TempDir(), "none.tar")); got != "" {
 			t.Errorf("tarballImageRef = %q, want empty", got)
 		}
 	})
+}
+
+// cancelAfter is a context whose Err reports context.Canceled from call
+// after+1 on, standing for a Ctrl+C at a known point of a read.
+type cancelAfter struct {
+	context.Context
+	after, calls int
+}
+
+func (c *cancelAfter) Err() error {
+	c.calls++
+	if c.calls > c.after {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestCtxReader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := ctxReader{ctx: ctx, r: strings.NewReader("data")}
+	buf := make([]byte, 2)
+	if n, err := r.Read(buf); n != 2 || err != nil {
+		t.Fatalf("Read before cancel = %d, %v; want 2, nil", n, err)
+	}
+	cancel()
+	if n, err := r.Read(buf); n != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Read after cancel = %d, %v; want 0, context.Canceled", n, err)
+	}
 }
 
 func TestImageRefField(t *testing.T) {
