@@ -327,6 +327,8 @@ type IngestOptions struct {
 	// are omitted from the /scan request body.
 	BOMTypes  []string
 	BOMFormat string
+	// ImageRef names the scanned image for its BOMs; empty is omitted.
+	ImageRef string
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -553,6 +555,7 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		OriginSHA:    opts.OriginSHA,
 		BOMTypes:     opts.BOMTypes,
 		BOMFormat:    opts.BOMFormat,
+		ImageRef:     opts.ImageRef,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

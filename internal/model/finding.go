@@ -176,6 +176,9 @@ type IngestScanStartRequest struct {
 	// same as before for scans that request no BOM.
 	BOMTypes  []string `json:"bom_types,omitempty"`
 	BOMFormat string   `json:"bom_format,omitempty"`
+	// ImageRef names the scanned image, such as python:3.12-slim, at the root
+	// of its BOMs. Sent on image scans with --bom only.
+	ImageRef string `json:"image_ref,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

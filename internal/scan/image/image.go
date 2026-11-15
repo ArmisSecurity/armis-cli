@@ -136,6 +136,16 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	return s.ScanTarball(ctx, tmpFileName)
 }
 
+// imageRef returns the image_ref sent with --bom: the normalized reference
+// ScanImage keeps in displayName, or for a direct --tarball the first
+// RepoTags entry of its manifest.json; "" when there is none.
+func (s *Scanner) imageRef(ctx context.Context, tarballPath string) string {
+	if s.displayName != "" {
+		return imageRefField(s.displayName)
+	}
+	return tarballImageRef(ctx, tarballPath)
+}
+
 // ScanTarball scans a container image from a tarball file.
 func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.ScanResult, error) {
 	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; rejects invalid paths before use
@@ -186,6 +196,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		if s.sbomVEXOpts.BOM != nil {
 			ingestOpts.BOMTypes = s.sbomVEXOpts.BOM.Types
 			ingestOpts.BOMFormat = s.sbomVEXOpts.BOM.Format
+			ingestOpts.ImageRef = s.imageRef(ctx, tarballPath)
 		}
 	}
 

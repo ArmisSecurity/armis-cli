@@ -455,6 +455,24 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("forwards image_ref to /scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "image", Filename: "armis-image-1.tar",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			BOMTypes: []string{"cbom"}, BOMFormat: "cyclonedx-1.7", ImageRef: "python:3.12-slim",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got := scanBody(t, state); got["image_ref"] != "python:3.12-slim" {
+			t.Errorf("image_ref = %v, want python:3.12-slim", got["image_ref"])
+		}
+	})
+
 	t.Run("omits bom fields without --bom", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)
