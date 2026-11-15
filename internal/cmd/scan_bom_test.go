@@ -105,6 +105,108 @@ func TestScanBOMFlagErrorsStopBeforeUpload(t *testing.T) {
 	}
 }
 
+// TestScanDefaultOutputDirStopsBeforeUpload runs the real command line in a
+// directory whose .armis is a symlink, as a scanned repository can commit it:
+// every flag that writes to the default .armis exits before auth and upload,
+// so the API server sees no request.
+func TestScanDefaultOutputDirStopsBeforeUpload(t *testing.T) {
+	isolateHomeDir(t)
+	var requests atomic.Int32
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	t.Setenv("ARMIS_API_URL", server.URL)
+	t.Setenv("ARMIS_API_TOKEN", testToken)
+	t.Setenv("ARMIS_TENANT_ID", testTenantID)
+
+	repoDir := t.TempDir()
+	tarball := filepath.Join(t.TempDir(), "image.tar")
+	testhelpers.WriteMinimalTar(t, tarball)
+	t.Chdir(t.TempDir())
+	outside := t.TempDir()
+	if err := os.Symlink(outside, ".armis"); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	origColor, origTheme, origNoUpdate := colorFlag, themeFlag, noUpdateCheck
+	colorFlag, themeFlag, noUpdateCheck = testColorNever, themeAuto, true
+	t.Cleanup(func() {
+		colorFlag, themeFlag, noUpdateCheck = origColor, origTheme, origNoUpdate
+		rootCmd.SetArgs(nil)
+	})
+
+	rows := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"--bom on a repo", []string{"scan", "repo", repoDir, "--bom", "cbom"}, "invalid CBOM output path: .armis is not a plain directory"},
+		{"--sbom on a repo", []string{"scan", "repo", repoDir, "--sbom"}, "invalid SBOM output path: .armis is not a plain directory"},
+		{"--vex on an image", []string{"scan", "image", "--tarball", tarball, "--vex"}, "invalid VEX output path: .armis is not a plain directory"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				for _, name := range []string{"bom", "sbom", "vex"} {
+					resetParsedFlag(t, scanCmd.PersistentFlags(), name)
+				}
+				resetParsedFlag(t, scanImageCmd.Flags(), "tarball")
+				bomTypes = nil
+			})
+			rootCmd.SetArgs(row.args)
+			err := Execute()
+			if err == nil || !strings.Contains(err.Error(), row.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, row.wantErr)
+			}
+			if n := requests.Load(); n != 0 {
+				t.Fatalf("server saw %d requests, want none before the check", n)
+			}
+		})
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote through the link: %v", entries)
+	}
+}
+
+func TestCheckDefaultOutputDir(t *testing.T) {
+	origTypes, origOutput := bomTypes, bomOutput
+	origSBOM, origSBOMOutput, origVEX, origVEXOutput := generateSBOM, sbomOutput, generateVEX, vexOutput
+	t.Cleanup(func() {
+		bomTypes, bomOutput = origTypes, origOutput
+		generateSBOM, sbomOutput, generateVEX, vexOutput = origSBOM, origSBOMOutput, origVEX, origVEXOutput
+	})
+	t.Chdir(t.TempDir())
+	if err := os.Symlink(t.TempDir(), ".armis"); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	rows := []struct {
+		name      string
+		set       func()
+		wantError bool
+	}{
+		{"no output flags", func() {}, false},
+		{"--bom to the default", func() { bomTypes = []string{"aibom"} }, true},
+		{"--bom to a typed directory", func() { bomTypes, bomOutput = []string{"aibom"}, ".armis" }, false},
+		{"--bom to stdout", func() { bomTypes, bomOutput = []string{"aibom"}, "-" }, false},
+		{"--sbom to the default", func() { generateSBOM = true }, true},
+		{"--sbom to a typed path", func() { generateSBOM, sbomOutput = true, filepath.Join(".armis", "s.json") }, false},
+		{"--vex to the default", func() { generateVEX = true }, true},
+		{"--vex to a typed path", func() { generateVEX, vexOutput = true, "vex.json" }, false},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			bomTypes, bomOutput = nil, ""
+			generateSBOM, sbomOutput, generateVEX, vexOutput = false, "", false, ""
+			row.set()
+			if err := checkDefaultOutputDir(); (err != nil) != row.wantError {
+				t.Errorf("checkDefaultOutputDir() = %v, want error %v", err, row.wantError)
+			}
+		})
+	}
+}
+
 func TestWarnOnUnusedBOMFlags(t *testing.T) {
 	origTypes, origFormat, origOutput := bomTypes, bomFormat, bomOutput
 	t.Cleanup(func() { bomTypes, bomFormat, bomOutput = origTypes, origFormat, origOutput })

@@ -32,9 +32,13 @@ var scanImageCmd = &cobra.Command{
   $ armis-cli scan image --tarball ./image.tar --bom cbom --bom-output -`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// The BOM type and format pairs and --bom-output fail before any
-		// network call; PersistentPreRunE has normalized the values.
+		// The BOM type and format pairs, --bom-output, and a default .armis
+		// that is not a plain directory fail before any network call;
+		// PersistentPreRunE has normalized the values.
 		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+			return err
+		}
+		if err := checkDefaultOutputDir(); err != nil {
 			return err
 		}
 

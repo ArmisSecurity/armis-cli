@@ -408,8 +408,8 @@ func prepareOutputPath(outputPath, docType string, defaultDir bool) (string, err
 
 	dir := filepath.Dir(sanitizedPath)
 	if defaultDir {
-		if _, err := plainDir(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("invalid %s output path: %w", docType, err)
+		if err := checkDefaultDir(dir, docType); err != nil {
+			return "", err
 		}
 	}
 
@@ -420,6 +420,23 @@ func prepareOutputPath(outputPath, docType string, defaultDir bool) (string, err
 		}
 	}
 	return sanitizedPath, nil
+}
+
+// CheckDefaultOutputDir returns the error the write of a docType file would
+// give later when DefaultBOMDir is not a plain directory, such as a symlink
+// committed in the scanned repository, so a scan can stop before upload. A
+// missing directory passes.
+func CheckDefaultOutputDir(docType string) error {
+	return checkDefaultDir(DefaultBOMDir, docType)
+}
+
+// checkDefaultDir refuses the default output directory dir unless it is a
+// plain directory or does not exist yet.
+func checkDefaultDir(dir, docType string) error {
+	if _, err := plainDir(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("invalid %s output path: %w", docType, err)
+	}
+	return nil
 }
 
 // plainDir returns the Lstat information of dir, or an error unless dir is a

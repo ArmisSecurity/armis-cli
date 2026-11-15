@@ -421,8 +421,8 @@ Generate SBOM and VEX as part of your CI pipeline:
 - SBOM and VEX download failures are logged as warnings but do not fail the scan
 - Files are protected against path traversal attacks
 - In `scan repo` and `scan image`, the default `.armis` output is refused when
-  `.armis` is not a plain directory, such as a symlink, or the file there is
-  not a regular file. Files there are replaced with mode 0600. A path given in
+  `.armis` is not a plain directory, such as a symlink (checked before upload),
+  or the file there is not a regular file. Files there are replaced with mode 0600. A path given in
   an output flag is written as given
 - Maximum download size is 100MB per file
 

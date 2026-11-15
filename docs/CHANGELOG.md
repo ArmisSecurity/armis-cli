@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- `scan repo`/`scan image`: files written to the default `.armis` directory by `--sbom`, `--vex` and `--bom` are refused when `.armis` is not a plain directory, such as a symlink committed in the scanned repository, or when the file there is not a regular file. They are replaced atomically with mode 0600. Paths given in `--sbom-output`, `--vex-output` and `--bom-output` are written in place.
+- `scan repo`/`scan image`: files written to the default `.armis` directory by `--sbom`, `--vex` and `--bom` are refused when `.armis` is not a plain directory, such as a symlink committed in the scanned repository, or when the file there is not a regular file. The directory is checked before upload, so no scan is created, and again at write time. Files there are replaced atomically with mode 0600. Paths given in `--sbom-output`, `--vex-output` and `--bom-output` are written in place.
 
 ---
 

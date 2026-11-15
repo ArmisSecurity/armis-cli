@@ -199,6 +199,25 @@ func warnOnUnusedBOMFlags() {
 	}
 }
 
+// checkDefaultOutputDir stops scan repo and scan image before auth and upload
+// when --sbom, --vex or --bom would write to a default .armis that is not a
+// plain directory, with the error the write would give after the scan. The
+// write checks again.
+func checkDefaultOutputDir() error {
+	var docType string
+	switch {
+	case generateSBOM && sbomOutput == "":
+		docType = "SBOM"
+	case generateVEX && vexOutput == "":
+		docType = "VEX"
+	case len(bomTypes) > 0 && bomOutput == "":
+		docType = scan.BOMLabel(bomTypes[0])
+	default:
+		return nil
+	}
+	return scan.CheckDefaultOutputDir(docType)
+}
+
 // bomOptions returns the BOM download options for a scan of target (as
 // typed), or nil without --bom.
 func bomOptions(target string) *scan.BOMOptions {
