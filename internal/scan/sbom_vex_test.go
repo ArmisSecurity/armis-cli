@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -570,6 +571,212 @@ func TestIndentJSON(t *testing.T) {
 	})
 }
 
+// TestSaveArtifactOutputPaths covers the write shared by --sbom, --vex and
+// --bom. A path the CLI picked itself under .armis is strict, since a scanned
+// repository can commit .armis or a file in it. A path from an output flag is
+// written in place, as before.
+func TestSaveArtifactOutputPaths(t *testing.T) {
+	const doc = `{"bomFormat":"CycloneDX"}`
+	d := &SBOMVEXDownloader{}
+	save := func(t *testing.T, path string, defaultDir bool) error {
+		t.Helper()
+		var err error
+		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", []byte(doc), defaultDir) })
+		return err
+	}
+	defaultPath := filepath.Join(".armis", "repo-sbom.json")
+
+	t.Run("the default .armis as a symlink is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		outside := t.TempDir()
+		if err := os.Symlink(outside, ".armis"); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
+			t.Fatalf("error = %v, want the symlinked .armis refused", err)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Errorf("wrote through the link: %v", entries)
+		}
+	})
+
+	t.Run("the default .armis as a file is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.WriteFile(".armis", []byte("keep"), 0600); err != nil {
+			t.Fatalf("write .armis: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
+			t.Fatalf("error = %v, want the non-directory .armis refused", err)
+		}
+		if got, _ := os.ReadFile(".armis"); string(got) != "keep" {
+			t.Errorf(".armis = %q, want it untouched", got)
+		}
+	})
+
+	t.Run("the default .armis swapped before it is opened is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		beforeDefaultDirOpen = func(dir string) {
+			if err := os.Rename(dir, dir+"-checked"); err != nil {
+				t.Errorf("move the checked directory: %v", err)
+			}
+			if err := os.Mkdir(dir, 0750); err != nil {
+				t.Errorf("make the swapped directory: %v", err)
+			}
+		}
+		t.Cleanup(func() { beforeDefaultDirOpen = nil })
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis changed while it was opened") {
+			t.Fatalf("error = %v, want the swapped .armis refused", err)
+		}
+		for _, dir := range []string{".armis", ".armis-checked"} {
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("%s holds %v, want nothing written", dir, entries)
+			}
+		}
+	})
+
+	t.Run("a directory as the target in the default .armis is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.MkdirAll(defaultPath, 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
+			t.Fatalf("error = %v, want the non-regular target refused", err)
+		}
+	})
+
+	t.Run("a symlinked target in the default .armis is refused and its target untouched", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		victim := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		if err := os.Symlink(victim, defaultPath); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
+			t.Fatalf("error = %v, want the symlinked target refused", err)
+		}
+		if got, _ := os.ReadFile(victim); string(got) != "keep" { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("link target = %q, want it untouched", got)
+		}
+	})
+
+	t.Run("a 240-byte file name in the default .armis works", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("the full path passes MAX_PATH on Windows")
+		}
+		t.Chdir(t.TempDir())
+		path := filepath.Join(".armis", strings.Repeat("n", 235)+".json")
+		if err := save(t, path, true); err != nil {
+			t.Fatalf("saveArtifact with a 240-byte name failed: %v", err)
+		}
+		assertBOMFile(t, path, doc)
+	})
+
+	t.Run("an existing 0644 file in the default .armis is replaced with mode 0600", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("file modes are not POSIX on Windows")
+		}
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(defaultPath, []byte("old"), 0600); err != nil {
+			t.Fatalf("write old file: %v", err)
+		}
+		if err := os.Chmod(defaultPath, 0644); err != nil { //nolint:gosec // test sets a loose mode on purpose
+			t.Fatalf("chmod: %v", err)
+		}
+		if err := save(t, defaultPath, true); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, defaultPath, doc)
+		if entries, _ := os.ReadDir(".armis"); len(entries) != 1 {
+			t.Errorf(".armis holds %v, want only the output file", entries)
+		}
+	})
+
+	// On macOS t.TempDir is under /var, a link to /private/var, as /tmp is.
+	t.Run("t.TempDir paths are used, from a flag and as the default", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "repo-sbom.json")
+		if err := save(t, path, false); err != nil {
+			t.Fatalf("saveArtifact with a flag path failed: %v", err)
+		}
+		assertBOMFile(t, path, doc)
+
+		t.Chdir(t.TempDir())
+		if err := save(t, defaultPath, true); err != nil {
+			t.Fatalf("saveArtifact with the default .armis failed: %v", err)
+		}
+		assertBOMFile(t, defaultPath, doc)
+	})
+
+	t.Run("/dev/stdout from a flag is written as before", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("no /dev/stdout on Windows")
+		}
+		if err := save(t, "/dev/stdout", false); err != nil {
+			t.Fatalf("saveArtifact to /dev/stdout failed: %v", err)
+		}
+	})
+
+	t.Run("a FIFO from a flag is written in place and stays a FIFO", func(t *testing.T) {
+		fifo := filepath.Join(t.TempDir(), "sbom.fifo")
+		r := openFIFO(t, fifo)
+		if err := save(t, fifo, false); err != nil {
+			t.Fatalf("saveArtifact to a FIFO failed: %v", err)
+		}
+		got, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("read FIFO: %v", err)
+		}
+		if !bytes.Equal(got, IndentJSON([]byte(doc))) {
+			t.Errorf("FIFO got %q, want the document", got)
+		}
+		if info, err := os.Lstat(fifo); err != nil || info.Mode()&fs.ModeNamedPipe == 0 {
+			t.Errorf("FIFO is now %v (%v), want it left a FIFO", info, err)
+		}
+	})
+
+	t.Run("a symlinked directory from a flag is used as given", func(t *testing.T) {
+		target := t.TempDir()
+		link := filepath.Join(t.TempDir(), "out")
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		if err := save(t, filepath.Join(link, "repo-sbom.json"), false); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(target, "repo-sbom.json"), doc)
+	})
+
+	t.Run("a symlinked target from a flag is written through, as before", func(t *testing.T) {
+		victim := filepath.Join(t.TempDir(), "sbom.json")
+		link := filepath.Join(t.TempDir(), "link.json")
+		if err := os.Symlink(victim, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		if err := save(t, link, false); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, victim, doc)
+		if info, err := os.Lstat(link); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			t.Errorf("link is now %v (%v), want it left a link", info, err)
+		}
+	})
+}
+
 // bomServer is a fake results endpoint plus S3: GET /api/v1/ingest/results
 // links every key in docs to /download/<key> on the same server, which serves
 // the document.
@@ -990,6 +1197,38 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 			t.Errorf("skip = %q, stderr = %q; want the skip reason", skip, stderr)
 		}
 		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+	})
+
+	t.Run("a symlinked default .armis is refused, the same path typed is used", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+		t.Chdir(t.TempDir())
+		outside := t.TempDir()
+		if err := os.Symlink(outside, ".armis"); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc, "sbom_results": sbomDoc}}
+		client := srv.start(t)
+
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true,
+			BOM:          &BOMOptions{Types: []string{"cbom"}, Format: "cyclonedx-1.7"},
+		})
+		assertBOMFailed(t, err, []string{"cbom"}, "")
+		if !strings.Contains(stderr, "invalid SBOM output path: .armis is not a plain directory") {
+			t.Errorf("stderr = %q, want the --sbom default refused", stderr)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Fatalf("wrote through the default .armis link: %v", entries)
+		}
+
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true, SBOMOutput: filepath.Join(".armis", "sbom.json"),
+			BOM: &BOMOptions{Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: ".armis"},
+		}); err != nil {
+			t.Fatalf("typed output paths must be used as given, got: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(outside, "test-artifact-bom-cbom.json"), cbomDoc)
+		assertBOMFile(t, filepath.Join(outside, "sbom.json"), sbomDoc)
 	})
 
 	t.Run("stdout mode writes the fetched bytes once", func(t *testing.T) {

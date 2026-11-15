@@ -4,9 +4,12 @@ package scan
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -149,7 +152,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 			if outputPath == "" {
 				outputPath = filepath.Join(".armis", defaultName)
 			}
-			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM"); err != nil {
+			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM", d.opts.SBOMOutput == ""); err != nil {
 				cli.PrintWarningf("%v", err)
 			}
 		} else {
@@ -165,7 +168,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 			if outputPath == "" {
 				outputPath = filepath.Join(".armis", sanitizedName+"-vex.json")
 			}
-			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX"); err != nil {
+			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX", d.opts.VEXOutput == ""); err != nil {
 				cli.PrintWarningf("%v", err)
 			}
 		} else {
@@ -273,20 +276,20 @@ func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format
 	if dir == "" {
 		dir = DefaultBOMDir
 	}
-	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, data)
+	return d.saveArtifact(filepath.Join(dir, BOMFileName(artifact, bomType, format)), label, data, opts.Output == "")
 }
 
 // downloadAndSave downloads from a URL and saves to a file. The output path
 // is checked before the download, so a bad path costs no request.
-func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string) error {
-	if _, err := prepareOutputPath(outputPath, docType); err != nil {
+func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string, defaultDir bool) error {
+	if _, err := prepareOutputPath(outputPath, docType, defaultDir); err != nil {
 		return err
 	}
 	data, err := d.fetchArtifact(ctx, url, docType)
 	if err != nil {
 		return err
 	}
-	return d.saveArtifact(outputPath, docType, data)
+	return d.saveArtifact(outputPath, docType, data, defaultDir)
 }
 
 // fetchArtifact checks a presigned link and downloads it, within the client's
@@ -306,15 +309,23 @@ func (d *SBOMVEXDownloader) fetchArtifact(ctx context.Context, url, docType stri
 }
 
 // saveArtifact writes a downloaded document, pretty-printed by IndentJSON, to
-// outputPath with mode 0600, creating its directory with mode 0750.
-func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, data []byte) error {
-	outputPath, err := prepareOutputPath(outputPath, docType)
+// outputPath, creating its directory with mode 0750. A path from an output
+// flag is the user's own and is written in place with mode 0600, as before, so
+// /dev/stdout, a FIFO or a device still work. A path the CLI picked itself
+// under .armis (defaultDir) goes through replaceInDefaultDir.
+func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, data []byte, defaultDir bool) error {
+	outputPath, err := prepareOutputPath(outputPath, docType, defaultDir)
 	if err != nil {
 		return err
 	}
 
-	// Write with secure permissions (owner read/write only)
-	if err := os.WriteFile(outputPath, IndentJSON(data), 0600); err != nil {
+	if defaultDir {
+		err = replaceInDefaultDir(outputPath, IndentJSON(data))
+	} else {
+		// Write with secure permissions (owner read/write only)
+		err = os.WriteFile(outputPath, IndentJSON(data), 0600)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to write %s to %s: %w", docType, outputPath, err)
 	}
 
@@ -326,22 +337,114 @@ func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, data []byte
 }
 
 // prepareOutputPath sanitizes an output path and creates its parent
-// directory.
-func prepareOutputPath(outputPath, docType string) (string, error) {
+// directory. For a path the CLI picked itself (defaultDir), the directory is
+// .armis, which a scanned repository can commit as a symbolic link or another
+// non-directory, so it is checked before MkdirAll could follow it. A path from
+// an output flag is trusted, as before.
+func prepareOutputPath(outputPath, docType string, defaultDir bool) (string, error) {
 	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; outputPath from user flag then sanitized
 	sanitizedPath, err := util.SanitizePath(outputPath)
 	if err != nil {
 		return "", fmt.Errorf("invalid %s output path: %w", docType, err)
 	}
 
-	// Ensure parent directory exists
 	dir := filepath.Dir(sanitizedPath)
+	if defaultDir {
+		if _, err := plainDir(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("invalid %s output path: %w", docType, err)
+		}
+	}
+
+	// Ensure parent directory exists
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return "", fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 	return sanitizedPath, nil
+}
+
+// plainDir returns the Lstat information of dir, or an error unless dir is a
+// plain directory. A symbolic link fails, and so does a Windows junction,
+// which Lstat reports as irregular.
+func plainDir(dir string) (fs.FileInfo, error) {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a plain directory", dir)
+	}
+	// Windows Lstat reads the file ID only at the first SameFile; read it now,
+	// so a later comparison sees this directory, not what the path names then.
+	if !os.SameFile(info, info) {
+		return nil, fmt.Errorf("cannot identify %s", dir)
+	}
+	return info, nil
+}
+
+// beforeDefaultDirOpen, when set, runs between the check of the default
+// directory and its opening. Tests use it to swap the directory.
+var beforeDefaultDirOpen func(dir string)
+
+// replaceInDefaultDir writes data to path, in the directory the CLI picked
+// itself. The directory must be a plain directory, and the one os.OpenRoot
+// then opens, so a swap between the check and the open is refused. Inside it,
+// an existing target must be a regular file. data goes to a new 0600 temp file
+// that is renamed over the target, so the target is replaced, never written
+// through, and ends with mode 0600.
+func replaceInDefaultDir(path string, data []byte) error {
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	checked, err := plainDir(dir)
+	if err != nil {
+		return err
+	}
+	if beforeDefaultDirOpen != nil {
+		beforeDefaultDirOpen(dir)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck // directory handle only
+	opened, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(checked, opened) {
+		return fmt.Errorf("%s changed while it was opened", dir)
+	}
+
+	if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	tmp := tempFileName()
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = root.Rename(tmp, name)
+	}
+	if err != nil {
+		_ = root.Remove(tmp)
+	}
+	return err
+}
+
+// tempFileName returns a temp file name of fixed length, so a long target
+// name cannot push it past the file system's limit on a name.
+func tempFileName() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // crypto/rand.Read does not fail
+	return ".armis-tmp-" + hex.EncodeToString(b)
 }
 
 // IndentJSON pretty-prints a JSON document. The backend serves SBOM/VEX
