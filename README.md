@@ -499,7 +499,9 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 --debug                 Enable debug mode for detailed API responses
 ```
 
-> The `--sbom`, `--sbom-format`, `--vex`, `--sbom-output`, `--vex-output`, `--bom`, `--bom-format`, and `--bom-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
+> The `--sbom`, `--sbom-format`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
+>
+> The `--bom`, `--bom-format`, and `--bom-output` flags apply to `scan repo` and `scan image` — see [BOMs](#boms-ai-bom-cbom-sbom). `scan sbom` and `scan status` ignore them; `--bom` prints a warning there.
 
 ### Scan Repository
 
@@ -583,7 +585,7 @@ Notes:
   and `cbom` or `all` with any SPDX value. A format the server does not offer
   for a type fails the scan request.
 - `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout.
-- Each file holds the stored document, pretty-printed, with mode 0600. SPDX files end in `.spdx.json`.
+- Each file holds the stored document, pretty-printed. New files get mode 0600, and so does a file replaced in the default `.armis`. SPDX files end in `.spdx.json`.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.
