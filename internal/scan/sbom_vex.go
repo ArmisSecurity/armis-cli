@@ -228,7 +228,7 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			failed = append(failed, bomType)
 			continue
 		}
-		if isEmptyBOM(data, format) {
+		if bomIsEmpty(results.BOMSummary, bomType, data, format) {
 			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}

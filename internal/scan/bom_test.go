@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/api"
 )
 
 func TestValidateBOMFlags(t *testing.T) {
@@ -233,6 +235,7 @@ func TestIsEmptyBOM(t *testing.T) {
 		{"SPDX 2.3 without packages", `{"spdxVersion":"SPDX-2.3"}`, "spdx-2.3", true},
 		{"SPDX 2.3 with empty packages", `{"packages":[]}`, "spdx-2.3", true},
 		{"SPDX 2.3 with a package", `{"packages":[{"name":"p"}]}`, "spdx-2.3", false},
+		{"SPDX 2.3 with only the root package", spdxRootOnly, "spdx-2.3", false},
 		{"SPDX 2.3 ignores components", `{"components":[{"name":"a"}]}`, "spdx-2.3", true},
 		{"SPDX 3.0.1 is not checked", `{"@graph":[]}`, "spdx-3.0.1", false},
 		{"not JSON", `<bom/>`, "cyclonedx-1.7", false},
@@ -243,6 +246,38 @@ func TestIsEmptyBOM(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isEmptyBOM([]byte(tt.data), tt.format); got != tt.want {
 				t.Errorf("isEmptyBOM(%s, %s) = %v, want %v", tt.data, tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+// spdxRootOnly is an empty SPDX 2.3 SBOM as the server sends it: the scan
+// root is always a package.
+const spdxRootOnly = `{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","name":"my-repo",` +
+	`"packages":[{"SPDXID":"SPDXRef-Package-3f2a","name":"my-repo","downloadLocation":"NONE"}],` +
+	`"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-3f2a"}]}`
+
+func TestBOMIsEmpty(t *testing.T) {
+	summary := func(status string) *api.BOMSummary {
+		return &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"sbom": {Status: status}}}
+	}
+	tests := []struct {
+		name    string
+		summary *api.BOMSummary
+		data    string
+		format  string
+		want    bool
+	}{
+		{"summary empty, SPDX with the root package", summary(api.BOMStatusEmpty), spdxRootOnly, "spdx-2.3", true},
+		{"summary generated, CycloneDX without components", summary(api.BOMStatusGenerated), `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", false},
+		{"summary without the type", &api.BOMSummary{}, `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", false},
+		{"no summary reads the document", nil, `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", true},
+		{"no summary, SPDX with the root package", nil, spdxRootOnly, "spdx-2.3", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bomIsEmpty(tt.summary, "sbom", []byte(tt.data), tt.format); got != tt.want {
+				t.Errorf("bomIsEmpty = %v, want %v", got, tt.want)
 			}
 		})
 	}

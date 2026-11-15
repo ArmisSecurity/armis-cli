@@ -1077,6 +1077,27 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		}
 	})
 
+	t.Run("an empty SPDX SBOM is named from bom_summary", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"bom_sbom_spdx23_results": spdxRootOnly},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"sbom": {Status: "empty", Formats: []string{"cyclonedx-1.7", "spdx-2.3"}},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"sbom"}, Format: "spdx-2.3", Output: dir, Target: "./my-repo",
+		}})
+		if err != nil {
+			t.Fatalf("an empty BOM must not fail, got: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-sbom.spdx.json"), spdxRootOnly)
+		if !strings.Contains(stderr, "No packages found in ./my-repo") {
+			t.Errorf("stderr = %q, want the empty SBOM line", stderr)
+		}
+	})
+
 	t.Run("a download over the size cap fails that type", func(t *testing.T) {
 		dir := t.TempDir()
 		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, oversizeKey: "aibom_results"}

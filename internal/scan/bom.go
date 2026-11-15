@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
@@ -306,10 +307,23 @@ func jsonDepthAtMost(data []byte, limit int) bool {
 	return true
 }
 
+// bomIsEmpty reports whether the BOM of bomType lists nothing. With a
+// bom_summary the server's status decides: its SPDX documents always name the
+// scan root as a package, so the document cannot tell. Without one,
+// isEmptyBOM reads the document.
+func bomIsEmpty(summary *api.BOMSummary, bomType string, data []byte, format string) bool {
+	if summary != nil {
+		st, ok := summary.TypeStatus(bomType)
+		return ok && st.Status == api.BOMStatusEmpty
+	}
+	return isEmptyBOM(data, format)
+}
+
 // isEmptyBOM reports whether a BOM lists nothing: no components and no
 // services for CycloneDX, no packages for SPDX 2.3. Input that is not a JSON
 // object, and SPDX 3.0.1 (a JSON-LD graph without top-level lists), is not
-// called empty.
+// called empty. It is the fallback for a results response without
+// bom_summary.
 func isEmptyBOM(data []byte, format string) bool {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
