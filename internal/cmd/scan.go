@@ -210,7 +210,8 @@ func bomOptions(target string) *scan.BOMOptions {
 
 // reportWriter returns where the findings report goes: stderr when the BOM
 // is written to stdout (--bom-output -) and --output is not set, so the two
-// do not mix; w otherwise.
+// do not mix; w otherwise. It stays out of cmdutil.ResolveOutput, which also
+// serves scan sbom and supply-chain check, commands that build no BOMs.
 func reportWriter(w io.Writer) io.Writer {
 	if len(bomTypes) > 0 && bomOutput == scan.BOMOutputStdout && outputFile == "" {
 		return os.Stderr
@@ -314,7 +315,7 @@ func init() {
 		scan.BOMFormatCycloneDX17: "CycloneDX 1.7 JSON (default)",
 		scan.BOMFormatCycloneDX16: "CycloneDX 1.6 JSON",
 		scan.BOMFormatSPDX23:      "SPDX 2.3 JSON, sbom only",
-		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom; not offered by the server yet",
+		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom",
 		scan.BOMFormatCycloneDX:   "Alias of cyclonedx-1.7",
 		scan.BOMFormatSPDX:        "Alias: spdx-2.3 for sbom, spdx-3.0.1 for aibom",
 	}))

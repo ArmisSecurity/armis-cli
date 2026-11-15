@@ -580,15 +580,15 @@ Notes:
   `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`
   (CycloneDX 1.7) and `spdx` (SPDX 2.3 for `sbom`, SPDX 3.0.1 for `aibom`).
 - A type with no such form is rejected before upload: `aibom` with `spdx-2.3`,
-  and `cbom` or `all` with any SPDX value. The server does not offer SPDX 3.0.1
-  yet, so `spdx-3.0.1`, and `spdx` with `aibom`, fail the scan request.
+  and `cbom` or `all` with any SPDX value. A format the server does not offer
+  for a type fails the scan request.
 - `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout.
 - Each file holds the stored document, pretty-printed, with mode 0600. SPDX files end in `.spdx.json`.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.
-- A type the server did not build, or a BOM over 50 MB, which is not stored,
-  prints a warning and does not change the exit code.
+- A type the server did not build, or a BOM too large to store, prints a
+  warning and does not change the exit code.
 - A BOM that was built but cannot be downloaded prints a warning and the scan
   exits 2, unless `--fail-on` triggers first (see [Exit Codes](#exit-codes)).
 - With `--changed` or `--include-files`, BOMs cover only the uploaded files.

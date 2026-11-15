@@ -10,9 +10,9 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 )
 
-// BOM types accepted by --bom. These mirror the backend BomType values
-// (Project-Moose moose_common.bom.types) and are sent verbatim in the ingest
-// request's bom_types field.
+// BOM types accepted by --bom. These mirror the backend BomType enum
+// (Project-Moose) and are sent verbatim in the ingest request's bom_types
+// field.
 const (
 	BOMTypeSBOM  = "sbom"
 	BOMTypeAIBOM = "aibom"
@@ -87,9 +87,9 @@ func SplitBOMError(err error) ([]string, error) {
 	return nil, err
 }
 
-// resultKeyStem and variantCode mirror results_key in Project-Moose
-// moose_common/bom/constants.py: "<stem>_results" for CycloneDX 1.7, and
-// "<stem>_<code>_results" for the other formats.
+// resultKeyStem and variantCode follow the results keys of the ingest results
+// API: "<stem>_results" for CycloneDX 1.7, and "<stem>_<code>_results" for
+// the other formats.
 var resultKeyStem = map[string]string{
 	BOMTypeSBOM:  "bom_sbom",
 	BOMTypeAIBOM: "aibom",
@@ -104,8 +104,8 @@ var variantCode = map[string]string{
 }
 
 // ResolveBOMFormat returns the versioned format an alias names for bomType,
-// as the server's resolve_format does: cyclonedx is cyclonedx-1.7, and spdx is
-// spdx-2.3 for sbom and spdx-3.0.1 for aibom. A versioned value is returned
+// as the server does: cyclonedx is cyclonedx-1.7, and spdx is spdx-2.3 for
+// sbom and spdx-3.0.1 for aibom. A versioned value is returned
 // unchanged; type and format pairs are checked by cmdutil.ValidateBOMFlags.
 func ResolveBOMFormat(bomType, format string) (string, error) {
 	switch format {

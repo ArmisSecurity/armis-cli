@@ -186,9 +186,9 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 // downloadBOMs downloads each requested BOM type and returns the results it
 // ended with and the types that failed. A type the server did not store (a
 // key not offered, too_large, or a format left out of bom_summary) only warns.
-// A 403, likely a presigned link past its 900 s expiry, refetches the results
-// once and retries that type once; the refetched results then serve the
-// remaining types and are returned.
+// A 403, likely an expired presigned link, refetches the results once and
+// retries that type once; the refetched results then serve the remaining
+// types and are returned.
 func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string) {
 	var failed []string
 	opts := d.opts.BOM
@@ -283,7 +283,7 @@ func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
 	st, ok := summary.TypeStatus(bomType)
 	switch {
 	case ok && st.Status == api.BOMStatusTooLarge:
-		cli.PrintWarningf("%s was larger than 50 MB and was not stored", label)
+		cli.PrintWarningf("%s was too large to store", label)
 	case ok && (st.Status == api.BOMStatusGenerated || st.Status == api.BOMStatusEmpty) &&
 		st.Formats != nil && !slices.Contains(st.Formats, format):
 		cli.PrintWarningf("%s is not available in %s", label, format)

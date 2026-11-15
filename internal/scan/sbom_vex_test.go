@@ -1037,7 +1037,7 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("too_large must not fail, got: %v", err)
 		}
-		if !strings.Contains(stderr, "CBOM was larger than 50 MB and was not stored") {
+		if !strings.Contains(stderr, "CBOM was too large to store") {
 			t.Errorf("stderr = %q, want the too_large warning", stderr)
 		}
 		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)

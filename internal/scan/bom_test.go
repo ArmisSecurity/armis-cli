@@ -46,7 +46,7 @@ func TestResolveBOMFormat(t *testing.T) {
 }
 
 // bomKeyCases are the type and resolved format pairs the server stores, with
-// the results key of Project-Moose results_key and the file armis-cli writes.
+// the results key the server links and the file armis-cli writes.
 var bomKeyCases = []struct {
 	bomType, format, key, file string
 }{

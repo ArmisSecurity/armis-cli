@@ -862,8 +862,8 @@ type ArtifactScanResultsResponse struct {
 	BOMSummary *BOMSummary `json:"bom_summary"`
 }
 
-// BOM type statuses in bom_summary.types.<type>.status (Project-Moose
-// moose_common.bom.types.BomStatus).
+// BOM type statuses in bom_summary.types.<type>.status. These mirror the
+// backend BomStatus enum (Project-Moose).
 const (
 	BOMStatusGenerated = "generated"
 	BOMStatusEmpty     = "empty"

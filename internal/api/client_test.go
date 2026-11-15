@@ -1133,8 +1133,8 @@ func TestClient_FetchArtifactScanResults(t *testing.T) {
 	})
 
 	t.Run("decodes bom_summary beside results", func(t *testing.T) {
-		// The shape GET /api/v1/ingest/results returns (BomSummary.to_document
-		// in Project-Moose), cut to the fields that matter here.
+		// The shape GET /api/v1/ingest/results returns, cut to the fields
+		// that matter here.
 		const body = `{"scan_status":"COMPLETED","results":{"aibom_cdx16_results":"https://bucket.s3.amazonaws.com/a"},` +
 			`"bom_summary":{"schema_version":1,"spec_version":"1.7","validation":"passed","types":{` +
 			`"aibom":{"status":"generated","components":4,"formats":["cyclonedx-1.7","cyclonedx-1.6"],"validation":"passed"},` +
