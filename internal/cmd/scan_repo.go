@@ -96,6 +96,7 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		warnOnUnusedSBOMVEXFlags()
+		warnOnUnusedBOMFlags()
 
 		// Configure SBOM/VEX options if any flags are set
 		if generateSBOM || generateVEX {

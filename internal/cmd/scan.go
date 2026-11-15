@@ -26,6 +26,9 @@ var (
 	generateVEX           bool
 	sbomOutput            string
 	vexOutput             string
+	bomTypes              []string
+	bomFormat             string
+	bomOutput             string
 	summaryTop            bool
 	outputFile            string
 	pollInterval          time.Duration
@@ -105,6 +108,16 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("invalid --sbom-format value %q: must be one of %v", sbomFormat, validSBOMFormats)
 		}
 
+		// Validate --bom, --bom-format and --bom-output early, normalizing the
+		// types and the format in place, so a bad value or a type and format
+		// pair the server rejects surfaces before auth and upload.
+		bomFlag := cmd.Flag("bom")
+		normalizedBOMTypes, normalizedBOMFormat, err := scan.ValidateBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat, bomOutput)
+		if err != nil {
+			return err
+		}
+		bomTypes, bomFormat = normalizedBOMTypes, normalizedBOMFormat
+
 		// Validate exit-code: must be between 1 and 255 (0 defeats --fail-on, >255 is invalid POSIX)
 		if exitCode < 1 || exitCode > 255 {
 			return fmt.Errorf("invalid --exit-code value %d: must be between 1 and 255", exitCode)
@@ -162,6 +175,22 @@ func warnOnUnusedSBOMVEXFlags() {
 	}
 	if vexOutput != "" && !generateVEX {
 		cli.PrintWarning("--vex-output is ignored without --vex flag")
+	}
+}
+
+// warnOnUnusedBOMFlags emits a warning when --bom-format / --bom-output are
+// set without --bom. bomTypes and bomFormat are normalized in
+// PersistentPreRunE, so an empty bomTypes means no --bom, and the format is
+// compared against the lower-case default.
+func warnOnUnusedBOMFlags() {
+	if len(bomTypes) > 0 {
+		return
+	}
+	if bomFormat != scan.BOMFormatCycloneDX17 {
+		cli.PrintWarning("--bom-format is ignored without --bom flag")
+	}
+	if bomOutput != "" {
+		cli.PrintWarning("--bom-output is ignored without --bom flag")
 	}
 }
 
@@ -232,6 +261,9 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&generateVEX, "vex", false, "Generate Vulnerability Exploitability eXchange (VEX) document")
 	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
+	scanCmd.PersistentFlags().StringSliceVar(&bomTypes, "bom", nil, "Download BOMs of these types, comma-separated or repeated: sbom, aibom, cbom, all (combined); BOM generation must be enabled for your tenant")
+	scanCmd.PersistentFlags().StringVar(&bomFormat, "bom-format", scan.BOMFormatCycloneDX17, "BOM format: cyclonedx-1.7, cyclonedx-1.6, spdx-2.3, spdx-3.0.1, or the aliases cyclonedx, spdx (requires --bom; BOM generation must be enabled for your tenant)")
+	scanCmd.PersistentFlags().StringVar(&bomOutput, "bom-output", "", "Directory for BOM files, or - to write one BOM to stdout (default: .armis; requires --bom; BOM generation must be enabled for your tenant)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
 	// poll-interval overrides the Scanner's default status-poll interval (5s in

@@ -56,6 +56,11 @@ generated alongside them.`,
 		if generateSBOM {
 			cli.PrintWarning("--sbom is ignored for `scan sbom` (the SBOM is the input, not the output)")
 		}
+		// --bom is persistent on `scan`, so it parses here, but `scan sbom`
+		// builds no BOMs.
+		if len(bomTypes) > 0 {
+			cli.PrintWarning("--bom is ignored for `scan sbom`")
+		}
 
 		// Validate path exists before making network calls. A directory, a
 		// single SBOM file, and a pre-built tarball are all valid inputs, so we

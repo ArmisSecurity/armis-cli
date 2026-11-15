@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
@@ -351,11 +354,17 @@ func TestScanPersistentPreRunE(t *testing.T) {
 	originalColorFlag := colorFlag
 	originalThemeFlag := themeFlag
 	originalNoUpdateCheck := noUpdateCheck
+	originalBOMTypes := bomTypes
+	originalBOMFormat := bomFormat
+	originalBOMOutput := bomOutput
 
 	t.Cleanup(func() {
 		format = originalFormat
 		groupBy = originalGroupBy
 		sbomFormat = originalSBOMFormat
+		bomTypes = originalBOMTypes
+		bomFormat = originalBOMFormat
+		bomOutput = originalBOMOutput
 		colorFlag = originalColorFlag
 		themeFlag = originalThemeFlag
 		noUpdateCheck = originalNoUpdateCheck
@@ -520,6 +529,79 @@ func TestScanPersistentPreRunE(t *testing.T) {
 		// Reset to a valid value so later subtests aren't affected.
 		sbomFormat = "cyclonedx"
 	})
+
+	// The --bom rows. PersistentPreRunE reads whether --bom was given from the
+	// flag's Changed state, so setBOMFlag sets it as the command line would.
+	setBOMFlag := func(t *testing.T, types []string, bomFmt, output string) {
+		t.Helper()
+		flag := scanCmd.PersistentFlags().Lookup("bom")
+		flag.Changed = true
+		bomTypes, bomFormat, bomOutput = types, bomFmt, output
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		t.Cleanup(func() {
+			flag.Changed = false
+			bomTypes, bomFormat, bomOutput = nil, scan.BOMFormatCycloneDX17, ""
+		})
+	}
+
+	t.Run("bom types are normalized in place", func(t *testing.T) {
+		setBOMFlag(t, []string{"CBOM", "aibom", "", "AIBOM"}, scan.BOMFormatCycloneDX17, "")
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(bomTypes, []string{"aibom", "cbom"}) {
+			t.Errorf("bomTypes = %v, want [aibom cbom]", bomTypes)
+		}
+	})
+
+	t.Run("bom-format is normalized to lowercase", func(t *testing.T) {
+		setBOMFlag(t, []string{"aibom"}, "CycloneDX-1.6", "")
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if bomFormat != "cyclonedx-1.6" {
+			t.Errorf("bomFormat = %q, want cyclonedx-1.6", bomFormat)
+		}
+	})
+
+	t.Run("bom without --bom leaves no types", func(t *testing.T) {
+		format = testFormatHuman
+		groupBy = testGroupByNone
+		bomTypes, bomFormat, bomOutput = nil, scan.BOMFormatCycloneDX16, t.TempDir()
+		t.Cleanup(func() { bomFormat, bomOutput = scan.BOMFormatCycloneDX17, "" })
+		if err := scanCmd.PersistentPreRunE(scanCmd, []string{}); err != nil {
+			t.Fatalf("--bom-format and --bom-output without --bom must only warn, got: %v", err)
+		}
+		if bomTypes != nil {
+			t.Errorf("bomTypes = %v, want nil", bomTypes)
+		}
+	})
+
+	bomErrorRows := []struct {
+		name    string
+		types   []string
+		bomFmt  string
+		output  string
+		wantErr string
+	}{
+		{"--bom= is rejected", []string{}, scan.BOMFormatCycloneDX17, "", "--bom requires a value: one of [sbom aibom cbom all]"},
+		{"unknown bom type", []string{"xbom"}, scan.BOMFormatCycloneDX17, "", `invalid --bom value "xbom"`},
+		{"unknown bom-format", []string{"aibom"}, "cyclonedx-1.5", "", `invalid --bom-format value "cyclonedx-1.5"`},
+		{"aibom with spdx-2.3", []string{"aibom"}, "spdx-2.3", "", "--bom-format spdx-2.3 is not available for --bom aibom: the AI-BOM's SPDX form is spdx-3.0.1"},
+		{"cbom with spdx", []string{"cbom"}, "SPDX", "", "--bom-format spdx is not available for --bom cbom: the CBOM has no SPDX form"},
+		{"stdout with two types", []string{"aibom", "cbom"}, scan.BOMFormatCycloneDX17, "-", "--bom-output - takes one BOM type, got 2: aibom,cbom"},
+		{"bom-output with ..", []string{"aibom"}, scan.BOMFormatCycloneDX17, "../out", "path traversal detected"},
+	}
+	for _, row := range bomErrorRows {
+		t.Run(row.name, func(t *testing.T) {
+			setBOMFlag(t, row.types, row.bomFmt, row.output)
+			err := scanCmd.PersistentPreRunE(scanCmd, []string{})
+			if err == nil || !strings.Contains(err.Error(), row.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, row.wantErr)
+			}
+		})
+	}
 
 	t.Run("chains to root PreRunE", func(t *testing.T) {
 		// Test that root's color validation is called
