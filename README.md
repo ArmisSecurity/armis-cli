@@ -590,7 +590,9 @@ Notes:
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.
 - A type the server did not build, or a BOM too large to store, prints a
-  warning and does not change the exit code.
+  warning and does not change the exit code. The warning says whether the type
+  is not supported for this scan, failed on the server (with the tools that
+  failed anywhere in the scan, if any), or was too large to store.
 - A BOM that was built but cannot be downloaded prints a warning and the scan
   exits 2, unless `--fail-on` triggers first (see [Exit Codes](#exit-codes)).
 - With `--changed` or `--include-files`, BOMs cover only the uploaded files.

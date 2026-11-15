@@ -865,15 +865,19 @@ type ArtifactScanResultsResponse struct {
 // BOM type statuses in bom_summary.types.<type>.status. These mirror the
 // backend BomStatus enum (Project-Moose).
 const (
-	BOMStatusGenerated = "generated"
-	BOMStatusEmpty     = "empty"
-	BOMStatusTooLarge  = "too_large"
+	BOMStatusGenerated    = "generated"
+	BOMStatusEmpty        = "empty"
+	BOMStatusTooLarge     = "too_large"
+	BOMStatusFailed       = "failed"
+	BOMStatusNotSupported = "not_supported"
 )
 
 // BOMSummary is the part of the results response's bom_summary that the CLI
-// reads.
+// reads. FailedTools names the tools that failed during the scan, for every
+// BOM type together.
 type BOMSummary struct {
-	Types map[string]BOMTypeStatus `json:"types"`
+	Types       map[string]BOMTypeStatus `json:"types"`
+	FailedTools []string                 `json:"failed_tools,omitempty"`
 }
 
 // BOMTypeStatus is the state of one BOM type. Formats lists the formats that

@@ -276,14 +276,26 @@ func stripControl(s string) string {
 	}, s)
 }
 
-// warnBOMNotOffered explains why a requested BOM type has no link. None of
-// these is a failure: the server built no such BOM, or does not offer BOMs.
+// warnBOMNotOffered explains why a requested BOM type has no link, from its
+// bom_summary status when the summary lists the type. None of these changes
+// the exit code: the server built or stored no such BOM, or does not offer
+// BOMs.
 func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
 	label := BOMLabel(bomType)
 	st, ok := summary.TypeStatus(bomType)
 	switch {
 	case ok && st.Status == api.BOMStatusTooLarge:
 		cli.PrintWarningf("%s was too large to store", label)
+	case ok && st.Status == api.BOMStatusNotSupported:
+		cli.PrintWarningf("%s is not supported for this scan", label)
+	case ok && st.Status == api.BOMStatusFailed:
+		// failed_tools covers the whole scan, not this type, and a type can
+		// fail with no tool failed, so the tools are named as scan-wide.
+		msg := label + " failed on the server"
+		if len(summary.FailedTools) > 0 {
+			msg += " (tools that failed in this scan: " + stripControl(strings.Join(summary.FailedTools, ", ")) + ")"
+		}
+		cli.PrintWarning(msg)
 	case ok && (st.Status == api.BOMStatusGenerated || st.Status == api.BOMStatusEmpty) &&
 		st.Formats != nil && !slices.Contains(st.Formats, format):
 		cli.PrintWarningf("%s is not available in %s", label, format)

@@ -1085,6 +1085,44 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		}
 	})
 
+	t.Run("each bom_summary status has its own warning", func(t *testing.T) {
+		rows := []struct {
+			name    string
+			summary *api.BOMSummary
+			want    string
+		}{
+			{"not_supported", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"aibom": {Status: "not_supported"}}},
+				"Warning: AI-BOM is not supported for this scan\n"},
+			{"failed with tools", &api.BOMSummary{
+				Types:       map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}},
+				FailedTools: []string{"tool_a", "tool\x1b[31m_b"},
+			}, "Warning: AI-BOM failed on the server (tools that failed in this scan: tool_a, tool[31m_b)\n"},
+			{"failed, with a tool of another type", &api.BOMSummary{
+				Types:       map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}, "cbom": {Status: "generated"}},
+				FailedTools: []string{"crypto_tool"},
+			}, "Warning: AI-BOM failed on the server (tools that failed in this scan: crypto_tool)\n"},
+			{"failed without tools", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}}},
+				"Warning: AI-BOM failed on the server\n"},
+			{"a type the summary does not list", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"cbom": {Status: "generated"}}},
+				"Warning: AI-BOM was requested but not available in results\n"},
+		}
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				srv := &bomServer{docs: map[string]string{}, summary: row.summary}
+				client := srv.start(t)
+				_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+					Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+				}})
+				if err != nil {
+					t.Fatalf("a %s type must not fail, got: %v", row.name, err)
+				}
+				if stderr != row.want {
+					t.Errorf("stderr = %q, want %q", stderr, row.want)
+				}
+			})
+		}
+	})
+
 	t.Run("a format missing from formats warns and does not fail", func(t *testing.T) {
 		dir := t.TempDir()
 		srv := &bomServer{
