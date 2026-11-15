@@ -123,7 +123,9 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	// does not hide BOMs that were built.
 	var bomErr error
 	if bom != nil {
-		if failed := d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
+		var failed []string
+		// A 403 refetch hands back fresher links, for --sbom and --vex too.
+		if results, failed = d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
 			bomErr = &BOMDownloadError{Types: failed}
 		}
 	}
@@ -181,12 +183,14 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	return "", bomErr
 }
 
-// downloadBOMs downloads each requested BOM type and returns the types that
-// failed. A type the server did not store (a key not offered, too_large, or a
-// format left out of bom_summary) only warns. A 403, likely a presigned link
-// past its 900 s expiry, refetches the results once and retries that type
-// once.
-func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (failed []string) {
+// downloadBOMs downloads each requested BOM type and returns the results it
+// ended with and the types that failed. A type the server did not store (a
+// key not offered, too_large, or a format left out of bom_summary) only warns.
+// A 403, likely a presigned link past its 900 s expiry, refetches the results
+// once and retries that type once; the refetched results then serve the
+// remaining types and are returned.
+func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string) {
+	var failed []string
 	opts := d.opts.BOM
 	for _, bomType := range opts.Types {
 		label := BOMLabel(bomType)
@@ -207,7 +211,11 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 		data, err := d.fetchArtifact(ctx, url, label)
 		var statusErr *api.DownloadStatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusForbidden {
-			url, err = d.refetchBOMURL(ctx, scanID, key, label)
+			var fresh *api.ArtifactScanResultsResponse
+			url, fresh, err = d.refetchBOMURL(ctx, scanID, key, label)
+			if fresh != nil {
+				results = fresh
+			}
 			if err == nil {
 				data, err = d.fetchArtifact(ctx, url, label)
 			}
@@ -232,19 +240,21 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}
-	return failed
+	return results, failed
 }
 
 // refetchBOMURL fetches the results again for a fresh presigned link to key.
-func (d *SBOMVEXDownloader) refetchBOMURL(ctx context.Context, scanID, key, label string) (string, error) {
+// It returns the refetched results whenever the call answered with them, even
+// without a link to key.
+func (d *SBOMVEXDownloader) refetchBOMURL(ctx context.Context, scanID, key, label string) (string, *api.ArtifactScanResultsResponse, error) {
 	fresh, err := d.client.FetchArtifactScanResults(ctx, d.tenantID, scanID)
 	if err != nil {
-		return "", fmt.Errorf("failed to download %s: refetching expired link: %w", label, serverTextError{err})
+		return "", nil, fmt.Errorf("failed to download %s: refetching expired link: %w", label, serverTextError{err})
 	}
 	if fresh == nil || fresh.Results[key] == "" {
-		return "", fmt.Errorf("failed to download %s: refetching expired link: no link in results", label)
+		return "", fresh, fmt.Errorf("failed to download %s: refetching expired link: no link in results", label)
 	}
-	return fresh.Results[key], nil
+	return fresh.Results[key], fresh, nil
 }
 
 // serverTextError is an error that can carry a server response body, with C0

@@ -778,8 +778,8 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 }
 
 // bomServer is a fake results endpoint plus S3: GET /api/v1/ingest/results
-// links every key in docs to /download/<key> on the same server, which serves
-// the document.
+// links every key in docs to /download/<key>?gen=<n> on the same server, which
+// serves the document; n counts the results calls.
 type bomServer struct {
 	docs        map[string]string // results key -> stored document
 	summary     *api.BOMSummary
@@ -798,6 +798,7 @@ type bomServer struct {
 	mu            sync.Mutex
 	resultsCalls  int
 	downloadCalls map[string]int
+	downloadGens  map[string][]string // results key -> gen of each download
 }
 
 // calls returns the number of results calls and of downloads of key.
@@ -810,6 +811,7 @@ func (b *bomServer) calls(key string) (int, int) {
 func (b *bomServer) start(t *testing.T) *api.Client {
 	t.Helper()
 	b.downloadCalls = map[string]int{}
+	b.downloadGens = map[string][]string{}
 	var serverURL string
 	server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
@@ -827,7 +829,7 @@ func (b *bomServer) start(t *testing.T) *api.Client {
 			}
 			results := map[string]string{}
 			for key := range b.docs {
-				results[key] = serverURL + "/download/" + key
+				results[key] = serverURL + "/download/" + key + "?gen=" + strconv.Itoa(b.resultsCalls)
 			}
 			if b.oversizeKey != "" {
 				results[b.oversizeKey] = serverURL + "/download/" + b.oversizeKey
@@ -842,6 +844,7 @@ func (b *bomServer) start(t *testing.T) *api.Client {
 		}
 		key := strings.TrimPrefix(r.URL.Path, "/download/")
 		b.downloadCalls[key]++
+		b.downloadGens[key] = append(b.downloadGens[key], r.URL.Query().Get("gen"))
 		if b.downloadCode != nil {
 			if code := b.downloadCode(key, b.downloadCalls[key]); code != 0 {
 				w.WriteHeader(code)
@@ -1181,6 +1184,52 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
 		if results, downloads := srv.calls("aibom_results"); results != 2 || downloads != 2 {
 			t.Errorf("results calls = %d, downloads = %d; want 2 and 2", results, downloads)
+		}
+	})
+
+	t.Run("after a 403 refetch the fresh links serve the other types and --sbom", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc, "sbom_results": sbomDoc},
+			downloadCode: func(key string, n int) int {
+				if key == "aibom_results" && n == 1 {
+					return http.StatusForbidden
+				}
+				return 0
+			},
+		}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true, SBOMOutput: filepath.Join(dir, "sbom.json"),
+			BOM: &BOMOptions{Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir},
+		}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		want := map[string][]string{"aibom_results": {"1", "2"}, "cbom_results": {"2"}, "sbom_results": {"2"}}
+		if !reflect.DeepEqual(srv.downloadGens, want) {
+			t.Errorf("link generations = %v, want %v", srv.downloadGens, want)
+		}
+		if srv.resultsCalls != 2 {
+			t.Errorf("results calls = %d, want 2", srv.resultsCalls)
+		}
+	})
+
+	t.Run("each type refetches at most once", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { return http.StatusForbidden },
+		}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom", "cbom"}, "")
+		if results, downloads := srv.calls("cbom_results"); results != 3 || downloads != 2 {
+			t.Errorf("results calls = %d, cbom downloads = %d; want 3 and 2", results, downloads)
 		}
 	})
 
