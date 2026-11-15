@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan image <name>`: SBOM, VEX and BOM files are now named after the image, such as `.armis/app-1.2-sbom.json` for `ghcr.io/org/app:1.2`, not after a random temporary file, so a rerun replaces them. `--tarball` still names them after the tarball file.
 - README and CI guide: the exit codes now match the CLI: `1` on an error, the `--exit-code` value (default `1`) on findings, `2` when results or a requested BOM cannot be downloaded, and `130` on Ctrl+C.
 
 ### Security

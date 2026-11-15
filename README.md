@@ -681,6 +681,12 @@ With `--bom`, an image scan sends the image name with the request so it appears
 in its BOMs. For `--tarball`, the name is the first tag in the tarball's
 `manifest.json`, as `docker save` writes it; a tarball without one sends none.
 
+The SBOM, VEX and BOM files of an image scanned by name start with the last
+part of the repository name and the tag, if one was given:
+`ghcr.io/org/app:1.2` gives `app-1.2-sbom.json`, and `python@sha256:...` gives
+`python-sbom.json`. A rerun replaces the same files. With `--tarball`, they
+start with the tarball's file name.
+
 #### Pull Policy
 
 Control how images are fetched before scanning:

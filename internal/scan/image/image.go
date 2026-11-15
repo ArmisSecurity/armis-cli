@@ -52,6 +52,11 @@ type Scanner struct {
 	// so history doesn't show the throwaway temp-tarball name; empty on the
 	// direct --tarball path, where the tarball's own filename is meaningful.
 	displayName string
+	// artifactName starts the names of the SBOM, VEX and BOM files.
+	// ScanImage sets it from the image reference, so a rerun writes the same
+	// files; empty on the direct --tarball path, which names them after the
+	// tarball file.
+	artifactName string
 }
 
 // NewScanner creates a new image scanner with the given configuration.
@@ -100,6 +105,7 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	if err != nil {
 		return nil, err
 	}
+	typed := imageName
 	imageName = normalised
 
 	if !IsDockerAvailable() {
@@ -107,8 +113,9 @@ func (s *Scanner) ScanImage(ctx context.Context, imageName string) (*model.ScanR
 	}
 
 	// Record the image reference (not the throwaway temp-tarball path that
-	// ScanTarball would otherwise derive) as the scan-history label.
-	s.displayName = imageName
+	// ScanTarball would otherwise derive) as the scan-history label and the
+	// output file name.
+	s.useImageName(typed, imageName)
 
 	tmpFile, err := os.CreateTemp("", "armis-image-*.tar")
 	if err != nil {
@@ -144,6 +151,14 @@ func (s *Scanner) imageRef(ctx context.Context, tarballPath string) string {
 		return imageRefField(s.displayName)
 	}
 	return tarballImageRef(ctx, tarballPath)
+}
+
+// useImageName records, for an image scanned by name, the normalized
+// reference as the scan-history label and image_ref, and the artifact name
+// from the reference as typed, so a tag is used only when one was given.
+func (s *Scanner) useImageName(typed, normalized string) {
+	s.displayName = normalized
+	s.artifactName = imageArtifactName(typed)
 }
 
 // ScanTarball scans a container image from a tarball file.
@@ -265,9 +280,12 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	// (e.g. appsec-v2 skipped for exceeding a file-count limit) even when the
 	// user didn't request SBOM/VEX generation. Download() no-ops the SBOM/VEX
 	// download steps when s.sbomVEXOpts is nil.
-	artifactName := filepath.Base(tarballPath)
-	if ext := filepath.Ext(artifactName); ext != "" {
-		artifactName = artifactName[:len(artifactName)-len(ext)]
+	artifactName := s.artifactName
+	if artifactName == "" {
+		artifactName = filepath.Base(tarballPath)
+		if ext := filepath.Ext(artifactName); ext != "" {
+			artifactName = artifactName[:len(artifactName)-len(ext)]
+		}
 	}
 	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
 	skipReason, err := downloader.Download(ctx, scanID, artifactName)

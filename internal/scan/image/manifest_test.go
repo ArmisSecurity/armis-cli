@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -348,6 +351,131 @@ func TestScanTarball_ImageRef(t *testing.T) {
 			if _, ok := got[key]; ok {
 				t.Errorf("%s = %v, want it omitted without --bom", key, got[key])
 			}
+		}
+	})
+}
+
+func TestImageArtifactName(t *testing.T) {
+	const digest = "sha256:05a9f2b1c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c4177"
+	tests := []struct {
+		typed, want string
+	}{
+		{"app", "app"},
+		{"python:3.12-slim", "python-3.12-slim"},
+		{"python@" + digest, "python"},
+		{"python:3.12@" + digest, "python-3.12"},
+		{"ghcr.io/org/app:1.2", "app-1.2"},
+		{"docker.io/library/nginx:1.27", "nginx-1.27"},
+		{"localhost:5000/team/app:v1", "app-v1"},
+		{"registry.example.com:443/a/b/c", "c"},
+		{"app:V1.0_rc-2", "app-V1.0_rc-2"},
+		{"my.app_x__y-z:1", "my.app_x__y-z-1"},
+		{"Python:3", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := imageArtifactName(tt.typed); got != tt.want {
+			t.Errorf("imageArtifactName(%q) = %q, want %q", tt.typed, got, tt.want)
+		}
+	}
+}
+
+func TestImageArtifactNameCap(t *testing.T) {
+	// A valid reference: a 200-character repository component and a
+	// 128-character tag give a 329-byte name.
+	repo, tag := strings.Repeat("a", 200), strings.Repeat("t", 128)
+	full := repo + "-" + tag
+	sum := sha256.Sum256([]byte(full))
+	want := full[:maxArtifactNameLength-9] + "-" + hex.EncodeToString(sum[:4])
+
+	got := imageArtifactName("registry.example.com/" + repo + ":" + tag)
+	if got != want {
+		t.Fatalf("imageArtifactName = %q (%d bytes), want %q", got, len(got), want)
+	}
+	if len(got) != maxArtifactNameLength {
+		t.Errorf("length = %d, want %d", len(got), maxArtifactNameLength)
+	}
+	if file := got + "-bom-sbom.spdx.json"; len(file) > 200 {
+		t.Errorf("longest file name is %d bytes, want well under 255", len(file))
+	}
+
+	exact := strings.Repeat("b", maxArtifactNameLength)
+	if got := imageArtifactName(exact); got != exact {
+		t.Errorf("a %d-byte name was changed to %q", maxArtifactNameLength, got)
+	}
+}
+
+// TestScanTarball_ArtifactName checks the output file names: an image scanned
+// by name names them after the image, so a rerun replaces the same files,
+// and --tarball names them after the tarball file.
+func TestScanTarball_ArtifactName(t *testing.T) {
+	const cbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.7","components":[{"name":"AES"}]}`
+	const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+	scanOnce := func(t *testing.T, typed, tarball string) {
+		t.Helper()
+		serverURL := testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{
+			ScanID: "scan-name", BOMContent: map[string]string{"cbom_results": cbomDoc}, SBOMContent: sbomDoc,
+		})
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		c, err := api.NewClient(serverURL, testutil.NewTestAuthProvider("token123"), false, time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		s := NewScanner(c, true, "tenant-456", 100, false, time.Minute, false).
+			WithPollInterval(10 * time.Millisecond).
+			WithSBOMVEXOptions(&scan.SBOMVEXOptions{
+				GenerateSBOM: true,
+				BOM:          &scan.BOMOptions{Types: []string{scan.BOMTypeCBOM}, Format: scan.BOMFormatCycloneDX17},
+			})
+		if typed != "" {
+			// As ScanImage does before it hands its temporary export over.
+			normalized, err := validateImageName(typed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.useImageName(typed, normalized)
+		}
+		_ = testutil.CaptureStderr(t, func() { _, err = s.ScanTarball(context.Background(), tarball) })
+		if err != nil {
+			t.Fatalf("ScanTarball: %v", err)
+		}
+	}
+	armisFiles := func(t *testing.T) []string {
+		t.Helper()
+		entries, err := os.ReadDir(".armis")
+		if err != nil {
+			t.Fatalf("read .armis: %v", err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+
+	t.Run("an image scanned by name twice writes the same files", func(t *testing.T) {
+		t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+		t.Chdir(t.TempDir())
+		for _, export := range []string{"armis-image-111.tar", "armis-image-222.tar"} {
+			tarball := filepath.Join(t.TempDir(), export)
+			testhelpers.WriteMinimalTar(t, tarball)
+			scanOnce(t, "ghcr.io/org/app:1.2", tarball)
+		}
+		want := []string{"app-1.2-bom-cbom.json", "app-1.2-sbom.json"}
+		if got := armisFiles(t); !reflect.DeepEqual(got, want) {
+			t.Errorf(".armis = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("--tarball names files after the tarball", func(t *testing.T) {
+		t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+		t.Chdir(t.TempDir())
+		scanOnce(t, "", writeImageTar(t, "app.tar", dockerSave("myorg/app:2.0")))
+		want := []string{"app-bom-cbom.json", "app-sbom.json"}
+		if got := armisFiles(t); !reflect.DeepEqual(got, want) {
+			t.Errorf(".armis = %v, want %v", got, want)
 		}
 	})
 }
