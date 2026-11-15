@@ -54,7 +54,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/progress/` - Braille-dot spinner with timer display, lipgloss styling, cursor hiding, CI detection (auto-disables animation). Context-aware with configurable timeout (default 30min). Upload progress via `NewReader()`/`NewWriter()` wrappers.
 - `internal/update/` - Background version checker against GitHub Releases API with file-based caching (~/.cache/armis-cli/, 24h TTL). Semver comparison. Skipped in CI, dev builds.
 - `internal/httpclient/` - HTTP client with exponential backoff retry (cenkalti/backoff). Retries on 5xx errors.
-- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting.
+- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting, control-character stripping for server text (`StripControl`).
 
 ### Key Interfaces
 

@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -262,19 +261,9 @@ func (d *SBOMVEXDownloader) refetchBOMURL(ctx context.Context, scanID, key, labe
 // and C1 control characters, such as terminal escapes, stripped from its text.
 type serverTextError struct{ err error }
 
-func (e serverTextError) Error() string { return stripControl(e.err.Error()) }
+func (e serverTextError) Error() string { return util.StripControl(e.err.Error()) }
 
 func (e serverTextError) Unwrap() error { return e.err }
-
-// stripControl removes C0 and C1 control characters from s.
-func stripControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
 
 // warnBOMNotOffered explains why a requested BOM type has no link, from its
 // bom_summary status when the summary lists the type. None of these changes
@@ -293,7 +282,7 @@ func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
 		// fail with no tool failed, so the tools are named as scan-wide.
 		msg := label + " failed on the server"
 		if len(summary.FailedTools) > 0 {
-			msg += " (tools that failed in this scan: " + stripControl(strings.Join(summary.FailedTools, ", ")) + ")"
+			msg += " (tools that failed in this scan: " + util.StripControl(strings.Join(summary.FailedTools, ", ")) + ")"
 		}
 		cli.PrintWarning(msg)
 	case ok && (st.Status == api.BOMStatusGenerated || st.Status == api.BOMStatusEmpty) &&

@@ -560,6 +560,74 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("a 422 refusing the BOM request is read from detail", func(t *testing.T) {
+		rows := []struct {
+			name    string
+			body    string
+			bom     bool
+			want    string
+			wantNot string
+		}{
+			{"detail with code and message", `{"detail":{"code":"export_format_unavailable","message":"The BOM type is not offered in this format"}}`, true,
+				"failed to trigger scan: the server refused the BOM request (--bom aibom,cbom --bom-format spdx): The BOM type is not offered in this format (export_format_unavailable)", "{"},
+			{"control characters in the message", `{"detail":{"code":"x\u001b[2J","message":"bad\u001b]0;t\u0007 format"}}`, true,
+				"the server refused the BOM request (--bom aibom,cbom --bom-format spdx): bad]0;t format (x[2J)", "\x1b"},
+			{"detail without a code", `{"detail":{"message":"The BOM type is not offered in this format"}}`, true,
+				"the server refused the BOM request (--bom aibom,cbom --bom-format spdx): The BOM type is not offered in this format", "()"},
+			{"a body that is not JSON", "<html>bad gateway</html>", true,
+				"/scan returned 422 Unprocessable Entity: <html>bad gateway</html>", "refused the BOM request"},
+			{"a detail list from request validation", `{"detail":[{"loc":["body","bom_format"],"msg":"bad"}]}`, true,
+				`/scan returned 422 Unprocessable Entity: {"detail":[`, "refused the BOM request"},
+			{"a request without BOM fields", `{"detail":{"code":"c","message":"m"}}`, false,
+				`/scan returned 422 Unprocessable Entity: {"detail":{"code":"c","message":"m"}}`, "refused the BOM request"},
+		}
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				t.Parallel()
+				srv, state := newIngestFlowServer(t)
+				state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					_, _ = io.WriteString(w, row.body)
+				}
+				client := newIngestFlowClient(t, srv.URL)
+				opts := IngestOptions{
+					TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+					Data: bytes.NewReader([]byte("test")), Size: 4,
+				}
+				if row.bom {
+					opts.BOMTypes, opts.BOMFormat = []string{"aibom", "cbom"}, "spdx"
+				}
+				_, err := client.StartIngest(context.Background(), opts)
+				if err == nil || !strings.Contains(err.Error(), row.want) {
+					t.Fatalf("error = %v, want it to contain %q", err, row.want)
+				}
+				if strings.Contains(err.Error(), row.wantNot) {
+					t.Errorf("error = %q, want no %q", err, row.wantNot)
+				}
+			})
+		}
+	})
+
+	t.Run("the raw /scan error has no control characters", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, "upload\x1b[2J not\u009b found\x07\r\nretry")
+		}
+		client := newIngestFlowClient(t, srv.URL)
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: upload[2J not foundretry") {
+			t.Fatalf("error = %v, want the body without control characters", err)
+		}
+		if strings.ContainsAny(err.Error(), "\x1b\x07\r\n\u009b") {
+			t.Errorf("error = %q holds a control character", err)
+		}
+	})
+
 	t.Run("context timeout", func(t *testing.T) {
 		// Slow /presigned-url so the orchestrator's upload context expires.
 		srv, state := newIngestFlowServer(t)

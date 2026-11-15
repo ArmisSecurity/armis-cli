@@ -583,7 +583,8 @@ Notes:
   (CycloneDX 1.7) and `spdx` (SPDX 2.3 for `sbom`, SPDX 3.0.1 for `aibom`).
 - A type with no such form is rejected before upload: `aibom` with `spdx-2.3`,
   and `cbom` or `all` with any SPDX value. A format the server does not offer
-  for a type fails the scan request.
+  for a type fails the scan request after upload, with exit code 1 and
+  `the server refused the BOM request (--bom <types> --bom-format <format>): <message> (<code>)`.
 - `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout.
 - Each file holds the stored document, pretty-printed. New files get mode 0600, and so does a file replaced in the default `.armis`. SPDX files end in `.spdx.json`.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
