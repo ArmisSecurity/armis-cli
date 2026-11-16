@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 func serverTransport(srv *httptest.Server) *http.Transport {
@@ -259,5 +262,107 @@ func TestRunClientCertificateRequired(t *testing.T) {
 		if !strings.Contains(report, want) {
 			t.Errorf("report should contain %q:\n%s", want, report)
 		}
+	}
+}
+
+func TestRunReportsDroppedTLS13Handshake(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	// Forwards TLS 1.2-only ClientHellos and silently holds TLS 1.3 ones, like
+	// an inspecting proxy that chokes on the CLI's TLS 1.3 handshake.
+	proxy := testutil.NewHelloProxy(t, srv.Listener.Addr().String(), func(h *testutil.ClientHello) bool {
+		return !slices.Contains(h.SupportedVersions, tls.VersionTLS13)
+	})
+
+	viaProxy := func(*url.URL) (*url.URL, string, error) { return proxy.URL, "the test", nil }
+	directOnly := func(*url.URL) (*url.URL, string, error) { return nil, "test", nil }
+	for _, tc := range []struct {
+		name      string
+		proxyFor  func(*url.URL) (*url.URL, string, error)
+		goVersion string
+		want58033 bool
+	}{
+		{"proxied verdict", viaProxy, "go1.27.3", true},
+		{"direct-only verdict", directOnly, "go1.27.3", true},
+		{"fixed toolchain", viaProxy, "go1.27.4", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			ok := Run(context.Background(), Options{
+				BaseURL:   srv.URL,
+				Out:       &out,
+				proxyFor:  tc.proxyFor,
+				goVersion: tc.goVersion,
+				transport: func(direct bool) *http.Transport {
+					tr := serverTransport(srv)
+					if !direct {
+						tr.Proxy = http.ProxyURL(proxy.URL)
+						tr.TLSHandshakeTimeout = time.Second
+					}
+					return tr
+				},
+			})
+			if ok {
+				t.Fatalf("the TLS 1.3 path must be reported as failed:\n%s", out.String())
+			}
+			report := out.String()
+			for _, want := range []string{
+				"TLS handshake timeout",
+				"[extra] Same connection, limited to TLS 1.2",
+				"TLS handshake finished (TLS 1.2",
+				"The TLS 1.2 handshake succeeds on this path and the CLI's TLS 1.3 handshake does not",
+			} {
+				if !strings.Contains(report, want) {
+					t.Errorf("report should contain %q:\n%s", want, report)
+				}
+			}
+			if got := strings.Contains(report, "Palo Alto threat ID 58033"); got != tc.want58033 {
+				t.Errorf("mentions threat ID 58033 = %v, want %v:\n%s", got, tc.want58033, report)
+			}
+		})
+	}
+}
+
+func TestMLDSAToolchain(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"go1.27.0", true},
+		{"go1.27.3", true},
+		{"go1.27rc2", true},
+		{"go1.27.3 X:boringcrypto", true},
+		{"go1.27.4", false},
+		{"go1.27.10", false},
+		{"go1.26.5", false},
+		{"go1.28.0", false},
+		{"devel go1.28-abcdef", false},
+		{"", false},
+	} {
+		if got := mldsaToolchain(tc.version); got != tc.want {
+			t.Errorf("mldsaToolchain(%q) = %v, want %v", tc.version, got, tc.want)
+		}
+	}
+}
+
+func TestRunSkipsTLS12RetryWithoutHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	var out bytes.Buffer
+	Run(context.Background(), Options{
+		BaseURL:   "https://" + addr,
+		Out:       &out,
+		proxyFor:  func(*url.URL) (*url.URL, string, error) { return nil, "test", nil },
+		transport: func(bool) *http.Transport { return &http.Transport{} },
+	})
+	if strings.Contains(out.String(), "[extra]") {
+		t.Errorf("a refused connection never reaches TLS; no TLS 1.2 retry expected:\n%s", out.String())
 	}
 }

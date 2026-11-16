@@ -2,6 +2,13 @@ module github.com/ArmisSecurity/armis-cli
 
 go 1.26.0
 
+// Go 1.27.0-1.27.3 offer ML-DSA in signature_algorithms_cert, and Palo Alto's
+// IPS rule for CVE-2020-1967 (threat ID 58033) drops those ClientHellos, so
+// scans hang behind such firewalls (go.dev/issue/79626). Release binaries must
+// be built with 1.27.4 or later. Drop this line once the go directive above is
+// 1.27.4 or later. CI reads the version from here.
+toolchain go1.27.4
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
