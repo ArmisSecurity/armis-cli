@@ -102,7 +102,7 @@ func TestRegisterVSCodePreservesJSONCServers(t *testing.T) {
 	if err := registerVSCodeFormat(path, scannerEntry("/plugin")); err != nil {
 		t.Fatalf("registerVSCodeFormat() error = %v", err)
 	}
-	servers, _ := readJSONFileAsMap(path)["servers"].(map[string]interface{})
+	servers, _ := mustReadJSON(t, path)["servers"].(map[string]interface{})
 	if _, ok := servers["other"]; !ok {
 		t.Errorf("servers = %v, want the existing \"other\" server preserved", servers)
 	}

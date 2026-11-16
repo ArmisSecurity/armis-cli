@@ -362,7 +362,7 @@ func checkVSCodeLog(report *DoctorReport, v vscodeVariant) {
 			hint("Open Copilot Chat in Agent mode, or run \"MCP: List Servers\" → armis-appsec → Start Server, then re-run this doctor.")
 		return
 	}
-	b, err := readBoundedConfigFile(path)
+	b, err := readEditorConfig(path)
 	if err != nil {
 		return
 	}
@@ -467,7 +467,7 @@ func vscodeProfileNames(root string) map[string]string {
 // readJSONCObject reads a JSONC file into a map. exists is false when the file
 // isn't there; err is set when it exists but can't be read or parsed.
 func readJSONCObject(path string) (obj map[string]interface{}, exists bool, err error) {
-	b, err := readBoundedConfigFile(path)
+	b, err := readEditorConfig(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil

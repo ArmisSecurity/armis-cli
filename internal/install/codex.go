@@ -1,6 +1,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,7 +84,7 @@ func RegisterCodexEntry(entry mcpEntry) error {
 
 	content, err := readFileOrEmpty(configPath)
 	if err != nil {
-		return err
+		return refuseOverwrite(err)
 	}
 
 	header := codexSectionHeaderFor(entry.name)
@@ -237,18 +238,29 @@ func tomlQuote(s string) string {
 }
 
 func readFileOrEmpty(path string) (string, error) {
-	// armis:ignore cwe:22 reason:path from known config location (homeDir + hardcoded segments)
-	b, err := os.ReadFile(filepath.Clean(path))
+	b, err := readEditorConfig(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return "", nil
 		}
-		return "", fmt.Errorf("reading %s: %w", path, err)
+		return "", err
 	}
 	return string(b), nil
 }
 
+// atomicTarget resolves symlinks so an atomic replace updates the file a
+// symlink points at (dotfile managers) rather than swapping the link itself.
+func atomicTarget(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// writeFileAtomic replaces path via a temp file and rename, so a crash or a
+// full disk mid-write never leaves a truncated config behind.
 func writeFileAtomic(path, content string) error {
+	path = atomicTarget(path)
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
