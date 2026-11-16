@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `armis-cli scan <path>` now scans the folder. It used to print help and exit 0 without scanning, which passed CI steps silently. `armis-cli scan` given flags but no path now fails instead of exiting 0. (PPSC-1589)
 - CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI` set to `false`, `0`, `no` or `off` as not CI. `AZURE_PIPELINES` no longer marks a CI run: no runner sets it, and Azure Pipelines is detected through `TF_BUILD`. (PPSC-1589)
+- Spinners and the upload progress bar animate only when stderr is a terminal. Otherwise each step is printed once, as in CI, instead of filling a redirected log with redraws. (PPSC-1589)
 
 ### Deprecated
 
@@ -26,7 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
+- A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
+- On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
+- `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
+
 ### Security
+
+- `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
 
 ---
 
