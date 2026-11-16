@@ -130,8 +130,9 @@ func TestResolve_ExistingProjectIsReused(t *testing.T) {
 
 func TestResolve_FollowsPagination(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
-		"":   page("c1", proj("p_1", "svc-a", "active")),
-		"c1": page("c2", proj("p_2", "svc-b", "active")),
+		// Sorted as the API sorts (byte order): matches before "svc" first.
+		"":   page("c1", proj("p_1", "a-svc", "active")),
+		"c1": page("c2", proj("p_2", "my-svc", "active")),
 		"c2": page("", proj("p_3", testName, "active")),
 	}}
 	res, err := Resolve(context.Background(), f, testTenant, testName)
@@ -322,7 +323,8 @@ func TestResolve_IncompleteLookupFallsBackToCreate(t *testing.T) {
 			if i > 0 {
 				cursor = "c" + strconv.Itoa(i)
 			}
-			pages[cursor] = page("c"+strconv.Itoa(i+1), proj("p_"+strconv.Itoa(i), "svc-"+strconv.Itoa(i), "active"))
+			// Zero-padded so the pages stay in byte order, all before "svc".
+			pages[cursor] = page("c"+strconv.Itoa(i+1), proj("p_"+strconv.Itoa(i), fmt.Sprintf("a-svc-%03d", i), "active"))
 		}
 		f := &fakeAPI{pages: pages}
 		res, err := Resolve(context.Background(), f, testTenant, testName)
@@ -421,5 +423,80 @@ func TestResolve_ExplainsAPIFailures(t *testing.T) {
 				t.Error("the AppSecError should still be reachable with errors.As")
 			}
 		})
+	}
+}
+
+// The API sorts name_asc in byte order, so a new name stops the lookup once a
+// page ends past it, instead of paging through every substring match.
+func TestResolve_LookupStopsOncePastTheName(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
+		"":   page("c1", proj("p_1", "a-svc", "active"), proj("p_2", "my-svc", "active")),
+		"c1": page("c2", proj("p_3", "svc-legacy", "active"), proj("p_4", "t-svc", "active")),
+		"c2": page("", proj("p_5", "zz-svc", "active")),
+	}}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !res.Created {
+		t.Errorf("got %+v, want a created project", res)
+	}
+	if len(f.listCalls) != 2 {
+		t.Errorf("list calls = %d, want 2 (the second page ends past %q)", len(f.listCalls), testName)
+	}
+}
+
+// Uppercase sorts before lowercase, so a case variant is seen before the
+// lookup stops, and refused.
+func TestResolve_LookupStopStillFindsCaseVariants(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
+		"":   page("c1", proj("p_1", "SVC", "active"), proj("p_2", "a-svc", "active")),
+		"c1": page("c2", proj("p_3", "t-svc", "active")),
+		"c2": page("", proj("p_4", "svC", "active")), // never reached: past "svc"
+	}}
+	_, err := Resolve(context.Background(), f, testTenant, testName)
+	var mismatch *CaseMismatchError
+	if !errors.As(err, &mismatch) || strings.Join(mismatch.Existing, ",") != "SVC" {
+		t.Fatalf("err = %v, want a case mismatch naming SVC", err)
+	}
+	if len(f.createCalls) != 0 || len(f.listCalls) != 2 {
+		t.Errorf("create calls = %d, list calls = %d; want 0 and 2", len(f.createCalls), len(f.listCalls))
+	}
+}
+
+// Names out of byte order mean the API sorted some other way: the lookup then
+// reads on rather than trusting the early stop.
+func TestResolve_LookupReadsOnWhenNamesAreNotInByteOrder(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
+		"":   page("c1", proj("p_1", "t-svc", "active"), proj("p_2", "a-svc", "active")),
+		"c1": page("", proj("p_3", testName, "active")),
+	}}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if res.Created || res.Project.ProjectID != "p_3" {
+		t.Errorf("got %+v, want the existing p_3", res)
+	}
+}
+
+func TestEqualFoldASCII(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"svc", "SVC", true},
+		{"Team/Svc-1.x", "team/svc-1.X", true},
+		{"svc", "svcs", false},
+		{"svc", "svd", false},
+		// Unicode folding (strings.EqualFold) would call these equal; for
+		// ASCII project names they are distinct.
+		{"ſvc", "svc", false},
+		{"\u212Avc", "kvc", false}, // the Kelvin sign folds to k in Unicode
+	}
+	for _, tt := range tests {
+		if got := equalFoldASCII(tt.a, tt.b); got != tt.want {
+			t.Errorf("equalFoldASCII(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
 	}
 }

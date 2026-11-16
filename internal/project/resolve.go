@@ -147,14 +147,25 @@ type lookupResult struct {
 	complete bool
 }
 
-// lookup pages through the projects whose name contains name (the API's only
-// name filter is a case-insensitive substring) for the one named exactly name,
-// noting those that differ only in case. It stops early on an exact match, and
-// gives up (complete=false) after maxLookupPages or on a cursor that does not
-// advance.
+// lookup pages through the projects whose name, repository or labels contain
+// name (the API's only name filter is a case-insensitive substring) for the one
+// named exactly name, noting those that differ only in case. It stops early on
+// an exact match, and once the pages have gone past every name that could
+// match (see below). It gives up (complete=false) after maxLookupPages or on a
+// cursor that does not advance.
+//
+// The API sorts name_asc in byte order (checked on dev, uppercase before
+// lowercase). Every case variant of an ASCII name sorts at or below its
+// all-lowercase form, so once a page ends past that form, no later page can
+// hold the name or a variant. That bounds the work for a short name such as
+// "api", which matches most projects of a large tenant. The stop is taken only
+// between pages, and only while every name seen so far was in byte order, so
+// an API that sorted differently would just be read to the end.
 func lookup(ctx context.Context, client API, tenantID, name string) (lookupResult, error) {
 	var found lookupResult
 	cursor := ""
+	last := strings.ToLower(name) // the highest any variant can sort
+	prev, ordered := "", true
 	for page := 0; page < maxLookupPages; page++ {
 		resp, err := client.ListProjects(ctx, tenantID, api.ProjectListOptions{
 			Query:    name,
@@ -172,12 +183,20 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 				found.exact = &p
 				return found, nil
 			}
-			if strings.EqualFold(p.Name, name) {
+			if equalFoldASCII(p.Name, name) {
 				found.variants = append(found.variants, p.Name)
 			}
+			if p.Name < prev {
+				ordered = false
+			}
+			prev = p.Name
 		}
 		next := resp.Pagination.NextCursor
 		if next == nil || *next == "" {
+			found.complete = true
+			return found, nil
+		}
+		if ordered && prev > last {
 			found.complete = true
 			return found, nil
 		}
@@ -187,6 +206,29 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 		cursor = *next
 	}
 	return found, nil
+}
+
+// equalFoldASCII reports whether a and b are equal ignoring ASCII case. Names
+// the CLI accepts are ASCII, so this is what "differs only in case" means for
+// them, and it keeps every variant at or below the lowercase name in byte
+// order, which lookup relies on.
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 // explain turns a projects API failure into an actionable error.
