@@ -326,6 +326,9 @@ func TestDeregisterRefusesUnparseableConfig(t *testing.T) {
 			if !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "cannot read") {
 				t.Errorf("error %q should say the file could not be read and name %s", err, path)
 			}
+			if !strings.Contains(err.Error(), "the file was not modified") {
+				t.Errorf("error %q should say the file was not modified", err)
+			}
 			assertUntouched(t, path, []byte(k.invalid), before)
 		})
 	}

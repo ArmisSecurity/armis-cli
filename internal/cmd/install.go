@@ -211,12 +211,12 @@ func installAll(force, withKnowledge bool) error {
 		if err := e.Register(ei.PluginDir()); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
 			failed = append(failed, e.Name)
-		} else {
-			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
-			registered = append(registered, e.Name)
-			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
-			kt.editors = append(kt.editors, e)
+			continue
 		}
+		fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
+		registered = append(registered, e.Name)
+		manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+		kt.editors = append(kt.editors, e)
 
 		if hc, ok := install.HookClientByID(install.HookClientID(e.ID)); ok {
 			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
@@ -251,12 +251,12 @@ func installAll(force, withKnowledge bool) error {
 			registered = append(registered, "Codex CLI")
 			manifest.SetCodex(install.CodexConfigPath())
 			kt.codex = true
-		}
-		if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
-			if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
-				fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+			if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
+				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+				}
 			}
 		}
 	}
@@ -405,11 +405,11 @@ func installTargetsWith(targets []string, opts installOptions) error {
 			if err := e.Register(ei.PluginDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
 				failed = append(failed, e.Name)
-			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
-				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
-				kt.editors = append(kt.editors, e)
+				continue
 			}
+			fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
+			manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
+			kt.editors = append(kt.editors, e)
 
 			if hc, ok := install.HookClientByID(install.HookClientID(id)); ok {
 				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
@@ -436,13 +436,13 @@ func installTargetsWith(targets []string, opts installOptions) error {
 				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 				manifest.SetCodex(install.CodexConfigPath())
 				kt.codex = true
-			}
-			if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
-				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
-					fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
-					failed = append(failed, "Codex CLI (hooks)")
-				} else {
-					fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+				if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
+					if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
+						fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+						failed = append(failed, "Codex CLI (hooks)")
+					} else {
+						fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
+					}
 				}
 			}
 		}

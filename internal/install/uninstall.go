@@ -204,6 +204,10 @@ func deregisterEditor(id EditorID, configFile string) error {
 	}
 }
 
+func unmodifiedErr(err error) error {
+	return fmt.Errorf("%w; the file was not modified", err)
+}
+
 func deregisterFromFile(id EditorID, configFile string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
@@ -214,7 +218,7 @@ func deregisterFromFile(id EditorID, configFile string) error {
 func deregisterMCPServersFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["mcpServers"].(map[string]interface{})
@@ -230,7 +234,7 @@ func deregisterMCPServersFormat(configFile string) error {
 func deregisterVSCodeFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["servers"].(map[string]interface{})
@@ -246,7 +250,7 @@ func deregisterVSCodeFormat(configFile string) error {
 func deregisterZedFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["context_servers"].(map[string]interface{})
@@ -271,7 +275,7 @@ func removeContinueEntry(configFile string, names []string) error {
 
 	data, err := readYAMLFileAsMap(configFile)
 	if err != nil {
-		return fmt.Errorf("%w; the file was not modified", err)
+		return unmodifiedErr(err)
 	}
 	existing, ok := data["mcpServers"].([]interface{})
 	if !ok || len(existing) == 0 {
@@ -326,7 +330,7 @@ func removeJSONKey(path, key string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("%w; the file was not modified", err)
+		return unmodifiedErr(err)
 	}
 	if _, exists := data[key]; !exists {
 		return nil
@@ -341,7 +345,7 @@ func removeNestedJSONKey(path, parentKey, childKey string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("%w; the file was not modified", err)
+		return unmodifiedErr(err)
 	}
 	parent, ok := data[parentKey].(map[string]interface{})
 	if !ok {
