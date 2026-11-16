@@ -2,6 +2,8 @@ module github.com/ArmisSecurity/armis-cli
 
 go 1.26.0
 
+toolchain go1.27.4
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0

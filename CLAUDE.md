@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Armis CLI is an enterprise-grade security scanning tool written in Go that integrates with Armis Cloud. It scans repositories and container images for security vulnerabilities, secrets, and license risks.
 
-**Prerequisites:** Go 1.26+, [golangci-lint](https://golangci-lint.run/) v2.0+, Make
+**Prerequisites:** Go 1.27.4+ (`go.mod` sets `toolchain go1.27.4`; Go 1.27.0-1.27.3 send a ClientHello some TLS-inspecting firewalls drop, which fails `internal/httpclient/clienthello_test.go`), [golangci-lint](https://golangci-lint.run/) v2.0+, Make
 
 ## Build Commands
 

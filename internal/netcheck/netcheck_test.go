@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
 func serverTransport(srv *httptest.Server) *http.Transport {
@@ -259,5 +262,77 @@ func TestRunClientCertificateRequired(t *testing.T) {
 		if !strings.Contains(report, want) {
 			t.Errorf("report should contain %q:\n%s", want, report)
 		}
+	}
+}
+
+func TestRunReportsDroppedTLS13Handshake(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	// Forwards TLS 1.2-only ClientHellos and silently holds TLS 1.3 ones, like
+	// an inspecting proxy that chokes on the CLI's TLS 1.3 handshake.
+	proxy := testutil.NewHelloProxy(t, srv.Listener.Addr().String(), func(h *testutil.ClientHello) bool {
+		return !slices.Contains(h.SupportedVersions, tls.VersionTLS13)
+	})
+
+	for _, tc := range []struct {
+		name     string
+		proxyFor func(*url.URL) (*url.URL, string, error)
+	}{
+		{"through the proxy", func(*url.URL) (*url.URL, string, error) { return proxy.URL, "the test", nil }},
+		{"no proxy configured", func(*url.URL) (*url.URL, string, error) { return nil, "test", nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			ok := Run(context.Background(), Options{
+				BaseURL:  srv.URL,
+				Out:      &out,
+				proxyFor: tc.proxyFor,
+				transport: func(direct bool) *http.Transport {
+					tr := serverTransport(srv)
+					if !direct {
+						tr.Proxy = http.ProxyURL(proxy.URL)
+						tr.TLSHandshakeTimeout = 300 * time.Millisecond
+					}
+					return tr
+				},
+			})
+			if ok {
+				t.Fatalf("the TLS 1.3 path must be reported as failed:\n%s", out.String())
+			}
+			report := out.String()
+			for _, want := range []string{
+				"TLS handshake timeout",
+				"[extra] Same connection, limited to TLS 1.2",
+				"TLS handshake finished (TLS 1.2",
+				"The TLS 1.2 handshake succeeds on this path and the CLI's TLS 1.3 handshake does not",
+				"Palo Alto threat ID 58033",
+			} {
+				if !strings.Contains(report, want) {
+					t.Errorf("report should contain %q:\n%s", want, report)
+				}
+			}
+		})
+	}
+}
+
+func TestRunSkipsTLS12RetryWithoutHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	var out bytes.Buffer
+	Run(context.Background(), Options{
+		BaseURL:   "https://" + addr,
+		Out:       &out,
+		proxyFor:  func(*url.URL) (*url.URL, string, error) { return nil, "test", nil },
+		transport: func(bool) *http.Transport { return &http.Transport{} },
+	})
+	if strings.Contains(out.String(), "[extra]") {
+		t.Errorf("a refused connection never reaches TLS; no TLS 1.2 retry expected:\n%s", out.String())
 	}
 }
