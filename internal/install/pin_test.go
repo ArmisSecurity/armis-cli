@@ -254,6 +254,7 @@ func TestClaudeInstallAtPinIsNoOp(t *testing.T) {
 
 func TestCheckPluginVersionPinned(t *testing.T) {
 	isolatePin(t)
+	stubGOOS(t, "linux")
 	if err := SetVersionPin("1.4.2"); err != nil {
 		t.Fatal(err)
 	}
