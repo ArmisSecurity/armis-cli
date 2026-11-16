@@ -263,12 +263,15 @@ func init() {
 	// cobra only applies its default distance (2) on its own unknown-command
 	// path; runScanShorthand calls SuggestionsFor directly, so set it here.
 	scanCmd.SuggestionsMinimumDistance = 2
-	// Complete folders alongside the subcommand names for `scan <TAB>`.
+	// `scan <TAB>` completes the subcommand names (cobra adds them) and paths.
+	// Not ShellCompDirectiveFilterDirs: the bash and zsh scripts read the first
+	// completion as the folder to list, which here is a subcommand name, so
+	// nothing would complete.
 	scanCmd.ValidArgsFunction = func(_ *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		if len(args) > 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		return nil, cobra.ShellCompDirectiveFilterDirs
+		return nil, cobra.ShellCompDirectiveDefault
 	}
 	addRepoScanFlags(scanCmd)
 
