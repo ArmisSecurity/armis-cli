@@ -561,6 +561,11 @@ func readYAMLFileAsMap(path string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseYAMLConfig(path, b)
+}
+
+// parseYAMLConfig is the YAML counterpart of parseJSONConfig.
+func parseYAMLConfig(path string, b []byte) (map[string]interface{}, error) {
 	var data map[string]interface{}
 	// armis:ignore cwe:502 reason:yaml.Unmarshal into map[string]interface{} performs no type resolution; input is the user's own local editor config, size-bounded by readEditorConfig
 	if err := yaml.Unmarshal(b, &data); err != nil {

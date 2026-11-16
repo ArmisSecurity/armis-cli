@@ -323,6 +323,9 @@ func (ki *KnowledgeMCPInstaller) RegisterClaude() error {
 		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ki.claudeDir) //nolint:staticcheck // proper noun
 	}
 
+	if err := checkClaudeRegistryFiles(ki.claudeDir); err != nil {
+		return err
+	}
 	if err := ki.registerClaudeMarketplace(); err != nil {
 		return fmt.Errorf("registering knowledge marketplace: %w", err)
 	}

@@ -507,6 +507,23 @@ func writeJSON(path string, data interface{}) error {
 	return writeJSONAtomic(path, data)
 }
 
+// checkClaudeRegistryFiles refuses up front when any of the Claude Code
+// registry files cannot be parsed. They are written one after another, and a
+// refusal on the last one would leave the plugin recorded as installed but not
+// enabled; a re-run at the same pin then skips the registry writes entirely.
+func checkClaudeRegistryFiles(claudeDir string) error {
+	for _, p := range []string{
+		filepath.Join(claudeDir, "plugins", "known_marketplaces.json"),
+		filepath.Join(claudeDir, "plugins", "installed_plugins.json"),
+		filepath.Join(claudeDir, "settings.json"),
+	} {
+		if _, err := readJSONFileAsMap(p); err != nil {
+			return refuseOverwrite(err)
+		}
+	}
+	return nil
+}
+
 // registerDirectoryMarketplace writes (or updates) a "source": "directory"
 // marketplace entry in claudeDir's known_marketplaces.json, pointing
 // marketplaceName at pluginDir. Both ClaudeInstaller (the scanner) and

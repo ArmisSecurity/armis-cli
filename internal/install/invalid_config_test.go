@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -533,5 +534,63 @@ func TestAtomicWritesFollowSymlinkAndLeaveNoTempFiles(t *testing.T) {
 				t.Errorf("temp files left behind: %v", names)
 			}
 		})
+	}
+}
+
+func TestDoctorOffersFixForConfigsRegistrationAccepts(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.json")
+	mustWrite(t, empty, "")
+	null := filepath.Join(dir, "null.json")
+	mustWrite(t, null, "null")
+	emptyYAML := filepath.Join(dir, "config.yaml")
+	mustWrite(t, emptyYAML, "")
+
+	editors := map[EditorID]ManifestEntry{
+		EditorCursor:   {ConfigFile: empty, Format: "mcpServers"},
+		EditorWindsurf: {ConfigFile: null, Format: "mcpServers"},
+		EditorContinue: {ConfigFile: emptyYAML, Format: configFormatContinue},
+	}
+	d := newDoctorRun(DoctorOptions{})
+	checkManifestEditors(d, "scanner", "armis-appsec", editors)
+
+	for _, c := range d.report.Checks {
+		if c.Fix != FixReregister {
+			t.Errorf("%s: fix = %q (%s), want %q since registration accepts this file", c.Name, c.Fix, c.Detail, FixReregister)
+		}
+	}
+	if d.report.HasBlockedRegistration() {
+		t.Error("HasBlockedRegistration() = true for configs registration can rewrite")
+	}
+}
+
+func TestDoctorBlocksFixForUnreadableCodexConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.MkdirAll(configFile, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	report := &DoctorReport{}
+	checkCodexSection(report, "scanner", &ManifestCodex{ConfigFile: configFile}, codexMCPServerName)
+
+	if len(report.Checks) != 1 || report.Checks[0].Fix != FixBlocked {
+		t.Fatalf("checks = %+v, want one FixBlocked check", report.Checks)
+	}
+}
+
+func TestClaudeInstallRefusesBeforeWritingAnyRegistryFile(t *testing.T) {
+	claudeDir := t.TempDir()
+	settings := filepath.Join(claudeDir, "settings.json")
+	bad := `{"model": "opus",`
+	mustWrite(t, settings, bad)
+
+	before := snapshotDir(t, claudeDir)
+
+	ci := &ClaudeInstaller{claudeDir: claudeDir, plugin: newPluginInstaller()}
+	err := ci.Install()
+
+	assertRefusal(t, err, settings)
+	assertUntouched(t, settings, []byte(bad), before)
+	if _, statErr := os.Stat(filepath.Join(claudeDir, "plugins")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("plugins dir was created before the refusal (stat err %v)", statErr)
 	}
 }

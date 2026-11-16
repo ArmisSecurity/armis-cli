@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 )
 
@@ -1121,27 +1119,19 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 			continue
 		}
 		// lookupEntry treats an unparseable file as having no entry, which
-		// would misreport a corrupted or non-object config (null, an array,
-		// invalid YAML, ...) as a genuinely edited-out entry. Catch that case
-		// explicitly. JSON configs are parsed as JSONC: VS Code's mcp.json
-		// allows comments and trailing commas.
-		var obj map[string]interface{}
+		// would misreport a corrupted or non-object config (an array, invalid
+		// YAML, ...) as a genuinely edited-out entry. Parse with the same rules
+		// registration uses, so --fix is withheld exactly when it would refuse.
 		var parseErr error
 		if entry.Format == configFormatContinue {
-			parseErr = yaml.Unmarshal(content, &obj)
+			_, parseErr = parseYAMLConfig(entry.ConfigFile, content)
 		} else {
-			parseErr = json.Unmarshal(stripJSONC(content), &obj)
-		}
-		// Both unmarshalers accept a top-level `null` without error (obj just
-		// stays nil), so an err-only check would miss it — require a non-nil
-		// object too.
-		if parseErr == nil && obj == nil {
-			parseErr = fmt.Errorf("top-level value is not an object")
+			_, parseErr = parseJSONConfig(entry.ConfigFile, content)
 		}
 		if parseErr != nil {
 			// Not auto-fixable: registration refuses to overwrite a file it
 			// cannot parse, so the user has to repair it by hand.
-			report.addEditor(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
+			report.addEditor(component, name, StatusFail, parseErr.Error()).
 				fix(FixBlocked, name+" ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			continue
 		}
@@ -1253,9 +1243,14 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 		return
 	}
 	content, err := readEditorConfig(codex.ConfigFile)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		report.addEditor(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err)).
 			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
+		return
+	}
+	if err != nil {
+		report.addEditor(component, "Codex CLI", StatusFail, err.Error()).
+			fix(FixBlocked, "Codex CLI cannot load a config file that is not a plain, reasonably sized file. Fix or remove it, then re-run this doctor.")
 		return
 	}
 	if !strings.Contains(strings.ToLower(string(content)), strings.ToLower(identifier)) {

@@ -67,6 +67,10 @@ func (ci *ClaudeInstaller) Install() error {
 		return nil
 	}
 
+	if err := checkClaudeRegistryFiles(ci.claudeDir); err != nil {
+		return err
+	}
+
 	if err := ci.plugin.FetchAndInstall(pluginDir); err != nil {
 		return err
 	}

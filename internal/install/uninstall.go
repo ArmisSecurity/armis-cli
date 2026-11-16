@@ -70,7 +70,7 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 			}
 			has, err := hasArmisEntry(id, entry.ConfigFile)
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: cannot read config: %v", name, err))
+				warnings = append(warnings, fmt.Sprintf("%s: %v; the file was not modified", name, err))
 				continue
 			}
 			if !has {
@@ -97,7 +97,7 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 		}
 		has, err := hasArmisEntry(e.ID, configFile)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: cannot read config: %v", e.Name, err))
+			warnings = append(warnings, fmt.Sprintf("%s: %v; the file was not modified", e.Name, err))
 			continue
 		}
 		if has {
