@@ -12,7 +12,7 @@ import (
 )
 
 // pinnedInstallHome returns a temp HOME whose shared plugin is already at the
-// pinned version, with a stub Python on PATH, so installTargetsWith registers
+// pinned version, with a stub Python on PATH, so installTargets registers
 // editors without touching the network.
 func pinnedInstallHome(t *testing.T) string {
 	t.Helper()
@@ -65,7 +65,7 @@ func TestInstallTargetsReportsFailedTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := installTargets([]string{"cursor", "copilot"}, false, false)
+	err := installTargets([]string{"cursor", "copilot"}, installOptions{})
 	if err == nil {
 		t.Fatal("expected an error when a target fails")
 	}
@@ -90,7 +90,7 @@ func TestInstallTargetsSucceedsWhenAllTargetsWork(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".copilot"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := installTargets([]string{"copilot"}, false, false); err != nil {
+	if err := installTargets([]string{"copilot"}, installOptions{}); err != nil {
 		t.Fatalf("installTargets() = %v, want nil", err)
 	}
 }
@@ -106,8 +106,8 @@ func TestInstallJetBrainsProjectMergesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := installTargetsWith([]string{"jetbrains"}, installOptions{jetbrainsProject: project}); err != nil {
-		t.Fatalf("installTargetsWith() = %v", err)
+	if err := installTargets([]string{"jetbrains"}, installOptions{jetbrainsProject: project}); err != nil {
+		t.Fatalf("installTargets() = %v", err)
 	}
 
 	b, err := os.ReadFile(cfg) //nolint:gosec // test path
@@ -130,7 +130,7 @@ func TestInstallJetBrainsProjectMergesConfig(t *testing.T) {
 
 func TestInstallJetBrainsProjectMustBeDirectory(t *testing.T) {
 	home := pinnedInstallHome(t)
-	err := installTargetsWith([]string{"jetbrains"}, installOptions{jetbrainsProject: filepath.Join(home, "missing")})
+	err := installTargets([]string{"jetbrains"}, installOptions{jetbrainsProject: filepath.Join(home, "missing")})
 	if err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Errorf("got %v, want a not-a-directory error", err)
 	}
@@ -182,5 +182,62 @@ func TestJetBrainsConfigPathRefusesSymlink(t *testing.T) {
 	}
 	if got, err := jetbrainsConfigPath(t.TempDir()); err != nil || !strings.HasSuffix(got, ".jb-mcp.json") {
 		t.Errorf("plain directory: got %q, %v", got, err)
+	}
+}
+
+func TestInstallTargetsJSONReportsPinnedVersionAndFailures(t *testing.T) {
+	home := pinnedInstallHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".cursor", "mcp.json"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".copilot"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	var err error
+	captureStderr(t, func() {
+		err = installTargets([]string{"cursor", "copilot"}, installOptions{format: formatJSON, stdout: &out})
+	})
+	if err == nil || !strings.Contains(err.Error(), "Cursor") || strings.Contains(err.Error(), "Copilot CLI") {
+		t.Fatalf("err = %v, want it to name only Cursor", err)
+	}
+
+	doc := decodeReport(t, []byte(out.String()))
+	plugin, _ := doc["plugin"].(map[string]interface{})
+	if plugin["version"] != "1.4.2" || plugin["pinned"] != true || plugin["already_current"] != true {
+		t.Errorf("plugin = %v, want pinned version 1.4.2 already current", plugin)
+	}
+	if got := clientByID(t, doc, "cursor")["status"]; got != "fail" {
+		t.Errorf("cursor status = %v, want fail", got)
+	}
+	if got := clientByID(t, doc, "copilot")["status"]; got != "ok" {
+		t.Errorf("copilot status = %v, want ok", got)
+	}
+	if msg, _ := doc["error"].(string); !strings.Contains(msg, "install failed for: Cursor") {
+		t.Errorf("error field = %q", msg)
+	}
+}
+
+func TestInstallJetBrainsProjectJSON(t *testing.T) {
+	home := pinnedInstallHome(t)
+	project := filepath.Join(home, "repo")
+	if err := os.MkdirAll(project, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	var err error
+	captureStderr(t, func() {
+		err = installTargets([]string{"jetbrains"}, installOptions{jetbrainsProject: project, format: formatJSON, stdout: &out})
+	})
+	if err != nil {
+		t.Fatalf("installTargets() = %v", err)
+	}
+	doc := decodeReport(t, []byte(out.String()))
+	jb := clientByID(t, doc, "jetbrains")
+	files, _ := jb["files"].([]interface{})
+	if jb["status"] != "ok" || len(files) != 1 || !strings.HasSuffix(files[0].(string), ".jb-mcp.json") {
+		t.Errorf("jetbrains = %v", jb)
 	}
 }

@@ -15,7 +15,7 @@ func TestInstallTargetsUnknownEditor(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	err := installTargets([]string{"nonexistent-editor"}, false, false)
+	err := installTargets([]string{"nonexistent-editor"}, installOptions{})
 	if err == nil {
 		t.Fatal("expected error for unknown editor")
 	}
@@ -32,7 +32,7 @@ func TestInstallTargetsAdvisoryEditors(t *testing.T) {
 	advisoryEditors := []string{"jetbrains", "devin", "openhands", "aider"}
 	for _, name := range advisoryEditors {
 		t.Run(name, func(t *testing.T) {
-			err := installTargets([]string{name}, false, false)
+			err := installTargets([]string{name}, installOptions{})
 			if err != nil {
 				t.Errorf("installTargets(%q) unexpected error: %v", name, err)
 			}
@@ -56,7 +56,7 @@ func TestInstallTargetsJetBrainsNoGhostFlag(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = oldStderr })
 
-	installErr := installTargets([]string{"jetbrains"}, false, false)
+	installErr := installTargets([]string{"jetbrains"}, installOptions{})
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	_ = r.Close()
@@ -167,7 +167,7 @@ func TestInstallTargetsWithKnowledgeAdvisoryOnlyExitsZero(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	if err := installTargets([]string{"jetbrains"}, false, true); err != nil {
+	if err := installTargets([]string{"jetbrains"}, installOptions{withKnowledge: true}); err != nil {
 		t.Errorf("installTargets with --with-knowledge returned error: %v", err)
 	}
 }

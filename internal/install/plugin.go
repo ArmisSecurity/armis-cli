@@ -652,6 +652,11 @@ func findPython() string {
 	return ""
 }
 
+const (
+	envClientID     = "ARMIS_CLIENT_ID"
+	envClientSecret = "ARMIS_CLIENT_SECRET" //nolint:gosec // variable name, not a credential
+)
+
 // writeEnvFromEnvironment writes ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET to a .env
 // file if both are set in the current process environment. Returns nil if the file
 // was written or if there is nothing to do (file exists or env vars unset).
@@ -663,8 +668,8 @@ func writeEnvFromEnvironment(envPath string) error {
 		return fmt.Errorf("checking env file: %w", err)
 	}
 
-	clientID := os.Getenv("ARMIS_CLIENT_ID")
-	clientSecret := os.Getenv("ARMIS_CLIENT_SECRET")
+	clientID := os.Getenv(envClientID)
+	clientSecret := os.Getenv(envClientSecret)
 	if clientID == "" || clientSecret == "" {
 		return nil
 	}
@@ -690,8 +695,8 @@ func writeEnvFromEnvironment(envPath string) error {
 // armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install functions
 func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 	return SetEnvFileVars(envPath, [][2]string{
-		{"ARMIS_CLIENT_ID", clientID},
-		{"ARMIS_CLIENT_SECRET", clientSecret},
+		{envClientID, clientID},
+		{envClientSecret, clientSecret},
 	})
 }
 
@@ -703,6 +708,11 @@ func WriteEnvFromValues(envPath, clientID, clientSecret string) error {
 // file is backed up to .env.bak, and the write is atomic.
 // armis:ignore cwe:73 reason:envPath derived from known plugin dir + ".env"; callers are internal install/doctor functions
 func SetEnvFileVars(envPath string, vars [][2]string) error {
+	return setEnvFileVars(envPath, vars, true)
+}
+
+// setEnvFileVars is SetEnvFileVars with the .env.bak copy made optional.
+func setEnvFileVars(envPath string, vars [][2]string, backup bool) error {
 	for _, kv := range vars {
 		if kv[0] == "" || strings.ContainsAny(kv[0], "=\n\r") || strings.ContainsAny(kv[1], "\n\r") {
 			return fmt.Errorf("invalid env entry for %q: keys must not contain '=' or newlines, and values must not contain newlines", kv[0])
@@ -714,10 +724,12 @@ func SetEnvFileVars(envPath string, vars [][2]string) error {
 	var lines []string
 	// Back up existing file via copy (not rename) so the original remains if a later step fails
 	if _, err := os.Stat(cleanPath); err == nil {
-		bakPath := cleanPath + ".bak"
-		// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
-		if err := copyFile(cleanPath, bakPath); err != nil {
-			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
+		if backup {
+			bakPath := cleanPath + ".bak"
+			// armis:ignore cwe:73 reason:bakPath derived from cleanPath which is constructed from known plugin dir + ".env"
+			if err := copyFile(cleanPath, bakPath); err != nil {
+				return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
+			}
 		}
 		existing, err := readBoundedConfigFile(cleanPath)
 		if err != nil {
@@ -800,6 +812,58 @@ func SetEnvFileVars(envPath string, vars [][2]string) error {
 		}
 	}
 	return nil
+}
+
+// CredentialRotation is the outcome of RotateEnvCredentials for one .env file.
+type CredentialRotation string
+
+const (
+	// CredentialsWritten means the .env did not exist and was created.
+	CredentialsWritten CredentialRotation = "written"
+	// CredentialsRotated means the file existed with different credentials.
+	CredentialsRotated CredentialRotation = "rotated"
+	// CredentialsUnchanged means the file already held these credentials and
+	// was left untouched.
+	CredentialsUnchanged CredentialRotation = "unchanged"
+)
+
+// RotateEnvCredentials replaces ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET in the
+// .env at envPath, keeping every other entry. Unlike WriteEnvFromValues it
+// leaves no .env.bak: a backup would keep the credentials being retired on
+// disk, so one left by an earlier run is removed too. The file is replaced
+// atomically with mode 0600, and an .env that already holds the values is not
+// rewritten. Errors never include either value.
+func RotateEnvCredentials(envPath, clientID, clientSecret string) (CredentialRotation, error) {
+	if clientID == "" || clientSecret == "" {
+		return "", fmt.Errorf("rotating credentials: client ID and secret must both be non-empty")
+	}
+	cleanPath := filepath.Clean(envPath)
+
+	existed := false
+	current, err := parseEnvFile(cleanPath)
+	switch {
+	case err == nil:
+		existed = true
+		if current[envClientID] == clientID && current[envClientSecret] == clientSecret {
+			return CredentialsUnchanged, nil
+		}
+	case os.IsNotExist(err):
+	default:
+		return "", fmt.Errorf("reading %s: %w", filepath.Base(cleanPath), err)
+	}
+
+	vars := [][2]string{{envClientID, clientID}, {envClientSecret, clientSecret}}
+	if err := setEnvFileVars(cleanPath, vars, false); err != nil {
+		return "", fmt.Errorf("rotating credentials in %s: %w", cleanPath, err)
+	}
+	// armis:ignore cwe:73 reason:path derived from known plugin dir + ".env.bak"
+	if err := os.Remove(cleanPath + ".bak"); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("removing stale %s.bak: %w", filepath.Base(cleanPath), err)
+	}
+	if existed {
+		return CredentialsRotated, nil
+	}
+	return CredentialsWritten, nil
 }
 
 // armis:ignore cwe:73 reason:called only from WriteEnvFromValues with paths from known plugin dir
