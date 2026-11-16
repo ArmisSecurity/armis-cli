@@ -57,7 +57,7 @@ func TestUninstallAllJSON(t *testing.T) {
 			var err error
 			captureStderr(t, func() {
 				err = uninstallAll(install.NewUninstaller(), tt.keepCreds, true, rep)
-				err = finishUninstall(formatJSON, &out, rep, err)
+				err = finishUninstall(agentFormatJSON, &out, rep, err)
 			})
 			switch {
 			case tt.wantErr == "" && err != nil:
@@ -109,7 +109,7 @@ func TestUninstallTargetsJSON(t *testing.T) {
 	var err error
 	captureStderr(t, func() {
 		err = uninstallTargets(install.NewUninstaller(), []string{"cursor", "jetbrains", "aider", "nonexistent-editor"}, rep)
-		err = finishUninstall(formatJSON, &out, rep, err)
+		err = finishUninstall(agentFormatJSON, &out, rep, err)
 	})
 	if err == nil || !strings.Contains(err.Error(), "nonexistent-editor") {
 		t.Fatalf("error = %v, want one naming the failed target", err)

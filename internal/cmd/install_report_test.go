@@ -103,7 +103,7 @@ func TestInstallReportClients(t *testing.T) {
 			}
 
 			var out bytes.Buffer
-			opts := installOptions{format: formatJSON, stdout: &out}
+			opts := installOptions{format: agentFormatJSON, stdout: &out}
 			if err := finishInstall(opts, rep, nil); err != nil {
 				t.Fatalf("finishInstall() error = %v", err)
 			}
@@ -154,7 +154,7 @@ func TestInstallTargetsJSON(t *testing.T) {
 		var out bytes.Buffer
 		var err error
 		stderr := captureStderr(t, func() {
-			err = installTargets([]string{"jetbrains", "devin", "aider"}, installOptions{format: formatJSON, stdout: &out})
+			err = installTargets([]string{"jetbrains", "devin", "aider"}, installOptions{format: agentFormatJSON, stdout: &out})
 		})
 		if err != nil {
 			t.Fatalf("installTargets() error = %v", err)
@@ -181,7 +181,7 @@ func TestInstallTargetsJSON(t *testing.T) {
 		var out bytes.Buffer
 		var err error
 		captureStderr(t, func() {
-			err = installTargets([]string{"nonexistent-editor"}, installOptions{format: formatJSON, stdout: &out})
+			err = installTargets([]string{"nonexistent-editor"}, installOptions{format: agentFormatJSON, stdout: &out})
 		})
 		if err == nil {
 			t.Fatal("expected an error so the exit code stays non-zero")
@@ -195,11 +195,11 @@ func TestInstallTargetsJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("human mode writes nothing to stdout", func(t *testing.T) {
+	t.Run("plain mode writes nothing to stdout", func(t *testing.T) {
 		throwawayHome(t)
 		var out bytes.Buffer
 		captureStderr(t, func() {
-			_ = installTargets([]string{"aider"}, installOptions{format: formatHuman, stdout: &out})
+			_ = installTargets([]string{"aider"}, installOptions{format: agentFormatPlain, stdout: &out})
 		})
 		if out.Len() != 0 {
 			t.Errorf("stdout = %q, want empty", out.String())
@@ -224,7 +224,7 @@ func TestRunInstallFormatFlags(t *testing.T) {
 		throwawayHome(t)
 		set(t, "format", "yaml")
 		err := runInstall(installCmd, nil)
-		if err == nil || !strings.Contains(err.Error(), "must be human or json") {
+		if err == nil || !strings.Contains(err.Error(), "must be plain or json") {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -567,7 +567,7 @@ func TestSettleCredentialsAndFinishInstall(t *testing.T) {
 	tracker.watch(envPath).managed = true
 	rep := newInstallReport()
 	var out bytes.Buffer
-	opts := installOptions{rotateTo: &clientCredentials{id: "new-id", secret: testSecret}, format: formatJSON, stdout: &out}
+	opts := installOptions{rotateTo: &clientCredentials{id: "new-id", secret: testSecret}, format: agentFormatJSON, stdout: &out}
 
 	var err error
 	captureStderr(t, func() {
@@ -590,7 +590,7 @@ func TestSettleCredentialsAndFinishInstall(t *testing.T) {
 func TestFinishInstallPassesErrorThrough(t *testing.T) {
 	boom := errors.New("boom")
 	var out bytes.Buffer
-	err := finishInstall(installOptions{format: formatJSON, stdout: &out}, newInstallReport(), boom)
+	err := finishInstall(installOptions{format: agentFormatJSON, stdout: &out}, newInstallReport(), boom)
 	if !errors.Is(err, boom) {
 		t.Errorf("err = %v, want boom", err)
 	}
@@ -615,7 +615,7 @@ func TestSetKnowledgeStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rep := newInstallReport()
 			rep.client("cursor", "Cursor")
-			rep.setKnowledge(tt.res, "/k/.env")
+			rep.setKnowledge(tt.res)
 			if rep.Knowledge.Status != tt.want {
 				t.Errorf("status = %q, want %q", rep.Knowledge.Status, tt.want)
 			}
@@ -626,9 +626,22 @@ func TestSetKnowledgeStatus(t *testing.T) {
 		rep := newInstallReport()
 		rep.client("cursor", "Cursor")
 		rep.client("claude", "Claude Code")
-		rep.setKnowledge(knowledgeResult{registered: []string{"Cursor", "Claude Code"}, shortSHA: "abc1234"}, "/k/.env")
+		rep.setKnowledge(knowledgeResult{registered: []string{"Cursor", "Claude Code"}, shortSHA: "abc1234"})
 		if got := strings.Join(rep.Knowledge.Registered, ","); got != "cursor,claude" {
 			t.Errorf("registered = %q", got)
+		}
+	})
+
+	t.Run("env path is reported only for an installed bridge", func(t *testing.T) {
+		rep := newInstallReport()
+		rep.setKnowledge(knowledgeResult{shortSHA: "abc1234", envFile: "/k/.env"})
+		if rep.Knowledge.EnvPath != "/k/.env" {
+			t.Errorf("env path = %q, want /k/.env", rep.Knowledge.EnvPath)
+		}
+		rep = newInstallReport()
+		rep.setKnowledge(knowledgeResult{skipped: true, envFile: "/k/.env"})
+		if rep.Knowledge.EnvPath != "" {
+			t.Errorf("env path = %q, want empty for a failed fetch", rep.Knowledge.EnvPath)
 		}
 	})
 }

@@ -48,7 +48,7 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	uninstallCmd.Flags().Bool("keep-credentials", false, "Preserve the .env credentials file")
 	uninstallCmd.Flags().Bool("force", false, "Skip confirmation prompt")
-	uninstallCmd.Flags().StringP("format", "f", formatHuman, "Output format: human, json (json writes one document to stdout; uninstalling everything also needs --force)")
+	uninstallCmd.Flags().StringP("format", "f", agentFormatPlain, "Output format: plain, json (json writes one document to stdout; uninstalling everything also needs --force)")
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {
@@ -78,7 +78,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	} else {
 		// Nobody can answer the prompt in JSON mode, and deleting the plugin
 		// and credentials must stay an explicit choice.
-		if format == formatJSON && !force {
+		if format == agentFormatJSON && !force {
 			return finishUninstall(format, nil, rep, fmt.Errorf("--format json without targets removes the plugin and credentials; pass --force to confirm"))
 		}
 		err = uninstallAll(u, keepCreds, force, rep)

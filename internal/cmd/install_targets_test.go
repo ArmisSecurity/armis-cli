@@ -197,7 +197,7 @@ func TestInstallTargetsJSONReportsPinnedVersionAndFailures(t *testing.T) {
 	var out strings.Builder
 	var err error
 	captureStderr(t, func() {
-		err = installTargets([]string{"cursor", "copilot"}, installOptions{format: formatJSON, stdout: &out})
+		err = installTargets([]string{"cursor", "copilot"}, installOptions{format: agentFormatJSON, stdout: &out})
 	})
 	if err == nil || !strings.Contains(err.Error(), "Cursor") || strings.Contains(err.Error(), "Copilot CLI") {
 		t.Fatalf("err = %v, want it to name only Cursor", err)
@@ -229,7 +229,7 @@ func TestInstallJetBrainsProjectJSON(t *testing.T) {
 	var out strings.Builder
 	var err error
 	captureStderr(t, func() {
-		err = installTargets([]string{"jetbrains"}, installOptions{jetbrainsProject: project, format: formatJSON, stdout: &out})
+		err = installTargets([]string{"jetbrains"}, installOptions{jetbrainsProject: project, format: agentFormatJSON, stdout: &out})
 	})
 	if err != nil {
 		t.Fatalf("installTargets() = %v", err)

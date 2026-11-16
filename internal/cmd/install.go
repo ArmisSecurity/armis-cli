@@ -96,7 +96,7 @@ func init() {
 	installCmd.Flags().String("plugin-version", "", "Install this MCP server release (e.g. 1.4.2) and keep it on updates; \"latest\" clears the pin. Also read from ARMIS_MCP_VERSION")
 	installCmd.Flags().String("project", "", "Project directory for the jetbrains target (writes <project>/.jb-mcp.json)")
 	installCmd.Flags().Bool("rotate-credentials", false, "Overwrite the client ID and secret in every managed .env with ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET (implies --non-interactive)")
-	installCmd.Flags().StringP("format", "f", formatHuman, "Output format: human, json (json writes one document to stdout and implies --non-interactive)")
+	installCmd.Flags().StringP("format", "f", agentFormatPlain, "Output format: plain, json (json writes one document to stdout and implies --non-interactive)")
 	installCmd.MarkFlagsMutuallyExclusive("interactive", "non-interactive")
 }
 
@@ -340,11 +340,11 @@ func installAllInto(opts installOptions, rep *installReport, tracker *credential
 // installKnowledgeTracked runs the knowledge install and records its outcome
 // and .env file in the report and tracker.
 func installKnowledgeTracked(kt knowledgeTargets, force bool, manifest *install.Manifest, rep *installReport, tracker *credentialTracker) knowledgeResult {
-	envPath := install.NewKnowledgeMCPInstaller(knowledgeEnvForDev(useDev)).EnvFilePath()
-	env := tracker.watch(envPath)
 	res := installKnowledgeFor(kt, force, manifest)
-	rep.setKnowledge(res, envPath)
-	env.managed = res.shortSHA != ""
+	rep.setKnowledge(res)
+	if res.shortSHA != "" {
+		tracker.track(res.envFile, res.envExisted).managed = true
+	}
 	return res
 }
 
@@ -570,7 +570,7 @@ func installClaudeTarget(force bool, kt *knowledgeTargets, rep *installReport, t
 	fmt.Fprintln(os.Stderr, "")
 	claude.ok(ci.PluginCacheDir())
 	claudeEnv.managed = true
-	rep.setPlugin(ci.InstalledVersion(), ci.PluginCacheDir(), false)
+	rep.setPlugin(ci.InstalledVersion(), ci.PluginCacheDir(), ci.AlreadyCurrent())
 	kt.claude = true
 
 	pluginDir := install.NewEditorInstaller().PluginDir()

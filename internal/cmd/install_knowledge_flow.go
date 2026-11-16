@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/ArmisSecurity/armis-cli/internal/install"
 )
@@ -25,6 +26,10 @@ type knowledgeResult struct {
 	registered []string
 	warnings   []string
 	shortSHA   string
+	// envFile is the .env the knowledge plugin reads, and envExisted whether
+	// it was there before this run; both are set once an install was attempted.
+	envFile    string
+	envExisted bool
 	skipped    bool
 	// upToDate is true when the installed bridge already matched the latest
 	// commit, so nothing was downloaded.
@@ -47,6 +52,9 @@ func installKnowledgeFor(t knowledgeTargets, force bool, m *install.Manifest) kn
 	}
 
 	ki := install.NewKnowledgeMCPInstaller(knowledgeEnvForDev(useDev))
+	res.envFile = ki.EnvFilePath()
+	_, statErr := os.Stat(res.envFile)
+	res.envExisted = statErr == nil
 
 	if err := ki.Fetch(force); err != nil {
 		if !errors.Is(err, install.ErrAlreadyCurrent) {

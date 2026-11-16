@@ -11,9 +11,6 @@ import (
 )
 
 const (
-	formatHuman = "human"
-	formatJSON  = "json"
-
 	reportOK   = "ok"
 	reportFail = "fail"
 	reportWarn = "warn"
@@ -57,7 +54,7 @@ func rotationCredentialsFromEnv() (*clientCredentials, error) {
 	return c, nil
 }
 
-func (o installOptions) json() bool { return o.format == formatJSON }
+func (o installOptions) json() bool { return o.format == agentFormatJSON }
 
 func (o installOptions) out() io.Writer {
 	if o.stdout != nil {
@@ -69,10 +66,10 @@ func (o installOptions) out() io.Writer {
 // parseOutputFormat validates a --format value for install and uninstall.
 func parseOutputFormat(v string) (string, error) {
 	switch v {
-	case formatHuman, formatJSON:
+	case agentFormatPlain, agentFormatJSON:
 		return v, nil
 	default:
-		return "", fmt.Errorf("invalid --format value %q: must be human or json", v)
+		return "", fmt.Errorf("invalid --format value %q: must be plain or json", v)
 	}
 }
 
@@ -200,7 +197,7 @@ func (r *installReport) setPlugin(version, path string, alreadyCurrent bool) {
 	r.Plugin = &pluginReport{Name: pluginReportName, Version: version, Path: path, AlreadyCurrent: alreadyCurrent, Pinned: install.EffectivePin() != ""}
 }
 
-func (r *installReport) setKnowledge(res knowledgeResult, envPath string) {
+func (r *installReport) setKnowledge(res knowledgeResult) {
 	k := &knowledgeReport{
 		Version:    res.shortSHA,
 		UpToDate:   res.upToDate,
@@ -221,7 +218,7 @@ func (r *installReport) setKnowledge(res knowledgeResult, envPath string) {
 		k.Status = reportFail
 	}
 	if res.shortSHA != "" {
-		k.EnvPath = envPath
+		k.EnvPath = res.envFile
 	}
 	r.Knowledge = k
 }
@@ -334,7 +331,12 @@ type trackedEnv struct {
 // write it, so call it ahead of that step.
 func (t *credentialTracker) watch(path string) *trackedEnv {
 	_, err := os.Stat(path)
-	f := &trackedEnv{path: path, existed: err == nil}
+	return t.track(path, err == nil)
+}
+
+// track records a file whose prior existence the caller already checked.
+func (t *credentialTracker) track(path string, existed bool) *trackedEnv {
+	f := &trackedEnv{path: path, existed: existed}
 	t.files = append(t.files, f)
 	return f
 }

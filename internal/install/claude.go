@@ -21,6 +21,9 @@ type ClaudeInstaller struct {
 	claudeDir string
 	plugin    *PluginInstaller
 	force     bool
+	// alreadyCurrent is set by Install when the pinned release was already
+	// in place and nothing was downloaded.
+	alreadyCurrent bool
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
@@ -39,6 +42,10 @@ func NewClaudeInstaller() (*ClaudeInstaller, error) {
 func (ci *ClaudeInstaller) InstalledVersion() string {
 	return ci.plugin.InstalledVersion()
 }
+
+// AlreadyCurrent reports whether the last Install found the pinned release
+// already in place and skipped the download.
+func (ci *ClaudeInstaller) AlreadyCurrent() bool { return ci.alreadyCurrent }
 
 // SetForce makes Install reinstall even when the pinned version is already in place.
 func (ci *ClaudeInstaller) SetForce(force bool) { ci.force = force }
@@ -62,7 +69,8 @@ func (ci *ClaudeInstaller) Install() error {
 
 	pluginDir := ci.pluginCacheDir()
 
-	if ci.alreadyAtPin() {
+	ci.alreadyCurrent = ci.alreadyAtPin()
+	if ci.alreadyCurrent {
 		ci.plugin.installedVersion = ci.plugin.pin
 		// armis:ignore cwe:522 reason:env file written with 0600 permissions; credentials sourced from caller's environment variables
 		if err := writeEnvFromEnvironment(ci.EnvFilePath()); err != nil {

@@ -134,7 +134,7 @@ func (r *uninstallReport) editorWarning(w string) {
 }
 
 func finishUninstall(format string, out io.Writer, rep *uninstallReport, err error) error {
-	if format != formatJSON {
+	if format != agentFormatJSON {
 		return err
 	}
 	if out == nil {
