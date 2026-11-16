@@ -117,21 +117,37 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 		ProjectType: model.ProjectTypeCICD,
 	})
 	if err == nil {
+		// Without a valid id the scan would go out unpublished (an empty
+		// project_id is omitted) while the CLI reported the project.
+		if !api.IsValidProjectID(created.ProjectID) {
+			return nil, fmt.Errorf("could not create the project: the API answered without a valid project id (got %q)",
+				created.ProjectID)
+		}
 		return &Resolution{Project: *created, Created: true}, nil
 	}
 
 	// Another run (say a parallel CI job) created the project between the
-	// lookup and the create: the 409 names it, so use it.
+	// lookup and the create: the 409 names it, so use it, holding it to the
+	// same rule as the lookup (exactly this name, case included).
 	var apiErr *api.AppSecError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict &&
 		apiErr.Code == api.AppSecCodeProjectNameConflict {
 		if id := apiErr.ContextString("conflicting_project_id"); api.IsValidProjectID(id) {
-			if p, getErr := client.GetProject(ctx, tenantID, id); getErr == nil {
-				return &Resolution{Project: *p}, nil
+			p, getErr := client.GetProject(ctx, tenantID, id)
+			if getErr != nil {
+				// Unfetched, its name cannot be checked, and adopting it
+				// unchecked could publish to a case variant the lookup refuses.
+				return nil, explain(getErr, tenantID, "check")
 			}
-			// The project exists; its status is unknown, but the id is enough
-			// to record the run.
-			return &Resolution{Project: model.Project{ProjectID: id, Name: name}}, nil
+			switch {
+			case p.Name == name:
+				return &Resolution{Project: *p}, nil
+			case equalFoldASCII(p.Name, name):
+				return nil, &CaseMismatchError{Name: name, Existing: []string{p.Name}}
+			default:
+				return nil, fmt.Errorf("could not create the project: the API reports that the name %q is taken "+
+					"by project %s, which is named %q", name, id, p.Name)
+			}
 		}
 	}
 	return nil, explain(err, tenantID, "create")

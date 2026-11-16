@@ -255,18 +255,18 @@ func TestResolve_CreateRace(t *testing.T) {
 		}
 	})
 
-	t.Run("still uses the id when it cannot be fetched", func(t *testing.T) {
+	// Unfetched, the project's name cannot be held to the lookup's rule, so it
+	// is not adopted.
+	t.Run("a project that cannot be fetched is not adopted", func(t *testing.T) {
+		errReset := errors.New("connection reset")
 		f := &fakeAPI{
 			pages:    map[string]model.ProjectListResponse{"": page("")},
 			createFn: func(model.ProjectCreateRequest) (*model.Project, error) { return nil, conflict(winnerID) },
-			getFn:    func(string) (*model.Project, error) { return nil, errors.New("connection reset") },
+			getFn:    func(string) (*model.Project, error) { return nil, errReset },
 		}
 		res, err := Resolve(context.Background(), f, testTenant, testName)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-		if res.Project.ProjectID != winnerID || res.Project.Name != testName {
-			t.Errorf("got %+v", res.Project)
+		if !errors.Is(err, errReset) || !strings.Contains(err.Error(), "could not check the project") {
+			t.Fatalf("Resolve = %+v, %v; want a check error wrapping %v", res, err, errReset)
 		}
 	})
 
@@ -477,6 +477,57 @@ func TestResolve_LookupReadsOnWhenNamesAreNotInByteOrder(t *testing.T) {
 	}
 	if res.Created || res.Project.ProjectID != "p_3" {
 		t.Errorf("got %+v, want the existing p_3", res)
+	}
+}
+
+func TestResolve_CreateMustReturnAValidProjectID(t *testing.T) {
+	for _, id := range []string{"", "p/../x"} {
+		f := &fakeAPI{
+			pages: map[string]model.ProjectListResponse{"": page("")},
+			createFn: func(req model.ProjectCreateRequest) (*model.Project, error) {
+				return &model.Project{ProjectID: id, Name: req.Name}, nil
+			},
+		}
+		_, err := Resolve(context.Background(), f, testTenant, testName)
+		if err == nil || !strings.Contains(err.Error(), "without a valid project id") {
+			t.Errorf("id %q: err = %v, want a missing-id error (an empty project_id would publish nothing)", id, err)
+		}
+	}
+}
+
+// The 409 path holds the project it adopts to the lookup's rule: exactly the
+// requested name, case included.
+func TestResolve_ConflictAdoptsOnlyTheSameName(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		wantErr  string
+	}{
+		{name: "the same name is adopted", existing: testName},
+		{name: "a case variant is refused", existing: "SVC", wantErr: "differs only in case"},
+		{name: "another name is an error", existing: "other", wantErr: `taken by project p_winner, which is named "other"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeAPI{
+				pages:    map[string]model.ProjectListResponse{"": page("")},
+				createFn: func(model.ProjectCreateRequest) (*model.Project, error) { return nil, conflict(winnerID) },
+				getFn: func(id string) (*model.Project, error) {
+					p := proj(id, tt.existing, model.ProjectStatusActive)
+					return &p, nil
+				},
+			}
+			res, err := Resolve(context.Background(), f, testTenant, testName)
+			if tt.wantErr == "" {
+				if err != nil || res.Project.ProjectID != winnerID {
+					t.Fatalf("Resolve = %+v, %v; want project %s", res, err, winnerID)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
