@@ -346,8 +346,8 @@ armis-cli scan image nginx:latest --sbom --vex
 | `--sbom-output` | Custom output path for SBOM | `.armis/<artifact>-sbom.json` (`.spdx.json` for SPDX) |
 | `--vex-output` | Custom output path for VEX | `.armis/<artifact>-vex.json` |
 | `--bom` | BOM types to download, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | none |
-| `--bom-format` | BOM format: `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx`; requires `--bom` | `cyclonedx-1.7` |
-| `--bom-output` | Directory for BOM files, or `-` to write one BOM to stdout; requires `--bom` | `.armis` |
+| `--bom-format` | BOM format: `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx`; without `--bom`, a non-default value is ignored with a warning | `cyclonedx-1.7` |
+| `--bom-output` | Directory for BOM files, or `-` to write one BOM to stdout; ignored with a warning without `--bom` | `.armis` |
 
 ### Output Location
 

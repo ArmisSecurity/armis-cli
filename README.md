@@ -586,7 +586,8 @@ Notes:
   for a type fails the scan request after upload, with exit code 1 and
   `the server refused the BOM request (--bom <types> --bom-format <format>): <message> (<code>)`.
 - `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout.
-- Each file holds the stored document, pretty-printed. New files get mode 0600, and so does a file replaced in the default `.armis`. SPDX files end in `.spdx.json`.
+- Without `--bom`, a non-default `--bom-format` prints `--bom-format is ignored without --bom flag`, any `--bom-output` prints the same for `--bom-output`, and the scan runs as without them.
+- Each file holds the stored document, pretty-printed. New files get mode 0600, and so does a file replaced in the default `.armis`. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.
