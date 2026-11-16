@@ -641,7 +641,7 @@ and `GO_PIPELINE_NAME`. Setting `CI=false` (or `0`) opts out of the generic
 markers.
 
 **Projects.** The first published scan with a new name creates the project.
-Later scans with the same name add runs to it and never create a duplicate.
+Later scans with the same name reuse it and never create a duplicate.
 A CLI project has no git integration behind it. It is listed with source
 `cli`, whether you scanned a git repository, a plain folder or a monorepo
 subfolder. Names are case-sensitive. If the only existing project differs
@@ -650,6 +650,11 @@ stops instead of creating a near-duplicate. A paused or archived project
 still gates the scan, but a warning says the run will not be recorded.
 Finding or creating a project needs credentials with the `admin` or
 `developer` role.
+
+> **Note:** Armis does not record CLI scans as runs of a project yet. Until it
+> does, a published scan still creates or finds the project, and runs and
+> gates as usual, but it does not appear under the project. The CLI prints a
+> note saying so.
 
 **Project names** are checked before anything is uploaded. A name that breaks
 a rule fails the command with the rule it broke and a valid example. It is

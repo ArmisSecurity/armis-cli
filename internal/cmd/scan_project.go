@@ -57,15 +57,25 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 	return decision, nil
 }
 
+// projectRunsRecorded says whether Armis records a published CLI scan as a run
+// of its project. /ingest/scan accepts project_id and trigger but does not
+// record a run from them yet; set this once it does, and the note goes away.
+const projectRunsRecorded = false
+
+// projectRunsNote tells the user what publishing does not do yet, so a CI log
+// does not suggest the scan will show up under the project.
+const projectRunsNote = "Note: Armis does not record CLI scans as runs of a project yet, " +
+	"so this scan will not appear under it. It still runs and gates as usual."
+
 // announceProject tells the user which project the scan is published to. A
 // paused or archived project does not record runs, so it is announced as
-// found, with a warning, rather than as published to.
+// found, with a warning, rather than as used.
 func announceProject(res *project.Resolution, decision project.Decision) {
 	styles := output.GetStyles()
 	name := styles.Bold.Render(res.Project.Name)
 	detail := styles.MutedText.Render(fmt.Sprintf("(%s; %s)", res.Project.ProjectID, decision.Reason))
 	warning := res.StatusWarning()
-	verb := "Publishing to project"
+	verb := "Using project"
 	switch {
 	case res.Created:
 		verb = "Created project"
@@ -73,8 +83,11 @@ func announceProject(res *project.Resolution, decision project.Decision) {
 		verb = "Found project"
 	}
 	fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render(verb), name, detail)
-	if warning != "" {
+	switch {
+	case warning != "":
 		cli.PrintWarning(warning)
+	case !projectRunsRecorded:
+		fmt.Fprintln(os.Stderr, styles.MutedText.Render(projectRunsNote))
 	}
 }
 

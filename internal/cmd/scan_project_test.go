@@ -335,8 +335,12 @@ func TestProjectScan_ExistingProjectIsReused(t *testing.T) {
 	if body, _ := env.scanBody(t); body.ProjectID != "p_existing" {
 		t.Errorf("project_id = %q, want p_existing", body.ProjectID)
 	}
-	if !strings.Contains(stderr, "Publishing to project") {
+	if !strings.Contains(stderr, "Using project") {
 		t.Errorf("stderr should announce the existing project:\n%s", stderr)
+	}
+	// The backend does not record CLI runs yet; the log must not suggest it does.
+	if !strings.Contains(stderr, "does not record CLI scans as runs") {
+		t.Errorf("stderr should say the scan is not recorded as a run yet:\n%s", stderr)
 	}
 }
 
@@ -605,7 +609,7 @@ func TestProjectScan_ArchivedProjectWarns(t *testing.T) {
 		t.Errorf("stderr should warn about the archived project:\n%s", stderr)
 	}
 	// A project that will not record the run is "found", not "published to".
-	if !strings.Contains(stderr, "Found project") || strings.Contains(stderr, "Publishing to project") {
+	if !strings.Contains(stderr, "Found project") || strings.Contains(stderr, "Using project") {
 		t.Errorf("stderr should announce the archived project as found:\n%s", stderr)
 	}
 	if creates := env.rec.Matching(http.MethodPost, projectsPathPart); len(creates) != 0 {

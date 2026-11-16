@@ -318,6 +318,11 @@ flag is needed, because the CLI detects the CI environment. Any folder works,
 including a non-git codebase or a monorepo subfolder, and the project is listed
 with source `cli`.
 
+> **Note:** Armis does not record CLI scans as runs of a project yet. Until it
+> does, a published scan still creates or finds the project, and runs and
+> gates as usual, but it does not appear under the project. The CLI prints a
+> note saying so.
+
 ```yaml
 # GitHub Actions: gate on HIGH/CRITICAL and publish to "checkout-service"
 - name: Armis scan
