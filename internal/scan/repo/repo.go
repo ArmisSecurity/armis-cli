@@ -100,7 +100,7 @@ func (s *Scanner) WithGitHints() *Scanner {
 
 // WithProject publishes the scan as a run of the AppSec project projectID,
 // stamped with trigger ("cli_ci" or "cli_dev"). Without it the scan is not
-// tied to any project (PPSC-1589).
+// tied to any project.
 func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
 	s.projectID = projectID
 	s.trigger = trigger

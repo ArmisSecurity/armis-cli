@@ -23,7 +23,7 @@ var changedRef string
 // showSuppressed controls whether findings suppressed by .armisignore are displayed.
 var showSuppressed bool
 
-// Project publishing flags (PPSC-1589), shared by `scan repo` and the
+// Project publishing flags, shared by `scan repo` and the
 // `scan <path>` shorthand.
 var (
 	// projectName is --project: the AppSec project a published scan is

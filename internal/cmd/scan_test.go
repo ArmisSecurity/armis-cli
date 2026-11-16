@@ -22,7 +22,7 @@ func TestScanCmd(t *testing.T) {
 		if scanCmd == nil {
 			t.Fatal("scanCmd should not be nil")
 		}
-		// `scan <path>` is a shorthand for `scan repo <path>` (PPSC-1589).
+		// `scan <path>` is a shorthand for `scan repo <path>`.
 		if scanCmd.Use != "scan [path]" {
 			t.Errorf("Expected Use 'scan [path]', got %s", scanCmd.Use)
 		}

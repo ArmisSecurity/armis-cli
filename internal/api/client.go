@@ -324,8 +324,8 @@ type IngestOptions struct {
 	RepoName  string
 	GitSHA    string
 	OriginSHA string
-	// ProjectID and Trigger publish the scan as a run of an AppSec project
-	// (PPSC-1589). Empty strings are omitted from the /scan request body.
+	// ProjectID and Trigger publish the scan as a run of an AppSec project.
+	// Empty strings are omitted from the /scan request body.
 	ProjectID string
 	Trigger   string
 }

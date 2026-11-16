@@ -448,7 +448,7 @@ func TestClient_StartIngest(t *testing.T) {
 		body := state.lastScanRequestBody
 		state.mu.Unlock()
 
-		// A scan that is not published must send exactly the pre-PPSC-1589 shape.
+		// A scan that is not published must send no project fields at all.
 		for _, key := range []string{"project_id", "trigger"} {
 			if strings.Contains(string(body), key) {
 				t.Errorf("expected %s to be omitted, got body: %s", key, body)
