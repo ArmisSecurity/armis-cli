@@ -637,8 +637,8 @@ The CLI detects CI from the variables CI systems set: `CI`,
 `GITLAB_CI`, `JENKINS_URL`, `CIRCLECI`, `TRAVIS`, `BITBUCKET_BUILD_NUMBER`,
 `TF_BUILD` (Azure Pipelines), `CODEBUILD_BUILD_ID`, `TEAMCITY_VERSION`,
 `BUILDKITE`, `bamboo_buildKey`, `DRONE`, `SEMAPHORE`, `APPVEYOR`, `BITRISE_IO`
-and `GO_PIPELINE_NAME`. Setting `CI=false` (or `0`) opts out of the generic
-markers.
+and `GO_PIPELINE_NAME`. Setting `CI` (or `CONTINUOUS_INTEGRATION`) to `false`,
+`0`, `no` or `off` opts out of the generic markers.
 
 **Projects.** The first published scan with a new name creates the project.
 Later scans with the same name reuse it and never create a duplicate.

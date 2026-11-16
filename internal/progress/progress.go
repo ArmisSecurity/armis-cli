@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,8 +31,8 @@ const (
 )
 
 // ciGenericEnvVars are the provider-neutral CI markers. They mark a CI run
-// unless set to a false boolean ("false", "0", "f", ...), so `CI=false` opts a
-// run out of CI behavior. Any other non-empty value counts.
+// unless set to an off value (see ciOptOut), so `CI=false` opts a run out of CI
+// behavior. Any other non-empty value counts.
 var ciGenericEnvVars = []string{
 	"CI",
 	"CONTINUOUS_INTEGRATION",
@@ -48,7 +49,6 @@ var ciVendorEnvVars = []string{
 	"TRAVIS",                 // Travis CI
 	"BITBUCKET_BUILD_NUMBER", // Bitbucket Pipelines
 	"TF_BUILD",               // Azure Pipelines (sets TF_BUILD=True, not CI)
-	"AZURE_PIPELINES",        // kept for compatibility: earlier releases checked it
 	"CODEBUILD_BUILD_ID",     // AWS CodeBuild
 	"TEAMCITY_VERSION",       // TeamCity
 	"BUILDKITE",              // Buildkite
@@ -74,7 +74,7 @@ func CIEnvVars() []string {
 func DetectCI() (bool, string) {
 	for _, envVar := range ciGenericEnvVars {
 		if v := os.Getenv(envVar); v != "" {
-			if b, err := strconv.ParseBool(v); err != nil || b {
+			if !ciOptOut(v) {
 				return true, envVar
 			}
 		}
@@ -391,4 +391,19 @@ func (s *Spinner) animated() bool {
 		return false
 	}
 	return s.forceAnimation || isTerminalWriter(s.writer)
+}
+
+// ciOptOut reports whether a generic CI marker is set to an off value: one
+// strconv.ParseBool reads as false ("false", "0", "f", ...), or "no" or "off"
+// in any case. CI detection decides whether a scan auto-publishes, so
+// `CI=off` must not publish a developer's scan.
+func ciOptOut(v string) bool {
+	if b, err := strconv.ParseBool(v); err == nil {
+		return !b
+	}
+	switch strings.ToLower(v) {
+	case "no", "off":
+		return true
+	}
+	return false
 }

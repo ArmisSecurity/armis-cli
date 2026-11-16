@@ -61,7 +61,7 @@ func TestIsCI(t *testing.T) {
 			},
 			expected: true,
 		},
-		// Azure Pipelines sets TF_BUILD=True and not CI; it used to go undetected.
+		// Azure Pipelines sets TF_BUILD=True and not CI.
 		{
 			name:     "TF_BUILD (Azure Pipelines) env var set",
 			envVars:  map[string]string{"TF_BUILD": "True"},
@@ -89,6 +89,29 @@ func TestIsCI(t *testing.T) {
 			name:     "CONTINUOUS_INTEGRATION=FALSE is not CI",
 			envVars:  map[string]string{"CONTINUOUS_INTEGRATION": "FALSE"},
 			expected: false,
+		},
+		// "no" and "off" are off values too: CI detection decides auto-publishing,
+		// so `CI=off` on a developer machine must not publish.
+		{
+			name:     "CI=no is not CI",
+			envVars:  map[string]string{"CI": "no"},
+			expected: false,
+		},
+		{
+			name:     "CI=OFF is not CI",
+			envVars:  map[string]string{"CI": "OFF"},
+			expected: false,
+		},
+		{
+			name:     "CONTINUOUS_INTEGRATION=Off is not CI",
+			envVars:  map[string]string{"CONTINUOUS_INTEGRATION": "Off"},
+			expected: false,
+		},
+		{
+			name:     "CI=yes is CI",
+			envVars:  map[string]string{"CI": "yes"},
+			expected: true,
+			wantVar:  "CI",
 		},
 		// A non-boolean value (some CI systems put their name in CI) still counts.
 		{

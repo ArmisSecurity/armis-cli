@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `armis-cli scan <path>` now scans the folder. It used to print help and exit 0 without scanning, which passed CI steps silently. `armis-cli scan` given flags but no path now fails instead of exiting 0. (PPSC-1589)
-- CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI=false` as not CI. (PPSC-1589)
+- CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI` set to `false`, `0`, `no` or `off` as not CI. `AZURE_PIPELINES` no longer marks a CI run: no runner sets it, and Azure Pipelines is detected through `TF_BUILD`. (PPSC-1589)
 
 ### Deprecated
 
