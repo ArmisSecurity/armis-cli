@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// fakePythonScript stands in for python3.13: it answers the version probe,
-// "-m venv" (copying itself in as the venv interpreter) and "-m pip". The
-// FAKE_* variables select failure modes.
+// fakePythonScript stands in for every Python candidate: it answers the
+// version probe, "-m venv" (copying itself in as the venv interpreter) and
+// "-m pip". The FAKE_* variables select failure modes.
 const fakePythonScript = `#!/bin/sh
 case "$1" in
   -c) echo True; exit 0;;
@@ -38,8 +38,11 @@ func setupFakeVenvEnv(t *testing.T) (pluginDir, oldMarker string) {
 		t.Skip("fake interpreter is a shell script")
 	}
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.13"), []byte(fakePythonScript), 0o700); err != nil { //nolint:gosec // test stub
-		t.Fatal(err)
+	// Every candidate name, so no host interpreter later on PATH can win.
+	for _, name := range pythonCandidates {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(fakePythonScript), 0o700); err != nil { //nolint:gosec // test stub
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+":/bin:/usr/bin")
 
