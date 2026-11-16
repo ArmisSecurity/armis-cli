@@ -258,6 +258,28 @@ func TestRunInstallFormatFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("--rotate-credentials without both credentials fails before installing", func(t *testing.T) {
+		for _, env := range []struct{ id, secret string }{{"", ""}, {"new-id", ""}, {"", testSecret}} {
+			home := throwawayHome(t)
+			t.Setenv("ARMIS_CLIENT_ID", env.id)
+			t.Setenv("ARMIS_CLIENT_SECRET", env.secret)
+			set(t, "format", "json")
+			set(t, "rotate-credentials", "true")
+			var err error
+			raw := captureStdout(t, func() { err = runInstall(installCmd, []string{"vscode"}) })
+			if err == nil || !strings.Contains(err.Error(), "requires both ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET") {
+				t.Errorf("id=%q secret set=%v: err = %v", env.id, env.secret != "", err)
+			}
+			doc := decodeReport(t, []byte(raw))
+			if clients, _ := doc["clients"].([]interface{}); len(clients) != 0 {
+				t.Errorf("clients = %v, want none attempted", clients)
+			}
+			if _, statErr := os.Stat(filepath.Join(home, ".armis")); !os.IsNotExist(statErr) {
+				t.Errorf("~/.armis must not be created, stat err = %v", statErr)
+			}
+		}
+	})
+
 	t.Run("-f json writes one document to the process stdout", func(t *testing.T) {
 		throwawayHome(t)
 		set(t, "format", "json")
@@ -303,7 +325,6 @@ func TestCredentialTrackerFinish(t *testing.T) {
 		wantStatus  string
 		wantFile    string
 		wantContent []string
-		wantDetail  string
 	}{
 		{
 			name:        "changed credentials are rotated",
@@ -387,23 +408,15 @@ func TestCredentialTrackerFinish(t *testing.T) {
 			wantStatus: "none",
 			wantFile:   "none",
 		},
-		{
-			name:        "rotation without environment credentials leaves files as they are",
-			rotate:      true,
-			existing:    strPtr("ARMIS_CLIENT_ID=" + oldID + "\nARMIS_CLIENT_SECRET=" + oldSec + "\n"),
-			perm:        0o600,
-			wantStatus:  "kept",
-			wantFile:    "kept",
-			wantContent: []string{"ARMIS_CLIENT_ID=" + oldID, "ARMIS_CLIENT_SECRET=" + oldSec},
-			wantDetail:  "not rotated",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := throwawayHome(t)
-			t.Setenv("ARMIS_CLIENT_ID", tt.envID)
-			t.Setenv("ARMIS_CLIENT_SECRET", tt.envSecret)
+			var rotateTo *clientCredentials
+			if tt.rotate {
+				rotateTo = &clientCredentials{id: tt.envID, secret: tt.envSecret}
+			}
 
 			envPath := filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp", ".env")
 			if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
@@ -429,7 +442,7 @@ func TestCredentialTrackerFinish(t *testing.T) {
 
 			var creds credentialsReport
 			var err error
-			stderr := captureStderr(t, func() { creds, err = tracker.finish(tt.rotate) })
+			stderr := captureStderr(t, func() { creds, err = tracker.finish(rotateTo) })
 			if err != nil {
 				t.Fatalf("finish() error = %v", err)
 			}
@@ -438,9 +451,6 @@ func TestCredentialTrackerFinish(t *testing.T) {
 			}
 			if len(creds.Files) != 1 || creds.Files[0].Path != envPath || creds.Files[0].Status != tt.wantFile {
 				t.Errorf("files = %+v, want one entry %s %s", creds.Files, envPath, tt.wantFile)
-			}
-			if tt.wantDetail != "" && !strings.Contains(creds.Detail, tt.wantDetail) {
-				t.Errorf("detail = %q, want it to contain %q", creds.Detail, tt.wantDetail)
 			}
 
 			if tt.wantContent != nil {
@@ -491,8 +501,6 @@ func TestCredentialTrackerFinish(t *testing.T) {
 
 func TestCredentialTrackerSkipsUnmanagedFiles(t *testing.T) {
 	home := throwawayHome(t)
-	t.Setenv("ARMIS_CLIENT_ID", "new-id")
-	t.Setenv("ARMIS_CLIENT_SECRET", testSecret)
 
 	managedPath := filepath.Join(home, "managed", ".env")
 	skippedPath := filepath.Join(home, "skipped", ".env")
@@ -503,7 +511,7 @@ func TestCredentialTrackerSkipsUnmanagedFiles(t *testing.T) {
 
 	var creds credentialsReport
 	var err error
-	captureStderr(t, func() { creds, err = tracker.finish(true) })
+	captureStderr(t, func() { creds, err = tracker.finish(&clientCredentials{id: "new-id", secret: testSecret}) })
 	if err != nil {
 		t.Fatalf("finish() error = %v", err)
 	}
@@ -517,8 +525,6 @@ func TestCredentialTrackerSkipsUnmanagedFiles(t *testing.T) {
 
 func TestCredentialTrackerRotationFailure(t *testing.T) {
 	home := throwawayHome(t)
-	t.Setenv("ARMIS_CLIENT_ID", "new-id")
-	t.Setenv("ARMIS_CLIENT_SECRET", testSecret)
 
 	// A directory in place of the .env makes the read fail.
 	envPath := filepath.Join(home, ".env")
@@ -531,7 +537,7 @@ func TestCredentialTrackerRotationFailure(t *testing.T) {
 
 	var creds credentialsReport
 	var err error
-	stderr := captureStderr(t, func() { creds, err = tracker.finish(true) })
+	stderr := captureStderr(t, func() { creds, err = tracker.finish(&clientCredentials{id: "new-id", secret: testSecret}) })
 	if err == nil {
 		t.Fatal("a failed rotation must return an error")
 	}
@@ -548,8 +554,6 @@ func TestCredentialTrackerRotationFailure(t *testing.T) {
 
 func TestSettleCredentialsAndFinishInstall(t *testing.T) {
 	home := throwawayHome(t)
-	t.Setenv("ARMIS_CLIENT_ID", "new-id")
-	t.Setenv("ARMIS_CLIENT_SECRET", testSecret)
 
 	envPath := filepath.Join(home, ".armis", "plugins", "armis-appsec-mcp", ".env")
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
@@ -563,7 +567,7 @@ func TestSettleCredentialsAndFinishInstall(t *testing.T) {
 	tracker.watch(envPath).managed = true
 	rep := newInstallReport()
 	var out bytes.Buffer
-	opts := installOptions{rotateCredentials: true, format: formatJSON, stdout: &out}
+	opts := installOptions{rotateTo: &clientCredentials{id: "new-id", secret: testSecret}, format: formatJSON, stdout: &out}
 
 	var err error
 	captureStderr(t, func() {

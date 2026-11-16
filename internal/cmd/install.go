@@ -147,7 +147,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts := installOptions{force: force, withKnowledge: withKnowledge, rotateCredentials: rotate, format: format, jetbrainsProject: project}
+	opts := installOptions{force: force, withKnowledge: withKnowledge, format: format, jetbrainsProject: project}
 
 	// A script reading stdout needs a document even when the flags are rejected.
 	failEarly := func(err error) error { return finishInstall(opts, newInstallReport(), err) }
@@ -163,6 +163,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if err := install.ValidatePinEnv(); err != nil {
 			return failEarly(err)
 		}
+	}
+
+	if rotate {
+		creds, err := rotationCredentialsFromEnv()
+		if err != nil {
+			return failEarly(err)
+		}
+		opts.rotateTo = creds
 	}
 
 	// Both flags take their credentials from the environment, so neither can
@@ -271,11 +279,15 @@ func installAllInto(opts installOptions, rep *installReport, tracker *credential
 		claudeEnv = tracker.watch(ci.EnvFilePath())
 		ciErr = ci.Install()
 	}
-	if ciErr != nil {
+	switch {
+	case errors.Is(ciErr, install.ErrClaudeNotInstalled):
+		claude.Status = reportSkip
+		claude.Detail = ciErr.Error()
+	case ciErr != nil:
 		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
 		claude.fail(ciErr)
 		failed = append(failed, "Claude Code")
-	} else {
+	default:
 		fmt.Fprintf(os.Stderr, "  ✓ Claude Code\n")
 		claude.ok(ci.PluginCacheDir())
 		claudeEnv.managed = true
@@ -322,7 +334,7 @@ func installAllInto(opts installOptions, rep *installReport, tracker *credential
 
 	printInstallSummary(os.Stderr, installSummary{targets: kt, knowledge: kres.registered})
 	printCredentialStatus(ei)
-	return rotateErr
+	return errors.Join(rep.failedTargetsError(), rotateErr)
 }
 
 // installKnowledgeTracked runs the knowledge install and records its outcome
@@ -339,7 +351,7 @@ func installKnowledgeTracked(kt knowledgeTargets, force bool, manifest *install.
 // settleCredentials applies --rotate-credentials, then stores the per-file
 // outcome in the report.
 func settleCredentials(opts installOptions, rep *installReport, tracker *credentialTracker) error {
-	creds, err := tracker.finish(opts.rotateCredentials)
+	creds, err := tracker.finish(opts.rotateTo)
 	rep.Credentials = creds
 	return err
 }

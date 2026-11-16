@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ const (
 	marketplaceName = "armis-appsec-mcp"
 	pluginName      = "armis-appsec"
 )
+
+// ErrClaudeNotInstalled is returned by Install when ~/.claude does not exist.
+var ErrClaudeNotInstalled = errors.New("Claude Code is not installed") //nolint:staticcheck // proper noun
 
 // ClaudeInstaller installs the Armis AppSec MCP plugin for Claude Code.
 type ClaudeInstaller struct {
@@ -53,7 +57,7 @@ func (ci *ClaudeInstaller) alreadyAtPin() bool {
 func (ci *ClaudeInstaller) Install() error {
 	// armis:ignore cwe:253 reason:intentionally checks only IsNotExist; other stat errors are irrelevant to user-facing message
 	if _, err := os.Stat(ci.claudeDir); os.IsNotExist(err) {
-		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir) //nolint:staticcheck // proper noun
+		return fmt.Errorf("%w: Claude Code directory not found at %s", ErrClaudeNotInstalled, ci.claudeDir)
 	}
 
 	pluginDir := ci.pluginCacheDir()

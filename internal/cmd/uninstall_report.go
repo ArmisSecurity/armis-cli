@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -84,6 +85,30 @@ func (r *uninstallReport) hook(hc install.HookClient, err error) {
 		return
 	}
 	r.client(id, hc.Name).Hook = &hookReport{Status: reportWarn, Detail: err.Error()}
+}
+
+// failedStepsError names every client and step that could not be removed,
+// so a partial uninstall exits non-zero like a partial install does.
+func (r *uninstallReport) failedStepsError() error {
+	var failed []string
+	for _, c := range r.Clients {
+		if c.Status == reportFail {
+			failed = append(failed, c.Label)
+		}
+		if c.Hook != nil && c.Hook.Status == reportWarn {
+			failed = append(failed, c.Label+" (hooks)")
+		}
+	}
+	if r.PreCommit != nil && r.PreCommit.Status == reportFail {
+		failed = append(failed, "pre-commit hook")
+	}
+	if r.PluginFiles != nil && r.PluginFiles.Status == reportFail {
+		failed = append(failed, "plugin files")
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("uninstall failed for: %s", strings.Join(failed, ", "))
 }
 
 // editorIDForName resolves a display name from the uninstaller back to a client id.

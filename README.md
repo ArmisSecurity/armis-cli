@@ -791,7 +791,7 @@ For CI and device-management rollouts, `install` and `uninstall` can report thei
 
 ```bash
 armis-cli install --format json            # -f json also works
-armis-cli uninstall --format json          # implies --force
+armis-cli uninstall --format json --force  # --force is required to uninstall everything
 ```
 
 Install output:
@@ -817,7 +817,7 @@ Install output:
 }
 ```
 
-`clients[].client` is a stable lowercase id (`cursor`, `vscode`, `copilot`, `codex`, `claude`, `antigravity`, `junie`, `jetbrains`, and so on). `status` is `ok`, `fail`, `warn` (manual setup needed, as for JetBrains) or `skip`. `hook` appears for clients with a native hook and is `ok` or `warn`. `plugin.version` is the installed release (the pinned one when `--plugin-version` or `ARMIS_MCP_VERSION` is set, and `pinned` is then `true`). For targeted installs, a failed client or a hook warning also makes the command exit non-zero and is named in `error`. `knowledge` is `null` unless `--with-knowledge` was given. `credentials.status` is `written`, `kept`, `rotated`, `none` or `failed`. A fatal error adds an `error` field and still exits non-zero.
+`clients[].client` is a stable lowercase id (`cursor`, `vscode`, `copilot`, `codex`, `claude`, `antigravity`, `junie`, `jetbrains`, and so on). `status` is `ok`, `fail`, `warn` (manual setup needed, as for JetBrains) or `skip`. `hook` appears for clients with a native hook and is `ok` or `warn`. `plugin.version` is the installed release (the pinned one when `--plugin-version` or `ARMIS_MCP_VERSION` is set, and `pinned` is then `true`). A failed client or a hook warning makes the command exit non-zero and is named in `error`; in a full install, Claude Code is `skip` when `~/.claude` does not exist. `uninstall` does the same for clients, hooks, the pre-commit hook and plugin files it could not remove. `knowledge` is `null` unless `--with-knowledge` was given. `credentials.status` is `written`, `kept`, `rotated`, `none` or `failed`. A fatal error adds an `error` field and still exits non-zero.
 
 `install` keeps an existing `.env` as it is. To replace the client ID and secret, set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` and pass `--rotate-credentials`:
 
@@ -825,7 +825,7 @@ Install output:
 ARMIS_CLIENT_ID=... ARMIS_CLIENT_SECRET=... armis-cli install --rotate-credentials
 ```
 
-This overwrites the two values in every `.env` the run manages: the shared plugin (`~/.armis/plugins/armis-appsec-mcp/.env`), the Claude Code plugin cache copy, and Armis Knowledge when it is installed. Other keys such as `HTTPS_PROXY` are kept, the file is replaced atomically with mode `0600`, and no `.env.bak` is left (an old one is deleted). A file that already holds the values is not rewritten. The secret is never printed. If the variables are not both set, the flag warns and changes nothing. A failed write makes the command exit non-zero.
+This overwrites the two values in every `.env` the run manages: the shared plugin (`~/.armis/plugins/armis-appsec-mcp/.env`), the Claude Code plugin cache copy, and Armis Knowledge when it is installed. Other keys such as `HTTPS_PROXY` are kept, the file is replaced atomically with mode `0600`, and no `.env.bak` is left (an old one is deleted). A file that already holds the values is not rewritten. The secret is never printed. If the variables are not both set, the command fails before installing anything. A failed write makes the command exit non-zero.
 
 #### Troubleshooting with `mcp doctor`
 

@@ -30,14 +30,31 @@ const (
 
 // installOptions carries the flags shared by the install paths.
 type installOptions struct {
-	force             bool
-	withKnowledge     bool
-	rotateCredentials bool
+	force         bool
+	withKnowledge bool
+	// rotateTo holds the credentials --rotate-credentials writes; nil when
+	// the flag is not set.
+	rotateTo *clientCredentials
 	// jetbrainsProject is the project directory for the jetbrains target.
 	jetbrainsProject string
 	format           string
 	// stdout receives the JSON document; nil means os.Stdout.
 	stdout io.Writer
+}
+
+type clientCredentials struct {
+	id     string
+	secret string
+}
+
+// rotationCredentialsFromEnv reads the credentials --rotate-credentials
+// writes. Both must be set so a rotation request can never end as a no-op.
+func rotationCredentialsFromEnv() (*clientCredentials, error) {
+	c := &clientCredentials{id: os.Getenv("ARMIS_CLIENT_ID"), secret: os.Getenv("ARMIS_CLIENT_SECRET")}
+	if c.id == "" || c.secret == "" {
+		return nil, fmt.Errorf("--rotate-credentials requires both ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET to be set")
+	}
+	return c, nil
 }
 
 func (o installOptions) json() bool { return o.format == formatJSON }
@@ -98,7 +115,6 @@ type credentialFileReport struct {
 
 type credentialsReport struct {
 	Status string                 `json:"status"`
-	Detail string                 `json:"detail,omitempty"`
 	Files  []credentialFileReport `json:"files"`
 }
 
@@ -323,20 +339,12 @@ func (t *credentialTracker) watch(path string) *trackedEnv {
 	return f
 }
 
-// finish settles every managed file. With rotate set and both credentials in
-// the environment it overwrites them; otherwise it only reports what the
-// install left behind. The returned error is non-nil only when a requested
-// rotation failed, and never contains the secret.
-func (t *credentialTracker) finish(rotate bool) (credentialsReport, error) {
+// finish settles every managed file. With rotateTo set it overwrites the
+// credentials in them; otherwise it only reports what the install left
+// behind. The returned error is non-nil only when a rotation failed, and
+// never contains the secret.
+func (t *credentialTracker) finish(rotateTo *clientCredentials) (credentialsReport, error) {
 	rep := credentialsReport{Status: credsNone, Files: []credentialFileReport{}}
-
-	id := os.Getenv("ARMIS_CLIENT_ID")
-	secret := os.Getenv("ARMIS_CLIENT_SECRET")
-	canRotate := rotate && id != "" && secret != ""
-	if rotate && !canRotate {
-		rep.Detail = "ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET are not both set; credentials were not rotated"
-		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", rep.Detail)
-	}
 
 	failed := 0
 	for _, f := range t.files {
@@ -345,8 +353,8 @@ func (t *credentialTracker) finish(rotate bool) (credentialsReport, error) {
 		}
 		entry := credentialFileReport{Path: f.path}
 
-		if canRotate {
-			outcome, err := install.RotateEnvCredentials(f.path, id, secret)
+		if rotateTo != nil {
+			outcome, err := install.RotateEnvCredentials(f.path, rotateTo.id, rotateTo.secret)
 			switch {
 			case err != nil:
 				entry.Status = credsFailed

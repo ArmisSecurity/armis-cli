@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/install"
@@ -28,10 +30,11 @@ func TestUninstallAllJSON(t *testing.T) {
 		corruptFile bool
 		wantClient  string
 		wantDetail  string
+		wantErr     string
 	}{
 		{name: "removes a registered client", wantClient: "ok", wantDetail: "removed"},
 		{name: "keeps credentials when asked", keepCreds: true, wantClient: "ok", wantDetail: "removed"},
-		{name: "reports a client that cannot be cleaned", corruptFile: true, wantClient: "fail"},
+		{name: "reports a client that cannot be cleaned", corruptFile: true, wantClient: "fail", wantErr: "uninstall failed for: Cursor"},
 	}
 
 	for _, tt := range tests {
@@ -56,8 +59,11 @@ func TestUninstallAllJSON(t *testing.T) {
 				err = uninstallAll(install.NewUninstaller(), tt.keepCreds, true, rep)
 				err = finishUninstall(formatJSON, &out, rep, err)
 			})
-			if err != nil {
+			switch {
+			case tt.wantErr == "" && err != nil:
 				t.Fatalf("error = %v", err)
+			case tt.wantErr != "" && (err == nil || err.Error() != tt.wantErr):
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
 			}
 
 			doc := decodeReport(t, out.Bytes())
@@ -105,11 +111,14 @@ func TestUninstallTargetsJSON(t *testing.T) {
 		err = uninstallTargets(install.NewUninstaller(), []string{"cursor", "jetbrains", "aider", "nonexistent-editor"}, rep)
 		err = finishUninstall(formatJSON, &out, rep, err)
 	})
-	if err != nil {
-		t.Fatalf("error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "nonexistent-editor") {
+		t.Fatalf("error = %v, want one naming the failed target", err)
 	}
 
 	doc := decodeReport(t, out.Bytes())
+	if doc["error"] != err.Error() {
+		t.Errorf("error field = %v, want %q", doc["error"], err.Error())
+	}
 	for id, want := range map[string]string{
 		"cursor":             "ok",
 		"jetbrains":          "warn",
@@ -142,51 +151,64 @@ func TestRunUninstallFormat(t *testing.T) {
 		}
 	})
 
-	t.Run("json skips the confirmation prompt", func(t *testing.T) {
-		home := throwawayHome(t)
-		stagePlugin(t, home)
-		if err := uninstallCmd.Flags().Set("format", "json"); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			f := uninstallCmd.Flags().Lookup("format")
-			_ = f.Value.Set(f.DefValue)
-			f.Changed = false
+	for _, tt := range []struct {
+		name    string
+		force   bool
+		wantErr string
+		wantPF  interface{}
+	}{
+		{name: "json without --force removes nothing", wantErr: "pass --force to confirm"},
+		{name: "json with --force skips the confirmation prompt", force: true, wantPF: "ok"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := throwawayHome(t)
+			pluginDir := stagePlugin(t, home)
+			for name, value := range map[string]string{"format": "json", "force": fmt.Sprint(tt.force)} {
+				if err := uninstallCmd.Flags().Set(name, value); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					f := uninstallCmd.Flags().Lookup(name)
+					_ = f.Value.Set(f.DefValue)
+					f.Changed = false
+				})
+			}
+
+			// An empty stdin would answer "no" if the prompt were shown.
+			in, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = w.Close()
+			oldStdin := os.Stdin
+			os.Stdin = in
+			t.Cleanup(func() { os.Stdin = oldStdin; _ = in.Close() })
+
+			var runErr error
+			raw := captureStdout(t, func() {
+				captureStderr(t, func() { runErr = runUninstall(uninstallCmd, nil) })
+			})
+
+			doc := decodeReport(t, []byte(raw))
+			pf, _ := doc["plugin_files"].(map[string]interface{})
+			if tt.wantErr != "" {
+				if runErr == nil || !strings.Contains(runErr.Error(), tt.wantErr) {
+					t.Fatalf("runUninstall() error = %v, want %q", runErr, tt.wantErr)
+				}
+				if doc["error"] != runErr.Error() {
+					t.Errorf("error field = %v, want %q", doc["error"], runErr.Error())
+				}
+				if _, statErr := os.Stat(pluginDir); statErr != nil {
+					t.Errorf("plugin dir must be kept, stat err = %v", statErr)
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("runUninstall() error = %v", runErr)
+			}
+			if pf["status"] != tt.wantPF {
+				t.Errorf("plugin_files = %v, want %v", pf, tt.wantPF)
+			}
 		})
-
-		// An empty stdin would answer "no" if the prompt were shown.
-		in, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = w.Close()
-		oldStdin := os.Stdin
-		os.Stdin = in
-		t.Cleanup(func() { os.Stdin = oldStdin; _ = in.Close() })
-
-		out, outW, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		oldStdout := os.Stdout
-		os.Stdout = outW
-		t.Cleanup(func() { os.Stdout = oldStdout })
-
-		var runErr error
-		captureStderr(t, func() { runErr = runUninstall(uninstallCmd, nil) })
-		_ = outW.Close()
-		os.Stdout = oldStdout
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(out)
-		_ = out.Close()
-
-		if runErr != nil {
-			t.Fatalf("runUninstall() error = %v", runErr)
-		}
-		doc := decodeReport(t, buf.Bytes())
-		pf, _ := doc["plugin_files"].(map[string]interface{})
-		if pf["status"] != "ok" {
-			t.Errorf("plugin_files = %v, want ok (prompt must be skipped)", pf)
-		}
-	})
+	}
 }

@@ -98,10 +98,10 @@ func TestUninstallTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown editor prints warning without error", func(t *testing.T) {
+	t.Run("unknown editor fails", func(t *testing.T) {
 		err := uninstallTargets(u, []string{"nonexistent-editor"}, newUninstallReport())
-		if err != nil {
-			t.Errorf("uninstallTargets(unknown) unexpected error: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "nonexistent-editor") {
+			t.Errorf("uninstallTargets(unknown) error = %v, want one naming the editor", err)
 		}
 	})
 

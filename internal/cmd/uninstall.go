@@ -48,7 +48,7 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	uninstallCmd.Flags().Bool("keep-credentials", false, "Preserve the .env credentials file")
 	uninstallCmd.Flags().Bool("force", false, "Skip confirmation prompt")
-	uninstallCmd.Flags().StringP("format", "f", formatHuman, "Output format: human, json (json writes one document to stdout and implies --force)")
+	uninstallCmd.Flags().StringP("format", "f", formatHuman, "Output format: human, json (json writes one document to stdout; uninstalling everything also needs --force)")
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {
@@ -76,8 +76,12 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		err = uninstallTargets(u, args, rep)
 	} else {
-		// JSON mode is for scripts, so there is nobody to answer the prompt.
-		err = uninstallAll(u, keepCreds, force || format == formatJSON, rep)
+		// Nobody can answer the prompt in JSON mode, and deleting the plugin
+		// and credentials must stay an explicit choice.
+		if format == formatJSON && !force {
+			return finishUninstall(format, nil, rep, fmt.Errorf("--format json without targets removes the plugin and credentials; pass --force to confirm"))
+		}
+		err = uninstallAll(u, keepCreds, force, rep)
 	}
 	return finishUninstall(format, nil, rep, err)
 }
@@ -284,7 +288,7 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool, rep *uninstallR
 		}
 	}
 	fmt.Fprintln(os.Stderr, "")
-	return nil
+	return rep.failedStepsError()
 }
 
 func uninstallTargets(u *install.Uninstaller, targets []string, rep *uninstallReport) error {
@@ -414,7 +418,7 @@ func uninstallTargets(u *install.Uninstaller, targets []string, rep *uninstallRe
 		fmt.Fprintln(os.Stderr, "Plugin files kept (other editors may still use them).")
 	}
 	fmt.Fprintln(os.Stderr, "")
-	return nil
+	return rep.failedStepsError()
 }
 
 // confirmOut is where confirm() writes its prompt. It defaults to stderr (all
