@@ -130,6 +130,18 @@ Download the latest release for your platform from the [releases page](https://g
 go install github.com/ArmisSecurity/armis-cli/cmd/armis-cli@latest
 ```
 
+### Fleet / MDM deployment (macOS)
+
+To roll out armis-cli and the Armis AppSec MCP server to many Macs, run `scripts/enterprise-setup.sh` by hand or from Jamf, Kandji or another MDM. It installs a pinned armis-cli, registers the MCP server in Cursor, VS Code with Copilot, Copilot CLI, Codex, Claude Code, Antigravity and Junie (and JetBrains projects you list), checks the result, and writes a JSON report per machine, user and component.
+
+```bash
+ARMIS_CLI_VERSION=1.27.0 ./scripts/enterprise-setup.sh --dry-run          # preview
+ARMIS_CLI_VERSION=1.27.0 ARMIS_CREDENTIALS_FILE=/var/db/armis/credentials \
+    sudo -E ./scripts/enterprise-setup.sh --non-interactive                # roll out
+```
+
+It supports `--dry-run`, `--uninstall`, `--only`/`--skip`, backups of every config it changes, and exit codes 0 (ok), 1 (partial), 2 (verification failed) and 3 (bad arguments or preflight failure). See [docs/ENTERPRISE-DEPLOYMENT.md](docs/ENTERPRISE-DEPLOYMENT.md).
+
 ### Verify Installation
 
 After installation, verify that the CLI is working:

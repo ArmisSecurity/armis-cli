@@ -1,0 +1,125 @@
+#!/bin/bash
+# Fake armis-cli for enterprise-setup.bats. Behaviour is switched by STUB_* variables.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="${STUB_LOG:?STUB_LOG is required}"
+printf '%s\n' "$*" >> "$LOG/armis-cli.argv"
+[ -z "${ARMIS_CLIENT_SECRET:-}" ] || echo "secret-in-env: $1" >> "$LOG/env.flags"
+
+label() {
+    case $1 in
+        cursor) echo "Cursor" ;; vscode) echo "VS Code" ;; copilot) echo "Copilot CLI" ;;
+        codex) echo "Codex CLI (MCP)" ;; claude) echo "Claude Code" ;; antigravity) echo "Antigravity" ;;
+        junie) echo "Junie" ;;
+    esac
+}
+
+# target -> "file|topkey"
+target_cfg() {
+    case $1 in
+        cursor) echo "$HOME/.cursor/mcp.json|mcpServers" ;;
+        vscode) echo "$HOME/Library/Application Support/Code/User/mcp.json|servers" ;;
+        copilot) echo "$HOME/.copilot/mcp-config.json|mcpServers" ;;
+        antigravity) echo "$HOME/.gemini/config/mcp_config.json|mcpServers" ;;
+        junie) echo "$HOME/.junie/mcp/mcp.json|mcpServers" ;;
+    esac
+}
+
+write_env() { # write_env FILE: like the real CLI, only when absent
+    [ ! -f "$1" ] || return 0
+    [ -n "${ARMIS_CLIENT_ID:-}" ] || return 0
+    mkdir -p "$(dirname "$1")"
+    ( umask 077; printf 'ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n' "$ARMIS_CLIENT_ID" "$ARMIS_CLIENT_SECRET" > "$1" )
+}
+
+do_install() {
+    local t cfg file top
+    if [ "${1:-}" = "--help" ]; then
+        echo "Usage: armis-cli install [editor...]"
+        if [ "${STUB_OLD_CLI:-0}" != 1 ]; then
+            echo "      --plugin-version string   Install this MCP server release"
+            echo "      --project string          Project directory for the jetbrains target"
+        fi
+        return 0
+    fi
+    local targets=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --project) project=$2; shift ;;
+            --plugin-version) shift ;;
+            --*) ;;
+            *) targets="$targets $1" ;;
+        esac
+        shift
+    done
+    if [ "${STUB_PYTHON_FAIL:-0}" = 1 ]; then echo "Error: no suitable Python 3.11+ interpreter found" >&2; return 1; fi
+    write_env "$HOME/.armis/plugins/armis-appsec-mcp/.env"
+    echo "MCP server v1.4.2 downloaded."
+    local failed=0
+    for t in $targets; do
+        case " ${STUB_FAIL_TARGETS:-} " in
+            *" $t "*)
+                IFS='|' read -r file top <<< "$(target_cfg "$t")"
+                [ -z "$file" ] || echo "garbage{" > "$file"
+                echo "  ✗ $(label "$t"): boom"
+                failed=1
+                continue ;;
+        esac
+        case $t in
+            claude)
+                write_env "$HOME/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest/.env"
+                mkdir -p "$HOME/.claude/plugins"
+                printf '{"version":2,"plugins":{"armis-appsec@armis-appsec-mcp":[{"version":"1.4.2"}]}}\n' > "$HOME/.claude/plugins/installed_plugins.json"
+                echo "  ✓ Claude Code v1.4.2" ;;
+            codex)
+                grep -q armis_scanner "$HOME/.codex/config.toml" 2>/dev/null || printf '[mcp_servers.armis_scanner]\ncommand = "python"\n' >> "$HOME/.codex/config.toml"
+                echo "  ✓ Codex CLI (MCP)" ;;
+            jetbrains)
+                osascript -l JavaScript "$DIR/merge.js" "$project/.jb-mcp.json" mcpServers
+                echo "  ✓ JetBrains ($project/.jb-mcp.json)" ;;
+            *)
+                IFS='|' read -r file top <<< "$(target_cfg "$t")"
+                mkdir -p "$(dirname "$file")"
+                osascript -l JavaScript "$DIR/merge.js" "$file" "$top"
+                echo "  ✓ $(label "$t")"
+                [ "${STUB_HOOK_WARN:-}" != "$t" ] || echo "  ⚠ $(label "$t") (hooks): adapter missing" ;;
+        esac
+    done
+    [ "$failed" -eq 0 ] || return "${STUB_FAIL_EXIT:-1}"
+    return 0
+}
+
+case "${1:-}" in
+    --version) echo "armis-cli version ${STUB_CLI_VERSION:-1.2.3} (commit: none, built: unknown)" ;;
+    install) shift; do_install "$@"; exit $? ;;
+    uninstall)
+        shift
+        targets=""
+        for a in "$@"; do case $a in --*) ;; *) targets="$targets $a" ;; esac; done
+        [ -n "$targets" ] || targets="cursor vscode copilot antigravity junie"
+        for t in $targets; do
+            IFS='|' read -r file top <<< "$(target_cfg "$t")"
+            [ -z "$file" ] || [ ! -f "$file" ] || osascript -l JavaScript "$DIR/merge.js" "$file" "$top" remove
+        done
+        exit 0 ;;
+    auth)
+        if [ "${2:-}" = whoami ]; then [ "${STUB_WHOAMI_FAIL:-0}" != 1 ] || { echo "Error: unauthorized" >&2; exit 1; }; echo "Tenant: acme" >&2; exit 0; fi
+        exit 0 ;;
+    mcp)
+        if [ "${3:-}" = "--network" ] || [ "${4:-}" = "--network" ]; then
+            [ "${STUB_NETWORK_FAIL:-0}" != 1 ] || { echo "TLS handshake failed" >&2; exit 1; }
+            exit 0
+        fi
+        if [ -n "${STUB_DOCTOR_JSON:-}" ]; then cat "$STUB_DOCTOR_JSON"; else
+            echo '{"checks":[{"component":"scanner","name":"python venv","status":"ok","detail":"ok"}]}'
+        fi
+        exit "${STUB_DOCTOR_EXIT:-0}" ;;
+    scan)
+        [ "${STUB_SCAN_FAIL:-0}" != 1 ] || { echo "scan failed" >&2; exit 1; }
+        echo '{"findings":[]}'; exit 0 ;;
+    hook)
+        if [ "${2:-}" = init ]; then
+            mkdir -p .git/hooks && printf '#!/bin/sh\nexit 0\n' > .git/hooks/pre-commit && chmod 755 .git/hooks/pre-commit
+        fi
+        exit 0 ;;
+esac
+exit 0

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Fake pgrep: STUB_RUNNING is a substring of the pattern that "is running".
+[ -n "${STUB_RUNNING:-}" ] || exit 1
+case "$*" in *"$STUB_RUNNING"*) exit 0 ;; esac
+exit 1

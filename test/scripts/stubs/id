@@ -1,0 +1,3 @@
+#!/bin/bash
+if [ "${STUB_ROOT:-0}" = 1 ] && [ "$*" = "-u" ]; then echo 0; exit 0; fi
+exec /usr/bin/id "$@"
