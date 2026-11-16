@@ -845,6 +845,15 @@ func RotateEnvCredentials(envPath, clientID, clientSecret string) (CredentialRot
 	case err == nil:
 		existed = true
 		if current[envClientID] == clientID && current[envClientSecret] == clientSecret {
+			// The .env is current, but a .bak from an earlier wizard run can
+			// still hold a retired secret, and the file mode may be loose.
+			if err := removeEnvBackup(cleanPath); err != nil {
+				return "", err
+			}
+			// armis:ignore cwe:73 reason:path derived from known plugin dir + ".env"
+			if err := os.Chmod(cleanPath, 0o600); err != nil {
+				return "", fmt.Errorf("restricting %s: %w", filepath.Base(cleanPath), err)
+			}
 			return CredentialsUnchanged, nil
 		}
 	case os.IsNotExist(err):
@@ -856,14 +865,21 @@ func RotateEnvCredentials(envPath, clientID, clientSecret string) (CredentialRot
 	if err := setEnvFileVars(cleanPath, vars, false); err != nil {
 		return "", fmt.Errorf("rotating credentials in %s: %w", cleanPath, err)
 	}
-	// armis:ignore cwe:73 reason:path derived from known plugin dir + ".env.bak"
-	if err := os.Remove(cleanPath + ".bak"); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("removing stale %s.bak: %w", filepath.Base(cleanPath), err)
+	if err := removeEnvBackup(cleanPath); err != nil {
+		return "", err
 	}
 	if existed {
 		return CredentialsRotated, nil
 	}
 	return CredentialsWritten, nil
+}
+
+func removeEnvBackup(envPath string) error {
+	// armis:ignore cwe:73 reason:path derived from known plugin dir + ".env.bak"
+	if err := os.Remove(envPath + ".bak"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale %s.bak: %w", filepath.Base(envPath), err)
+	}
+	return nil
 }
 
 // armis:ignore cwe:73 reason:called only from WriteEnvFromValues with paths from known plugin dir

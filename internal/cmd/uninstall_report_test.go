@@ -68,6 +68,9 @@ func TestUninstallAllJSON(t *testing.T) {
 			if tt.wantDetail != "" && c["detail"] != tt.wantDetail {
 				t.Errorf("detail = %v, want %s", c["detail"], tt.wantDetail)
 			}
+			if hook, _ := c["hook"].(map[string]interface{}); hook["status"] != "ok" {
+				t.Errorf("cursor hook = %v, want status ok", c["hook"])
+			}
 
 			pf, _ := doc["plugin_files"].(map[string]interface{})
 			if pf["status"] != "ok" || pf["credentials_kept"] != tt.keepCreds {

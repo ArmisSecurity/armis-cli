@@ -129,19 +129,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading --with-knowledge flag: %w", err)
 	}
 
-	pluginVersion, err := cmd.Flags().GetString("plugin-version")
-	if err != nil {
-		return fmt.Errorf("reading --plugin-version flag: %w", err)
-	}
-	if err := install.SetVersionPin(pluginVersion); err != nil {
-		return err
-	}
-	if pluginVersion == "" {
-		if err := install.ValidatePinEnv(); err != nil {
-			return err
-		}
-	}
-
 	project, err := cmd.Flags().GetString("project")
 	if err != nil {
 		return fmt.Errorf("reading --project flag: %w", err)
@@ -162,11 +149,27 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	opts := installOptions{force: force, withKnowledge: withKnowledge, rotateCredentials: rotate, format: format, jetbrainsProject: project}
 
+	// A script reading stdout needs a document even when the flags are rejected.
+	failEarly := func(err error) error { return finishInstall(opts, newInstallReport(), err) }
+
+	pluginVersion, err := cmd.Flags().GetString("plugin-version")
+	if err != nil {
+		return failEarly(fmt.Errorf("reading --plugin-version flag: %w", err))
+	}
+	if err := install.SetVersionPin(pluginVersion); err != nil {
+		return failEarly(err)
+	}
+	if pluginVersion == "" {
+		if err := install.ValidatePinEnv(); err != nil {
+			return failEarly(err)
+		}
+	}
+
 	// Both flags take their credentials from the environment, so neither can
 	// run the wizard that asks for them.
 	scripted := opts.json() || rotate
 	if interactive && scripted {
-		return fmt.Errorf("--interactive cannot be combined with --format json or --rotate-credentials")
+		return failEarly(fmt.Errorf("--interactive cannot be combined with --format json or --rotate-credentials"))
 	}
 
 	// Interactive mode: explicit flag, or (no args + TTY + not --non-interactive)

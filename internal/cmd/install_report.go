@@ -119,16 +119,20 @@ func newInstallReport() *installReport {
 	}
 }
 
-// client returns the entry for id, creating it on first use.
-func (r *installReport) client(id, label string) *clientReport {
-	for _, c := range r.Clients {
+// clientEntry returns the entry for id in *clients, appending it on first use.
+func clientEntry(clients *[]*clientReport, id, label string) *clientReport {
+	for _, c := range *clients {
 		if c.Client == id {
 			return c
 		}
 	}
 	c := &clientReport{Client: id, Label: label, Status: reportSkip}
-	r.Clients = append(r.Clients, c)
+	*clients = append(*clients, c)
 	return c
+}
+
+func (r *installReport) client(id, label string) *clientReport {
+	return clientEntry(&r.Clients, id, label)
 }
 
 // failedTargetsError names every target whose registration failed or whose
@@ -272,10 +276,16 @@ func finishInstall(opts installOptions, rep *installReport, err error) error {
 	if !opts.json() {
 		return err
 	}
+	return finishJSONReport(opts.out(), rep, &rep.Error, err)
+}
+
+// finishJSONReport stores err in *errField, writes doc to w and returns err,
+// or the write error when err is nil.
+func finishJSONReport(w io.Writer, doc interface{}, errField *string, err error) error {
 	if err != nil {
-		rep.Error = err.Error()
+		*errField = err.Error()
 	}
-	if werr := writeJSONReport(opts.out(), rep); werr != nil && err == nil {
+	if werr := writeJSONReport(w, doc); werr != nil && err == nil {
 		return werr
 	}
 	return err

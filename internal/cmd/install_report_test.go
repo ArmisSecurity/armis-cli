@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -232,9 +233,28 @@ func TestRunInstallFormatFlags(t *testing.T) {
 		throwawayHome(t)
 		set(t, "format", "json")
 		set(t, "interactive", "true")
-		err := runInstall(installCmd, nil)
+		var err error
+		raw := captureStdout(t, func() { err = runInstall(installCmd, nil) })
 		if err == nil || !strings.Contains(err.Error(), "--interactive cannot be combined") {
 			t.Errorf("err = %v", err)
+		}
+		if doc := decodeReport(t, []byte(raw)); !strings.Contains(fmt.Sprint(doc["error"]), "--interactive cannot be combined") {
+			t.Errorf("error field = %v", doc["error"])
+		}
+	})
+
+	t.Run("json reports a rejected --plugin-version", func(t *testing.T) {
+		throwawayHome(t)
+		set(t, "format", "json")
+		set(t, "plugin-version", "not-a-version")
+		t.Cleanup(func() { _ = install.SetVersionPin("") })
+		var err error
+		raw := captureStdout(t, func() { err = runInstall(installCmd, nil) })
+		if err == nil {
+			t.Fatal("expected an error for an invalid --plugin-version")
+		}
+		if doc := decodeReport(t, []byte(raw)); doc["error"] != err.Error() {
+			t.Errorf("error field = %v, want %q", doc["error"], err.Error())
 		}
 	})
 

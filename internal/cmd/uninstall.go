@@ -125,9 +125,10 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool, rep *uninstallR
 	}
 
 	// Remove native hook configs from all AI clients
-	for _, hc := range install.AllHookClients {
+	hookErrs := make([]error, len(install.AllHookClients))
+	for i, hc := range install.AllHookClients {
 		err := install.RemoveNativeHook(hc)
-		rep.hook(hc, err)
+		hookErrs[i] = err
 		if err != nil {
 			if styled {
 				fmt.Fprintf(os.Stderr, "  %s Hook removal (%s): %v\n", warnMark.Render("⚠"), hc.Name, err)
@@ -187,6 +188,12 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool, rep *uninstallR
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✓ Removed from Codex CLI\n")
 		}
+	}
+
+	// rep.hook only records a successful removal against a client already in
+	// the report, so it runs once the deregistration steps have added them.
+	for i, hc := range install.AllHookClients {
+		rep.hook(hc, hookErrs[i])
 	}
 
 	// Remove Armis Knowledge whenever the manifest records it — no flag. Leaving

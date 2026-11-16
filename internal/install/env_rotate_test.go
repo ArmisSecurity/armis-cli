@@ -41,6 +41,16 @@ func TestRotateEnvCredentials(t *testing.T) {
 			wantLines: []string{"ARMIS_CLIENT_ID=same-id", "ARMIS_CLIENT_SECRET=same-secret"},
 		},
 		{
+			name:      "unchanged values still drop a stale backup and tighten the mode",
+			existing:  ptr("ARMIS_CLIENT_ID=same-id\nARMIS_CLIENT_SECRET=same-secret\n"),
+			mode:      0o644,
+			staleBak:  true,
+			id:        "same-id",
+			secret:    "same-secret",
+			want:      CredentialsUnchanged,
+			wantLines: []string{"ARMIS_CLIENT_ID=same-id", "ARMIS_CLIENT_SECRET=same-secret"},
+		},
+		{
 			name:      "missing file is created",
 			existing:  nil,
 			id:        "new-id",
@@ -158,7 +168,7 @@ func TestRotateEnvCredentials(t *testing.T) {
 				}
 			}
 
-			if runtime.GOOS != "windows" && got != CredentialsUnchanged {
+			if runtime.GOOS != "windows" {
 				info, err := os.Stat(envPath)
 				if err != nil {
 					t.Fatal(err)

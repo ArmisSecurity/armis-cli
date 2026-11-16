@@ -41,14 +41,7 @@ func newUninstallReport() *uninstallReport {
 }
 
 func (r *uninstallReport) client(id, label string) *clientReport {
-	for _, c := range r.Clients {
-		if c.Client == id {
-			return c
-		}
-	}
-	c := &clientReport{Client: id, Label: label, Status: reportSkip}
-	r.Clients = append(r.Clients, c)
-	return c
+	return clientEntry(&r.Clients, id, label)
 }
 
 func (r *uninstallReport) warned(id, label, detail string) {
@@ -119,14 +112,8 @@ func finishUninstall(format string, out io.Writer, rep *uninstallReport, err err
 	if format != formatJSON {
 		return err
 	}
-	if err != nil {
-		rep.Error = err.Error()
-	}
 	if out == nil {
 		out = os.Stdout
 	}
-	if werr := writeJSONReport(out, rep); werr != nil && err == nil {
-		return werr
-	}
-	return err
+	return finishJSONReport(out, rep, &rep.Error, err)
 }
