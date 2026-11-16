@@ -464,6 +464,45 @@ jobs:
 - Store artifacts for compliance and audit purposes
 - VEX helps prioritize vulnerabilities that are actually exploitable
 
+#### AI-BOM, CBOM and other BOMs
+
+`--bom` downloads BOMs built during the scan, one file per type: `sbom`
+(packages), `aibom` (AI models, AI providers, MCP servers and their tools),
+`cbom` (cryptographic algorithms, certificates and keys) and `all` (the combined
+BOM). BOM generation must be enabled for your tenant; without it, each requested
+type prints a "not available" warning, and the exit code does not change.
+
+```yaml
+      - name: Run Security Scan with BOMs
+        env:
+          ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
+          ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
+        run: |
+          armis-cli scan repo . \
+            --format sarif \
+            --bom aibom,cbom \
+            --bom-output ./artifacts \
+            > results.sarif
+
+      - name: Upload BOM Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boms-${{ github.sha }}
+          path: ./artifacts/
+```
+
+**Key points:**
+
+- Files are named `<artifact>-bom-<type>.json`, or `.spdx.json` for an SPDX `--bom-format`
+- `--bom-format` takes `cyclonedx-1.7` (default), `cyclonedx-1.6`, `spdx-2.3`,
+  `spdx-3.0.1`, `cyclonedx` or `spdx`; a type with no such form, such as `cbom`
+  with any SPDX value, fails the step before upload
+- `--bom-output -` writes one BOM to stdout; the findings report then goes to stderr unless `--output` is set
+- An empty BOM is still written and does not change the exit code
+- A BOM that was built but could not be downloaded exits `2`, unless
+  `--fail-on` triggers first; a type the server did not build only warns
+
 ---
 
 ### Container Image Scanning
@@ -839,8 +878,13 @@ Configure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as [secured repository var
 | Code | Meaning |
 |------|---------|
 | `0` | Scan completed, no findings above threshold |
-| `1` | Scan completed, findings exceed `fail-on` threshold |
-| `>1` | Scan error (authentication, network, timeout) |
+| `--exit-code` value (default `1`) | Scan completed, findings exceed `fail-on` threshold |
+| `1` | Error (invalid flags, authentication, network, timeout, failed scan) |
+| `2` | Scan completed, but its results or a requested BOM could not be downloaded |
+| `130` | Scan cancelled (Ctrl+C) |
+
+With the default `--exit-code 1`, findings and errors share exit code `1`; set
+`--exit-code` to another value to tell them apart.
 
 **Distinguishing findings from errors:**
 The reusable workflow's "Check for Failures" step differentiates between:

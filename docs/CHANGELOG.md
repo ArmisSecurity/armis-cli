@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo`/`scan image`: new `--bom` flag downloads the BOMs Armis builds during the scan, one file per type: `sbom`, `aibom`, `cbom`, or `all` (combined), comma-separated or repeated. Files go to `.armis/<artifact>-bom-<type>.json` (`.spdx.json` for SPDX). BOM generation must be enabled for the tenant. A type the server did not build only warns; a built BOM that cannot be downloaded exits 2 unless `--fail-on` triggers first. The types are sent in the ingest API's `bom_types` field. (#358)
+- `scan repo`/`scan image`: new `--bom-format` flag selects the BOM format: `cyclonedx-1.7` (default), `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx` and `spdx`. A type with no such form, such as `cbom` with SPDX, is rejected before upload. The value is sent as typed in the ingest API's `bom_format` field. (#358)
+- `scan repo`/`scan image`: new `--bom-output` flag sets the BOM directory (default `.armis`), or `-` to write one BOM to stdout; the findings report then goes to stderr unless `--output` is set. (#358)
+- `scan image`: with `--bom`, the ingest request carries `image_ref`, the image name, or the first `RepoTags` entry of a `--tarball`'s `manifest.json`, so the BOMs name the image. (#358)
+
 ### Changed
 
 ### Deprecated
@@ -17,7 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan image <name>`: SBOM, VEX and BOM files are now named after the image, such as `.armis/app-1.2-sbom.json` for `ghcr.io/org/app:1.2`, not after a random temporary file, so a rerun replaces them. `--tarball` still names them after the tarball file. (#358)
+- README and CI guide: the exit codes now match the CLI: `1` on an error, the `--exit-code` value (default `1`) on findings, `2` when results or a requested BOM cannot be downloaded, and `130` on Ctrl+C. (#358)
+
 ### Security
+
+- `scan repo`/`scan image`: files written to the default `.armis` directory by `--sbom`, `--vex` and `--bom` are refused when `.armis` is not a plain directory, such as a symlink committed in the scanned repository, or when the file there is not a regular file. The directory is checked before upload, so no scan is created, and again at write time. Files there are replaced atomically with mode 0600. Paths given in `--sbom-output`, `--vex-output` and `--bom-output` are written in place. (#358)
 
 ---
 

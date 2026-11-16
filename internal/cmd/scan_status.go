@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -73,6 +74,12 @@ func runScanStatus(cmd *cobra.Command, args []string) error {
 	statusFmt := strings.ToLower(strings.TrimSpace(format))
 	if !isValidStatusFormat(statusFmt) {
 		return fmt.Errorf("invalid --format value %q: must be one of %v", format, statusFormats)
+	}
+
+	// --bom is persistent on `scan`, so it parses here, but a status lookup
+	// downloads nothing.
+	if len(bomTypes) > 0 {
+		cli.PrintWarning("--bom is ignored for `scan status`")
 	}
 
 	authProvider, err := getAuthProvider(cmd.Context())

@@ -50,11 +50,11 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/cli/` - Centralized color state management. `InitColors(mode)` resolves `--color` flag (auto/always/never) with `NO_COLOR` env, `TERM=dumb`, and TTY detection on stderr. `PrintError()`/`PrintWarning()` parse JSON `{"detail":"..."}` from API errors for clean display.
 - `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`.
 - `internal/scan/image/` - Image scanner: validates image names via `distribution/reference`, uses docker/podman to export, then uploads. Also supports direct tarball scanning.
-- `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX from presigned S3 URLs).
+- `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX and `--bom` files from presigned S3 URLs), `bom.go` (BOM types and formats, results keys and file names for `--bom`), `image/manifest.go` (reads `image_ref` from the `manifest.json` of a `--tarball`).
 - `internal/progress/` - Braille-dot spinner with timer display, lipgloss styling, cursor hiding, CI detection (auto-disables animation). Context-aware with configurable timeout (default 30min). Upload progress via `NewReader()`/`NewWriter()` wrappers.
 - `internal/update/` - Background version checker against GitHub Releases API with file-based caching (~/.cache/armis-cli/, 24h TTL). Semver comparison. Skipped in CI, dev builds.
 - `internal/httpclient/` - HTTP client with exponential backoff retry (cenkalti/backoff). Retries on 5xx errors.
-- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting.
+- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting, control-character stripping for server text (`StripControl`).
 
 ### Key Interfaces
 

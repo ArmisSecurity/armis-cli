@@ -56,12 +56,24 @@ armis-cli scan repo . \
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--sbom` | Generate CycloneDX SBOM | `false` |
+| `--sbom` | Generate SBOM (CycloneDX by default) | `false` |
+| `--sbom-format` | SBOM format: `cyclonedx` or `spdx` (SPDX 2.3) | `cyclonedx` |
 | `--vex` | Generate VEX document | `false` |
 | `--sbom-output` | Custom SBOM output path | `.armis/<artifact>-sbom.json` |
 | `--vex-output` | Custom VEX output path | `.armis/<artifact>-vex.json` |
+| `--bom` | BOM types to download: `sbom`, `aibom`, `cbom`, `all` | none |
+| `--bom-format` | BOM format, such as `cyclonedx-1.7` or `spdx-2.3` | `cyclonedx-1.7` |
+| `--bom-output` | Directory for BOM files, or `-` for stdout | `.armis` |
 
 Store SBOM/VEX artifacts for compliance and audit purposes. See the [CI Integration Guide](../CI-INTEGRATION.md#sbom-and-vex-generation) for detailed examples.
+
+To download an AI-BOM and a CBOM (BOM generation must be enabled for your tenant):
+
+```bash
+armis-cli scan repo . --bom aibom,cbom --bom-output ./artifacts
+```
+
+A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on` triggers first. See [AI-BOM, CBOM and other BOMs](../CI-INTEGRATION.md#ai-bom-cbom-and-other-boms).
 
 ## Quick Start
 

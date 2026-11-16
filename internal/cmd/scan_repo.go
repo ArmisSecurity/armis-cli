@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -30,6 +31,8 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
   $ armis-cli scan repo . --sbom --sbom-output sbom.json
   $ armis-cli scan repo . --sbom --sbom-format spdx
+  $ armis-cli scan repo . --bom aibom,cbom
+  $ armis-cli scan repo . --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main`,
@@ -38,6 +41,16 @@ var scanRepoCmd = &cobra.Command{
 	// `scan image`'s arg handling.
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The BOM type and format pairs, --bom-output, and a default .armis
+		// that is not a plain directory fail before any network call;
+		// PersistentPreRunE has normalized the values.
+		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+			return err
+		}
+		if err := checkDefaultOutputDir(); err != nil {
+			return err
+		}
+
 		repoPath := "."
 		if len(args) > 0 {
 			repoPath = args[0]
@@ -96,15 +109,17 @@ var scanRepoCmd = &cobra.Command{
 		}
 
 		warnOnUnusedSBOMVEXFlags()
+		warnOnUnusedBOMFlags()
 
-		// Configure SBOM/VEX options if any flags are set
-		if generateSBOM || generateVEX {
+		// Configure SBOM/VEX/BOM options if any flags are set
+		if generateSBOM || generateVEX || len(bomTypes) > 0 {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
 				GenerateSBOM: generateSBOM,
 				SBOMFormat:   sbomFormat,
 				GenerateVEX:  generateVEX,
 				SBOMOutput:   sbomOutput,
 				VEXOutput:    vexOutput,
+				BOM:          bomOptions(repoPath),
 			}
 			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 		}
@@ -177,6 +192,12 @@ var scanRepoCmd = &cobra.Command{
 			scanner = scanner.WithIncludeFiles(fileList)
 		}
 
+		// A --changed or --include-files upload holds only some files, and the
+		// BOMs are built from the upload.
+		if len(bomTypes) > 0 && (len(includeFiles) > 0 || cmd.Flags().Changed("changed")) {
+			cli.PrintWarning("BOMs cover only the uploaded files")
+		}
+
 		ctx, cancel := NewSignalContext()
 		defer cancel()
 
@@ -207,7 +228,7 @@ var scanRepoCmd = &cobra.Command{
 			ShowSuppressed:   showSuppressed,
 		}
 
-		return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
+		return bomExit(result, formatScanResult(formatter, result, reportWriter(outputCfg.Writer), opts, minSeverity, failOnSeverities))
 	},
 }
 

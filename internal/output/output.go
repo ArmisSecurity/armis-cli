@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
@@ -36,6 +37,20 @@ type ErrResultsIncomplete struct {
 
 func (e *ErrResultsIncomplete) Error() string {
 	return fmt.Sprintf("scan completed but results could not be retrieved (scan ID: %s)", e.ScanID)
+}
+
+// ErrBOMIncomplete indicates the scan completed but one or more BOMs requested
+// with --bom could not be downloaded. Like ErrResultsIncomplete it exits 2, so
+// CI does not pass without the files it asked for. Labels are the BOM type
+// labels (such as "AI-BOM"), given by the caller since output cannot import
+// scan.
+type ErrBOMIncomplete struct {
+	ScanID string
+	Labels []string
+}
+
+func (e *ErrBOMIncomplete) Error() string {
+	return fmt.Sprintf("scan completed but %s could not be downloaded (scan ID: %s)", strings.Join(e.Labels, ", "), e.ScanID)
 }
 
 // FormatOptions contains options for formatting scan results.

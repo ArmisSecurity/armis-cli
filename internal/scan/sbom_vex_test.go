@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,6 +567,917 @@ func TestIndentJSON(t *testing.T) {
 		in := []byte(`<xml/>`)
 		if got := IndentJSON(in); !bytes.Equal(got, in) {
 			t.Errorf("got %q, want %q", got, in)
+		}
+	})
+}
+
+// TestSaveArtifactOutputPaths covers the write shared by --sbom, --vex and
+// --bom. A path the CLI picked itself under .armis is strict, since a scanned
+// repository can commit .armis or a file in it. A path from an output flag is
+// written in place, as before.
+func TestSaveArtifactOutputPaths(t *testing.T) {
+	const doc = `{"bomFormat":"CycloneDX"}`
+	d := &SBOMVEXDownloader{}
+	save := func(t *testing.T, path string, defaultDir bool) error {
+		t.Helper()
+		var err error
+		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", IndentJSON([]byte(doc)), defaultDir) })
+		return err
+	}
+	defaultPath := filepath.Join(".armis", "repo-sbom.json")
+
+	t.Run("the default .armis as a symlink is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		outside := t.TempDir()
+		if err := os.Symlink(outside, ".armis"); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
+			t.Fatalf("error = %v, want the symlinked .armis refused", err)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Errorf("wrote through the link: %v", entries)
+		}
+	})
+
+	t.Run("the default .armis as a file is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.WriteFile(".armis", []byte("keep"), 0600); err != nil {
+			t.Fatalf("write .armis: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
+			t.Fatalf("error = %v, want the non-directory .armis refused", err)
+		}
+		if got, _ := os.ReadFile(".armis"); string(got) != "keep" {
+			t.Errorf(".armis = %q, want it untouched", got)
+		}
+	})
+
+	t.Run("the default .armis swapped before it is opened is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		beforeDefaultDirOpen = func(dir string) {
+			if err := os.Rename(dir, dir+"-checked"); err != nil {
+				t.Errorf("move the checked directory: %v", err)
+			}
+			if err := os.Mkdir(dir, 0750); err != nil {
+				t.Errorf("make the swapped directory: %v", err)
+			}
+		}
+		t.Cleanup(func() { beforeDefaultDirOpen = nil })
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), ".armis changed while it was opened") {
+			t.Fatalf("error = %v, want the swapped .armis refused", err)
+		}
+		for _, dir := range []string{".armis", ".armis-checked"} {
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("%s holds %v, want nothing written", dir, entries)
+			}
+		}
+	})
+
+	t.Run("a directory as the target in the default .armis is refused", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.MkdirAll(defaultPath, 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
+			t.Fatalf("error = %v, want the non-regular target refused", err)
+		}
+	})
+
+	t.Run("a symlinked target in the default .armis is refused and its target untouched", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		victim := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		if err := os.Symlink(victim, defaultPath); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		err := save(t, defaultPath, true)
+		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
+			t.Fatalf("error = %v, want the symlinked target refused", err)
+		}
+		if got, _ := os.ReadFile(victim); string(got) != "keep" { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("link target = %q, want it untouched", got)
+		}
+	})
+
+	t.Run("a 240-byte file name in the default .armis works", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("the full path passes MAX_PATH on Windows")
+		}
+		t.Chdir(t.TempDir())
+		path := filepath.Join(".armis", strings.Repeat("n", 235)+".json")
+		if err := save(t, path, true); err != nil {
+			t.Fatalf("saveArtifact with a 240-byte name failed: %v", err)
+		}
+		assertBOMFile(t, path, doc)
+	})
+
+	t.Run("an existing 0644 file in the default .armis is replaced with mode 0600", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("file modes are not POSIX on Windows")
+		}
+		t.Chdir(t.TempDir())
+		if err := os.Mkdir(".armis", 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(defaultPath, []byte("old"), 0600); err != nil {
+			t.Fatalf("write old file: %v", err)
+		}
+		if err := os.Chmod(defaultPath, 0644); err != nil { //nolint:gosec // test sets a loose mode on purpose
+			t.Fatalf("chmod: %v", err)
+		}
+		if err := save(t, defaultPath, true); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, defaultPath, doc)
+		if entries, _ := os.ReadDir(".armis"); len(entries) != 1 {
+			t.Errorf(".armis holds %v, want only the output file", entries)
+		}
+	})
+
+	// On macOS t.TempDir is under /var, a link to /private/var, as /tmp is.
+	t.Run("t.TempDir paths are used, from a flag and as the default", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "repo-sbom.json")
+		if err := save(t, path, false); err != nil {
+			t.Fatalf("saveArtifact with a flag path failed: %v", err)
+		}
+		assertBOMFile(t, path, doc)
+
+		t.Chdir(t.TempDir())
+		if err := save(t, defaultPath, true); err != nil {
+			t.Fatalf("saveArtifact with the default .armis failed: %v", err)
+		}
+		assertBOMFile(t, defaultPath, doc)
+	})
+
+	t.Run("/dev/stdout from a flag is written as before", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("no /dev/stdout on Windows")
+		}
+		if err := save(t, "/dev/stdout", false); err != nil {
+			t.Fatalf("saveArtifact to /dev/stdout failed: %v", err)
+		}
+	})
+
+	t.Run("a FIFO from a flag is written in place and stays a FIFO", func(t *testing.T) {
+		fifo := filepath.Join(t.TempDir(), "sbom.fifo")
+		r := openFIFO(t, fifo)
+		if err := save(t, fifo, false); err != nil {
+			t.Fatalf("saveArtifact to a FIFO failed: %v", err)
+		}
+		got, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("read FIFO: %v", err)
+		}
+		if !bytes.Equal(got, IndentJSON([]byte(doc))) {
+			t.Errorf("FIFO got %q, want the document", got)
+		}
+		if info, err := os.Lstat(fifo); err != nil || info.Mode()&fs.ModeNamedPipe == 0 {
+			t.Errorf("FIFO is now %v (%v), want it left a FIFO", info, err)
+		}
+	})
+
+	t.Run("a symlinked directory from a flag is used as given", func(t *testing.T) {
+		target := t.TempDir()
+		link := filepath.Join(t.TempDir(), "out")
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		if err := save(t, filepath.Join(link, "repo-sbom.json"), false); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(target, "repo-sbom.json"), doc)
+	})
+
+	t.Run("a symlinked target from a flag is written through, as before", func(t *testing.T) {
+		victim := filepath.Join(t.TempDir(), "sbom.json")
+		link := filepath.Join(t.TempDir(), "link.json")
+		if err := os.Symlink(victim, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		if err := save(t, link, false); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, victim, doc)
+		if info, err := os.Lstat(link); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			t.Errorf("link is now %v (%v), want it left a link", info, err)
+		}
+	})
+}
+
+// bomServer is a fake results endpoint plus S3: GET /api/v1/ingest/results
+// links every key in docs to /download/<key>?gen=<n> on the same server, which
+// serves the document; n counts the results calls.
+type bomServer struct {
+	docs        map[string]string // results key -> stored document
+	summary     *api.BOMSummary
+	skipReason  *string
+	resultsCode int // non-zero: the results call answers this status
+	// refetchCode, when set, is the status of every results call after the
+	// first, with refetchBody as the body.
+	refetchCode int
+	refetchBody string
+	// downloadCode, when set, gives the status of the n-th download (from 1)
+	// of key; 0 serves the document.
+	downloadCode func(key string, n int) int
+	badURLKey    string // results key linked to a host that is not S3
+	oversizeKey  string // results key whose download is one byte over the cap
+
+	mu            sync.Mutex
+	resultsCalls  int
+	downloadCalls map[string]int
+	downloadGens  map[string][]string // results key -> gen of each download
+}
+
+// calls returns the number of results calls and of downloads of key.
+func (b *bomServer) calls(key string) (int, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.resultsCalls, b.downloadCalls[key]
+}
+
+func (b *bomServer) start(t *testing.T) *api.Client {
+	t.Helper()
+	b.downloadCalls = map[string]int{}
+	b.downloadGens = map[string][]string{}
+	var serverURL string
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if strings.Contains(r.URL.Path, "/api/v1/ingest/results") {
+			b.resultsCalls++
+			if b.resultsCode != 0 {
+				w.WriteHeader(b.resultsCode)
+				return
+			}
+			if b.refetchCode != 0 && b.resultsCalls > 1 {
+				w.WriteHeader(b.refetchCode)
+				_, _ = io.WriteString(w, b.refetchBody)
+				return
+			}
+			results := map[string]string{}
+			for key := range b.docs {
+				results[key] = serverURL + "/download/" + key + "?gen=" + strconv.Itoa(b.resultsCalls)
+			}
+			if b.oversizeKey != "" {
+				results[b.oversizeKey] = serverURL + "/download/" + b.oversizeKey
+			}
+			if b.badURLKey != "" {
+				results[b.badURLKey] = "https://attacker.example.com/" + b.badURLKey
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, api.ArtifactScanResultsResponse{
+				ScanStatus: "COMPLETED", Results: results, BOMSummary: b.summary, SkipReason: b.skipReason,
+			})
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/download/")
+		b.downloadCalls[key]++
+		b.downloadGens[key] = append(b.downloadGens[key], r.URL.Query().Get("gen"))
+		if b.downloadCode != nil {
+			if code := b.downloadCode(key, b.downloadCalls[key]); code != 0 {
+				w.WriteHeader(code)
+				return
+			}
+		}
+		if key == b.oversizeKey {
+			// Declare a body one byte over the cap; the client rejects it
+			// from Content-Length, so no 100 MB body is sent.
+			w.Header().Set("Content-Length", strconv.FormatInt(api.MaxDownloadSize+1, 10))
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, b.docs[key])
+	})
+	serverURL = server.URL
+
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0,
+		api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	return client
+}
+
+// downloadBOMs runs Download with BOM options and returns the skip reason,
+// stderr and the error.
+func downloadBOMs(t *testing.T, client *api.Client, opts *SBOMVEXOptions) (skip, stderr string, err error) {
+	t.Helper()
+	stderr = testutil.CaptureStderr(t, func() {
+		skip, err = NewSBOMVEXDownloader(client, "tenant-123", opts).Download(context.Background(), "scan-456", "test-artifact")
+	})
+	return skip, stderr, err
+}
+
+// assertBOMFile checks that path holds doc pretty-printed by IndentJSON, as
+// the --sbom and VEX files are, with mode 0600.
+func assertBOMFile(t *testing.T, path, doc string) {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // test file path from t.TempDir()
+	if err != nil {
+		t.Fatalf("expected BOM file %s: %v", path, err)
+	}
+	if !jsonEqual(t, data, []byte(doc)) {
+		t.Errorf("%s content = %s, want %s", path, data, doc)
+	}
+	if !bytes.Equal(data, IndentJSON([]byte(doc))) {
+		t.Errorf("%s is not the stored document pretty-printed:\n%s", path, data)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Errorf("%s mode = %o, want 600", path, perm)
+		}
+	}
+}
+
+// assertBOMFailed checks that err is a *BOMDownloadError for want. wantCause
+// is a substring of its Err, set only when the results call failed; empty
+// means Err must be nil.
+func assertBOMFailed(t *testing.T, err error, want []string, wantCause string) {
+	t.Helper()
+	var bomErr *BOMDownloadError
+	if !errors.As(err, &bomErr) {
+		t.Fatalf("error = %v, want a *BOMDownloadError", err)
+	}
+	if !reflect.DeepEqual(bomErr.Types, want) {
+		t.Errorf("failed types = %v, want %v", bomErr.Types, want)
+	}
+	switch {
+	case wantCause == "" && bomErr.Err != nil:
+		t.Errorf("Err = %v, want nil for a per-type failure", bomErr.Err)
+	case wantCause != "" && (bomErr.Err == nil || !strings.Contains(bomErr.Err.Error(), wantCause)):
+		t.Errorf("Err = %v, want it to contain %q", bomErr.Err, wantCause)
+	}
+}
+
+func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
+	const aibomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.7","components":[{"type":"machine-learning-model","name":"m"}]}`
+	const cbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.7","components":[{"type":"cryptographic-asset","name":"AES"}]}`
+
+	t.Run("downloads one file per type, pretty-printed", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir, Target: ".",
+		}})
+		if err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+		if !strings.Contains(stderr, "AI-BOM saved to:") || !strings.Contains(stderr, "CBOM saved to:") {
+			t.Errorf("stderr = %q, want both saved lines", stderr)
+		}
+	})
+
+	t.Run("cyclonedx-1.6 reads the _cdx16_ key", func(t *testing.T) {
+		const cdx16 = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"m"}]}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": aibomDoc, "aibom_cdx16_results": cdx16}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.6", Output: dir,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), cdx16)
+	})
+
+	t.Run("spdx alias gives the SPDX 2.3 SBOM", func(t *testing.T) {
+		const spdx = `{"spdxVersion":"SPDX-2.3","packages":[{"name":"p"}]}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"bom_sbom_spdx23_results": spdx}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"sbom"}, Format: "spdx", Output: dir,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-sbom.spdx.json"), spdx)
+	})
+
+	t.Run("defaults to the .armis directory", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7",
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(".armis", "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("--sbom next to --bom sbom writes both files", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+		const bomSBOMDoc = `{"bomFormat":"CycloneDX","specVersion":"1.7","components":[{"name":"a"}]}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"sbom_results": sbomDoc, "bom_sbom_results": bomSBOMDoc}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true, SBOMOutput: filepath.Join(dir, "sbom.json"),
+			BOM: &BOMOptions{Types: []string{"sbom"}, Format: "cyclonedx-1.7", Output: dir},
+		}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "sbom.json"), sbomDoc)
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-sbom.json"), bomSBOMDoc)
+	})
+
+	t.Run("missing key warns and does not fail", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("a key not offered must not fail, got: %v", err)
+		}
+		if !strings.Contains(stderr, "AI-BOM was requested but not available in results") {
+			t.Errorf("stderr = %q, want the not-available warning", stderr)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Errorf("expected no file, got %v", entries)
+		}
+	})
+
+	t.Run("too_large warns and does not fail", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"aibom": {Status: "generated", Formats: []string{"cyclonedx-1.7"}},
+				"cbom":  {Status: "too_large"},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("too_large must not fail, got: %v", err)
+		}
+		if !strings.Contains(stderr, "CBOM was too large to store") {
+			t.Errorf("stderr = %q, want the too_large warning", stderr)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+	})
+
+	t.Run("a type not offered names a file from an earlier run", func(t *testing.T) {
+		dir := t.TempDir()
+		old := filepath.Join(dir, "test-artifact-bom-cbom.json")
+		if err := os.WriteFile(old, []byte(cbomDoc), 0600); err != nil {
+			t.Fatalf("write earlier file: %v", err)
+		}
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"aibom": {Status: "generated", Formats: []string{"cyclonedx-1.7"}},
+				"cbom":  {Status: "too_large"},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("too_large must not fail, got: %v", err)
+		}
+		if !strings.Contains(stderr, old+" is from an earlier run, not this scan") {
+			t.Errorf("stderr = %q, want the earlier-run warning", stderr)
+		}
+		if strings.Contains(stderr, "test-artifact-bom-aibom.json is from an earlier run") {
+			t.Errorf("stderr = %q names the AI-BOM written this run", stderr)
+		}
+		if got, _ := os.ReadFile(old); string(got) != cbomDoc { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("earlier file = %q, want it left in place", got)
+		}
+	})
+
+	t.Run("a type not offered without an earlier file names none", func(t *testing.T) {
+		srv := &bomServer{docs: map[string]string{}}
+		client := srv.start(t)
+		_, stderr, _ := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		if strings.Contains(stderr, "earlier run") {
+			t.Errorf("stderr = %q, want no earlier-run warning", stderr)
+		}
+	})
+
+	t.Run("each bom_summary status has its own warning", func(t *testing.T) {
+		rows := []struct {
+			name    string
+			summary *api.BOMSummary
+			want    string
+		}{
+			{"not_supported", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"aibom": {Status: "not_supported"}}},
+				"Warning: AI-BOM is not supported for this scan\n"},
+			{"failed with tools", &api.BOMSummary{
+				Types:       map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}},
+				FailedTools: []string{"tool_a", "tool\x1b[31m_b"},
+			}, "Warning: AI-BOM failed on the server (tools that failed in this scan: tool_a, tool[31m_b)\n"},
+			{"failed, with a tool of another type", &api.BOMSummary{
+				Types:       map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}, "cbom": {Status: "generated"}},
+				FailedTools: []string{"crypto_tool"},
+			}, "Warning: AI-BOM failed on the server (tools that failed in this scan: crypto_tool)\n"},
+			{"failed without tools", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"aibom": {Status: "failed"}}},
+				"Warning: AI-BOM failed on the server\n"},
+			{"a type the summary does not list", &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"cbom": {Status: "generated"}}},
+				"Warning: AI-BOM was requested but not available in results\n"},
+		}
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				srv := &bomServer{docs: map[string]string{}, summary: row.summary}
+				client := srv.start(t)
+				_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+					Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+				}})
+				if err != nil {
+					t.Fatalf("a %s type must not fail, got: %v", row.name, err)
+				}
+				if stderr != row.want {
+					t.Errorf("stderr = %q, want %q", stderr, row.want)
+				}
+			})
+		}
+	})
+
+	t.Run("a format missing from formats warns and does not fail", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"aibom": {Status: "generated", Formats: []string{"cyclonedx-1.7"}},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.6", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("a missing format must not fail, got: %v", err)
+		}
+		if !strings.Contains(stderr, "AI-BOM is not available in cyclonedx-1.6") {
+			t.Errorf("stderr = %q, want the format warning", stderr)
+		}
+	})
+
+	t.Run("an empty BOM is written and named on stderr", func(t *testing.T) {
+		const empty = `{"bomFormat":"CycloneDX"}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": empty}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: dir, Target: "./my-repo",
+		}})
+		if err != nil {
+			t.Fatalf("an empty BOM must not fail, got: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), empty)
+		if !strings.Contains(stderr, "No AI components found in ./my-repo") {
+			t.Errorf("stderr = %q, want the empty AI-BOM line", stderr)
+		}
+	})
+
+	t.Run("an empty SPDX SBOM is named from bom_summary", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"bom_sbom_spdx23_results": spdxRootOnly},
+			summary: &api.BOMSummary{Types: map[string]api.BOMTypeStatus{
+				"sbom": {Status: "empty", Formats: []string{"cyclonedx-1.7", "spdx-2.3"}},
+			}},
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"sbom"}, Format: "spdx-2.3", Output: dir, Target: "./my-repo",
+		}})
+		if err != nil {
+			t.Fatalf("an empty BOM must not fail, got: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-sbom.spdx.json"), spdxRootOnly)
+		if !strings.Contains(stderr, "No packages found in ./my-repo") {
+			t.Errorf("stderr = %q, want the empty SBOM line", stderr)
+		}
+	})
+
+	t.Run("a download over the size cap fails that type", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, oversizeKey: "aibom_results"}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if _, statErr := os.Stat(filepath.Join(dir, "test-artifact-bom-aibom.json")); statErr == nil {
+			t.Error("no file may be written for a download over the cap")
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("invalid JSON fails that type", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": `{"components":[`, "cbom_results": cbomDoc}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if !strings.Contains(stderr, "AI-BOM is not valid JSON") {
+			t.Errorf("stderr = %q, want the invalid JSON warning", stderr)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "test-artifact-bom-aibom.json")); statErr == nil {
+			t.Error("no file may be written for invalid JSON")
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("invalid JSON fails that type in stdout mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		srv := &bomServer{docs: map[string]string{"cbom_results": `<bom/>`}}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: "-", Stdout: &buf,
+		}})
+		assertBOMFailed(t, err, []string{"cbom"}, "")
+		if buf.Len() != 0 {
+			t.Errorf("stdout = %q, want nothing", buf.String())
+		}
+	})
+
+	t.Run("a deeply nested BOM is written unchanged", func(t *testing.T) {
+		deep := `{"components":` + strings.Repeat("[", 5000) + strings.Repeat("]", 5000) + `}`
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"cbom_results": deep}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "test-artifact-bom-cbom.json")) //nolint:gosec // test path from t.TempDir()
+		if err != nil {
+			t.Fatalf("read BOM file: %v", err)
+		}
+		if string(data) != deep {
+			t.Errorf("file is %d bytes, want the %d stored bytes unchanged", len(data), len(deep))
+		}
+	})
+
+	t.Run("a 403 refetches the results and retries once", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc},
+			downloadCode: func(_ string, n int) int {
+				if n == 1 {
+					return http.StatusForbidden
+				}
+				return 0
+			},
+		}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: dir,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+		if results, downloads := srv.calls("aibom_results"); results != 2 || downloads != 2 {
+			t.Errorf("results calls = %d, downloads = %d; want 2 and 2", results, downloads)
+		}
+	})
+
+	t.Run("after a 403 refetch the fresh links serve the other types and --sbom", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+		dir := t.TempDir()
+		srv := &bomServer{
+			docs: map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc, "sbom_results": sbomDoc},
+			downloadCode: func(key string, n int) int {
+				if key == "aibom_results" && n == 1 {
+					return http.StatusForbidden
+				}
+				return 0
+			},
+		}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true, SBOMOutput: filepath.Join(dir, "sbom.json"),
+			BOM: &BOMOptions{Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir},
+		}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		want := map[string][]string{"aibom_results": {"1", "2"}, "cbom_results": {"2"}, "sbom_results": {"2"}}
+		if !reflect.DeepEqual(srv.downloadGens, want) {
+			t.Errorf("link generations = %v, want %v", srv.downloadGens, want)
+		}
+		if srv.resultsCalls != 2 {
+			t.Errorf("results calls = %d, want 2", srv.resultsCalls)
+		}
+	})
+
+	t.Run("each type refetches at most once", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { return http.StatusForbidden },
+		}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom", "cbom"}, "")
+		if results, downloads := srv.calls("cbom_results"); results != 3 || downloads != 2 {
+			t.Errorf("results calls = %d, cbom downloads = %d; want 3 and 2", results, downloads)
+		}
+	})
+
+	t.Run("a second 403 fails that type", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc},
+			downloadCode: func(string, int) int { return http.StatusForbidden },
+		}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if results, downloads := srv.calls("aibom_results"); results != 2 || downloads != 2 {
+			t.Errorf("results calls = %d, downloads = %d; want 2 and 2", results, downloads)
+		}
+	})
+
+	t.Run("a failed refetch warns without control characters", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc},
+			downloadCode: func(string, int) int { return http.StatusForbidden },
+			refetchCode:  http.StatusBadRequest,
+			refetchBody:  "bad\x1b[2J\x1b]0;title\x07\u009b31m\r\nrequest",
+		}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31mrequest") {
+			t.Errorf("stderr = %q, want the server text without control characters", stderr)
+		}
+		if strings.ContainsAny(stderr, "\x1b\x07\u009b\r") {
+			t.Errorf("stderr = %q holds a control character", stderr)
+		}
+	})
+
+	t.Run("another error status is not retried", func(t *testing.T) {
+		srv := &bomServer{
+			docs:         map[string]string{"aibom_results": aibomDoc, "cbom_results": cbomDoc},
+			downloadCode: func(key string, _ int) int { return map[string]int{"cbom_results": http.StatusNotFound}[key] },
+		}
+		client := srv.start(t)
+		dir := t.TempDir()
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		assertBOMFailed(t, err, []string{"cbom"}, "")
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+		if results, downloads := srv.calls("cbom_results"); results != 1 || downloads != 1 {
+			t.Errorf("results calls = %d, cbom downloads = %d; want 1 and 1", results, downloads)
+		}
+	})
+
+	t.Run("a link to a host that is not S3 fails that type", func(t *testing.T) {
+		srv := &bomServer{docs: map[string]string{}, badURLKey: "aibom_results"}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom"}, "")
+		if !strings.Contains(stderr, "invalid AI-BOM URL") {
+			t.Errorf("stderr = %q, want the URL check warning", stderr)
+		}
+	})
+
+	t.Run("an invalid artifact name fails every type", func(t *testing.T) {
+		srv := &bomServer{docs: map[string]string{"aibom_results": aibomDoc}}
+		client := srv.start(t)
+		var err error
+		_ = testutil.CaptureStderr(t, func() {
+			_, err = NewSBOMVEXDownloader(client, "tenant-123", &SBOMVEXOptions{BOM: &BOMOptions{
+				Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+			}}).Download(context.Background(), "scan-456", "..")
+		})
+		assertBOMFailed(t, err, []string{"aibom"}, "invalid artifact name")
+		if results, _ := srv.calls("aibom_results"); results != 0 {
+			t.Errorf("results calls = %d, want none", results)
+		}
+	})
+
+	t.Run("results 404 fails every type", func(t *testing.T) {
+		srv := &bomServer{resultsCode: http.StatusNotFound}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom", "cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"aibom", "cbom"}, "artifact results not available")
+	})
+
+	t.Run("a failed results call fails every type", func(t *testing.T) {
+		srv := &bomServer{resultsCode: http.StatusBadRequest}
+		client := srv.start(t)
+		_, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
+		}})
+		assertBOMFailed(t, err, []string{"cbom"}, "failed to fetch artifact results")
+	})
+
+	t.Run("a scanner skip does not hide BOMs", func(t *testing.T) {
+		skipMsg := "Repository too large for AI-based scanning."
+		dir := t.TempDir()
+		srv := &bomServer{docs: map[string]string{"aibom_results": aibomDoc}, skipReason: &skipMsg}
+		client := srv.start(t)
+		skip, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		if err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		if skip != skipMsg || !strings.Contains(stderr, "Scanner skipped:") {
+			t.Errorf("skip = %q, stderr = %q; want the skip reason", skip, stderr)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-aibom.json"), aibomDoc)
+	})
+
+	t.Run("a symlinked default .armis is refused, the same path typed is used", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"a"}]}`
+		t.Chdir(t.TempDir())
+		outside := t.TempDir()
+		if err := os.Symlink(outside, ".armis"); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc, "sbom_results": sbomDoc}}
+		client := srv.start(t)
+
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true,
+			BOM:          &BOMOptions{Types: []string{"cbom"}, Format: "cyclonedx-1.7"},
+		})
+		assertBOMFailed(t, err, []string{"cbom"}, "")
+		if !strings.Contains(stderr, "invalid SBOM output path: .armis is not a plain directory") {
+			t.Errorf("stderr = %q, want the --sbom default refused", stderr)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Fatalf("wrote through the default .armis link: %v", entries)
+		}
+
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{
+			GenerateSBOM: true, SBOMOutput: filepath.Join(".armis", "sbom.json"),
+			BOM: &BOMOptions{Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: ".armis"},
+		}); err != nil {
+			t.Fatalf("typed output paths must be used as given, got: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(outside, "test-artifact-bom-cbom.json"), cbomDoc)
+		assertBOMFile(t, filepath.Join(outside, "sbom.json"), sbomDoc)
+	})
+
+	t.Run("stdout mode writes the fetched bytes once", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		var buf bytes.Buffer
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: "-", Stdout: &buf,
+		}})
+		if err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		if buf.String() != cbomDoc {
+			t.Errorf("stdout = %q, want the stored bytes %q", buf.String(), cbomDoc)
+		}
+		if !strings.Contains(stderr, "CBOM written to stdout") {
+			t.Errorf("stderr = %q, want the stdout line", stderr)
+		}
+		if _, statErr := os.Stat(".armis"); statErr == nil {
+			t.Error("stdout mode must not create .armis")
 		}
 	})
 }

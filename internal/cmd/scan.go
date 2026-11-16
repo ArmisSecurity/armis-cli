@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ var (
 	generateVEX           bool
 	sbomOutput            string
 	vexOutput             string
+	bomTypes              []string
+	bomFormat             string
+	bomOutput             string
 	summaryTop            bool
 	outputFile            string
 	pollInterval          time.Duration
@@ -68,6 +72,9 @@ var scanCmd = &cobra.Command{
   # Scan with SBOM generation
   armis-cli scan repo . --sbom --sbom-output sbom.json
 
+  # Download an AI-BOM and a CBOM (BOM generation must be enabled for your tenant)
+  armis-cli scan repo . --bom aibom,cbom
+
   # Check the status of the last scan (or a specific 24-character scan_id)
   armis-cli scan status
   armis-cli scan status 507f1f77bcf86cd799439011`,
@@ -104,6 +111,17 @@ var scanCmd = &cobra.Command{
 		if !validSBOMFormatSet[sbomFormat] {
 			return fmt.Errorf("invalid --sbom-format value %q: must be one of %v", sbomFormat, validSBOMFormats)
 		}
+
+		// Validate the --bom and --bom-format values early, normalizing them in
+		// place, so a bad value surfaces before auth and upload. The type and
+		// format pairs and --bom-output are checked by scan repo and scan
+		// image only: scan status and scan sbom ignore the BOM flags.
+		bomFlag := cmd.Flag("bom")
+		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.NormalizeBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat)
+		if err != nil {
+			return err
+		}
+		bomTypes, bomFormat = normalizedBOMTypes, normalizedBOMFormat
 
 		// Validate exit-code: must be between 1 and 255 (0 defeats --fail-on, >255 is invalid POSIX)
 		if exitCode < 1 || exitCode > 255 {
@@ -163,6 +181,78 @@ func warnOnUnusedSBOMVEXFlags() {
 	if vexOutput != "" && !generateVEX {
 		cli.PrintWarning("--vex-output is ignored without --vex flag")
 	}
+}
+
+// warnOnUnusedBOMFlags emits a warning when --bom-format / --bom-output are
+// set without --bom. bomTypes and bomFormat are normalized in
+// PersistentPreRunE, so an empty bomTypes means no --bom, and the format is
+// compared against the lower-case default.
+func warnOnUnusedBOMFlags() {
+	if len(bomTypes) > 0 {
+		return
+	}
+	if bomFormat != scan.BOMFormatCycloneDX17 {
+		cli.PrintWarning("--bom-format is ignored without --bom flag")
+	}
+	if bomOutput != "" {
+		cli.PrintWarning("--bom-output is ignored without --bom flag")
+	}
+}
+
+// checkDefaultOutputDir stops scan repo and scan image before auth and upload
+// when --sbom, --vex or --bom would write to a default .armis that is not a
+// plain directory, with the error the write would give after the scan. The
+// write checks again.
+func checkDefaultOutputDir() error {
+	var docType string
+	switch {
+	case generateSBOM && sbomOutput == "":
+		docType = "SBOM"
+	case generateVEX && vexOutput == "":
+		docType = "VEX"
+	case len(bomTypes) > 0 && bomOutput == "":
+		docType = scan.BOMLabel(bomTypes[0])
+	default:
+		return nil
+	}
+	return scan.CheckDefaultOutputDir(docType)
+}
+
+// bomOptions returns the BOM download options for a scan of target (as
+// typed), or nil without --bom.
+func bomOptions(target string) *scan.BOMOptions {
+	if len(bomTypes) == 0 {
+		return nil
+	}
+	return &scan.BOMOptions{Types: bomTypes, Format: bomFormat, Output: bomOutput, Target: target}
+}
+
+// reportWriter returns where the findings report goes: stderr when the BOM
+// is written to stdout (--bom-output -) and --output is not set, so the two
+// do not mix; w otherwise. It stays out of cmdutil.ResolveOutput, which also
+// serves scan sbom and supply-chain check, commands that build no BOMs.
+func reportWriter(w io.Writer) io.Writer {
+	if len(bomTypes) > 0 && bomOutput == scan.BOMOutputStdout && outputFile == "" {
+		return os.Stderr
+	}
+	return w
+}
+
+// bomExit returns the scan's exit error: err from formatScanResult wins, a
+// --fail-on exit included; otherwise a failed BOM download gives
+// ErrBOMIncomplete, which exits 2.
+func bomExit(result *model.ScanResult, err error) error {
+	if err != nil {
+		return err
+	}
+	if result == nil || len(result.BOMFailures) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(result.BOMFailures))
+	for _, t := range result.BOMFailures {
+		labels = append(labels, scan.BOMLabel(t))
+	}
+	return &output.ErrBOMIncomplete{ScanID: result.ScanID, Labels: labels}
 }
 
 // formatScanResult writes result through formatter and returns the --fail-on
@@ -232,6 +322,23 @@ func init() {
 	scanCmd.PersistentFlags().BoolVar(&generateVEX, "vex", false, "Generate Vulnerability Exploitability eXchange (VEX) document")
 	scanCmd.PersistentFlags().StringVar(&sbomOutput, "sbom-output", "", "Output file path for SBOM (default: .armis/<artifact>-sbom.json)")
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
+	scanCmd.PersistentFlags().StringSliceVar(&bomTypes, "bom", nil, "Download BOMs of these types, comma-separated or repeated: sbom, aibom, cbom, all (combined); BOM generation must be enabled for your tenant")
+	scanCmd.PersistentFlags().StringVar(&bomFormat, "bom-format", scan.BOMFormatCycloneDX17, "BOM format: cyclonedx-1.7, cyclonedx-1.6, spdx-2.3, spdx-3.0.1, or the aliases cyclonedx, spdx (requires --bom; BOM generation must be enabled for your tenant)")
+	_ = scanCmd.RegisterFlagCompletionFunc("bom", fixedCompletions(scan.BOMTypeOrder, map[string]string{
+		scan.BOMTypeSBOM:  "Software BOM",
+		scan.BOMTypeAIBOM: "AI BOM: models, AI services and MCP servers",
+		scan.BOMTypeCBOM:  "Cryptographic BOM",
+		scan.BOMTypeAll:   "Combined BOM of all types",
+	}))
+	_ = scanCmd.RegisterFlagCompletionFunc("bom-format", fixedCompletions(scan.BOMFormats, map[string]string{
+		scan.BOMFormatCycloneDX17: "CycloneDX 1.7 JSON (default)",
+		scan.BOMFormatCycloneDX16: "CycloneDX 1.6 JSON",
+		scan.BOMFormatSPDX23:      "SPDX 2.3 JSON, sbom only",
+		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom",
+		scan.BOMFormatCycloneDX:   "Alias of cyclonedx-1.7",
+		scan.BOMFormatSPDX:        "Alias: spdx-2.3 for sbom, spdx-3.0.1 for aibom",
+	}))
+	scanCmd.PersistentFlags().StringVar(&bomOutput, "bom-output", "", "Directory for BOM files, or - to write one BOM to stdout (default: .armis; requires --bom; BOM generation must be enabled for your tenant)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
 	// poll-interval overrides the Scanner's default status-poll interval (5s in

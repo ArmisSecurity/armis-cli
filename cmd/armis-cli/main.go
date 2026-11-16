@@ -39,6 +39,13 @@ func main() {
 			cmd.PrintUpdateNotification()
 			os.Exit(2)
 		}
+		// Handle missing BOMs (scan succeeded but a --bom download failed)
+		var bomErr *output.ErrBOMIncomplete
+		if errors.As(err, &bomErr) {
+			cli.PrintWarning(bomErr.Error())
+			cmd.PrintUpdateNotification()
+			os.Exit(2)
+		}
 		// Handle user cancellation (Ctrl+C) cleanly without printing error
 		if errors.Is(err, cmd.ErrScanCancelled) {
 			cmd.PrintUpdateNotification()

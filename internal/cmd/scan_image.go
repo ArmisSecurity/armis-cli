@@ -27,9 +27,21 @@ var scanImageCmd = &cobra.Command{
   $ armis-cli scan image myapp:v1.0 --format json
   $ armis-cli scan image --tarball ./image.tar
   $ armis-cli scan image alpine:3.18 --sbom --vex --fail-on HIGH,CRITICAL
-  $ armis-cli scan image alpine:3.18 --sbom --sbom-format spdx`,
+  $ armis-cli scan image alpine:3.18 --sbom --sbom-format spdx
+  $ armis-cli scan image python:3.12-slim --bom sbom --bom cbom
+  $ armis-cli scan image --tarball ./image.tar --bom cbom --bom-output -`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The BOM type and format pairs, --bom-output, and a default .armis
+		// that is not a plain directory fail before any network call;
+		// PersistentPreRunE has normalized the values.
+		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+			return err
+		}
+		if err := checkDefaultOutputDir(); err != nil {
+			return err
+		}
+
 		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
 		// flag error rather than hiding behind an auth failure. This mirrors the
 		// allowlist in determinePullBehavior, which only runs after auth + the docker
@@ -116,15 +128,17 @@ var scanImageCmd = &cobra.Command{
 		}
 
 		warnOnUnusedSBOMVEXFlags()
+		warnOnUnusedBOMFlags()
 
-		// Configure SBOM/VEX options if any flags are set
-		if generateSBOM || generateVEX {
+		// Configure SBOM/VEX/BOM options if any flags are set
+		if generateSBOM || generateVEX || len(bomTypes) > 0 {
 			sbomVEXOpts := &scan.SBOMVEXOptions{
 				GenerateSBOM: generateSBOM,
 				SBOMFormat:   sbomFormat,
 				GenerateVEX:  generateVEX,
 				SBOMOutput:   sbomOutput,
 				VEXOutput:    vexOutput,
+				BOM:          bomOptions(imageTarget(args)),
 			}
 			scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 		}
@@ -178,8 +192,17 @@ var scanImageCmd = &cobra.Command{
 			FailOnSeverities: failOnSeverities,
 		}
 
-		return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
+		return bomExit(result, formatScanResult(formatter, result, reportWriter(outputCfg.Writer), opts, minSeverity, failOnSeverities))
 	},
+}
+
+// imageTarget returns the scan target as typed: the --tarball path, which
+// wins over an image name, else the image name.
+func imageTarget(args []string) string {
+	if tarballPath != "" || len(args) == 0 {
+		return tarballPath
+	}
+	return args[0]
 }
 
 func init() {

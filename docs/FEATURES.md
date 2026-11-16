@@ -314,7 +314,7 @@ Generate industry-standard Software Bill of Materials (SBOM) and Vulnerability E
 
 - **VEX (Vulnerability Exploitability eXchange)**: A document that communicates the exploitability status of vulnerabilities in your specific context. Helps reduce alert fatigue by indicating which vulnerabilities actually affect your deployment.
 
-Both documents are generated in [CycloneDX](https://cyclonedx.org/) format, an OWASP standard widely supported by security tools.
+Both documents are generated in [CycloneDX](https://cyclonedx.org/) format by default, an OWASP standard widely supported by security tools. `--sbom-format spdx` gives an SPDX 2.3 SBOM instead.
 
 ### Basic Usage
 
@@ -341,9 +341,13 @@ armis-cli scan image nginx:latest --sbom --vex
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--sbom` | Generate Software Bill of Materials | `false` |
+| `--sbom-format` | SBOM format: `cyclonedx` or `spdx` (SPDX 2.3); requires `--sbom` | `cyclonedx` |
 | `--vex` | Generate VEX document | `false` |
-| `--sbom-output` | Custom output path for SBOM | `.armis/<artifact>-sbom.json` |
+| `--sbom-output` | Custom output path for SBOM | `.armis/<artifact>-sbom.json` (`.spdx.json` for SPDX) |
 | `--vex-output` | Custom output path for VEX | `.armis/<artifact>-vex.json` |
+| `--bom` | BOM types to download, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | none |
+| `--bom-format` | BOM format: `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx`; without `--bom`, a non-default value is ignored with a warning | `cyclonedx-1.7` |
+| `--bom-output` | Directory for BOM files, or `-` to write one BOM to stdout; ignored with a warning without `--bom` | `.armis` |
 
 ### Output Location
 
@@ -354,6 +358,31 @@ By default, SBOM and VEX files are saved to the `.armis/` directory:
 ├── my-project-sbom.json
 └── my-project-vex.json
 ```
+
+### BOMs (AI-BOM, CBOM, SBOM)
+
+`--bom` downloads the BOMs that Armis builds during the scan, one file per
+type. BOM generation must be enabled for your tenant; without it, each
+requested type prints a "not available" warning and the exit code does not
+change.
+
+```bash
+# AI-BOM and CBOM → .armis/<artifact>-bom-aibom.json and .armis/<artifact>-bom-cbom.json
+armis-cli scan repo . --bom aibom,cbom
+
+# Combined BOM as CycloneDX 1.6 into ./boms
+armis-cli scan image nginx:latest --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
+```
+
+- Types: `sbom` (packages), `aibom` (AI models, AI providers, MCP servers and
+  their tools), `cbom` (cryptographic algorithms, certificates and keys), and
+  `all` (combined).
+- Files are named `<artifact>-bom-<type>.json`, or `.spdx.json` for an SPDX format.
+- `scan repo` and `scan image` take these flags; `scan sbom` and `scan status` ignore them.
+- A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on`
+  triggers first. A type the server did not build only warns.
+
+See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules.
 
 ### CI/CD Example
 
@@ -389,8 +418,12 @@ Generate SBOM and VEX as part of your CI pipeline:
 ### Notes
 
 - SBOM/VEX generation is performed server-side by Armis Cloud
-- Download failures are logged as warnings but do not fail the scan
+- SBOM and VEX download failures are logged as warnings but do not fail the scan
 - Files are protected against path traversal attacks
+- In `scan repo` and `scan image`, the default `.armis` output is refused when
+  `.armis` is not a plain directory, such as a symlink (checked before upload),
+  or the file there is not a regular file. Files there are replaced with mode 0600. A path given in
+  an output flag is written as given
 - Maximum download size is 100MB per file
 
 ---
