@@ -3,10 +3,12 @@ package repo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +27,7 @@ import (
 type ingestRecorder struct {
 	mu           sync.Mutex
 	scanBody     []byte
+	presignCalls int
 	statusCalls  int
 	resultsCalls int
 }
@@ -35,6 +38,9 @@ func newIngestRecorderServer(t *testing.T) (*ingestRecorder, string) {
 	srv := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+			rec.mu.Lock()
+			rec.presignCalls++
+			rec.mu.Unlock()
 			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
 				ScanID:       testScanID,
 				PresignedURL: testhelpers.SchemeFromRequest(r) + "://" + r.Host + "/_s3/upload",
@@ -159,5 +165,103 @@ func TestScan_AsyncReturnsOnceAccepted(t *testing.T) {
 	entry, err := history.NewStoreWithDir(historyDir).Latest(url, "tenant-456")
 	if err != nil || entry == nil || entry.ScanID != testScanID {
 		t.Errorf("history entry = %+v (err %v), want scan %s", entry, err, testScanID)
+	}
+}
+
+// resolvedProjectID is the project id the resolvers in these tests return.
+const resolvedProjectID = "p_77"
+
+func TestScan_ProjectResolverStampsTheScanRequest(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	rec, url := newIngestRecorderServer(t)
+
+	calls := 0
+	resolve := func(context.Context) (string, string, error) {
+		calls++
+		return resolvedProjectID, "cli_dev", nil
+	}
+	if _, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), newProjectTestRepo(t)); err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var req model.IngestScanStartRequest
+	if err := json.Unmarshal(rec.scanBody, &req); err != nil {
+		t.Fatalf("decode /scan body: %v", err)
+	}
+	if req.ProjectID != resolvedProjectID || req.Trigger != "cli_dev" || calls != 1 {
+		t.Errorf("project_id/trigger = %q/%q after %d resolver calls, want p_77/cli_dev after 1", req.ProjectID, req.Trigger, calls)
+	}
+}
+
+// A scan rejected by its local checks must not create a project: the resolver
+// runs only once they pass.
+func TestScan_ProjectResolverRunsOnlyAfterLocalChecks(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(notADir, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unreadableIgnore := newProjectTestRepo(t)
+	ignorePath := filepath.Join(unreadableIgnore, ".armisignore")
+	if err := os.WriteFile(ignorePath, []byte("*.log\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name, path, skip string
+	}{
+		{name: "the path is not a directory", path: notADir},
+		{name: "the .armisignore cannot be read", path: unreadableIgnore, skip: unreadableSkipReason()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.skip != "" {
+				t.Skip(tt.skip)
+			}
+			rec, url := newIngestRecorderServer(t)
+			called := false
+			resolve := func(context.Context) (string, string, error) {
+				called = true
+				return resolvedProjectID, "cli_ci", nil
+			}
+			if _, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), tt.path); err == nil {
+				t.Fatal("expected the local check to fail")
+			}
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if called || rec.presignCalls != 0 {
+				t.Errorf("resolver called = %v, upload requests = %d; want neither", called, rec.presignCalls)
+			}
+		})
+	}
+}
+
+// unreadableSkipReason reports why a mode-0 file would still be readable here.
+func unreadableSkipReason() string {
+	if runtime.GOOS == "windows" {
+		return "file modes do not restrict reads on Windows"
+	}
+	if os.Geteuid() == 0 {
+		return "root can read a mode-0 file"
+	}
+	return ""
+}
+
+// A failed lookup or create stops the scan before anything is uploaded, and
+// keeps its own error.
+func TestScan_ProjectResolverErrorStopsBeforeUpload(t *testing.T) {
+	rec, url := newIngestRecorderServer(t)
+	errLookup := errors.New("could not look up the project")
+	resolve := func(context.Context) (string, string, error) { return "", "", errLookup }
+
+	_, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), newProjectTestRepo(t))
+	if err != errLookup { //nolint:errorlint // the resolver's error must come back unwrapped
+		t.Fatalf("err = %v, want the resolver's error unwrapped", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.presignCalls != 0 || rec.scanBody != nil {
+		t.Errorf("upload requests = %d, scan body = %q; want no upload", rec.presignCalls, rec.scanBody)
 	}
 }

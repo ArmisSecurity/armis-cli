@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -266,16 +267,22 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	ctx, cancel := NewSignalContext()
 	defer cancel()
 
-	// Resolve (or create) the project only now that a scan will really run,
-	// so a project is never created for a scan that did not happen.
+	// The scanner resolves (or creates) the project once its local checks
+	// pass (path, .armisignore, size) and before it uploads: a scan rejected
+	// locally never creates a project, and a credential or naming problem
+	// still fails before the upload. If the upload or /ingest/scan itself
+	// fails, the project exists with no runs and the next run reuses it.
 	var published *project.Resolution
+	var resolveErr error
 	if decision.Publish {
-		published, err = project.Resolve(ctx, client, tid, projectName)
-		if err != nil {
-			return err
-		}
-		announceProject(published, decision)
-		scanner = scanner.WithProject(published.Project.ProjectID, decision.Trigger)
+		scanner = scanner.WithProjectResolver(func(ctx context.Context) (string, string, error) {
+			published, resolveErr = project.Resolve(ctx, client, tid, projectName)
+			if resolveErr != nil {
+				return "", "", resolveErr
+			}
+			announceProject(published, decision)
+			return published.Project.ProjectID, decision.Trigger, nil
+		})
 	} else if projectName != "" {
 		cli.PrintWarning(fmt.Sprintf("--project %s: this scan runs locally and is not published, "+
 			"since no CI environment was detected. Add --report to publish it to the project "+
@@ -289,6 +296,11 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	// armis:ignore cwe:22 reason:repoPath is from direct CLI argument; validated as existing directory above
 	result, err := scanner.Scan(ctx, repoPath)
 	if err != nil {
+		// A project lookup or create failure keeps its own message, not
+		// handleScanError's "scan failed:" prefix.
+		if resolveErr != nil {
+			return resolveErr
+		}
 		return handleScanError(ctx, err)
 	}
 

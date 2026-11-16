@@ -47,6 +47,7 @@ type Scanner struct {
 	detectGitHints        bool
 	projectID             string
 	trigger               string
+	projectResolver       ProjectResolver
 	async                 bool
 }
 
@@ -104,6 +105,20 @@ func (s *Scanner) WithGitHints() *Scanner {
 func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
 	s.projectID = projectID
 	s.trigger = trigger
+	return s
+}
+
+// ProjectResolver finds or creates the project a published scan is recorded
+// on, and returns its id and the run's trigger.
+type ProjectResolver func(ctx context.Context) (projectID, trigger string, err error)
+
+// WithProjectResolver publishes the scan to the project resolve returns. Scan
+// calls it once its local checks have passed (path, .armisignore, size) and
+// before it tars and uploads. So a scan that fails those checks never creates
+// a project, while a credential or naming problem still surfaces before the
+// upload. Its error is returned unwrapped.
+func (s *Scanner) WithProjectResolver(resolve ProjectResolver) *Scanner {
+	s.projectResolver = resolve
 	return s
 }
 
@@ -190,6 +205,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", rawSize, MaxRepoSize)
 	}
 
+	if s.projectResolver != nil {
+		projectID, trigger, err := s.projectResolver(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.projectID, s.trigger = projectID, trigger
+	}
+
 	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
@@ -199,6 +222,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	// body size before sending — gzip output size isn't known up front.
 	// Disk-based buffering also makes the upload retryable in the future
 	// without re-tarring.
+	// armis:ignore cwe:770 reason:one temp tarball per CLI run, removed on return; its input is capped by the MaxRepoSize check above
 	tmpFile, err := os.CreateTemp("", "armis-repo-*.tar.gz")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp tarball: %w", err)
