@@ -228,10 +228,20 @@ func (p *HelloProxy) serve(c net.Conn, filter func(*ClientHello) bool, done <-ch
 	if err != nil {
 		return
 	}
-	defer up.Close() //nolint:errcheck // test proxy
 	if _, err := up.Write(record); err != nil {
+		_ = up.Close()
 		return
 	}
-	go func() { _, _ = io.Copy(c, up); _ = c.Close() }()
-	_, _ = io.Copy(up, br)
+	upClosed := make(chan struct{})
+	go func() { _, _ = io.Copy(c, up); _ = c.Close(); close(upClosed) }()
+	downClosed := make(chan struct{})
+	go func() { _, _ = io.Copy(up, br); _ = up.Close(); close(downClosed) }()
+	select {
+	case <-done:
+	case <-downClosed:
+	}
+	_ = c.Close()
+	_ = up.Close()
+	<-upClosed
+	<-downClosed
 }

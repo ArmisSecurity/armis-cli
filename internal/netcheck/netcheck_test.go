@@ -276,24 +276,30 @@ func TestRunReportsDroppedTLS13Handshake(t *testing.T) {
 		return !slices.Contains(h.SupportedVersions, tls.VersionTLS13)
 	})
 
+	viaProxy := func(*url.URL) (*url.URL, string, error) { return proxy.URL, "the test", nil }
+	directOnly := func(*url.URL) (*url.URL, string, error) { return nil, "test", nil }
 	for _, tc := range []struct {
-		name     string
-		proxyFor func(*url.URL) (*url.URL, string, error)
+		name      string
+		proxyFor  func(*url.URL) (*url.URL, string, error)
+		goVersion string
+		want58033 bool
 	}{
-		{"through the proxy", func(*url.URL) (*url.URL, string, error) { return proxy.URL, "the test", nil }},
-		{"no proxy configured", func(*url.URL) (*url.URL, string, error) { return nil, "test", nil }},
+		{"proxied verdict", viaProxy, "go1.27.3", true},
+		{"direct-only verdict", directOnly, "go1.27.3", true},
+		{"fixed toolchain", viaProxy, "go1.27.4", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			ok := Run(context.Background(), Options{
-				BaseURL:  srv.URL,
-				Out:      &out,
-				proxyFor: tc.proxyFor,
+				BaseURL:   srv.URL,
+				Out:       &out,
+				proxyFor:  tc.proxyFor,
+				goVersion: tc.goVersion,
 				transport: func(direct bool) *http.Transport {
 					tr := serverTransport(srv)
 					if !direct {
 						tr.Proxy = http.ProxyURL(proxy.URL)
-						tr.TLSHandshakeTimeout = 300 * time.Millisecond
+						tr.TLSHandshakeTimeout = time.Second
 					}
 					return tr
 				},
@@ -307,13 +313,37 @@ func TestRunReportsDroppedTLS13Handshake(t *testing.T) {
 				"[extra] Same connection, limited to TLS 1.2",
 				"TLS handshake finished (TLS 1.2",
 				"The TLS 1.2 handshake succeeds on this path and the CLI's TLS 1.3 handshake does not",
-				"Palo Alto threat ID 58033",
 			} {
 				if !strings.Contains(report, want) {
 					t.Errorf("report should contain %q:\n%s", want, report)
 				}
 			}
+			if got := strings.Contains(report, "Palo Alto threat ID 58033"); got != tc.want58033 {
+				t.Errorf("mentions threat ID 58033 = %v, want %v:\n%s", got, tc.want58033, report)
+			}
 		})
+	}
+}
+
+func TestMLDSAToolchain(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"go1.27.0", true},
+		{"go1.27.3", true},
+		{"go1.27rc2", true},
+		{"go1.27.3 X:boringcrypto", true},
+		{"go1.27.4", false},
+		{"go1.27.10", false},
+		{"go1.26.5", false},
+		{"go1.28.0", false},
+		{"devel go1.28-abcdef", false},
+		{"", false},
+	} {
+		if got := mldsaToolchain(tc.version); got != tc.want {
+			t.Errorf("mldsaToolchain(%q) = %v, want %v", tc.version, got, tc.want)
+		}
 	}
 }
 

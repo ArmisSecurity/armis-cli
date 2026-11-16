@@ -71,7 +71,7 @@ func TestClientHelloSignatureSchemesCert(t *testing.T) {
 func TestClientHelloStillOffersTLS13AndHTTP2(t *testing.T) {
 	hello := captureClientHello(t)
 	if !slices.Contains(hello.SupportedVersions, tls.VersionTLS13) {
-		t.Errorf("ClientHello should still offer TLS 1.3, got versions %s", hex(hello.SupportedVersions))
+		t.Errorf("ClientHello should still offer TLS 1.3, got versions %s", fmtCodepoints(hello.SupportedVersions))
 	}
 	if !slices.Equal(hello.ALPN, []string{"h2", "http/1.1"}) {
 		t.Errorf("ALPN = %q, want [h2 http/1.1]", hello.ALPN)
@@ -96,7 +96,12 @@ func TestHandshakeThroughFirewallDroppingMLDSACertHellos(t *testing.T) {
 	tr := ProxyAwareTransport()
 	tr.Proxy = http.ProxyURL(proxy.URL)
 	tr.TLSHandshakeTimeout = time.Second
-	tr.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if tr.TLSClientConfig != nil {
+		cfg = tr.TLSClientConfig.Clone()
+	}
+	cfg.RootCAs = roots
+	tr.TLSClientConfig = cfg
 	defer tr.CloseIdleConnections()
 
 	// httptest's certificate is valid for example.com; the proxy sends every
@@ -111,7 +116,7 @@ func TestHandshakeThroughFirewallDroppingMLDSACertHellos(t *testing.T) {
 	}
 }
 
-func hex(v []uint16) string {
+func fmtCodepoints(v []uint16) string {
 	parts := make([]string, len(v))
 	for i, x := range v {
 		parts[i] = fmt.Sprintf("0x%04x", x)

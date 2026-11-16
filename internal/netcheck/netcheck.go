@@ -34,6 +34,7 @@ type Options struct {
 	// Test hooks. Production code leaves them nil.
 	proxyFor  func(*url.URL) (*url.URL, string, error)
 	transport func(direct bool) *http.Transport
+	goVersion string
 }
 
 type attempt struct {
@@ -77,6 +78,10 @@ func Run(ctx context.Context, opts Options) bool {
 	if newTransport == nil {
 		newTransport = defaultTransport
 	}
+	goVersion := opts.goVersion
+	if goVersion == "" {
+		goVersion = runtime.Version()
+	}
 
 	proxy, source, proxyErr := proxyFor(target)
 
@@ -114,7 +119,7 @@ func Run(ctx context.Context, opts Options) bool {
 	}
 
 	if proxy == nil {
-		verdictDirectOnly(out, used, tls12)
+		verdictDirectOnly(out, used, tls12, goVersion)
 		return used.err == nil
 	}
 
@@ -122,7 +127,7 @@ func Run(ctx context.Context, opts Options) bool {
 	direct := probe(ctx, newTransport(true), target)
 	report(out, direct)
 
-	verdictProxied(out, used, direct, tls12, target.Hostname())
+	verdictProxied(out, used, direct, tls12, goVersion, target.Hostname())
 	return used.err == nil
 }
 
@@ -298,9 +303,9 @@ func report(out io.Writer, a attempt) {
 	}
 }
 
-func verdictDirectOnly(out io.Writer, a attempt, tls12 *attempt) {
+func verdictDirectOnly(out io.Writer, a attempt, tls12 *attempt, goVersion string) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
-	if untrustedNote(out, a) || clientCertNote(out, a) || tls13DroppedNote(out, tls12) {
+	if untrustedNote(out, a) || clientCertNote(out, a) || tls13DroppedNote(out, tls12, goVersion) {
 		return
 	}
 	if a.err == nil {
@@ -312,9 +317,9 @@ func verdictDirectOnly(out io.Writer, a attempt, tls12 *attempt) {
 	_, _ = fmt.Fprintf(out, "  If your network requires a proxy, set HTTPS_PROXY. A firewall, VPN or security agent can also block the connection.\n")
 }
 
-func verdictProxied(out io.Writer, used, direct attempt, tls12 *attempt, host string) {
+func verdictProxied(out io.Writer, used, direct attempt, tls12 *attempt, goVersion string, host string) {
 	_, _ = fmt.Fprintf(out, "\nResult\n")
-	if untrustedNote(out, used) || clientCertNote(out, used) || tls13DroppedNote(out, tls12) {
+	if untrustedNote(out, used) || clientCertNote(out, used) || tls13DroppedNote(out, tls12, goVersion) {
 		return
 	}
 	switch {
@@ -339,7 +344,31 @@ func verdictProxied(out io.Writer, used, direct attempt, tls12 *attempt, host st
 // retryWithTLS12 reports whether a TLS 1.2 retry can tell anything apart: the
 // handshake failed on its own, not over a certificate the user can act on.
 func retryWithTLS12(a attempt) bool {
-	return a.err != nil && a.handshakeFailed && !a.clientCertAsked && !strings.Contains(a.err.Error(), "x509:")
+	return a.err != nil && a.handshakeFailed && !a.clientCertAsked && !isCertError(a)
+}
+
+func isCertError(a attempt) bool {
+	var verr *tls.CertificateVerificationError
+	return errors.As(a.err, &verr)
+}
+
+// mldsaToolchain reports whether a Go release offers ML-DSA in
+// signature_algorithms_cert, which Palo Alto threat ID 58033 drops
+// (go.dev/issue/79626). Go 1.27.4 stopped offering it.
+func mldsaToolchain(version string) bool {
+	fields := strings.Fields(version)
+	if len(fields) == 0 {
+		return false
+	}
+	rest, ok := strings.CutPrefix(fields[0], "go1.27")
+	if !ok {
+		return false
+	}
+	switch rest {
+	case ".0", ".1", ".2", ".3":
+		return true
+	}
+	return strings.HasPrefix(rest, "rc") || strings.HasPrefix(rest, "beta")
 }
 
 func limitToTLS12(tr *http.Transport) {
@@ -354,14 +383,16 @@ func limitToTLS12(tr *http.Transport) {
 
 // tls13DroppedNote explains a path that completes TLS 1.2 but not the CLI's
 // TLS 1.3 handshake, and reports whether it did.
-func tls13DroppedNote(out io.Writer, tls12 *attempt) bool {
+func tls13DroppedNote(out io.Writer, tls12 *attempt, goVersion string) bool {
 	if tls12 == nil || tls12.err != nil {
 		return false
 	}
 	_, _ = fmt.Fprintf(out, "  The TLS 1.2 handshake succeeds on this path and the CLI's TLS 1.3 handshake does not.\n")
 	_, _ = fmt.Fprintf(out, "  A proxy, firewall or security agent is dropping the CLI's TLS 1.3 ClientHello. Tools with a different TLS stack (curl, PowerShell, browsers) can still work.\n")
-	_, _ = fmt.Fprintf(out, "  A known cause is an IPS rule for OpenSSL CVE-2020-1967 (Palo Alto threat ID 58033) that misreads the signature algorithms newer clients offer.\n")
-	_, _ = fmt.Fprintf(out, "  Ask your network team to check their IPS logs for this host, update or exempt that rule, and send this report to Armis support.\n")
+	if mldsaToolchain(goVersion) {
+		_, _ = fmt.Fprintf(out, "  This CLI was built with %s, which offers signature algorithms that an IPS rule for OpenSSL CVE-2020-1967 (Palo Alto threat ID 58033) drops. Upgrade the CLI.\n", goVersion)
+	}
+	_, _ = fmt.Fprintf(out, "  Ask your network team to check their IPS or firewall logs for this host, exempt it from the rule that drops the connection, and send this report to Armis support.\n")
 	return true
 }
 
@@ -380,7 +411,7 @@ func clientCertNote(out io.Writer, a attempt) bool {
 // untrustedNote explains a connection that failed because its certificate is
 // not trusted, and reports whether it did.
 func untrustedNote(out io.Writer, a attempt) bool {
-	if a.err == nil || !strings.Contains(a.err.Error(), "x509:") {
+	if !isCertError(a) {
 		return false
 	}
 	if len(a.untrusted) > 0 {
