@@ -16,6 +16,7 @@ type Manifest struct {
 	SchemaVersion int                        `json:"schemaVersion"`
 	InstalledAt   string                     `json:"installedAt"`
 	PluginVersion string                     `json:"pluginVersion"`
+	PinnedVersion string                     `json:"pinnedVersion,omitempty"`
 	PluginDir     string                     `json:"pluginDir"`
 	Editors       map[EditorID]ManifestEntry `json:"editors,omitempty"`
 	Claude        *ManifestClaude            `json:"claude,omitempty"`
@@ -90,6 +91,7 @@ func ReadManifest(pluginDir string) *Manifest {
 
 // WriteManifest persists the manifest to the plugin directory atomically.
 func WriteManifest(m *Manifest) error {
+	m.applyRequestedPin()
 	path := ManifestPath(m.PluginDir)
 	if path == "" {
 		return fmt.Errorf("invalid plugin directory path")

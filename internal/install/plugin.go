@@ -31,6 +31,7 @@ const (
 const (
 	pluginRepo        = "ArmisSecurity/armis-appsec-mcp"
 	releasesURL       = "https://api.github.com/repos/" + pluginRepo + "/releases/latest"
+	releaseByTagURL   = "https://api.github.com/repos/" + pluginRepo + "/releases/tags/v"
 	downloadTimeout   = 60 * time.Second
 	maxArchiveBytes   = 50 * 1024 * 1024  // 50 MB safety limit
 	maxExtractedSize  = 100 * 1024 * 1024 // 100 MB total extracted size
@@ -49,6 +50,7 @@ type githubRelease struct {
 type PluginInstaller struct {
 	httpClient        *http.Client
 	releasesURL       string
+	pin               string
 	installedVersion  string
 	skipURLValidation bool
 }
@@ -57,7 +59,18 @@ func newPluginInstaller() *PluginInstaller {
 	return &PluginInstaller{
 		httpClient:  &http.Client{Timeout: downloadTimeout, Transport: httpclient.ProxyAwareTransport()},
 		releasesURL: releasesURL,
+		pin:         EffectivePin(),
 	}
+}
+
+// releaseURL is the GitHub endpoint for the release to install: the pinned tag
+// when a pin is set, the latest release otherwise. A releasesURL other than the
+// default is a test override and is used as is.
+func (pi *PluginInstaller) releaseURL() string {
+	if pi.pin != "" && pi.releasesURL == releasesURL {
+		return releaseByTagURL + pi.pin
+	}
+	return pi.releasesURL
 }
 
 // InstalledVersion returns the version that was installed (available after FetchAndInstall).
@@ -65,8 +78,12 @@ func (pi *PluginInstaller) InstalledVersion() string {
 	return pi.installedVersion
 }
 
-// LatestVersion checks GitHub for the latest release version without downloading.
+// LatestVersion returns the version the installer targets: the pin when one is
+// set (no network call), otherwise the latest GitHub release.
 func (pi *PluginInstaller) LatestVersion() (string, error) {
+	if pi.pin != "" {
+		return pi.pin, nil
+	}
 	release, err := pi.fetchLatestRelease()
 	if err != nil {
 		return "", err
@@ -78,7 +95,7 @@ func (pi *PluginInstaller) LatestVersion() (string, error) {
 func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 	release, err := pi.fetchLatestRelease()
 	if err != nil {
-		return fmt.Errorf("failed to fetch latest release: %w", err)
+		return fmt.Errorf("failed to fetch release: %w", err)
 	}
 	pi.installedVersion = strings.TrimPrefix(release.TagName, "v")
 
@@ -98,13 +115,14 @@ func (pi *PluginInstaller) FetchAndInstall(destDir string) error {
 }
 
 func (pi *PluginInstaller) fetchLatestRelease() (*githubRelease, error) {
+	target := pi.releaseURL()
 	if !pi.skipURLValidation {
-		if err := validateGitHubURL(pi.releasesURL); err != nil {
+		if err := validateGitHubURL(target); err != nil {
 			return nil, fmt.Errorf("invalid releases URL: %w", err)
 		}
 	}
 
-	req, err := http.NewRequest("GET", pi.releasesURL, nil) //nolint:gosec // URL validated by validateGitHubURL above
+	req, err := http.NewRequest("GET", target, nil) //nolint:gosec // URL validated by validateGitHubURL above
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -116,6 +134,9 @@ func (pi *PluginInstaller) fetchLatestRelease() (*githubRelease, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound && pi.pin != "" {
+		return nil, fmt.Errorf("no armis-appsec-mcp release v%s (HTTP 404) — check %s or use --plugin-version latest", pi.pin, EnvMCPVersion)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned HTTP %d — is there a published release?", resp.StatusCode)
 	}
