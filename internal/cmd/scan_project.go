@@ -128,12 +128,7 @@ func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published
 		styles.MutedText.Render("Check its progress with:"),
 		"armis-cli scan status "+result.ScanID)
 
-	effectiveFormat := strings.ToLower(format)
-	if f := cmd.Flag("format"); (f == nil || !f.Changed) && outputFile != "" {
-		if detected := output.FormatFromExtension(outputFile); detected != "" {
-			effectiveFormat = detected
-		}
-	}
+	effectiveFormat := strings.ToLower(cmdutil.EffectiveFormat(cmd, outputFile, format))
 	if effectiveFormat != statusFormatJSON {
 		if effectiveFormat != statusFormatHuman || outputFile != "" {
 			cli.PrintWarning(fmt.Sprintf("--format %s writes no results with --async (there are none yet); "+

@@ -66,16 +66,7 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 		return cfg, nil
 	}
 
-	// Auto-detect format from extension if user hasn't explicitly set --format.
-	// Use cmd.Flag() instead of cmd.Flags().Changed() because --format is a
-	// persistent flag on the root command, and Flags() doesn't include inherited flags.
-	fmtFlag := cmd.Flag("format")
-	formatExplicitlySet := fmtFlag != nil && fmtFlag.Changed
-	if !formatExplicitlySet {
-		if detected := output.FormatFromExtension(outputPath); detected != "" {
-			cfg.Format = detected
-		}
-	}
+	cfg.Format = EffectiveFormat(cmd, outputPath, formatFlag)
 
 	// Capture previous state for restoration on error or cleanup
 	prevOutputToFile := cli.GetOutputToFile()
@@ -110,4 +101,20 @@ func ResolveOutput(cmd *cobra.Command, outputPath, formatFlag, colorFlag string)
 	}
 
 	return cfg, nil
+}
+
+// EffectiveFormat is the format a command writes its results in: --format
+// when it was set explicitly, otherwise the format implied by the --output
+// file's extension, otherwise formatFlag's default. ResolveOutput and the
+// `scan --async` record share it, so both judge a format the same way.
+func EffectiveFormat(cmd *cobra.Command, outputPath, formatFlag string) string {
+	// cmd.Flag() rather than cmd.Flags().Changed(): --format is inherited from
+	// an ancestor command, and Flags() does not include inherited flags.
+	if f := cmd.Flag("format"); f != nil && f.Changed {
+		return formatFlag
+	}
+	if detected := output.FormatFromExtension(outputPath); detected != "" {
+		return detected
+	}
+	return formatFlag
 }
