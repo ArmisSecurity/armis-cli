@@ -16,31 +16,31 @@ func TestRedactPresignedURLCredentials(t *testing.T) {
 		{
 			// The shape the results API returns on dev (SigV2 with a session token).
 			name:     "SigV2 with a session token",
-			in:       "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=ASIAIOSFODNN7EXAMPLE&Signature=EXAMPLEsignature%3D&x-amz-security-token=EXAMPLEsessiontoken%2F%2F&Expires=1794561080",
-			gone:     []string{"ASIAIOSFODNN7EXAMPLE", "EXAMPLEsignature", "EXAMPLEsessiontoken"},
+			in:       "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=EXAMPLEACCESSKEYID&Signature=EXAMPLEsignature%3D&x-amz-security-token=EXAMPLEsessiontoken%2F%2F&Expires=1794561080",
+			gone:     []string{"EXAMPLEACCESSKEYID", "EXAMPLEsignature", "EXAMPLEsessiontoken"},
 			kept:     []string{"https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?", "Expires=1794561080"},
 			redacted: 3,
 		},
 		{
 			name:     "SigV4",
-			in:       "https://b.s3.amazonaws.com/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAIOSFODNN7EXAMPLE%2F20261113%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261113T000000Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Security-Token=EXAMPLEv4sessiontoken&X-Amz-Signature=EXAMPLEv4signature",
-			gone:     []string{"ASIAIOSFODNN7EXAMPLE%2F20261113", "EXAMPLEv4sessiontoken", "EXAMPLEv4signature"},
+			in:       "https://b.s3.amazonaws.com/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=EXAMPLEACCESSKEYID%2F20261113%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261113T000000Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Security-Token=EXAMPLEv4sessiontoken&X-Amz-Signature=EXAMPLEv4signature",
+			gone:     []string{"EXAMPLEACCESSKEYID%2F20261113", "EXAMPLEv4sessiontoken", "EXAMPLEv4signature"},
 			kept:     []string{"X-Amz-Algorithm=AWS4-HMAC-SHA256", "X-Amz-Expires=900", "X-Amz-SignedHeaders=host"},
 			redacted: 3,
 		},
 		{
 			// Go's encoding/json writes "&" as \u0026.
 			name:     "inside JSON with an escaped ampersand",
-			in:       `{"all_results":"https://b/k?AWSAccessKeyId=ASIAIOSFODNN7EXAMPLE\u0026Signature=EXAMPLEjsonsig%3D\u0026Expires=1"}`,
-			gone:     []string{"ASIAIOSFODNN7EXAMPLE", "EXAMPLEjsonsig%3D"},
+			in:       `{"all_results":"https://b/k?AWSAccessKeyId=EXAMPLEACCESSKEYID\u0026Signature=EXAMPLEjsonsig%3D\u0026Expires=1"}`,
+			gone:     []string{"EXAMPLEACCESSKEYID", "EXAMPLEjsonsig%3D"},
 			kept:     []string{`\u0026Expires=1"}`},
 			redacted: 2,
 		},
 		{
 			// A presigned URL nested in another URL's query is encoded again.
 			name:     "a nested URL with an encoded equals sign",
-			in:       "https://app.example/open?to=https%3A%2F%2Fb%2Fk%3FAWSAccessKeyId%3DASIAIOSFODNN7EXAMPLE%26Signature%3DEXAMPLEnestedsig%26Expires%3D1",
-			gone:     []string{"ASIAIOSFODNN7EXAMPLE", "EXAMPLEnestedsig"},
+			in:       "https://app.example/open?to=https%3A%2F%2Fb%2Fk%3FAWSAccessKeyId%3DEXAMPLEACCESSKEYID%26Signature%3DEXAMPLEnestedsig%26Expires%3D1",
+			gone:     []string{"EXAMPLEACCESSKEYID", "EXAMPLEnestedsig"},
 			kept:     []string{"https://app.example/open?to="},
 			redacted: 1,
 		},

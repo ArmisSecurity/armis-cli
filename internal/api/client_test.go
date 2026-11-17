@@ -1210,7 +1210,7 @@ func TestClient_DebugModeRedactsPresignedURLs(t *testing.T) {
 		testutil.JSONResponse(t, w, http.StatusOK, ArtifactScanResultsResponse{
 			ScanStatus: "COMPLETED",
 			Results: map[string]string{
-				"all_results": "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=ASIAIOSFODNN7EXAMPLE&Signature=" + signature + "&x-amz-security-token=" + token + "&Expires=1794561080",
+				"all_results": "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=EXAMPLEACCESSKEYID&Signature=" + signature + "&x-amz-security-token=" + token + "&Expires=1794561080",
 			},
 		})
 	})
@@ -1230,7 +1230,7 @@ func TestClient_DebugModeRedactsPresignedURLs(t *testing.T) {
 	if !strings.Contains(stderr, "Artifact Scan Results API Response") {
 		t.Fatalf("expected a debug dump, got:\n%s", stderr)
 	}
-	for _, leaked := range []string{signature, token, "ASIAIOSFODNN7EXAMPLE"} {
+	for _, leaked := range []string{signature, token, "EXAMPLEACCESSKEYID"} {
 		if strings.Contains(stderr, leaked) {
 			t.Errorf("debug output leaks %q:\n%s", leaked, stderr)
 		}
