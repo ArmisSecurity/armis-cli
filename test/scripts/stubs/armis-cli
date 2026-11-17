@@ -5,14 +5,6 @@ LOG="${STUB_LOG:?STUB_LOG is required}"
 printf '%s\n' "$*" >> "$LOG/armis-cli.argv"
 [ -z "${ARMIS_CLIENT_SECRET:-}" ] || echo "secret-in-env: $1" >> "$LOG/env.flags"
 
-label() {
-    case $1 in
-        cursor) echo "Cursor" ;; vscode) echo "VS Code" ;; copilot) echo "Copilot CLI" ;;
-        codex) echo "Codex CLI (MCP)" ;; claude) echo "Claude Code" ;; antigravity) echo "Antigravity" ;;
-        junie) echo "Junie" ;;
-    esac
-}
-
 # target -> "file|topkey"
 target_cfg() {
     case $1 in
@@ -31,36 +23,47 @@ write_env() { # write_env FILE: like the real CLI, only when absent
     ( umask 077; printf 'ARMIS_CLIENT_ID=%s\nARMIS_CLIENT_SECRET=%s\n' "$ARMIS_CLIENT_ID" "$ARMIS_CLIENT_SECRET" > "$1" )
 }
 
+rotate_env() { # rotate_env FILE: like --rotate-credentials
+    [ -f "$1" ] || return 0
+    awk -v id="$ARMIS_CLIENT_ID" -v sec="$ARMIS_CLIENT_SECRET" '
+        /^ARMIS_CLIENT_ID=/ { print "ARMIS_CLIENT_ID=" id; next }
+        /^ARMIS_CLIENT_SECRET=/ { print "ARMIS_CLIENT_SECRET=" sec; next }
+        { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1" && chmod 600 "$1" && rm -f "$1.bak"
+    creds=rotated
+}
+
+# report CLIENT STATUS [DETAIL] [HOOKSTATUS HOOKDETAIL]: one clients[] entry
+report() {
+    local e="{\"client\":\"$1\",\"status\":\"$2\",\"detail\":\"${3:-}\""
+    [ -z "${4:-}" ] || e="$e,\"hook\":{\"status\":\"$4\",\"detail\":\"${5:-}\"}"
+    clients="${clients:+$clients,}$e}"
+}
+
 do_install() {
-    local t cfg file top
-    if [ "${1:-}" = "--help" ]; then
-        echo "Usage: armis-cli install [editor...]"
-        if [ "${STUB_OLD_CLI:-0}" != 1 ]; then
-            echo "      --plugin-version string   Install this MCP server release"
-            echo "      --project string          Project directory for the jetbrains target"
-        fi
-        return 0
-    fi
-    local targets=""
+    local t file top targets="" rotate=0 project="" clients="" creds=none failed=0 f
     while [ $# -gt 0 ]; do
         case $1 in
             --project) project=$2; shift ;;
-            --plugin-version) shift ;;
+            --plugin-version | --format) shift ;;
+            --rotate-credentials) rotate=1 ;;
             --*) ;;
             *) targets="$targets $1" ;;
         esac
         shift
     done
-    if [ "${STUB_PYTHON_FAIL:-0}" = 1 ]; then echo "Error: no suitable Python 3.11+ interpreter found" >&2; return 1; fi
+    if [ "${STUB_PYTHON_FAIL:-0}" = 1 ]; then
+        echo "Error: no suitable Python 3.11+ interpreter found" >&2
+        echo '{"clients":[],"error":"no suitable Python 3.11+ interpreter found"}'
+        return 1
+    fi
     write_env "$HOME/.armis/plugins/armis-appsec-mcp/.env"
-    echo "MCP server v1.4.2 downloaded."
-    local failed=0
+    echo "MCP server v1.4.2 downloaded." >&2
     for t in $targets; do
         case " ${STUB_FAIL_TARGETS:-} " in
             *" $t "*)
                 IFS='|' read -r file top <<< "$(target_cfg "$t")"
                 [ -z "$file" ] || echo "garbage{" > "$file"
-                echo "  ✗ $(label "$t"): boom"
+                report "$t" fail boom
                 failed=1
                 continue ;;
         esac
@@ -68,38 +71,43 @@ do_install() {
             claude)
                 write_env "$HOME/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest/.env"
                 mkdir -p "$HOME/.claude/plugins"
-                printf '{"version":2,"plugins":{"armis-appsec@armis-appsec-mcp":[{"version":"1.4.2"}]}}\n' > "$HOME/.claude/plugins/installed_plugins.json"
-                echo "  ✓ Claude Code v1.4.2" ;;
+                printf '{"version":2,"plugins":{"armis-appsec@armis-appsec-mcp":[{"version":"1.4.2"}]}}\n' > "$HOME/.claude/plugins/installed_plugins.json" ;;
             codex)
-                grep -q armis_scanner "$HOME/.codex/config.toml" 2>/dev/null || printf '[mcp_servers.armis_scanner]\ncommand = "python"\n' >> "$HOME/.codex/config.toml"
-                echo "  ✓ Codex CLI (MCP)" ;;
+                grep -q armis_scanner "$HOME/.codex/config.toml" 2>/dev/null || printf '[mcp_servers.armis_scanner]\ncommand = "python"\n' >> "$HOME/.codex/config.toml" ;;
             jetbrains)
-                osascript -l JavaScript "$DIR/merge.js" "$project/.jb-mcp.json" mcpServers
-                echo "  ✓ JetBrains ($project/.jb-mcp.json)" ;;
+                osascript -l JavaScript "$DIR/merge.js" "$project/.jb-mcp.json" mcpServers ;;
             *)
                 IFS='|' read -r file top <<< "$(target_cfg "$t")"
                 mkdir -p "$(dirname "$file")"
-                osascript -l JavaScript "$DIR/merge.js" "$file" "$top"
-                echo "  ✓ $(label "$t")"
-                [ "${STUB_HOOK_WARN:-}" != "$t" ] || echo "  ⚠ $(label "$t") (hooks): adapter missing" ;;
+                osascript -l JavaScript "$DIR/merge.js" "$file" "$top" ;;
         esac
+        if [ "${STUB_HOOK_WARN:-}" = "$t" ]; then report "$t" ok "" warn "adapter missing"; failed=1; else report "$t" ok; fi
     done
+    if [ "$rotate" = 1 ]; then
+        for f in "$HOME/.armis/plugins/armis-appsec-mcp/.env" "$HOME/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest/.env"; do
+            rotate_env "$f"
+        done
+    fi
+    printf '{"clients":[%s],"credentials":{"status":"%s","files":[]}}\n' "$clients" "$creds"
     [ "$failed" -eq 0 ] || return "${STUB_FAIL_EXIT:-1}"
     return 0
 }
 
 case "${1:-}" in
-    --version) echo "armis-cli version ${STUB_CLI_VERSION:-1.2.3} (commit: none, built: unknown)" ;;
+    --version) echo "armis-cli version ${STUB_CLI_VERSION:-1.27.0} (commit: none, built: unknown)" ;;
     install) shift; do_install "$@"; exit $? ;;
     uninstall)
         shift
         targets=""
         for a in "$@"; do case $a in --*) ;; *) targets="$targets $a" ;; esac; done
         [ -n "$targets" ] || targets="cursor vscode copilot antigravity junie"
+        clients=""
         for t in $targets; do
             IFS='|' read -r file top <<< "$(target_cfg "$t")"
             [ -z "$file" ] || [ ! -f "$file" ] || osascript -l JavaScript "$DIR/merge.js" "$file" "$top" remove
+            report "$t" ok removed
         done
+        printf '{"clients":[%s],"warnings":[]}\n' "$clients"
         exit 0 ;;
     auth)
         if [ "${2:-}" = whoami ]; then [ "${STUB_WHOAMI_FAIL:-0}" != 1 ] || { echo "Error: unauthorized" >&2; exit 1; }; echo "Tenant: acme" >&2; exit 0; fi

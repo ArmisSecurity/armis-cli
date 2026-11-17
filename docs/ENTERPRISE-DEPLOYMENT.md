@@ -39,7 +39,7 @@ A client that is not installed is reported as `skip (not installed)` and is not 
   - `moose.armis.com` (`eu.moose.armis.com` for region `eu1`)
   - `api.github.com`, `github.com` and `raw.githubusercontent.com`. Set `ARMIS_INSTALLER_URL` to an internal mirror of `scripts/install.sh` if you cannot reach `raw.githubusercontent.com`.
 - A proxy or TLS inspection is supported through `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (upper or lower case) and `SSL_CERT_FILE` (a PEM file with your root CA). The script passes them, and `ARMIS_API_URL` when set, to `curl` and to every armis-cli command.
-- To pin the MCP server version (`ARMIS_MCP_VERSION`), armis-cli must be a release that has `install --plugin-version`. To register JetBrains projects it must have `install jetbrains --project`. The script checks both and tells you when a release is too old.
+- armis-cli 1.27.0 or later. The script reads the `install --format json` report and uses `--rotate-credentials`, and it exits 3 when `ARMIS_CLI_VERSION` is older.
 
 ## Quick start
 
@@ -79,7 +79,7 @@ Every value can come from the environment, so an MDM can set them as script para
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ARMIS_CLI_VERSION` | none | armis-cli release to install, for example `1.27.0`. The installer is fetched from the same tag. |
+| `ARMIS_CLI_VERSION` | none | armis-cli release to install, `1.27.0` or later. The installer is fetched from the same tag. |
 | `ARMIS_ALLOW_LATEST` | `0` | `1` allows an unpinned install with `--non-interactive`. |
 | `ARMIS_MCP_VERSION` | latest | MCP server release to pin. A pin is saved and kept by `armis-cli mcp update` and `armis-cli mcp doctor --fix`. |
 | `ARMIS_TENANT_ID` | none | Tenant. Required for `sso`. |
@@ -110,7 +110,7 @@ Do not pass credentials as MDM policy parameters, because Jamf and Kandji show p
 
 The script never puts credentials in command-line arguments, so they do not appear in `ps`. They reach armis-cli only through the process environment. They are not written to the log or the report; a masking filter also hides the secret value if a command echoes it.
 
-Each editor starts the MCP server without your shell environment, so credentials must also be in the `.env` files that armis-cli writes. armis-cli does not overwrite an existing `.env`. After installing, the script compares every `.env` it knows about (the shared plugin, the Claude Code plugin cache and Knowledge) with the credentials you supplied, rewrites the ones that differ at mode `0600` while keeping other keys such as `HTTPS_PROXY`, and deletes the `.env.bak` copies that hold the old secret. Rotating a credential is therefore a re-run with the new value.
+Each editor starts the MCP server without your shell environment, so credentials must also be in the `.env` files that armis-cli writes. armis-cli does not overwrite an existing `.env` on its own, so the script runs `armis-cli install --rotate-credentials`. That rewrites every `.env` armis-cli manages (the shared plugin, the Claude Code plugin cache and Knowledge) at mode `0600`, keeps other keys such as `HTTPS_PROXY`, and deletes the `.env.bak` copies that hold the old secret. Rotating a credential is therefore a re-run with the new value.
 
 With `ARMIS_AUTH_MODE=sso`, developers sign in through the identity provider you registered (see [SSO-SETUP.md](SSO-SETUP.md)). Under `--non-interactive` the script does not open a browser unless `ARMIS_SSO_LOGIN=now`. A user who has not signed in is reported as `sign-in pending: run 'armis-cli auth login'`. When run as root, a browser sign-in only works for the user logged in at the console.
 
@@ -204,7 +204,7 @@ The script never restores `*.armis-bak.*` files by itself, because that could un
 | `sign-in pending` | The user runs `armis-cli auth login`, or you re-run with `ARMIS_SSO_LOGIN=now` while they are logged in. |
 | `config at ... is not valid JSON` | The file was left untouched. Fix or remove it and re-run. |
 | The editor does not show the Armis tools | Restart the editor (the matrix says `restart <editor>` when it is running). For VS Code, open "MCP: List Servers". |
-| VS Code: `enable Copilot Agent mode and MCP` | A VS Code setting (`chat.agent.enabled`, `chat.mcp.enabled` or `chat.mcp.access`) or a GitHub organization policy turns it off. The script only reports this and never edits settings. |
+| VS Code: `chat.mcp.enabled`, `chat.mcp.access` or `chat.agent.enabled` in an `mcp doctor` failure | A VS Code setting or a GitHub organization policy turns MCP or Agent mode off. The script only reports this and never edits settings. |
 | `mcp doctor` failures | Run `armis-cli mcp doctor` as the user. Use `--bundle` here, or `armis-cli mcp doctor --bundle`, to produce a support bundle. In an editor, call the `debug_config` tool. |
 | The sample scan fails | Check `armis-cli auth whoami` and the network. Set `ARMIS_SAMPLE_SCAN=0` to skip it. |
 | `only the checksum was verified` | Install [cosign](https://docs.sigstore.dev/cosign/installation/) to also verify the release signature. This is advice and does not change the exit code. |

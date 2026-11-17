@@ -25,7 +25,7 @@ setup() {
     export ARMIS_EXTRA_PATH="$STUBS:$PYSTUB"
     export ARMIS_INSTALL_DIR="$INSTALL_DIR"
     export ARMIS_LOG_DIR="$LOG_DIR"
-    export ARMIS_CLI_VERSION="1.2.3"
+    export ARMIS_CLI_VERSION="1.27.0"
     export ARMIS_SAMPLE_SCAN=0
     export ARMIS_CLIENT_ID="test-id"
     export ARMIS_CLIENT_SECRET="$SECRET"
@@ -118,10 +118,10 @@ backups() {
 
 @test "installs the CLI from the matching tag when missing" {
     rm -f "$INSTALL_DIR/armis-cli" "$INSTALL_DIR/merge.js"
-    STUB_CLI_VERSION=1.2.3 setup_run --only cursor
+    setup_run --only cursor
     [ "$status" -eq 0 ]
     [ -x "$INSTALL_DIR/armis-cli" ]
-    grep -q 'armis-cli/v1.2.3/scripts/install.sh' "$STUB_LOG/curl.urls"
+    grep -q 'armis-cli/v1.27.0/scripts/install.sh' "$STUB_LOG/curl.urls"
 }
 
 @test "a checksum failure in the installer exits 3" {
@@ -141,12 +141,12 @@ backups() {
 }
 
 @test "an installed CLI whose version only contains the pin is reinstalled" {
-    export ARMIS_CLI_VERSION=1.2.3 STUB_CLI_VERSION=11.2.3
+    export STUB_CLI_VERSION=11.27.0
     make_clients
     setup_run --only cursor
-    grep -q 'armis-cli/v1.2.3/scripts/install.sh' "$STUB_LOG/curl.urls"
+    grep -q 'armis-cli/v1.27.0/scripts/install.sh' "$STUB_LOG/curl.urls"
     [ "$status" -eq 2 ]
-    [[ "$output" == *"does not report version 1.2.3"* ]]
+    [[ "$output" == *"does not report version 1.27.0"* ]]
 }
 
 @test "registers every detected client and exits 0" {
@@ -213,7 +213,7 @@ backups() {
     [ "$status" -eq 0 ]
 }
 
-@test "a client failure with exit 0 (older CLI) is recorded and restored; others unaffected" {
+@test "a client failure in the install report is recorded and restored, even with exit 0" {
     make_clients
     echo '{"mcpServers":{"other":{"command":"x"}}}' > "$HOME/.cursor/mcp.json"
     cp "$HOME/.cursor/mcp.json" "$T/original"
@@ -222,9 +222,10 @@ backups() {
     [ "$status" -eq 1 ]
     cmp "$HOME/.cursor/mcp.json" "$T/original"
     grep -q armis-appsec "$HOME/Library/Application Support/Code/User/mcp.json"
-    grep -q '"user":"-","component":"armis-cli"' <(tr -d ' ' < "$T/rep.json")
-    grep -q '"component": "cursor", "detected": "yes", "installed": "fail"' "$T/rep.json"
-    grep -q '"component": "vscode", "detected": "yes", "installed": "ok"' "$T/rep.json"
+    rep=$(tr -d ' \n' < "$T/rep.json")
+    [[ "$rep" == *'"user":"-","component":"armis-cli"'* ]]
+    [[ "$rep" == *'"component":"cursor","detected":"yes","installed":"fail","auth":"ok","verified":"","action":"boom'* ]]
+    [[ "$rep" == *'"component":"vscode","detected":"yes","installed":"ok"'* ]]
 }
 
 @test "a failing doctor check exits 2" {
@@ -281,7 +282,7 @@ EOF
     grep -q "^-n -H -u $(id -un) .* /bin/sh -c umask 077; cp -p .*/.cursor/mcp.json " "$STUB_LOG/sudo.argv"
     # sudo.argv holds one line per argv line; the multi-line scripts end in "exit $rc".
     grep -q 'exit $rc sh .*/\.zshenv # >>> armis-cli' "$STUB_LOG/sudo.argv"
-    grep -q 'exit $rc sh .*/armis-appsec-mcp/\.env write' "$STUB_LOG/sudo.argv"
+    grep -q 'install cursor --format json --rotate-credentials' "$STUB_LOG/sudo.argv"
     grep -q '^ARMIS_CLIENT_ID=test-id$' "$HOME/.armis/plugins/armis-appsec-mcp/.env"
     grep -q "ARMIS_TENANT_ID='acme'" "$HOME/.zshenv"
 }
@@ -373,7 +374,7 @@ EOF
     : > "$STUB_LOG/armis-cli.argv"
     setup_run --skip cursor,codex,claude
     [ "$status" -eq 0 ]
-    line=$(grep '^install .*--non-interactive' "$STUB_LOG/armis-cli.argv" | head -n 1)
+    line=$(grep '^install .*--format json' "$STUB_LOG/armis-cli.argv" | head -n 1)
     [[ "$line" != *cursor* ]]
     [[ "$line" == *vscode* ]]
 }
@@ -392,16 +393,15 @@ EOF
     export ARMIS_MCP_VERSION=v1.4.2
     setup_run --only cursor
     [ "$status" -eq 0 ]
-    grep -q 'install cursor --non-interactive --plugin-version 1.4.2' "$STUB_LOG/armis-cli.argv"
+    grep -q 'install cursor --format json --plugin-version 1.4.2' "$STUB_LOG/armis-cli.argv"
 }
 
-@test "an older CLI without --plugin-version is flagged instead of silently unpinned" {
-    make_clients
-    export ARMIS_MCP_VERSION=1.4.2 STUB_OLD_CLI=1
+@test "a CLI version older than the minimum is rejected before any download" {
+    export ARMIS_CLI_VERSION=1.26.0
     setup_run --only cursor
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"MCP version not pinned"* ]]
-    ! grep -q -- '--plugin-version' "$STUB_LOG/armis-cli.argv"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"needs 1.27.0 or later"* ]]
+    [ ! -e "$STUB_LOG/curl.urls" ]
 }
 
 @test "a native hook warning is reported for the client" {
@@ -409,7 +409,7 @@ EOF
     export STUB_HOOK_WARN=cursor
     setup_run --only cursor
     [ "$status" -eq 1 ]
-    [[ "$output" == *"native hook not installed"* ]]
+    [[ "$output" == *"native hook not installed: adapter missing"* ]]
 }
 
 @test "restart hints appear only for running editors whose config changed" {
@@ -463,14 +463,14 @@ EOF
     make_clients
     setup_run --uninstall
     [ "$status" -eq 0 ]
-    grep -q '^uninstall --force$' "$STUB_LOG/armis-cli.argv"
+    grep -q '^uninstall --force --format json$' "$STUB_LOG/armis-cli.argv"
 }
 
 @test "targeted uninstall passes only the chosen targets" {
     make_clients
     setup_run --uninstall --only cursor,vscode
     [ "$status" -eq 0 ]
-    grep -q '^uninstall cursor vscode$' "$STUB_LOG/armis-cli.argv"
+    grep -q '^uninstall cursor vscode --format json$' "$STUB_LOG/armis-cli.argv"
 }
 
 @test "uninstall of only the commit gate does not run a bare armis-cli uninstall" {
@@ -498,7 +498,7 @@ EOF
     export STUB_CURL_FAIL=1
     setup_run --uninstall
     [ "$status" -eq 0 ]
-    grep -q '^uninstall --force$' "$STUB_LOG/armis-cli.argv"
+    grep -q '^uninstall --force --format json$' "$STUB_LOG/armis-cli.argv"
 }
 
 @test "uninstall removes the managed profile block and keeps other content" {

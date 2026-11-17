@@ -43,12 +43,11 @@ fi
 # Every value can be set from the environment (MDM script parameters or a
 # wrapper). Values given here are the defaults.
 
-# armis-cli release to install, e.g. 1.27.0. Required with --non-interactive
+# armis-cli release to install, 1.27.0 or later. Required with --non-interactive
 # unless ARMIS_ALLOW_LATEST=1. The installer script is fetched from the same tag.
 ARMIS_CLI_VERSION="${ARMIS_CLI_VERSION:-}"
 ARMIS_ALLOW_LATEST="${ARMIS_ALLOW_LATEST:-0}"
 # MCP server release to pin, e.g. 1.4.2. Empty follows the latest release.
-# Needs an armis-cli with `install --plugin-version`.
 ARMIS_MCP_VERSION="${ARMIS_MCP_VERSION:-}"
 
 # Tenant and region. The tenant is required for sso. The region is only needed
@@ -105,6 +104,7 @@ ARMIS_REMOVE_CLI="${ARMIS_REMOVE_CLI:-0}"
 # ---- CONFIG END ------------------------------------------------------------
 
 SCRIPT_VERSION="1.0.0"
+MIN_CLI_VERSION="1.27.0"
 MARK_BEGIN="# >>> armis-cli (managed) >>>"
 MARK_END="# <<< armis-cli (managed) <<<"
 REPO="ArmisSecurity/armis-cli"
@@ -135,8 +135,6 @@ LOG_FILE=""
 LOG_DIR=""
 RUN_TS=$(date +%Y%m%d-%H%M%S)
 CLI_BIN=""
-CLI_HAS_PIN=0
-CLI_HAS_PROJECT=0
 CLI_COSIGN="unknown"
 FORCED_EXIT=0
 LAST_OUT=""
@@ -388,8 +386,12 @@ function load(p) {
     return o;
 }
 
+function line(fields) {
+    return fields.map(function (x) { return String(x || '').replace(/[\u001f\n\r]+/g, ' '); }).join('\u001f');
+}
+
 function run(argv) {
-    var cmd = argv[0], o, v;
+    var cmd = argv[0], o, v, i;
     if (cmd === 'check') {
         load(argv[1]);
         return '';
@@ -399,10 +401,6 @@ function run(argv) {
         v = o[argv[2]];
         if (v && typeof v === 'object' && !Array.isArray(v)) return Object.keys(v).sort().join('\n');
         return '';
-    }
-    if (cmd === 'get') {
-        o = load(argv[1]);
-        return o.hasOwnProperty(argv[2]) ? JSON.stringify(o[argv[2]]) : '';
     }
     if (cmd === 'delserver') {
         o = load(argv[1]);
@@ -415,9 +413,34 @@ function run(argv) {
     if (cmd === 'doctor') {
         o = JSON.parse(readFile(argv[1]));
         return (o.checks || []).map(function (c) {
-            return [c.component || '', c.editor || '', c.name || '', c.status || '', c.detail || '', c.remediation || '']
-                .map(function (x) { return String(x).replace(/[\u001f\n\r]+/g, ' '); }).join('\u001f');
+            return line([c.component, c.editor, c.name, c.status, c.detail, c.remediation]);
         }).join('\n');
+    }
+    // The --format json document of `armis-cli install` or `uninstall`.
+    if (cmd === 'result') {
+        o = JSON.parse(readFile(argv[1]));
+        v = (o.clients || []).map(function (c) {
+            var h = c.hook || {};
+            return line([c.client, c.status, c.detail, h.status, h.detail]);
+        });
+        if (o.credentials) {
+            v.push(line(['_credentials', o.credentials.status, (o.credentials.files || [])
+                .filter(function (f) { return f.status === 'failed'; })
+                .map(function (f) { return f.path + ': ' + f.detail; }).join('; ')]));
+        }
+        if (o.error) v.push(line(['_error', 'fail', o.error]));
+        return v.join('\n');
+    }
+    // report TABLE OUT KEY VALUE...: the run report, from build_table rows.
+    if (cmd === 'report') {
+        o = {};
+        for (i = 3; i + 1 < argv.length; i += 2) o[argv[i]] = argv[i] === 'exit_code' ? Number(argv[i + 1]) : argv[i + 1];
+        o.components = (readFile(argv[1]) || '').split('\n').filter(Boolean).map(function (r) {
+            var f = r.split('\u001f');
+            return { user: f[0], component: f[1], detected: f[2], installed: f[3], auth: f[4], verified: f[5], action: f[6] };
+        });
+        writeFile(argv[2], JSON.stringify(o, null, 2) + '\n');
+        return '';
     }
     throw new Error('unknown command ' + cmd);
 }
@@ -436,32 +459,23 @@ json_ok() {
 
 # ---- per-client definitions -------------------------------------------------
 
-# client_name CLIENT KIND: KIND is install (label in `armis-cli install` status
-# lines), doctor (editor name in `mcp doctor` checks) or display (shown to people).
-client_name() {
-    local install doctor display
+# client_label CLIENT: the editor name `mcp doctor` uses.
+client_label() {
     case $1 in
-        cursor) install="Cursor" doctor="Cursor" display="Cursor" ;;
-        vscode) install="VS Code" doctor="VS Code" display="VS Code" ;;
-        copilot) install="Copilot CLI" doctor="Copilot CLI" display="Copilot CLI" ;;
-        codex) install="Codex CLI (MCP)" doctor="Codex CLI" display="Codex" ;;
-        claude) install="Claude Code" doctor="Claude Code" display="Claude Code" ;;
-        antigravity) install="Antigravity" doctor="Antigravity" display="Antigravity" ;;
-        junie) install="Junie" doctor="Junie" display="Junie" ;;
-        *) return 1 ;;
-    esac
-    case $2 in
-        install) echo "$install" ;;
-        doctor) echo "$doctor" ;;
-        display) echo "$display" ;;
+        cursor) echo "Cursor" ;;
+        vscode) echo "VS Code" ;;
+        copilot) echo "Copilot CLI" ;;
+        codex) echo "Codex CLI" ;;
+        claude) echo "Claude Code" ;;
+        antigravity) echo "Antigravity" ;;
+        junie) echo "Junie" ;;
     esac
 }
 
-# client_from_doctor NAME: the client whose doctor editor name is NAME.
-client_from_doctor() {
+client_from_doctor() { # client_from_doctor LABEL
     local c
     for c in $ALL_CLIENTS; do
-        if [ "$(client_name "$c" doctor)" = "$1" ]; then echo "$c"; return; fi
+        if [ "$(client_label "$c")" = "$1" ]; then echo "$c"; return; fi
     done
 }
 
@@ -578,67 +592,6 @@ load_credentials() {
     esac
 }
 
-# rotate_env FILE MODE AWKPROG, run as the user with the configured credentials
-# in ARMIS_CLIENT_ID/ARMIS_CLIENT_SECRET. MODE is check or write. Exits 0 when
-# FILE already holds them, 10 when it did not (and, with write, now does), 1 on error.
-# shellcheck disable=SC2016 # expanded by the inner shell
-ROTATE_SH='f=$1
-[ -f "$f" ] || exit 0
-cur_id=$(sed -n "s/^ARMIS_CLIENT_ID=//p" "$f" | head -n 1)
-cur_secret=$(sed -n "s/^ARMIS_CLIENT_SECRET=//p" "$f" | head -n 1)
-rc=0
-if [ "$cur_id" != "$ARMIS_CLIENT_ID" ] || [ "$cur_secret" != "$ARMIS_CLIENT_SECRET" ]; then
-    rc=10
-    if [ "$2" = write ]; then
-        tmp=$(mktemp "$(dirname "$f")/.env.tmp.XXXXXX") || exit 1
-        chmod 600 "$tmp"
-        if ! awk "$3" "$f" > "$tmp" || ! mv -f "$tmp" "$f"; then rm -f "$tmp"; exit 1; fi
-    fi
-fi
-if [ "$2" = write ]; then
-    chmod 600 "$f" || exit 1
-    # The installers leave a copy of the old file next to the new one.
-    rm -f "$f.bak"
-fi
-exit $rc'
-
-# Sets the client credentials in a .env, keeping other keys.
-# shellcheck disable=SC2016 # awk program
-ROTATE_AWK='
-    BEGIN { id = ENVIRON["ARMIS_CLIENT_ID"]; sec = ENVIRON["ARMIS_CLIENT_SECRET"] }
-    /^ARMIS_CLIENT_ID=/ { if (!d1) { print "ARMIS_CLIENT_ID=" id; d1 = 1 } ; next }
-    /^ARMIS_CLIENT_SECRET=/ { if (!d2) { print "ARMIS_CLIENT_SECRET=" sec; d2 = 1 } ; next }
-    { print }
-    END { if (!d1) print "ARMIS_CLIENT_ID=" id; if (!d2) print "ARMIS_CLIENT_SECRET=" sec }'
-
-# rotate_credentials USER HOME: bring every .env the installers wrote to the
-# configured credentials. armis-cli keeps an existing .env as is.
-rotate_credentials() {
-    local user=$1 home=$2 f mode=write rc changed=0 bad=0
-    [ -n "$CRED_ID" ] || return 0
-    [ "$DRY_RUN" -eq 0 ] || mode=check
-    for f in \
-        "$home/.armis/plugins/armis-appsec-mcp/.env" \
-        "$home/.claude/plugins/cache/armis-appsec-mcp/armis-appsec/latest/.env" \
-        "$home/.armis/plugins/armis-knowledge-mcp/.env"; do
-        [ -f "$f" ] || continue
-        as_user "$user" "$home" 1 0 /bin/sh -c "$ROTATE_SH" sh "$f" "$mode" "$ROTATE_AWK"
-        rc=$?
-        case $rc:$mode in
-            0:*) ;;
-            10:check) log "[dry-run] would update credentials in $f" ;;
-            10:write) log "[$user] updated credentials in $f"; changed=1 ;;
-            *) warn "[$user] could not update credentials in $f"; bad=1 ;;
-        esac
-    done
-    if [ "$bad" -eq 1 ]; then
-        rec "$user" _user auth fail
-        rec "$user" mcp-server action "could not rotate credentials; fix permissions on ~/.armis/plugins and re-run"
-    elif [ "$changed" -eq 1 ]; then
-        rec "$user" mcp-server action "credentials rotated; restart editors"
-    fi
-}
-
 # ---- preflight --------------------------------------------------------------
 
 fatal() { # fatal CODE MESSAGE
@@ -731,16 +684,6 @@ cli_version_ok() { # does the installed binary report exactly the wanted version
     [ -n "$got" ] && [ "$got" = "$ARMIS_CLI_VERSION" ]
 }
 
-detect_cli_features() {
-    local help
-    CLI_HAS_PIN=0
-    CLI_HAS_PROJECT=0
-    [ -x "$CLI_BIN" ] || return 0
-    help=$("$CLI_BIN" install --help 2>&1 || true)
-    case $help in *--plugin-version*) CLI_HAS_PIN=1 ;; esac
-    case $help in *--project*) CLI_HAS_PROJECT=1 ;; esac
-}
-
 stage_cli() {
     local ref installer_url version_arg
     log "armis-cli"
@@ -751,7 +694,6 @@ stage_cli() {
         rec "-" armis-cli detected yes
         rec "-" armis-cli installed ok
         rec "-" armis-cli verified ok
-        detect_cli_features
         return 0
     fi
 
@@ -812,7 +754,6 @@ stage_cli() {
         CLI_COSIGN=no
         rec "-" armis-cli action "only the checksum was verified; install cosign for signature verification"
     fi
-    detect_cli_features
 }
 
 # ---- profiles ---------------------------------------------------------------
@@ -953,62 +894,36 @@ user_has_python() { # user_has_python USER HOME
 
 # ---- mcp --------------------------------------------------------------------
 
-# out_find SYMBOL LABEL FILE: first status line "SYMBOL LABEL..." in an armis-cli
-# transcript, with the symbol and label removed.
-out_find() {
-    awk -v sym="$1" -v label="$2" '
-        { sub(/^[ \t]+/, "") }
-        index($0, sym " " label) == 1 { print substr($0, length(sym " " label) + 1); found = 1; exit }
-        END { exit found ? 0 : 1 }
-    ' "$3"
+# servers_kept HOME CLIENT DIR: are the client's configs still valid JSON, with
+# every server that was registered before install still there?
+servers_kept() {
+    local kind path top lost
+    while IFS='|' read -r kind path top; do
+        [ "$kind" = json ] || continue
+        if ! json_ok "$path"; then
+            CHECK_MSG="$path is not valid JSON after install"
+            return 1
+        fi
+        [ -n "$top" ] && [ -f "$3/$2.before" ] || continue
+        lost=$(jt keys "$path" "$top" | awk 'NR == FNR { a[$0] = 1; next } !($0 in a)' - "$3/$2.before" | head -n 1)
+        if [ -n "$lost" ]; then
+            CHECK_MSG="existing server '$lost' disappeared from $path"
+            return 1
+        fi
+    done <<< "$(client_files "$2" "$1")"
 }
 
-# check_client_state USER HOME CLIENT KEYFILE: did registration leave the
-# server in place and the earlier servers intact?
-check_client_state() {
-    local user=$1 home=$2 client=$3 before=$4 kind path top after
-    local primary_ok=1
-    while IFS='|' read -r kind path top; do
-        [ -n "$kind" ] || continue
-        if [ "$kind" = json ]; then
-            if ! json_ok "$path"; then
-                CHECK_MSG="$path is not valid JSON after install"
-                return 1
-            fi
-            if [ -n "$top" ]; then
-                after=$(jt keys "$path" "$top")
-                if ! printf '%s\n' "$after" | grep -qx "$SERVER_KEY"; then
-                    CHECK_MSG="$SERVER_KEY is missing from $path"
-                    primary_ok=0
-                fi
-                if [ -f "$before" ]; then
-                    local lost
-                    lost=$(awk 'NR == FNR { a[$0] = 1; next } !($0 in a)' <(printf '%s\n' "$after") "$before" | head -n 1)
-                    if [ -n "$lost" ]; then
-                        CHECK_MSG="existing server '$lost' disappeared from $path"
-                        return 1
-                    fi
-                fi
-            fi
-        fi
-    done <<< "$(client_files "$client" "$home")"
-    case $client in
-        claude)
-            grep -q 'armis-appsec@armis-appsec-mcp' "$home/.claude/plugins/installed_plugins.json" 2>/dev/null \
-                || { CHECK_MSG="plugin missing from ~/.claude/plugins/installed_plugins.json"; return 1; } ;;
-        codex)
-            grep -q '^\[mcp_servers.armis_scanner\]' "$home/.codex/config.toml" 2>/dev/null \
-                || { CHECK_MSG="armis_scanner section missing from ~/.codex/config.toml"; return 1; } ;;
-    esac
-    [ "$primary_ok" -eq 1 ]
+# result_field FILE CLIENT N: field N of CLIENT's line from `jt result`.
+result_field() {
+    awk -F'\037' -v c="$2" -v n="$3" '$1 == c { print $n; exit }' "$1"
 }
 
 stage_mcp() { # stage_mcp USER HOME
-    local user=$1 home=$2 client dir targets="" kind path top msg hook_msg list c
-    local bad_dir="$WORK/mcp.$user"
+    local user=$1 home=$2 client dir targets="" kind path top list status detail
+    local mdir="$WORK/mcp.$user"
     log "[$user] MCP server"
-    mkdir -p "$bad_dir"
-    list="$bad_dir/backups"
+    mkdir -p "$mdir"
+    list="$mdir/backups"
     : > "$list"
 
     for client in $CLIENT_LIST; do
@@ -1021,8 +936,8 @@ stage_mcp() { # stage_mcp USER HOME
             rec "$user" "$client" installed skip
             continue
         fi
-        # Validate every config we are about to touch. A file that does not
-        # parse would be replaced by armis-cli, deleting the user's other servers.
+        # armis-cli replaces a config it cannot parse, which would delete the
+        # user's other servers, so such a client is skipped.
         local invalid=""
         while IFS='|' read -r kind path top; do
             [ -n "$kind" ] || continue
@@ -1033,10 +948,9 @@ stage_mcp() { # stage_mcp USER HOME
             rec "$user" "$client" action "config at $invalid is not valid JSON; fix or remove it, then re-run"
             continue
         fi
-        # Record the servers already registered, and back the files up.
         while IFS='|' read -r kind path top; do
             [ -n "$kind" ] || continue
-            if [ -n "$top" ] && [ -f "$path" ]; then jt keys "$path" "$top" > "$bad_dir/$client.before" || true; fi
+            if [ -n "$top" ] && [ -f "$path" ]; then jt keys "$path" "$top" > "$mdir/$client.before" || true; fi
             backup_file "$user" "$home" "$path" "$list"
         done <<< "$(client_files "$client" "$home")"
         targets="$targets $client"
@@ -1059,16 +973,12 @@ stage_mcp() { # stage_mcp USER HOME
         return 0
     fi
 
-    local flags="--non-interactive"
+    local flags="--format json"
     [ "$ARMIS_WITH_KNOWLEDGE" = 1 ] && flags="$flags --with-knowledge"
-    if [ -n "$ARMIS_MCP_VERSION" ]; then
-        if [ "$CLI_HAS_PIN" -eq 1 ] || { [ "$DRY_RUN" -eq 1 ] && [ ! -x "$CLI_BIN" ]; }; then
-            flags="$flags --plugin-version $ARMIS_MCP_VERSION"
-        else
-            rec "$user" mcp-server action "MCP version not pinned: this armis-cli has no --plugin-version; use a newer armis-cli"
-            rec "$user" mcp-server installed warn
-        fi
-    fi
+    [ -z "$ARMIS_MCP_VERSION" ] || flags="$flags --plugin-version $ARMIS_MCP_VERSION"
+    # armis-cli keeps an existing .env as is; this brings every one it manages
+    # to the configured credentials.
+    [ -z "$CRED_ID" ] || flags="$flags --rotate-credentials"
 
     if [ "$DRY_RUN" -eq 1 ]; then
         log "[dry-run] would run: armis-cli install $targets $flags"
@@ -1079,67 +989,58 @@ stage_mcp() { # stage_mcp USER HOME
         return 0
     fi
 
+    SEQ=$((SEQ + 1))
+    LAST_OUT="$WORK/out.$SEQ"
+    vlog "as $user: $CLI_BIN install $targets $flags"
     # shellcheck disable=SC2086 # targets and flags are word lists
-    user_cmd "$user" "$home" 1 0 "$CLI_BIN" install $targets $flags
+    as_user "$user" "$home" 1 0 "$CLI_BIN" install $targets $flags > "$mdir/install.json" 2> "$LAST_OUT"
+    local install_rc=$?
     show_out "$LAST_OUT"
-    local install_rc=$LAST_RC install_out=$LAST_OUT
-    local tail_msg
-    tail_msg=$(grep -v '^[[:space:]]*$' "$install_out" | tail -n 1)
+    jt result "$mdir/install.json" > "$mdir/install.tsv" || : > "$mdir/install.tsv"
+    local install_err
+    install_err=$(result_field "$mdir/install.tsv" _error 3)
+    [ -s "$mdir/install.tsv" ] || install_err=$(grep -v '^[[:space:]]*$' "$LAST_OUT" | tail -n 1)
 
     for client in $targets; do
-        c=$(client_name "$client" install)
+        status=$(result_field "$mdir/install.tsv" "$client" 2)
+        detail=$(result_field "$mdir/install.tsv" "$client" 3)
         CHECK_MSG=""
-        if msg=$(out_find "✗" "$c" "$install_out"); then
+        if [ "$status" != ok ]; then
             rec "$user" "$client" installed fail
-            rec "$user" "$client" action "${msg#: }"
+            rec "$user" "$client" action "${detail:-${install_err:-armis-cli install failed}}"
             restore_files "$user" "$home" "$client" "$list"
             continue
         fi
-        if ! out_find "✓" "$c" "$install_out" >/dev/null && [ "$install_rc" -ne 0 ]; then
+        if ! servers_kept "$home" "$client" "$mdir"; then
             rec "$user" "$client" installed fail
-            rec "$user" "$client" action "${tail_msg:-armis-cli install failed}"
-            restore_files "$user" "$home" "$client" "$list"
-            continue
-        fi
-        if ! check_client_state "$user" "$home" "$client" "$bad_dir/$client.before"; then
-            rec "$user" "$client" installed fail
-            rec "$user" "$client" action "${CHECK_MSG:-registration was not found}; restored the previous config"
+            rec "$user" "$client" action "$CHECK_MSG; restored the previous config"
             restore_files "$user" "$home" "$client" "$list"
             continue
         fi
         rec "$user" "$client" installed ok
-        if hook_msg=$(out_find "⚠" "$(client_hook_label "$client")" "$install_out"); then
+        if [ "$(result_field "$mdir/install.tsv" "$client" 4)" = warn ]; then
             rec "$user" "$client" installed warn
-            rec "$user" "$client" action "native hook not installed${hook_msg}"
+            rec "$user" "$client" action "native hook not installed: $(result_field "$mdir/install.tsv" "$client" 5)"
         fi
-    done
-
-    # Restart hints, only for clients whose config changed.
-    for client in $targets; do
         if config_changed "$home" "$client" "$list" && is_running "$client" "$user"; then
-            rec "$user" "$client" action "restart $(client_name "$client" display)"
+            rec "$user" "$client" action "restart $(client_label "$client")"
         fi
     done
-
     drop_unchanged "$user" "$home" "$list"
-    stage_mcp_extras "$user" "$home"
-    rotate_credentials "$user" "$home"
+
+    case $(result_field "$mdir/install.tsv" _credentials 2) in
+        failed)
+            rec "$user" _user auth fail
+            rec "$user" mcp-server action "could not rotate credentials ($(result_field "$mdir/install.tsv" _credentials 3)); fix permissions on ~/.armis/plugins and re-run" ;;
+        rotated) rec "$user" mcp-server action "credentials rotated; restart editors" ;;
+    esac
 
     if [ "$install_rc" -ne 0 ]; then
         rec "$user" mcp-server installed warn
-        rec "$user" mcp-server action "armis-cli install exited $install_rc; failed clients are listed above"
+        rec "$user" mcp-server action "armis-cli install exited $install_rc${install_err:+: $install_err}"
     else
         rec "$user" mcp-server installed ok
     fi
-}
-
-client_hook_label() {
-    case $1 in
-        cursor) echo "Cursor (hooks)" ;;
-        copilot) echo "Copilot CLI (hooks)" ;;
-        codex) echo "Codex CLI (hooks)" ;;
-        *) echo "-" ;;
-    esac
 }
 
 restore_files() { # restore_files USER HOME CLIENT LIST
@@ -1172,31 +1073,10 @@ config_changed() { # config_changed HOME CLIENT LIST
     return 1
 }
 
-# Copilot Agent mode and MCP can be switched off in VS Code settings or by
-# organization policy. Only reported, never edited.
-stage_mcp_extras() { # stage_mcp_extras USER HOME
-    local user=$1 home=$2 settings v
-    settings="$home/Library/Application Support/Code/User/settings.json"
-    [ -f "$settings" ] || return 0
-    if ! in_list vscode "$CLIENT_LIST"; then return 0; fi
-    for key in chat.agent.enabled chat.mcp.enabled; do
-        v=$(jt get "$settings" "$key") || continue
-        if [ "$v" = false ]; then
-            rec "$user" vscode installed warn
-            rec "$user" vscode action "enable Copilot Agent mode and MCP ($key is false in VS Code settings, or ask the GitHub org admin about the MCP policy)"
-        fi
-    done
-    v=$(jt get "$settings" chat.mcp.access) || v=""
-    if [ "$v" = '"none"' ]; then
-        rec "$user" vscode installed warn
-        rec "$user" vscode action "chat.mcp.access is none in VS Code settings; set it to all"
-    fi
-}
-
 # ---- jetbrains --------------------------------------------------------------
 
 stage_jetbrains() { # stage_jetbrains USER HOME
-    local user=$1 home=$2 p owner cfg list found=0 ok=1 shown=0
+    local user=$1 home=$2 p owner cfg list found=0 ok=1
     in_list jetbrains "$ENABLED_EXTRAS" || return 0
     log "[$user] JetBrains"
     list="$WORK/jb.$user"
@@ -1215,11 +1095,6 @@ stage_jetbrains() { # stage_jetbrains USER HOME
     fi
 
     rec "$user" jetbrains detected yes
-    if [ "$CLI_HAS_PROJECT" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-        rec "$user" jetbrains installed fail
-        rec "$user" jetbrains action "this armis-cli has no 'install jetbrains --project'; use a newer armis-cli"
-        return 0
-    fi
     while IFS= read -r p; do
         [ -n "$p" ] || continue
         owner=$(stat -f %Su "$p" 2>/dev/null || true)
@@ -1242,8 +1117,6 @@ stage_jetbrains() { # stage_jetbrains USER HOME
             restore_one "$user" "$home" "$cfg" "$list"
             rec "$user" jetbrains action "registration failed for $p"
             ok=0
-        else
-            shown=$((shown + 1))
         fi
     done <<< "$(lines_of_list "$ARMIS_JETBRAINS_PROJECTS")"
     drop_unchanged "$user" "$home" "$list"
@@ -1429,7 +1302,7 @@ network_check() { # network_check USER HOME
 # ---- uninstall --------------------------------------------------------------
 
 stage_uninstall() { # stage_uninstall USER HOME
-    local user=$1 home=$2 client targets="" flags="--force" p repo cfg top
+    local user=$1 home=$2 client targets="" flags="--force" p repo cfg
     log "[$user] uninstall"
     for client in $CLIENT_LIST; do
         in_list "$client" "$ALL_CLIENTS" || continue
@@ -1439,24 +1312,22 @@ stage_uninstall() { # stage_uninstall USER HOME
     targets=${targets# }
     [ "$ARMIS_KEEP_CREDENTIALS" = 1 ] && flags="$flags --keep-credentials"
 
+    local args=$targets res="$WORK/uninstall.$user" status detail
+    [ "$FULL_UNINSTALL" -eq 0 ] || args=$flags
+    : > "$res.tsv"
     if [ "$FULL_UNINSTALL" -eq 0 ] && [ -z "$targets" ]; then
         # A bare `armis-cli uninstall` means everything; nothing here was selected.
         vlog "[$user] no client selected; not running armis-cli uninstall"
     elif [ "$DRY_RUN" -eq 1 ]; then
-        if [ "$FULL_UNINSTALL" -eq 1 ]; then
-            log "[dry-run] would run: armis-cli uninstall $flags"
-        else
-            log "[dry-run] would run: armis-cli uninstall $targets"
-        fi
+        log "[dry-run] would run: armis-cli uninstall $args"
     elif [ -x "$CLI_BIN" ]; then
-        if [ "$FULL_UNINSTALL" -eq 1 ]; then
-            # shellcheck disable=SC2086
-            user_cmd "$user" "$home" 0 0 "$CLI_BIN" uninstall $flags
-        else
-            # shellcheck disable=SC2086
-            user_cmd "$user" "$home" 0 0 "$CLI_BIN" uninstall $targets
-        fi
+        SEQ=$((SEQ + 1))
+        LAST_OUT="$WORK/out.$SEQ"
+        # shellcheck disable=SC2086 # args is a word list
+        as_user "$user" "$home" 0 0 "$CLI_BIN" uninstall $args --format json > "$res.json" 2> "$LAST_OUT"
+        LAST_RC=$?
         show_out "$LAST_OUT"
+        jt result "$res.json" > "$res.tsv" || true
         if [ "$LAST_RC" -ne 0 ]; then
             rec "$user" mcp-server installed fail
             rec "$user" mcp-server action "armis-cli uninstall exited $LAST_RC; see the log"
@@ -1475,16 +1346,17 @@ stage_uninstall() { # stage_uninstall USER HOME
             rec "$user" "$client" installed skip
             continue
         fi
-        cfg=$(client_files "$client" "$home" | head -n 1 | cut -d'|' -f2)
-        top=$(client_files "$client" "$home" | head -n 1 | cut -d'|' -f3)
-        if [ -n "$top" ] && [ -f "$cfg" ] && jt keys "$cfg" "$top" | grep -qx "$SERVER_KEY"; then
-            rec "$user" "$client" installed fail
-            rec "$user" "$client" action "$SERVER_KEY is still registered in $cfg"
-        else
-            rec "$user" "$client" installed ok
-            rec "$user" "$client" verified ok
-            rec "$user" "$client" action "removed"
-        fi
+        status=$(result_field "$res.tsv" "$client" 2)
+        detail=$(result_field "$res.tsv" "$client" 3)
+        case $status in
+            fail | warn)
+                rec "$user" "$client" installed "$status"
+                rec "$user" "$client" action "${detail:-could not be removed}" ;;
+            *)
+                rec "$user" "$client" installed ok
+                rec "$user" "$client" verified ok
+                rec "$user" "$client" action "removed" ;;
+        esac
     done
 
     # The profile block serves every client: keep it while any client stays registered.
@@ -1581,37 +1453,13 @@ print_matrix() { # print_matrix TABLEFILE ENDPOINT
     } | column -t -s $'\t'
 }
 
-json_str() { # JSON-escape stdin lines into one quoted string
-    awk 'BEGIN { ORS = "" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); if (NR > 1) print "\\n"; print }' | { printf '"'; cat; printf '"'; }
-}
-
-write_reports() { # write_reports TABLEFILE ENDPOINT SERIAL CODE STATUS
-    local json=${ARMIS_REPORT_PATH%.json}.json u c d i a v act first=1 mcp_ver
+write_report() { # write_report TABLEFILE ENDPOINT SERIAL CODE STATUS
+    local json=${ARMIS_REPORT_PATH%.json}.json
     mkdir -p "$(dirname "$json")" 2>/dev/null || return 1
-    mcp_ver=${ARMIS_MCP_VERSION:-latest}
-    {
-        printf '{\n'
-        printf '  "endpoint": %s,\n' "$(printf '%s' "$2" | json_str)"
-        printf '  "serial": %s,\n' "$(printf '%s' "$3" | json_str)"
-        printf '  "timestamp": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        printf '  "script_version": "%s",\n' "$SCRIPT_VERSION"
-        printf '  "cli_version": %s,\n' "$(printf '%s' "$ARMIS_CLI_VERSION" | json_str)"
-        printf '  "mcp_version": %s,\n' "$(printf '%s' "$mcp_ver" | json_str)"
-        printf '  "cosign_verified": "%s",\n' "$CLI_COSIGN"
-        printf '  "mode": "%s",\n' "$([ "$DO_UNINSTALL" -eq 1 ] && echo uninstall || echo install)"
-        printf '  "exit_code": %s,\n' "$4"
-        printf '  "status": "%s",\n' "$5"
-        printf '  "components": ['
-        while IFS=$'\037' read -r u c d i a v act; do
-            [ "$first" -eq 1 ] || printf ','
-            first=0
-            printf '\n    {"user": %s, "component": %s, "detected": %s, "installed": %s, "auth": %s, "verified": %s, "action": %s}' \
-                "$(printf '%s' "$u" | json_str)" "$(printf '%s' "$c" | json_str)" "$(printf '%s' "${d:-}" | json_str)" \
-                "$(printf '%s' "${i:-}" | json_str)" "$(printf '%s' "${a:-}" | json_str)" "$(printf '%s' "${v:-}" | json_str)" \
-                "$(printf '%s' "${act:-}" | json_str)"
-        done < "$1"
-        printf '\n  ]\n}\n'
-    } > "$json"
+    jt report "$1" "$json" endpoint "$2" serial "$3" timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        script_version "$SCRIPT_VERSION" cli_version "$ARMIS_CLI_VERSION" mcp_version "${ARMIS_MCP_VERSION:-latest}" \
+        cosign_verified "$CLI_COSIGN" mode "$([ "$DO_UNINSTALL" -eq 1 ] && echo uninstall || echo install)" \
+        exit_code "$4" status "$5" || return 1
     chmod 644 "$json"
     log "report: $json"
 }
@@ -1634,7 +1482,7 @@ stage_report() {
     if [ "$DRY_RUN" -eq 1 ]; then
         log "[dry-run] no report written"
     elif [ -n "$ARMIS_REPORT_PATH" ]; then
-        write_reports "$table" "$endpoint" "$serial" "$code" "$status" || warn "could not write the report to $ARMIS_REPORT_PATH"
+        write_report "$table" "$endpoint" "$serial" "$code" "$status" || warn "could not write the report to $ARMIS_REPORT_PATH"
     fi
     printf 'ARMIS_STATUS=%s components=%s failing=%s\n' "$status" "$n_components" "$n_failing"
     FINAL_CODE=$code
@@ -1715,6 +1563,13 @@ if [ "$DO_UNINSTALL" -eq 0 ]; then
         ARMIS_CLI_VERSION=${ARMIS_CLI_VERSION#v}
         printf '%s' "$ARMIS_CLI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$' \
             || die_usage "ARMIS_CLI_VERSION must look like 1.27.0"
+        # This script reads `install --format json`, added in this release.
+        if awk -v a="${ARMIS_CLI_VERSION%%-*}" -v b="$MIN_CLI_VERSION" 'BEGIN {
+            split(a, x, "."); split(b, y, ".")
+            for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 < y[i] + 0)
+            exit 1 }'; then
+            die_usage "ARMIS_CLI_VERSION $ARMIS_CLI_VERSION is too old; this script needs $MIN_CLI_VERSION or later"
+        fi
     fi
     if [ "$ARMIS_AUTH_MODE" = sso ] && [ -z "$ARMIS_TENANT_ID" ]; then
         die_usage "ARMIS_TENANT_ID is required with ARMIS_AUTH_MODE=sso"
