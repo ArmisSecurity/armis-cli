@@ -9,16 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scan repo`/`scan image`: new `--bom` flag downloads the BOMs Armis builds during the scan, one file per type: `sbom`, `aibom`, `cbom`, or `all` (combined), comma-separated or repeated. Files go to `.armis/<artifact>-bom-<type>.json` (`.spdx.json` for SPDX). BOM generation must be enabled for the tenant. A type the server did not build only warns; a built BOM that cannot be downloaded exits 2 unless `--fail-on` triggers first. The types are sent in the ingest API's `bom_types` field. (#358)
-- `scan repo`/`scan image`: new `--bom-format` flag selects the BOM format: `cyclonedx-1.7` (default), `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx` and `spdx`. A type with no such form, such as `cbom` with SPDX, is rejected before upload. The value is sent as typed in the ingest API's `bom_format` field. (#358)
-- `scan repo`/`scan image`: new `--bom-output` flag sets the BOM directory (default `.armis`), or `-` to write one BOM to stdout; the findings report then goes to stderr unless `--output` is set. (#358)
-- `scan image`: with `--bom`, the ingest request carries `image_ref`, the image name, or the first `RepoTags` entry of a `--tarball`'s `manifest.json`, so the BOMs name the image. (#358)
-
 ### Changed
 
 ### Deprecated
 
 ### Removed
+
+### Fixed
+
+### Security
+
+---
+
+## [1.27.0] - 2026-11-17
+
+### Added
+
+- `scan repo`/`scan image`: new `--bom` flag downloads the BOMs Armis builds during the scan, one file per type: `sbom`, `aibom`, `cbom`, or `all` (combined), comma-separated or repeated. Files go to `.armis/<artifact>-bom-<type>.json` (`.spdx.json` for SPDX). BOM generation must be enabled for the tenant. A type the server did not build only warns; a built BOM that cannot be downloaded exits 2 unless `--fail-on` triggers first. The types are sent in the ingest API's `bom_types` field. (#358)
+- `scan repo`/`scan image`: new `--bom-format` flag selects the BOM format: `cyclonedx-1.7` (default), `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx` and `spdx`. A type with no such form, such as `cbom` with SPDX, is rejected before upload. The value is sent as typed in the ingest API's `bom_format` field. (#358)
+- `scan repo`/`scan image`: new `--bom-output` flag sets the BOM directory (default `.armis`), or `-` to write one BOM to stdout; the findings report then goes to stderr unless `--output` is set. (#358)
+- `scan image`: with `--bom`, the ingest request carries `image_ref`, the image name, or the first `RepoTags` entry of a `--tarball`'s `manifest.json`, so the BOMs name the image. (#358)
+- `install --plugin-version <x.y.z|latest>` and `ARMIS_MCP_VERSION` pin the MCP server to one release. The pin is stored in the manifest, so `mcp update` and `mcp doctor --fix` keep it until `latest` clears it. An install already at the pinned version skips the download and rewrites unless `--force` is set, and `mcp doctor` warns when the plugin is outside its pin (#363)
+- `install jetbrains --project <dir>` merges the MCP server into `<dir>/.jb-mcp.json`. A symlinked or non-regular `.jb-mcp.json` is refused (#363)
+- `install` and `uninstall` take `-f/--format json` and write one JSON document to stdout (clients, plugin, knowledge, credentials); human output stays on stderr. JSON mode implies `--non-interactive` for `install` and `--force` for `uninstall`, so CI and MDM rollouts need no prompt (#365)
+- `install --rotate-credentials` overwrites `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` from the environment in every `.env` the run manages. Other keys are kept, the write is atomic with mode 0600, and no `.env.bak` is left (#365)
+
+### Changed
+
+- `install` and `uninstall` now try every target and exit non-zero with one error naming each target, hook or plugin step that failed, instead of looking like success on a partial failure (#363, #365)
+- Build with Go 1.27.4 (pinned in `go.mod`, CI, release and lint workflows). Go 1.27.0-1.27.3 offer ML-DSA signature schemes that a Palo Alto IPS rule (threat ID 58033) drops, which made the CLI hang at the TLS handshake behind those firewalls (#364)
+- `mcp doctor --network` retries a failed handshake limited to TLS 1.2 and, if that works, reports that a middlebox is dropping the TLS 1.3 ClientHello (#364)
+- Docs: the README, FEATURES and CHANGELOG now note that BOM files are written with mode 0600 on Linux and macOS only, and that Windows PowerShell 5.1 saves redirected `--bom-output -` output as UTF-16 (#367)
 
 ### Fixed
 
@@ -843,7 +864,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...HEAD
+[1.27.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...v1.26.0
 [1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
 [1.25.1]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.0...v1.25.1
