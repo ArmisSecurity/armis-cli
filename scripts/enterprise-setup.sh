@@ -129,6 +129,8 @@ IS_ROOT=0
 
 CRED_ID=""
 CRED_SECRET=""
+# Masked in every log line, even when the run does not use client credentials.
+REDACT_SECRET=""
 WORK=""
 RESULTS=""
 LOG_FILE=""
@@ -142,6 +144,8 @@ LAST_RC=0
 SEQ=0
 USERS=""
 NO_PYTHON_USERS=""
+# Users for whom `armis-cli install` did not run, so there is nothing for mcp doctor to check.
+NO_MCP_USERS=""
 
 # ---- logging and results ---------------------------------------------------
 
@@ -150,8 +154,8 @@ redact() {
         -e 's/(ARMIS_CLIENT_SECRET[[:space:]]*[=:][[:space:]]*)[^[:space:]]+/\1***/g' \
         -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._~+\/=-]+/\1***/g' \
         -e 's/("?client_secret"?[[:space:]]*[=:][[:space:]]*"?)[^[:space:]",}]+/\1***/g' |
-        if [ "${#CRED_SECRET}" -ge 8 ]; then
-            CS="$CRED_SECRET" awk '{
+        if [ "${#REDACT_SECRET}" -ge 8 ]; then
+            CS="$REDACT_SECRET" awk '{
                 s = ENVIRON["CS"]
                 while ((i = index($0, s)) > 0) $0 = substr($0, 1, i - 1) "***" substr($0, i + length(s))
                 print
@@ -595,6 +599,16 @@ load_credentials() {
     case "$CRED_ID$CRED_SECRET" in
         *$'\n'* | *$'\r'*) die_usage "client credentials must not contain newlines" ;;
     esac
+    REDACT_SECRET=$CRED_SECRET
+}
+
+# drop_ambient_credentials: for runs that must not authenticate with client
+# credentials (sso, uninstall). JWT credentials in the environment would win over
+# SSO in every armis-cli child and would reach them through sudo --preserve-env.
+drop_ambient_credentials() {
+    # shellcheck disable=SC2031
+    REDACT_SECRET="${ARMIS_CLIENT_SECRET:-}"
+    unset ARMIS_CLIENT_ID ARMIS_CLIENT_SECRET
 }
 
 # ---- preflight --------------------------------------------------------------
@@ -910,7 +924,9 @@ servers_kept() {
             return 1
         fi
         [ -n "$top" ] && [ -f "$3/$2.before" ] || continue
-        lost=$(jt keys "$path" "$top" | awk 'NR == FNR { a[$0] = 1; next } !($0 in a)' - "$3/$2.before" | head -n 1)
+        jt keys "$path" "$top" > "$3/$2.after" || : > "$3/$2.after"
+        # FILENAME, not NR == FNR: an empty "after" must still report every key as lost.
+        lost=$(awk 'FILENAME == ARGV[1] { a[$0] = 1; next } $0 != "" && !($0 in a)' "$3/$2.after" "$3/$2.before" | head -n 1)
         if [ -n "$lost" ]; then
             CHECK_MSG="existing server '$lost' disappeared from $path"
             return 1
@@ -970,11 +986,13 @@ stage_mcp() { # stage_mcp USER HOME
 
     if [ -z "$targets" ]; then
         log "[$user] no clients to configure"
+        NO_MCP_USERS="$NO_MCP_USERS $user"
         return 0
     fi
 
     if ! user_has_python "$user" "$home"; then
         NO_PYTHON_USERS="$NO_PYTHON_USERS $user"
+        NO_MCP_USERS="$NO_MCP_USERS $user"
         rec "$user" mcp-server installed warn
         rec "$user" mcp-server action "install Python 3.11+ (brew install python@3.12, or the python.org installer), then re-run"
         for client in $targets; do
@@ -1230,8 +1248,12 @@ stage_verify() { # stage_verify USER HOME
         fi
     fi
 
-    if in_list "$user" "$NO_PYTHON_USERS"; then
-        log "[$user] MCP server not installed (no Python 3.11+); skipping mcp doctor"
+    if in_list "$user" "$NO_MCP_USERS"; then
+        if in_list "$user" "$NO_PYTHON_USERS"; then
+            log "[$user] MCP server not installed (no Python 3.11+); skipping mcp doctor"
+        else
+            log "[$user] no client was configured; skipping mcp doctor"
+        fi
         if [ "$scan" -eq 1 ]; then sample_scan "$user" "$home"; fi
         return 0
     fi
@@ -1372,7 +1394,7 @@ stage_uninstall() { # stage_uninstall USER HOME
         done <<< "$(lines_of_list "$ARMIS_HOOK_REPOS")"
     fi
 
-    local args=$targets res="$WORK/uninstall.$user" status detail
+    local args=$targets res="$WORK/uninstall.$user" status detail ran=0 parsed=0 kind path top left
     [ "$FULL_UNINSTALL" -eq 0 ] || args=$flags
     : > "$res.tsv"
     if [ "$FULL_UNINSTALL" -eq 0 ] && [ -z "$targets" ]; then
@@ -1386,8 +1408,9 @@ stage_uninstall() { # stage_uninstall USER HOME
         # shellcheck disable=SC2086 # args is a word list
         as_user "$user" "$home" 0 0 "$CLI_BIN" uninstall $args --format json > "$res.json" 2> "$LAST_OUT"
         LAST_RC=$?
+        ran=1
         show_out "$LAST_OUT"
-        jt result "$res.json" > "$res.tsv" || true
+        if jt result "$res.json" > "$res.tsv"; then parsed=1; else : > "$res.tsv"; fi
         if [ "$LAST_RC" -ne 0 ]; then
             rec "$user" mcp-server installed fail
             rec "$user" mcp-server action "armis-cli uninstall exited $LAST_RC; see the log"
@@ -1406,17 +1429,42 @@ stage_uninstall() { # stage_uninstall USER HOME
             rec "$user" "$client" installed skip
             continue
         fi
+        if [ "$ran" -eq 0 ]; then
+            rec "$user" "$client" installed skip
+            continue
+        fi
         status=$(result_field "$res.tsv" "$client" 2)
         detail=$(result_field "$res.tsv" "$client" 3)
+        # A full uninstall lists only the clients it deregistered; a missing one had no entry.
+        if [ -z "$status" ] && [ "$parsed" -eq 1 ] && [ "$FULL_UNINSTALL" -eq 1 ]; then
+            status=ok
+            detail="not registered"
+        fi
         case $status in
+            ok) ;;
             fail | warn)
                 rec "$user" "$client" installed "$status"
-                rec "$user" "$client" action "${detail:-could not be removed}" ;;
+                rec "$user" "$client" action "${detail:-could not be removed}"
+                continue ;;
             *)
-                rec "$user" "$client" installed ok
-                rec "$user" "$client" verified ok
-                rec "$user" "$client" action "removed" ;;
+                rec "$user" "$client" installed fail
+                rec "$user" "$client" action "armis-cli uninstall reported no result for $client; see the log"
+                continue ;;
         esac
+        left=""
+        while IFS='|' read -r kind path top; do
+            [ "$kind" = json ] && [ -n "$top" ] && [ -f "$path" ] || continue
+            if ! jt keys "$path" "$top" > "$res.keys"; then left="$path is not valid JSON"; break; fi
+            if grep -qxF "$SERVER_KEY" "$res.keys"; then left="$SERVER_KEY is still registered in $path"; break; fi
+        done <<< "$(client_files "$client" "$home")"
+        rec "$user" "$client" installed ok
+        if [ -n "$left" ]; then
+            rec "$user" "$client" verified fail
+            rec "$user" "$client" action "$left"
+        else
+            rec "$user" "$client" verified ok
+            rec "$user" "$client" action "${detail:-removed}"
+        fi
     done
 
     # The profile block serves every client: keep it while any client stays registered.
@@ -1431,9 +1479,17 @@ stage_uninstall() { # stage_uninstall USER HOME
             cfg="$p/.jb-mcp.json"
             [ -f "$cfg" ] || continue
             user_cmd "$user" "$home" 0 0 osascript -l JavaScript "$WORK/json_tool.js" delserver "$cfg" mcpServers "$SERVER_KEY"
-            show_out "$LAST_OUT"
-            rec "$user" jetbrains installed ok
-            rec "$user" jetbrains action "removed from $cfg"
+            if [ "$LAST_RC" -ne 0 ]; then
+                show_out "$LAST_OUT"
+                rec "$user" jetbrains installed fail
+                rec "$user" jetbrains action "could not remove $SERVER_KEY from $cfg (invalid JSON or not writable)"
+            elif grep -qx absent "$LAST_OUT"; then
+                rec "$user" jetbrains installed ok
+                rec "$user" jetbrains action "not registered in $cfg"
+            else
+                rec "$user" jetbrains installed ok
+                rec "$user" jetbrains action "removed from $cfg"
+            fi
         done <<< "$(lines_of_list "$ARMIS_JETBRAINS_PROJECTS")"
     fi
 
@@ -1627,6 +1683,7 @@ if [ "$DO_UNINSTALL" -eq 0 ]; then
     fi
     if [ "$ARMIS_AUTH_MODE" = client-credentials ]; then load_credentials; fi
 fi
+if [ "$DO_UNINSTALL" -eq 1 ] || [ "$ARMIS_AUTH_MODE" != client-credentials ]; then drop_ambient_credentials; fi
 
 # The clients and extras this run touches.
 CLIENT_LIST=""
@@ -1655,9 +1712,11 @@ if [ -z "$ONLY" ] && ! in_list jetbrains "$SKIP" && ! in_list jetbrains "$ENABLE
 fi
 ENABLED_EXTRAS=${ENABLED_EXTRAS# }
 
-# A full uninstall (nothing selected) removes everything; --only/--skip narrows it.
+# A full uninstall (nothing selected) removes everything; --only, --skip or an
+# ARMIS_CLIENTS subset narrows it to those clients.
 FULL_UNINSTALL=1
 if [ -n "$ONLY" ] || [ -n "$SKIP" ]; then FULL_UNINSTALL=0; fi
+for n in $ALL_CLIENTS; do in_list "$n" "$ARMIS_CLIENTS" || FULL_UNINSTALL=0; done
 
 if [ "$IS_ROOT" -eq 1 ]; then
     CLI_DIR=${ARMIS_INSTALL_DIR:-/usr/local/bin}

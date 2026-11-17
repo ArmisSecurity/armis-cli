@@ -81,7 +81,8 @@ do_install() {
             *)
                 IFS='|' read -r file top <<< "$(target_cfg "$t")"
                 mkdir -p "$(dirname "$file")"
-                osascript -l JavaScript "$DIR/merge.js" "$file" "$top" ;;
+                osascript -l JavaScript "$DIR/merge.js" "$file" "$top"
+                [ "${STUB_WIPE_SERVERS:-}" != "$t" ] || echo '{}' > "$file" ;;
         esac
         if [ "${STUB_HOOK_WARN:-}" = "$t" ]; then report "$t" ok "" warn "adapter missing"; failed=1; else report "$t" ok; fi
     done
@@ -100,13 +101,19 @@ case "${1:-}" in
     install) shift; do_install "$@"; exit $? ;;
     uninstall)
         shift
+        [ "${STUB_UNINSTALL_NOJSON:-0}" != 1 ] || { echo "panic: boom" >&2; exit 2; }
         targets=""
-        for a in "$@"; do case $a in --*) ;; *) targets="$targets $a" ;; esac; done
+        prev=""
+        for a in "$@"; do
+            case $prev:$a in --format:*) ;; *:--*) ;; *) targets="$targets $a" ;; esac
+            prev=$a
+        done
         [ -n "$targets" ] || targets="cursor vscode copilot antigravity junie"
         clients=""
         for t in $targets; do
             IFS='|' read -r file top <<< "$(target_cfg "$t")"
-            [ -z "$file" ] || [ ! -f "$file" ] || osascript -l JavaScript "$DIR/merge.js" "$file" "$top" remove
+            [ "${STUB_UNINSTALL_KEEP:-}" = "$t" ] || [ -z "$file" ] || [ ! -f "$file" ] \
+                || osascript -l JavaScript "$DIR/merge.js" "$file" "$top" remove
             report "$t" ok removed
         done
         printf '{"clients":[%s],"warnings":[]}\n' "$clients"

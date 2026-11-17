@@ -112,7 +112,7 @@ The script never puts credentials in command-line arguments, so they do not appe
 
 Each editor starts the MCP server without your shell environment, so credentials must also be in the `.env` files that armis-cli writes. armis-cli does not overwrite an existing `.env` on its own, so the script runs `armis-cli install --rotate-credentials`. That rewrites every `.env` armis-cli manages (the shared plugin, the Claude Code plugin cache and Knowledge) at mode `0600`, keeps other keys such as `HTTPS_PROXY`, and deletes the `.env.bak` copies that hold the old secret. Rotating a credential is therefore a re-run with the new value.
 
-With `ARMIS_AUTH_MODE=sso`, developers sign in through the identity provider you registered (see [SSO-SETUP.md](SSO-SETUP.md)). Under `--non-interactive` the script does not open a browser unless `ARMIS_SSO_LOGIN=now`. A user who has not signed in is reported as `sign-in pending: run 'armis-cli auth login'`. When run as root, a browser sign-in only works for the user logged in at the console.
+With `ARMIS_AUTH_MODE=sso`, developers sign in through the identity provider you registered (see [SSO-SETUP.md](SSO-SETUP.md)). Under `--non-interactive` the script does not open a browser unless `ARMIS_SSO_LOGIN=now`. A user who has not signed in is reported as `sign-in pending: run 'armis-cli auth login'`. When run as root, a browser sign-in only works for the user logged in at the console. In `sso` mode and during `--uninstall`, `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` in the environment are removed before any armis-cli command runs, so they cannot take precedence over the SSO session.
 
 ## What changes on disk
 
@@ -185,12 +185,12 @@ The script runs `armis-cli install jetbrains --project <path>` for each project 
 ./scripts/enterprise-setup.sh --uninstall --non-interactive
 ```
 
-- **Without `--only` or `--skip`**: runs `armis-cli uninstall --force`, which removes the MCP server from every client and deletes the plugin directory and its `.env`. Add `ARMIS_KEEP_CREDENTIALS=1` to keep credentials.
-- **With `--only` or `--skip`**: runs `armis-cli uninstall <clients>`. This removes only those registrations and leaves the shared plugin directory and `.env` in place. When the selection names no client (for example `--only hook`), armis-cli is not called.
+- **Without `--only`, `--skip` or an `ARMIS_CLIENTS` subset**: runs `armis-cli uninstall --force`, which removes the MCP server from every client and deletes the plugin directory and its `.env`. Add `ARMIS_KEEP_CREDENTIALS=1` to keep credentials.
+- **With `--only`, `--skip`, or `ARMIS_CLIENTS` naming fewer than all clients**: runs `armis-cli uninstall <clients>`. This removes only those registrations and leaves the shared plugin directory and `.env` in place. When the selection names no client (for example `--only hook`), armis-cli is not called.
 - The managed profile blocks are removed by a full uninstall, or when the selection covers every client. A partial uninstall keeps them, because the remaining clients need `ARMIS_TENANT_ID`, `ARMIS_REGION` and the sign-in method.
 - Uninstall skips the network and disk-space checks, so it also works offline.
 - Also removed: hooks in `ARMIS_HOOK_REPOS` (`hook init --remove`, run before the plugin directory is deleted; `ARMIS_HOOK_ENABLE` is not needed) and the `armis-appsec` entry in `.jb-mcp.json` of the listed JetBrains projects. With `ARMIS_REMOVE_CLI=1` as root, `/usr/local/bin/armis-cli` too.
-- The result is checked: a client that still has the entry is reported as failed.
+- The result is checked: a client that armis-cli reports as failed, that is missing from its report, or whose JSON config still has the `armis-appsec` entry is reported as failed.
 
 The script never restores `*.armis-bak.*` files by itself, because that could undo changes the developer made later. To roll a file back by hand, copy the backup over the original, for example `cp -p ~/.cursor/mcp.json.armis-bak.20260101-120000 ~/.cursor/mcp.json`, then restart the editor.
 

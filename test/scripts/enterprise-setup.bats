@@ -616,6 +616,83 @@ EOF
     [ "$before" = "$(tree_hash "$HOME")" ]
 }
 
+@test "a user with no detected client is not checked by mcp doctor" {
+    cat > "$T/doctor.json" <<'EOF'
+{"checks":[{"component":"install","name":"manifest","status":"fail","detail":"no install manifest found"}]}
+EOF
+    export STUB_DOCTOR_JSON="$T/doctor.json" STUB_DOCTOR_EXIT=1
+    setup_run
+    [ "$status" -eq 0 ]
+    ! grep -q '^mcp doctor -f json' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "an install that drops existing servers is restored and reported" {
+    make_clients
+    echo '{"mcpServers":{"other":{"command":"x"}}}' > "$HOME/.cursor/mcp.json"
+    export STUB_WIPE_SERVERS=cursor
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"existing server 'other' disappeared"* ]]
+    grep -q '"other"' "$HOME/.cursor/mcp.json"
+}
+
+@test "uninstall without a JSON report marks the clients as failed" {
+    make_clients
+    export STUB_UNINSTALL_NOJSON=1
+    setup_run --uninstall --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"reported no result for cursor"* ]]
+    [[ "$output" != *"removed"* ]]
+}
+
+@test "uninstall without armis-cli does not report clients as removed" {
+    make_clients
+    rm -f "$INSTALL_DIR/armis-cli"
+    setup_run --uninstall
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"armis-cli is not installed"* ]]
+    [[ "$output" != *"removed"* ]]
+}
+
+@test "a client whose config still has the server after uninstall fails verification" {
+    make_clients
+    setup_run --only cursor
+    grep -q armis-appsec "$HOME/.cursor/mcp.json"
+    export STUB_UNINSTALL_KEEP=cursor
+    setup_run --uninstall --only cursor
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"armis-appsec is still registered in $HOME/.cursor/mcp.json"* ]]
+}
+
+@test "a JetBrains config that cannot be edited on uninstall is reported as failed" {
+    make_clients
+    mkdir -p "$HOME/repo"
+    printf '{broken' > "$HOME/repo/.jb-mcp.json"
+    export ARMIS_JETBRAINS_PROJECTS="$HOME/repo"
+    setup_run --uninstall --only jetbrains
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"could not remove armis-appsec from $HOME/repo/.jb-mcp.json"* ]]
+}
+
+@test "uninstall with an ARMIS_CLIENTS subset removes only those clients" {
+    make_clients
+    export ARMIS_CLIENTS="cursor vscode"
+    setup_run --uninstall
+    [ "$status" -eq 0 ]
+    grep -q '^uninstall cursor vscode --format json$' "$STUB_LOG/armis-cli.argv"
+    ! grep -q -- '--force' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "sso mode and uninstall drop client credentials from the environment" {
+    make_clients
+    export STUB_ROOT=1 ARMIS_AUTH_MODE=sso ARMIS_TENANT_ID=acme ARMIS_SSO_LOGIN=skip
+    setup_run --only cursor
+    setup_run --uninstall --only cursor
+    [ ! -e "$STUB_LOG/env.flags" ]
+    ! grep -rq "$SECRET" "$LOG_DIR"
+    ! grep -q -- '--rotate-credentials' "$STUB_LOG/armis-cli.argv"
+}
+
 @test "the script runs under bash 3.2 without bash 4 features" {
     [ "$(/bin/bash -c 'echo ${BASH_VERSINFO[0]}')" -le 3 ] || skip "/bin/bash is not 3.x on this machine"
     make_clients
