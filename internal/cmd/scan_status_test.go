@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/history"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -391,5 +393,43 @@ func TestScanStatus_HistoryScopedByEnv(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "wrong-env-scan") {
 		t.Errorf("cross-env scan_id leaked into fallback: %v", err)
+	}
+}
+
+// TestScanStatus_StripsServerText: every server string in the human block
+// loses its control characters, such as terminal escapes.
+func TestScanStatus_StripsServerText(t *testing.T) {
+	// Plain styles, so the only escapes left would be the server's.
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
+	const esc = "\x1b[2J\x1b]0;t\x07\u009b"
+	lastError := "upload\nrejected" + esc
+	completed := "2026-07-27T10:09:00Z" + esc
+	cleanup := setupStatusEnv(t, statusServer(t, "FAILED"+esc, func(d *model.IngestStatusData) {
+		d.ArtifactType += esc
+		d.ScanType += esc
+		d.FileName += esc
+		d.StartedAt += esc
+		d.UpdatedAt += esc
+		d.ExpirationTime += esc
+		d.CompletedAt = &completed
+		d.LastError = &lastError
+	}))
+	defer cleanup()
+	origFormat := format
+	t.Cleanup(func() { format = origFormat })
+	format = statusFormatHuman
+
+	out, err := runStatus(t, []string{"507f1f77bcf86cd799439011"})
+	if err != nil {
+		t.Fatalf("scan status: %v", err)
+	}
+	if strings.ContainsAny(out, "\x1b\x07\u009b") {
+		t.Errorf("output holds a control character: %q", out)
+	}
+	for _, want := range []string{"FAILED[2J]0;T", "repo[2J]0;t", "example.tar.gz[2J]0;t", "upload rejected[2J]0;t", "2026-07-27T10:09:00Z[2J]0;t"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want %q", out, want)
+		}
 	}
 }

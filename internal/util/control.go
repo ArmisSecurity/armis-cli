@@ -6,12 +6,38 @@ import (
 )
 
 // StripControl removes C0 and C1 control characters, such as terminal
-// escapes, from text a server sent before it reaches the terminal.
+// escapes, from text a server sent before it reaches the terminal. Line
+// breaks and tabs separate words, so a run of whitespace that holds a \n, \r
+// or \t becomes one space between words and is dropped at either end. Other
+// text, spaces and non-ASCII letters included, is kept as sent.
 func StripControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
+	var b strings.Builder
+	b.Grow(len(s))
+	var run strings.Builder // spaces seen since the last word, not yet written
+	breaks := false         // the run holds a \n, \r or \t
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			breaks = true
+		case r == ' ':
+			run.WriteRune(r)
+		case unicode.IsControl(r):
+			// Dropped; it does not end a run of whitespace.
+		default:
+			if breaks {
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+			} else {
+				b.WriteString(run.String())
+			}
+			run.Reset()
+			breaks = false
+			b.WriteRune(r)
 		}
-		return r
-	}, s)
+	}
+	if !breaks {
+		b.WriteString(run.String())
+	}
+	return b.String()
 }

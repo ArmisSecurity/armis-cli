@@ -686,7 +686,7 @@ func TestClient_StartIngest(t *testing.T) {
 			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
 			Data: bytes.NewReader([]byte("test")), Size: 4,
 		})
-		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: upload[2J not foundretry") {
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: upload[2J not found retry") {
 			t.Fatalf("error = %v, want the body without control characters", err)
 		}
 		if strings.ContainsAny(err.Error(), "\x1b\x07\r\n\u009b") {

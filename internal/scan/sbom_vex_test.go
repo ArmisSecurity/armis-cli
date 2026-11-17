@@ -1452,7 +1452,7 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
 		}})
 		assertBOMFailed(t, err, []string{"aibom"}, "")
-		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31mrequest") {
+		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31m request") {
 			t.Errorf("stderr = %q, want the server text without control characters", stderr)
 		}
 		if strings.ContainsAny(stderr, "\x1b\x07\u009b\r") {
@@ -1625,6 +1625,7 @@ func TestSBOMVEXOptionsBOMOnly(t *testing.T) {
 func TestBOMOnlyResult(t *testing.T) {
 	const cbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
 	skip := "a scanner was skipped"
+	controlSkip := "a scanner\x1b[2J was\u009b skipped\x07"
 	rows := []struct {
 		name         string
 		srv          *bomServer
@@ -1643,6 +1644,8 @@ func TestBOMOnlyResult(t *testing.T) {
 			types: []string{"sbom", "all"}, wantFailures: []string{"sbom", "all"}},
 		{name: "the skip reason is kept", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, skipReason: &skip},
 			types: []string{"cbom"}, wantSkip: skip, wantFile: true},
+		{name: "the skip reason loses control characters", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, skipReason: &controlSkip},
+			types: []string{"cbom"}, wantSkip: "a scanner[2J was skipped", wantFile: true},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {

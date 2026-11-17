@@ -133,6 +133,8 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	}
 
 	if msg, skipped := results.SkipMessage(); skipped {
+		// Server text, printed here and in the scan summary.
+		msg = util.StripControl(msg)
 		cli.PrintWarningf("Scanner skipped: %s", msg)
 		fmt.Fprintln(os.Stderr)
 		return msg, bomErr

@@ -781,7 +781,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 
 			if statusUpper == "FAILED" {
 				if status.LastError != nil && *status.LastError != "" {
-					return nil, fmt.Errorf("scan failed: %s", *status.LastError)
+					return nil, fmt.Errorf("scan failed: %s", util.StripControl(*status.LastError))
 				}
 				return nil, fmt.Errorf("scan failed with no error message (scan_id: %s)", scanID)
 			}
