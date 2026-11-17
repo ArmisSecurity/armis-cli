@@ -37,7 +37,7 @@ A client that is not installed is reported as `skip (not installed)` and is not 
 - Python 3.11 or later on each developer's `PATH` (the MCP server runs on it). If it is missing, the script reports it per user and exits 1; armis-cli still installs. Install it with `brew install python@3.12` or the python.org installer, then re-run.
 - Network access to the endpoints below, directly or through your proxy:
   - `moose.armis.com` (`eu.moose.armis.com` for region `eu1`)
-  - `api.github.com`, `github.com` and `raw.githubusercontent.com`. Set `ARMIS_INSTALLER_URL` to an internal mirror of `scripts/install.sh` if you cannot reach `raw.githubusercontent.com`.
+  - `github.com` and `raw.githubusercontent.com`. Set `ARMIS_INSTALLER_URL` to an internal mirror of `scripts/install.sh` if you cannot reach `raw.githubusercontent.com`.
 - A proxy or TLS inspection is supported through `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (upper or lower case) and `SSL_CERT_FILE` (a PEM file with your root CA). The script passes them, and `ARMIS_API_URL` when set, to `curl` and to every armis-cli command.
 - armis-cli 1.27.0 or later. The script reads the `install --format json` report and uses `--rotate-credentials`, and it exits 3 when `ARMIS_CLI_VERSION` is older.
 
@@ -80,7 +80,7 @@ Every value can come from the environment, so an MDM can set them as script para
 | Variable | Default | Meaning |
 |---|---|---|
 | `ARMIS_CLI_VERSION` | none | armis-cli release to install, `1.27.0` or later. The installer is fetched from the same tag. |
-| `ARMIS_ALLOW_LATEST` | `0` | `1` allows an unpinned install with `--non-interactive`. |
+| `ARMIS_ALLOW_LATEST` | `0` | `1` allows an unpinned install with `--non-interactive`. The script resolves the latest release tag and downloads the installer from that tag, never from `main`. |
 | `ARMIS_MCP_VERSION` | latest | MCP server release to pin. A pin is saved and kept by `armis-cli mcp update` and `armis-cli mcp doctor --fix`. |
 | `ARMIS_TENANT_ID` | none | Tenant. Required for `sso`. |
 | `ARMIS_REGION` | default region | For example `eu1`. |
@@ -123,7 +123,7 @@ For each user (the home directory is that user's):
 | `ARMIS_INSTALL_DIR/armis-cli` | The binary. |
 | `~/.armis/plugins/armis-appsec-mcp/` | The MCP server, its Python environment and `.env` (mode 0600). |
 | The client files in the [table above](#supported-clients) | One `armis-appsec` entry added. Other servers are kept. |
-| `~/.zshenv`, `~/.profile` or `~/.bash_profile`, `~/.bashrc` | A block between `# >>> armis-cli (managed) >>>` and `# <<< armis-cli (managed) <<<` with `ARMIS_TENANT_ID`, `ARMIS_REGION`, `ARMIS_DEFAULT_AUTH_METHOD` (sso) and `PATH`. Written only when it has content. Everything outside the markers is untouched. |
+| `~/.zshenv`, `~/.profile` or `~/.bash_profile`, `~/.bashrc` | A block between `# >>> armis-cli (managed) >>>` and `# <<< armis-cli (managed) <<<` with `ARMIS_TENANT_ID`, `ARMIS_REGION`, `ARMIS_DEFAULT_AUTH_METHOD` (sso) and `PATH`. Written only when it has content. Everything outside the markers is untouched. A file with the begin marker but no end marker is left unchanged and reported, so a hand-edited block cannot truncate it. |
 | `<project>/.jb-mcp.json`, `<repo>/.git/hooks/pre-commit` | Only for the projects and repositories you list. |
 | `ARMIS_LOG_DIR` | `enterprise-setup-<timestamp>.log` and `.json`. |
 
@@ -173,7 +173,7 @@ Junie is automatic (`junie` above). JetBrains AI Assistant reads a `.jb-mcp.json
 ARMIS_JETBRAINS_PROJECTS="$HOME/code/api,$HOME/code/web" ./scripts/enterprise-setup.sh --only jetbrains
 ```
 
-The script runs `armis-cli install jetbrains --project <path>` for each project that belongs to the user. The developer then enables the server in the IDE's AI Assistant MCP settings. Without a project list, the script reports `run 'armis-cli install jetbrains --project <repo>' in each repo, or use Junie`.
+The script runs `armis-cli install jetbrains --project <path>` for each project that belongs to the user. The developer then enables the server in the IDE's AI Assistant MCP settings. Without a project list, the script reports `run 'armis-cli install jetbrains --project <repo>' in each repo, or use Junie`. On a run without `--only` this is a hint and does not change the exit code; with `--only jetbrains` it is a warning (exit 1).
 
 ## Commit gate
 

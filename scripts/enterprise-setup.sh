@@ -212,6 +212,16 @@ split_list() { printf '%s' "$1" | tr ',' ' ' | tr -s ' '; }
 # lines_of_list "a,b c": one entry per line, splitting on commas only (paths may contain spaces).
 lines_of_list() { printf '%s' "$1" | tr ',' '\n' | sed '/^[[:space:]]*$/d'; }
 
+# version_lt A B: is release A (prerelease suffix ignored) older than B?
+version_lt() {
+    awk -v a="${1%%-*}" -v b="$2" 'BEGIN {
+        split(a, x, "."); split(b, y, ".")
+        for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 < y[i] + 0)
+        exit 1 }'
+}
+
+valid_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; }
+
 require_ident() {
     local name=$1 value=$2
     printf '%s' "$value" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' \
@@ -679,7 +689,7 @@ stage_preflight() {
         fatal 3 "$dir is not writable by $(id -un)"
     fi
 
-    for url in "$(api_base)" "https://api.github.com" "https://github.com/$REPO/releases"; do
+    for url in "$(api_base)" "https://github.com/$REPO/releases"; do
         code=$(probe "$url")
         if [ "$code" = 000 ]; then
             fatal 3 "cannot reach $url (check the network, HTTPS_PROXY and SSL_CERT_FILE)"
@@ -703,12 +713,46 @@ cli_version_ok() { # does the installed binary report exactly the wanted version
     [ -n "$got" ] && [ "$got" = "$ARMIS_CLI_VERSION" ]
 }
 
+# resolve_latest: the version of the latest release, from the redirect of
+# github.com/REPO/releases/latest, so "latest" installs a released tag's installer.
+resolve_latest() {
+    local url tag
+    if [ -n "${SSL_CERT_FILE:-}" ]; then
+        url=$(curl -fsSL -o /dev/null -w '%{url_effective}' --connect-timeout 10 --max-time 30 \
+            --cacert "$SSL_CERT_FILE" "https://github.com/$REPO/releases/latest" 2>/dev/null) || return 1
+    else
+        url=$(curl -fsSL -o /dev/null -w '%{url_effective}' --connect-timeout 10 --max-time 30 \
+            "https://github.com/$REPO/releases/latest" 2>/dev/null) || return 1
+    fi
+    case $url in */releases/tag/*) tag=${url##*/releases/tag/} ;; *) return 1 ;; esac
+    tag=${tag#v}
+    valid_version "$tag" || return 1
+    printf '%s' "$tag"
+}
+
 stage_cli() {
-    local ref installer_url version_arg
+    local installer_url latest
     log "armis-cli"
     CLI_BIN="$CLI_DIR/armis-cli"
 
-    if [ "$ARMIS_CLI_VERSION" != latest ] && cli_version_ok; then
+    if [ "$ARMIS_CLI_VERSION" = latest ]; then
+        if ! latest=$(resolve_latest); then
+            rec "-" armis-cli installed fail
+            rec "-" armis-cli action "could not resolve the latest release from https://github.com/$REPO/releases/latest; set ARMIS_CLI_VERSION"
+            FORCED_EXIT=2
+            finish
+        fi
+        if version_lt "$latest" "$MIN_CLI_VERSION"; then
+            rec "-" armis-cli installed fail
+            rec "-" armis-cli action "the latest release $latest is older than $MIN_CLI_VERSION, which this script needs"
+            FORCED_EXIT=2
+            finish
+        fi
+        log "latest armis-cli release is $latest"
+        ARMIS_CLI_VERSION=$latest
+    fi
+
+    if cli_version_ok; then
         log "armis-cli $ARMIS_CLI_VERSION already installed at $CLI_BIN"
         rec "-" armis-cli detected yes
         rec "-" armis-cli installed ok
@@ -716,8 +760,7 @@ stage_cli() {
         return 0
     fi
 
-    if [ "$ARMIS_CLI_VERSION" = latest ]; then ref=main; version_arg=latest; else ref="v$ARMIS_CLI_VERSION"; version_arg="v$ARMIS_CLI_VERSION"; fi
-    installer_url="${ARMIS_INSTALLER_URL:-https://raw.githubusercontent.com/$REPO/$ref/scripts/install.sh}"
+    installer_url="${ARMIS_INSTALLER_URL:-https://raw.githubusercontent.com/$REPO/v$ARMIS_CLI_VERSION/scripts/install.sh}"
 
     if [ "$DRY_RUN" -eq 1 ]; then
         log "[dry-run] would download $installer_url and install armis-cli $ARMIS_CLI_VERSION to $CLI_DIR"
@@ -741,7 +784,7 @@ stage_cli() {
     # CI=1 keeps the installer from editing the invoking account's shell rc;
     # profiles are managed per developer below.
     exec_cmd env CI=1 SHELL="${SHELL:-/bin/bash}" INSTALL_DIR="$CLI_DIR" VERIFY=true \
-        PATH="$SAFE_PATH:$CLI_DIR:$PATH" bash "$WORK/install.sh" "$version_arg"
+        PATH="$SAFE_PATH:$CLI_DIR:$PATH" bash "$WORK/install.sh" "v$ARMIS_CLI_VERSION"
     show_out "$LAST_OUT"
     if grep -Eq "(Checksum|Signature) verification failed" "$LAST_OUT"; then
         rec "-" armis-cli installed fail
@@ -759,7 +802,7 @@ stage_cli() {
 
     rec "-" armis-cli detected yes
     rec "-" armis-cli installed ok
-    if [ "$ARMIS_CLI_VERSION" != latest ] && ! cli_version_ok; then
+    if ! cli_version_ok; then
         rec "-" armis-cli verified fail
         rec "-" armis-cli action "installed binary does not report version $ARMIS_CLI_VERSION"
         FORCED_EXIT=2
@@ -781,8 +824,14 @@ stage_cli() {
 MANAGED_BLOCK_SH='f=$1 b=$2 e=$3 c=$4
 tmp=$(mktemp "${TMPDIR:-/tmp}/armis-profile.XXXXXX") || exit 1
 if [ -f "$f" ]; then
-    awk -v b="$b" -v e="$e" "\$0 == b { skip = 1; next } \$0 == e { skip = 0; next } !skip" "$f" > "$tmp" \
-        || { rm -f "$tmp"; exit 1; }
+    # Exit 3, leaving FILE alone, when a begin marker has no end marker after it.
+    awk -v b="$b" -v e="$e" "{ l = \$0; sub(/[[:space:]]+\$/, \"\", l) }
+        !skip && l == b { skip = 1; next }
+        skip && l == e { skip = 0; next }
+        !skip { print }
+        END { exit skip ? 3 : 0 }" "$f" > "$tmp"
+    rc=$?
+    [ "$rc" -eq 0 ] || { rm -f "$tmp"; exit "$rc"; }
 fi
 if [ -n "$c" ]; then printf "%s\n%s\n%s\n" "$b" "$c" "$e" >> "$tmp"; fi
 cat "$tmp" > "$f"
@@ -799,8 +848,18 @@ set_managed_block() { # set_managed_block FILE USER HOME CONTENT
         return 0
     fi
     backup_file "$user" "$home" "$file" "$list"
-    as_user "$user" "$home" 0 0 /bin/sh -c "$MANAGED_BLOCK_SH" sh "$file" "$MARK_BEGIN" "$MARK_END" "$content" \
-        || warn "[$user] could not update $file"
+    as_user "$user" "$home" 0 0 /bin/sh -c "$MANAGED_BLOCK_SH" sh "$file" "$MARK_BEGIN" "$MARK_END" "$content"
+    case $? in
+        0) ;;
+        3)
+            warn "[$user] $file has '$MARK_BEGIN' without '$MARK_END'; left it unchanged"
+            rec "$user" profile installed warn
+            rec "$user" profile action "$file has an unterminated armis-cli managed block; fix the markers by hand, then re-run" ;;
+        *)
+            warn "[$user] could not update $file"
+            rec "$user" profile installed warn
+            rec "$user" profile action "could not update $file" ;;
+    esac
     drop_unchanged "$user" "$home" "$list"
 }
 
@@ -1118,7 +1177,11 @@ stage_jetbrains() { # stage_jetbrains USER HOME
     if [ -z "$ARMIS_JETBRAINS_PROJECTS" ]; then
         if ls -d "$home/Library/Application Support/JetBrains"/* >/dev/null 2>&1; then
             rec "$user" jetbrains detected yes
-            rec "$user" jetbrains installed warn
+            if [ "$JETBRAINS_HINT_ONLY" -eq 1 ]; then
+                rec "$user" jetbrains installed skip
+            else
+                rec "$user" jetbrains installed warn
+            fi
             rec "$user" jetbrains action "JetBrains AI Assistant is per project: run 'armis-cli install jetbrains --project <repo>' in each repo, set ARMIS_JETBRAINS_PROJECTS, or use Junie"
         else
             rec "$user" jetbrains detected no
@@ -1668,13 +1731,9 @@ if [ "$DO_UNINSTALL" -eq 0 ]; then
     fi
     if [ "$ARMIS_CLI_VERSION" != latest ]; then
         ARMIS_CLI_VERSION=${ARMIS_CLI_VERSION#v}
-        printf '%s' "$ARMIS_CLI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$' \
-            || die_usage "ARMIS_CLI_VERSION must look like 1.27.0"
+        valid_version "$ARMIS_CLI_VERSION" || die_usage "ARMIS_CLI_VERSION must look like 1.27.0"
         # This script reads `install --format json`, added in this release.
-        if awk -v a="${ARMIS_CLI_VERSION%%-*}" -v b="$MIN_CLI_VERSION" 'BEGIN {
-            split(a, x, "."); split(b, y, ".")
-            for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 < y[i] + 0)
-            exit 1 }'; then
+        if version_lt "$ARMIS_CLI_VERSION" "$MIN_CLI_VERSION"; then
             die_usage "ARMIS_CLI_VERSION $ARMIS_CLI_VERSION is too old; this script needs $MIN_CLI_VERSION or later"
         fi
     fi
@@ -1706,9 +1765,12 @@ for n in jetbrains hook; do
         ENABLED_EXTRAS="$ENABLED_EXTRAS $n"
     fi
 done
-# A bare run (no --only) still reports on JetBrains, as a hint.
+# A bare run (no --only) still reports on JetBrains, as a hint that does not
+# count against the exit code.
+JETBRAINS_HINT_ONLY=0
 if [ -z "$ONLY" ] && ! in_list jetbrains "$SKIP" && ! in_list jetbrains "$ENABLED_EXTRAS"; then
     ENABLED_EXTRAS="$ENABLED_EXTRAS jetbrains"
+    JETBRAINS_HINT_ONLY=1
 fi
 ENABLED_EXTRAS=${ENABLED_EXTRAS# }
 

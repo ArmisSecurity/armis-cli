@@ -693,6 +693,64 @@ EOF
     ! grep -q -- '--rotate-credentials' "$STUB_LOG/armis-cli.argv"
 }
 
+@test "an unpinned install uses the installer from the latest release tag" {
+    unset ARMIS_CLI_VERSION
+    export ARMIS_ALLOW_LATEST=1 STUB_LATEST=1.28.0 STUB_CLI_VERSION=1.28.0
+    rm -f "$INSTALL_DIR/armis-cli"
+    setup_run --only cursor --report "$T/rep"
+    [ "$status" -eq 0 ]
+    grep -q 'armis-cli/v1.28.0/scripts/install.sh' "$STUB_LOG/curl.urls"
+    ! grep -q '/main/' "$STUB_LOG/curl.urls"
+    grep -q '"cli_version": "1.28.0"' "$T/rep.json"
+}
+
+@test "an unpinned install fails when the latest release cannot be resolved" {
+    unset ARMIS_CLI_VERSION
+    export ARMIS_ALLOW_LATEST=1 STUB_LATEST=garbage
+    rm -f "$INSTALL_DIR/armis-cli"
+    setup_run --only cursor
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"could not resolve the latest release"* ]]
+    ! grep -q 'install.sh' "$STUB_LOG/curl.urls"
+}
+
+@test "preflight does not need api.github.com" {
+    make_clients
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    ! grep -q 'api.github.com' "$STUB_LOG/curl.urls"
+}
+
+@test "a JetBrains data directory on a bare run is a hint, not a warning" {
+    make_clients
+    mkdir -p "$HOME/Library/Application Support/JetBrains/IntelliJIdea2025.1"
+    setup_run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"install jetbrains --project"* ]]
+}
+
+@test "a profile with an unterminated managed block is left unchanged" {
+    make_clients
+    printf 'export A=1\n# >>> armis-cli (managed) >>>\nexport OLD=1\nexport KEEP=me\n' > "$HOME/.zshenv"
+    before=$(shasum "$HOME/.zshenv")
+    export ARMIS_TENANT_ID=acme
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unterminated armis-cli managed block"* ]]
+    [ "$before" = "$(shasum "$HOME/.zshenv")" ]
+}
+
+@test "an end marker with trailing whitespace still closes the managed block" {
+    make_clients
+    printf 'export A=1\n# >>> armis-cli (managed) >>>\nexport OLD=1\n# <<< armis-cli (managed) <<<  \nexport KEEP=me\n' > "$HOME/.zshenv"
+    export ARMIS_TENANT_ID=acme
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    grep -q 'export KEEP=me' "$HOME/.zshenv"
+    ! grep -q 'export OLD=1' "$HOME/.zshenv"
+    [ "$(grep -c 'armis-cli (managed) >>>' "$HOME/.zshenv")" -eq 1 ]
+}
+
 @test "the script runs under bash 3.2 without bash 4 features" {
     [ "$(/bin/bash -c 'echo ${BASH_VERSINFO[0]}')" -le 3 ] || skip "/bin/bash is not 3.x on this machine"
     make_clients
