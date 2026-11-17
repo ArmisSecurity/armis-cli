@@ -1699,3 +1699,80 @@ func TestBOMOnlyResult(t *testing.T) {
 		}
 	})
 }
+
+// TestDownloadBOMsWarnsOnFailedTools: a BOM written while BOM tools failed on
+// the server gets one warning after the BOM lines, naming the tools (control
+// characters stripped, deduplicated, sorted) and the written types; the
+// download still succeeds.
+func TestDownloadBOMsWarnsOnFailedTools(t *testing.T) {
+	const cbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
+	const emptyAIBOM = `{"bomFormat":"CycloneDX","components":[]}`
+	const prefix = "BOM tools failed on the server: "
+	status := func(types map[string]string, tools ...string) *api.BOMSummary {
+		s := &api.BOMSummary{Types: map[string]api.BOMTypeStatus{}, FailedTools: tools}
+		for t, st := range types {
+			s.Types[t] = api.BOMTypeStatus{Status: st}
+		}
+		return s
+	}
+	rows := []struct {
+		name     string
+		docs     map[string]string
+		summary  *api.BOMSummary
+		types    []string
+		want     string // the whole warning line; "" for none
+		wantAlso string
+	}{
+		{name: "generated with a failed tool", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"cbom": api.BOMStatusGenerated}, "opengrep_bom"), types: []string{"cbom"},
+			want: prefix + "opengrep_bom; CBOM may be incomplete"},
+		{name: "empty with failed tools, deduplicated and sorted", docs: map[string]string{"aibom_results": emptyAIBOM},
+			summary: status(map[string]string{"aibom": api.BOMStatusEmpty}, "zz_tool", "a_tool\x1b[2J", "zz_tool", " "), types: []string{"aibom"},
+			want: prefix + "a_tool[2J, zz_tool; AI-BOM may be incomplete", wantAlso: "No AI components found"},
+		{name: "a failed type only: its own warning, no extra line",
+			summary: status(map[string]string{"cbom": api.BOMStatusFailed}, "opengrep_bom"), types: []string{"cbom"},
+			wantAlso: "CBOM failed on the server (tools that failed in this scan: opengrep_bom)"},
+		{name: "a failed type beside a written one names the written one", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"aibom": api.BOMStatusFailed, "cbom": api.BOMStatusGenerated}, "opengrep_bom"),
+			types:   []string{"aibom", "cbom"}, want: prefix + "opengrep_bom; CBOM may be incomplete"},
+		{name: "no failed tools", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"cbom": api.BOMStatusGenerated}), types: []string{"cbom"}},
+		{name: "no summary", docs: map[string]string{"cbom_results": cbomDoc}, types: []string{"cbom"}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			srv := &bomServer{docs: row.docs, summary: row.summary}
+			if srv.docs == nil {
+				srv.docs = map[string]string{}
+			}
+			client := srv.start(t)
+			_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+				Types: row.types, Format: BOMFormatCycloneDX17, Output: t.TempDir(), Target: ".",
+			}})
+			if err != nil {
+				t.Fatalf("Download = %v, want no failure", err)
+			}
+			wantCount := 0
+			if row.want != "" {
+				wantCount = 1
+			}
+			if n := strings.Count(stderr, prefix); n != wantCount {
+				t.Errorf("stderr has %d failed-tools warnings, want %d:\n%s", n, wantCount, stderr)
+			}
+			if row.want != "" {
+				if !strings.Contains(stderr, "Warning: "+row.want+"\n") {
+					t.Errorf("stderr = %q, want the line %q", stderr, row.want)
+				}
+				if saved := strings.LastIndex(stderr, "saved to:"); saved > strings.Index(stderr, prefix) {
+					t.Errorf("the warning comes before a BOM line:\n%s", stderr)
+				}
+			}
+			if row.wantAlso != "" && !strings.Contains(stderr, row.wantAlso) {
+				t.Errorf("stderr = %q, want %q", stderr, row.wantAlso)
+			}
+			if strings.ContainsAny(stderr, "\x1b") {
+				t.Errorf("stderr holds a control character: %q", stderr)
+			}
+		})
+	}
+}

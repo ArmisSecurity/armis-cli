@@ -382,6 +382,7 @@ armis-cli scan image nginx:latest --bom all --bom-format cyclonedx-1.6 --bom-out
   `all` (combined).
 - Files are named `<artifact>-bom-<type>.json`, or `.spdx.json` for an SPDX format.
 - `scan repo` and `scan image` take these flags; `scan sbom` and `scan status` ignore them.
+- A BOM written while a BOM tool failed on the server prints a warning that it may be incomplete; the exit code does not change.
 - A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on`
   triggers first. A type the server did not build only warns.
 

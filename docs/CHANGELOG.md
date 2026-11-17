@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo`/`scan image`/`bom repo`/`bom image`: a BOM written while BOM tools failed on the server (`bom_summary.failed_tools`) now prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines, instead of passing silently. The exit code does not change.
 - `bom repo`/`bom image`: new commands build BOMs without a security scan and download them, which takes less time than `scan repo|image --bom`. The upload, file names and `.armis` default are those of `--bom`; there is no findings report and no `--fail-on`. BOM generation must be enabled for the tenant. The ingest request carries `scan_type: "bom"`.
 - `bom repo`/`bom image`: new `--type` flag takes `sbom`, `aibom`, `cbom` or `all`, comma-separated or repeated; the default is `all`, the combined BOM. A refused pair with the default says `--type all (the default)`.
 - `bom repo`/`bom image`: new `--format` and `--output` flags take the values of `--bom-format` and `--bom-output`. A missing `--output` path that ends in `.json` is refused before upload, with a hint to use `--output -` (for one type) or a directory.

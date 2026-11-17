@@ -598,6 +598,7 @@ Notes:
   warning and does not change the exit code. The warning says whether the type
   is not supported for this scan, failed on the server (with the tools that
   failed anywhere in the scan, if any), or was too large to store.
+- A BOM written while BOM tools failed on the server, such as `generated` or `empty` with `failed_tools` set, prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines; the exit code does not change. `bom repo` and `bom image` do the same.
 - A BOM that was built but cannot be downloaded prints a warning and the scan
   exits 2, unless `--fail-on` triggers first (see [Exit Codes](#exit-codes)).
 - With `--changed` or `--include-files`, BOMs cover only the uploaded files.

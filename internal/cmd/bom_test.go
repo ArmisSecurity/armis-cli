@@ -871,3 +871,43 @@ func TestTypedBOMDirRefusesLinkedFile(t *testing.T) {
 		})
 	}
 }
+
+// TestFailedToolsWarning: scan repo --bom and bom repo share the warning for
+// a BOM written while a BOM tool failed, and both still exit 0.
+func TestFailedToolsWarning(t *testing.T) {
+	const doc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
+	const want = "Warning: BOM tools failed on the server: opengrep_bom; CBOM may be incomplete"
+	rows := []struct {
+		name string
+		run  func(t *testing.T, repoDir, dir string) (string, error)
+	}{
+		{"scan repo --bom", func(t *testing.T, repoDir, dir string) (string, error) {
+			bomTypes, bomOutput = []string{scan.BOMTypeCBOM}, dir
+			_, stderr, err := runRepoScanIn(t, repoDir)
+			return stderr, err
+		}},
+		{"bom repo", func(t *testing.T, repoDir, dir string) (string, error) {
+			bomOnlyTypes, bomOnlyOutput = []string{scan.BOMTypeCBOM}, dir
+			_, stderr, err := runBOM(t, bomRepoCmd, repoDir)
+			return stderr, err
+		}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			setupBOMRunEnv(t, testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{
+				BOMContent: map[string]string{"cbom_results": doc},
+				BOMSummary: map[string]interface{}{
+					"types":        map[string]interface{}{"cbom": map[string]interface{}{"status": "generated"}},
+					"failed_tools": []string{"opengrep_bom"},
+				},
+			}))
+			stderr, err := row.run(t, createTestRepo(t), t.TempDir())
+			if code := mainExitCode(err); code != 0 {
+				t.Errorf("exit code = %d (%v), want 0", code, err)
+			}
+			if strings.Count(stderr, want) != 1 {
+				t.Errorf("stderr = %q, want %q once", stderr, want)
+			}
+		})
+	}
+}

@@ -290,7 +290,41 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}
+	if len(written) > 0 {
+		warnFailedTools(results.BOMSummary, written)
+	}
 	return results, failed, written
+}
+
+// warnFailedTools warns, after the BOM lines, that BOMs were written while
+// BOM tools failed on the server: a generated or empty BOM may then lack what
+// the failed tools would have found. failed_tools covers the whole scan, so
+// the warning names the written types. A type whose status is failed and
+// that wrote nothing has said so in its own warning. The exit code does not
+// change.
+func warnFailedTools(summary *api.BOMSummary, written []string) {
+	if summary == nil {
+		return
+	}
+	seen := make(map[string]bool)
+	var tools []string
+	for _, tool := range summary.FailedTools {
+		tool = strings.TrimSpace(util.StripControl(tool))
+		if tool != "" && !seen[tool] {
+			seen[tool] = true
+			tools = append(tools, tool)
+		}
+	}
+	if len(tools) == 0 {
+		return
+	}
+	slices.Sort(tools)
+	labels := make([]string, 0, len(written))
+	for _, t := range written {
+		labels = append(labels, BOMLabel(t))
+	}
+	cli.PrintWarningf("BOM tools failed on the server: %s; %s may be incomplete",
+		strings.Join(tools, ", "), strings.Join(labels, ", "))
 }
 
 // refetchBOMURL fetches the results again for a fresh presigned link to key.
