@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan repo`/`bom repo`: the `repo_name` git hint drops the query and fragment of an `http` or `https` origin URL, so a remote such as `https://github.com/org/repo.git?access_token=...` gives `org/repo`, not `org/repo.git?access_token=...`. Other remotes keep `?` and `#`, which git reads as part of their path.
+
 ### Security
 
 - `scan repo`/`scan image`/`scan status`/`bom`: control characters, such as terminal escapes, are stripped from server text the CLI prints: an unknown scan status in the progress line, a failed scan's error, a scanner-skip reason, and every field of `scan status`. Line breaks and tabs in server text now become one space, so a multi-line error no longer runs its words together.
