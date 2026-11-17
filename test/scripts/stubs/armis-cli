@@ -4,6 +4,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="${STUB_LOG:?STUB_LOG is required}"
 printf '%s\n' "$*" >> "$LOG/armis-cli.argv"
 [ -z "${ARMIS_CLIENT_SECRET:-}" ] || echo "secret-in-env: $1" >> "$LOG/env.flags"
+touch "$LOG/env.probe"
+[ -z "${ARMIS_DEFAULT_AUTH_METHOD:-}" ] || echo "${2:-$1} ARMIS_DEFAULT_AUTH_METHOD=$ARMIS_DEFAULT_AUTH_METHOD" >> "$LOG/env.probe"
 
 # target -> "file|topkey"
 target_cfg() {
@@ -117,6 +119,8 @@ case "${1:-}" in
             [ "${STUB_NETWORK_FAIL:-0}" != 1 ] || { echo "TLS handshake failed" >&2; exit 1; }
             exit 0
         fi
+        prev=""
+        for a in "$@"; do [ "$prev" != --bundle-path ] || echo zip > "$a"; prev=$a; done
         if [ -n "${STUB_DOCTOR_JSON:-}" ]; then cat "$STUB_DOCTOR_JSON"; else
             echo '{"checks":[{"component":"scanner","name":"python venv","status":"ok","detail":"ok"}]}'
         fi
@@ -125,7 +129,9 @@ case "${1:-}" in
         [ "${STUB_SCAN_FAIL:-0}" != 1 ] || { echo "scan failed" >&2; exit 1; }
         echo '{"findings":[]}'; exit 0 ;;
     hook)
-        if [ "${2:-}" = init ]; then
+        if [ "${2:-}" = init ] && [ "${3:-}" = --remove ]; then
+            rm -f .git/hooks/pre-commit
+        elif [ "${2:-}" = init ]; then
             mkdir -p .git/hooks && printf '#!/bin/sh\nexit 0\n' > .git/hooks/pre-commit && chmod 755 .git/hooks/pre-commit
         fi
         exit 0 ;;

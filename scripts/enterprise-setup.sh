@@ -525,9 +525,14 @@ is_running() { # is_running CLIENT USER
 # as root: the paths are theirs to symlink anywhere.
 
 # backup_file USER HOME FILE LISTFILE: copy FILE to FILE.armis-bak.<ts> once per
-# run and note it in LISTFILE as "orig<TAB>bak".
+# run and note it in LISTFILE as "orig<TAB>bak". A FILE that does not exist yet
+# is noted as "orig<TAB>-" so a failed install's leftover can be deleted.
 backup_file() {
     local user=$1 home=$2 f=$3 list=$4 bak
+    if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+        printf '%s\t-\n' "$f" >> "$list"
+        return 0
+    fi
     [ -f "$f" ] || return 0
     bak="$f.armis-bak.$RUN_TS"
     if [ ! -e "$bak" ] && [ ! -L "$bak" ]; then
@@ -830,9 +835,6 @@ stage_auth() { # stage_auth USER HOME
         return 0
     fi
 
-    local authmethod_env=""
-    if [ "$ARMIS_AUTH_MODE" = sso ]; then authmethod_env=SSO; fi
-
     if [ "$ARMIS_AUTH_MODE" = client-credentials ] && [ -n "$CRED_ID" ]; then
         user_cmd "$user" "$home" 1 0 "$CLI_BIN" auth whoami
         show_out "$LAST_OUT"
@@ -847,7 +849,10 @@ stage_auth() { # stage_auth USER HOME
 
     # sso, or client-credentials with no credentials supplied
     if session_present "$home"; then
-        user_cmd "$user" "$home" 0 0 env ARMIS_DEFAULT_AUTH_METHOD="$authmethod_env" "$CLI_BIN" auth whoami
+        # Unset so a session that doesn't load fails here instead of starting a
+        # device-flow sign-in that nobody can approve; armis-cli reads the stored
+        # session either way.
+        user_cmd "$user" "$home" 0 0 env -u ARMIS_DEFAULT_AUTH_METHOD "$CLI_BIN" auth whoami
         show_out "$LAST_OUT"
         if [ "$LAST_RC" -eq 0 ]; then
             rec "$user" _user auth ok
@@ -948,11 +953,17 @@ stage_mcp() { # stage_mcp USER HOME
             rec "$user" "$client" action "config at $invalid is not valid JSON; fix or remove it, then re-run"
             continue
         fi
+        local nobak=""
         while IFS='|' read -r kind path top; do
             [ -n "$kind" ] || continue
             if [ -n "$top" ] && [ -f "$path" ]; then jt keys "$path" "$top" > "$mdir/$client.before" || true; fi
-            backup_file "$user" "$home" "$path" "$list"
+            backup_file "$user" "$home" "$path" "$list" || { nobak=$path; break; }
         done <<< "$(client_files "$client" "$home")"
+        if [ -n "$nobak" ]; then
+            rec "$user" "$client" installed fail
+            rec "$user" "$client" action "could not back up $nobak; left it unchanged"
+            continue
+        fi
         targets="$targets $client"
     done
     targets=${targets# }
@@ -1054,7 +1065,11 @@ restore_files() { # restore_files USER HOME CLIENT LIST
 restore_one() { # restore_one USER HOME FILE LIST
     local bak
     bak=$(awk -F'\t' -v o="$3" '$1 == o { b = $2 } END { print b }' "$4")
-    if [ -n "$bak" ] && [ -f "$bak" ]; then
+    if [ "$bak" = - ]; then
+        if [ -f "$3" ] || [ -L "$3" ]; then
+            as_user "$1" "$2" 0 0 /bin/rm -f "$3" && log "removed $3 (it did not exist before)"
+        fi
+    elif [ -n "$bak" ] && [ -f "$bak" ]; then
         as_user "$1" "$2" 0 0 /bin/cp -p "$bak" "$3" && log "restored $3 from $bak"
     fi
 }
@@ -1064,7 +1079,7 @@ config_changed() { # config_changed HOME CLIENT LIST
     while IFS='|' read -r kind path top; do
         [ -n "$kind" ] || continue
         bak=$(awk -F'\t' -v o="$path" '$1 == o { b = $2 } END { print b }' "$3")
-        if [ -z "$bak" ]; then
+        if [ -z "$bak" ] || [ "$bak" = - ]; then
             [ -f "$path" ] && return 0
             continue
         fi
@@ -1106,7 +1121,11 @@ stage_jetbrains() { # stage_jetbrains USER HOME
             ok=0
             continue
         fi
-        backup_file "$user" "$home" "$cfg" "$list"
+        if ! backup_file "$user" "$home" "$cfg" "$list"; then
+            rec "$user" jetbrains action "could not back up $cfg; left it unchanged"
+            ok=0
+            continue
+        fi
         if [ "$DRY_RUN" -eq 1 ]; then
             log "[dry-run] would run: armis-cli install jetbrains --project $p"
             continue
@@ -1162,7 +1181,11 @@ stage_hook() { # stage_hook USER HOME
         hooks=$(tail -n 1 "$LAST_OUT")
         case $hooks in /*) ;; *) hooks="$repo/$hooks" ;; esac
         hook="$hooks/pre-commit"
-        backup_file "$user" "$home" "$hook" "$list"
+        if ! backup_file "$user" "$home" "$hook" "$list"; then
+            rec "$user" hook action "could not back up $hook; left it unchanged"
+            ok=0
+            continue
+        fi
         if [ "$DRY_RUN" -eq 1 ]; then
             log "[dry-run] would run: armis-cli hook init $flags in $repo"
             continue
@@ -1192,25 +1215,49 @@ stage_hook() { # stage_hook USER HOME
 # ---- verify -----------------------------------------------------------------
 
 stage_verify() { # stage_verify USER HOME
-    local user=$1 home=$2 bundle="" report comp editor name status detail fix client c
+    local user=$1 home=$2 bundle="" bdir="" deep="" report comp editor name status detail fix client c
     log "[$user] verify"
     if [ "$DRY_RUN" -eq 1 ]; then return 0; fi
+
+    local scan=0
+    if [ "$ARMIS_SAMPLE_SCAN" = 1 ]; then
+        if sign_in_pending "$user"; then
+            rec "$user" sample-scan detected yes
+            rec "$user" sample-scan verified skip
+            rec "$user" sample-scan action "skipped until $user signs in"
+        else
+            scan=1
+        fi
+    fi
+
     if in_list "$user" "$NO_PYTHON_USERS"; then
         log "[$user] MCP server not installed (no Python 3.11+); skipping mcp doctor"
-        if [ "$ARMIS_SAMPLE_SCAN" = 1 ]; then sample_scan "$user" "$home"; fi
+        if [ "$scan" -eq 1 ]; then sample_scan "$user" "$home"; fi
         return 0
     fi
 
+    # --deep is the sample scan, through the MCP server.
+    [ "$scan" -eq 0 ] || deep="--deep"
     if [ "$WANT_BUNDLE" -eq 1 ]; then
-        bundle="--bundle-path $LOG_DIR/doctor-$user-$RUN_TS.zip"
+        # doctor runs as the user, who can't write to a root-owned LOG_DIR.
+        bdir=$(mktemp -d "$WORK/bundle.XXXXXX")
+        [ "$IS_ROOT" -eq 0 ] || chown "$user" "$bdir"
+        bundle="--bundle-path $bdir/doctor-$user-$RUN_TS.zip"
     fi
     report="$WORK/doctor.$user.json"
     SEQ=$((SEQ + 1))
     LAST_OUT="$WORK/out.$SEQ"
-    # shellcheck disable=SC2086 # bundle is two words on purpose
-    with_timeout 300 as_user "$user" "$home" 1 0 "$CLI_BIN" mcp doctor -f json --deep $bundle > "$report" 2> "$LAST_OUT"
+    # shellcheck disable=SC2086 # deep and bundle are word lists
+    with_timeout 300 as_user "$user" "$home" 1 0 "$CLI_BIN" mcp doctor -f json $deep $bundle > "$report" 2> "$LAST_OUT"
     LAST_RC=$?
     show_out "$LAST_OUT"
+    if [ -n "$bdir" ]; then
+        if [ -f "$bdir/doctor-$user-$RUN_TS.zip" ] && cp "$bdir/doctor-$user-$RUN_TS.zip" "$LOG_DIR/"; then
+            log "[$user] support bundle: $LOG_DIR/doctor-$user-$RUN_TS.zip"
+        else
+            rec "$user" mcp-server action "no support bundle was written; run 'armis-cli mcp doctor --bundle' as $user"
+        fi
+    fi
 
     if ! jt doctor "$report" > "$WORK/doctor.$user.tsv" 2>/dev/null; then
         rec "$user" mcp-server verified fail
@@ -1241,8 +1288,10 @@ stage_verify() { # stage_verify USER HOME
     if ! awk -F'\t' -v u="$user" '$1 == u && $2 == "mcp-server" && $3 == "verified" { f = 1 } END { exit f ? 0 : 1 }' "$RESULTS"; then
         rec "$user" mcp-server verified ok
     fi
+}
 
-    if [ "$ARMIS_SAMPLE_SCAN" = 1 ]; then sample_scan "$user" "$home"; fi
+sign_in_pending() { # sign_in_pending USER
+    awk -F'\t' -v u="$1" '$1 == u && $2 == "_user" && $3 == "auth" { a = $4 } END { exit a == "warn" ? 0 : 1 }' "$RESULTS"
 }
 
 # doctor_action NAME DETAIL REMEDIATION: one-line action text, capped in length.
@@ -1312,6 +1361,17 @@ stage_uninstall() { # stage_uninstall USER HOME
     targets=${targets# }
     [ "$ARMIS_KEEP_CREDENTIALS" = 1 ] && flags="$flags --keep-credentials"
 
+    # Before `uninstall --force`, which deletes the plugin directory these hooks exec.
+    if in_list hook "$ENABLED_EXTRAS" && [ -x "$CLI_BIN" ] && [ "$DRY_RUN" -eq 0 ]; then
+        while IFS= read -r repo; do
+            [ -n "$repo" ] || continue
+            [ "$(stat -f %Su "$repo" 2>/dev/null)" = "$user" ] || continue
+            # shellcheck disable=SC2016
+            user_cmd "$user" "$home" 0 0 /bin/sh -c 'cd "$1" && shift && exec "$@"' sh "$repo" "$CLI_BIN" hook init --remove
+            show_out "$LAST_OUT"
+        done <<< "$(lines_of_list "$ARMIS_HOOK_REPOS")"
+    fi
+
     local args=$targets res="$WORK/uninstall.$user" status detail
     [ "$FULL_UNINSTALL" -eq 0 ] || args=$flags
     : > "$res.tsv"
@@ -1364,15 +1424,6 @@ stage_uninstall() { # stage_uninstall USER HOME
     for client in $ALL_CLIENTS; do in_list "$client" "$targets" || keep_profile=1; done
     if [ "$FULL_UNINSTALL" -eq 1 ] || [ "$keep_profile" -eq 0 ]; then remove_profiles "$user" "$home"; fi
 
-    if in_list hook "$ENABLED_EXTRAS" && [ -x "$CLI_BIN" ] && [ "$DRY_RUN" -eq 0 ]; then
-        while IFS= read -r repo; do
-            [ -n "$repo" ] || continue
-            [ "$(stat -f %Su "$repo" 2>/dev/null)" = "$user" ] || continue
-            # shellcheck disable=SC2016
-            user_cmd "$user" "$home" 0 0 /bin/sh -c 'cd "$1" && shift && exec "$@"' sh "$repo" "$CLI_BIN" hook init --remove
-            show_out "$LAST_OUT"
-        done <<< "$(lines_of_list "$ARMIS_HOOK_REPOS")"
-    fi
     if in_list jetbrains "$ENABLED_EXTRAS" && [ "$DRY_RUN" -eq 0 ]; then
         while IFS= read -r p; do
             [ -n "$p" ] || continue
@@ -1594,7 +1645,7 @@ for n in jetbrains hook; do
         in_list "$n" "$ONLY" && ENABLED_EXTRAS="$ENABLED_EXTRAS $n"
     elif [ "$n" = jetbrains ] && [ -n "$ARMIS_JETBRAINS_PROJECTS" ]; then
         ENABLED_EXTRAS="$ENABLED_EXTRAS $n"
-    elif [ "$n" = hook ] && [ "$ARMIS_HOOK_ENABLE" = 1 ]; then
+    elif [ "$n" = hook ] && { [ "$ARMIS_HOOK_ENABLE" = 1 ] || { [ "$DO_UNINSTALL" -eq 1 ] && [ -n "$ARMIS_HOOK_REPOS" ]; }; }; then
         ENABLED_EXTRAS="$ENABLED_EXTRAS $n"
     fi
 done
@@ -1618,6 +1669,9 @@ fi
 CLI_BIN="$CLI_DIR/armis-cli"
 
 [ -n "${TMPDIR:-}" ] || TMPDIR=/tmp
+# Steps run as other users read WORK; under `sudo -E` TMPDIR is the admin's
+# private 0700 directory.
+[ "$IS_ROOT" -eq 0 ] || TMPDIR=/tmp
 WORK=$(mktemp -d "${TMPDIR%/}/armis-setup.XXXXXX") || die_usage "cannot create a temporary directory"
 chmod 755 "$WORK"
 trap cleanup EXIT

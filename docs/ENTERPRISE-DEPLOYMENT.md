@@ -10,7 +10,7 @@ It does these things in order, and each stage checks its own result:
 4. **mcp**: registers the MCP server in each detected client.
 5. **jetbrains**: JetBrains AI Assistant projects you list.
 6. **hook**: the commit gate in repositories you list (off by default).
-7. **verify**: `armis-cli mcp doctor --deep` and a sample scan.
+7. **verify**: `armis-cli mcp doctor`. With `ARMIS_SAMPLE_SCAN=1` it runs with `--deep`, which scans a sample through the MCP server. Users without Python 3.11+ get a CLI sample scan instead. The scan is skipped while a user's sign-in is pending.
 8. **report**: a table on stdout, plus a JSON file.
 
 A component that fails does not stop the others. Only a preflight failure or a failed armis-cli install stops the run.
@@ -93,7 +93,7 @@ Every value can come from the environment, so an MDM can set them as script para
 | `ARMIS_HOOK_ENABLE`, `ARMIS_HOOK_REPOS` | `0`, none | Install the commit gate in these repositories (comma-separated). |
 | `ARMIS_HOOK_FAIL_OPEN` | `0` | `1` makes the gate warn instead of block. |
 | `ARMIS_WITH_KNOWLEDGE` | `0` | Also install Armis Knowledge. It cannot be pinned. |
-| `ARMIS_SAMPLE_SCAN` | `1` | Scan a two-line sample to prove the whole path. This uses tenant scan quota. `0` skips it. |
+| `ARMIS_SAMPLE_SCAN` | `1` | Scan a two-line sample once per user to prove the whole path. This uses tenant scan quota. `0` skips it, including `mcp doctor --deep`. |
 | `ARMIS_TARGET_USERS` | console user | Comma-separated accounts to configure. |
 | `ARMIS_INSTALL_DIR` | `/usr/local/bin` as root, `~/.local/bin` otherwise | Where armis-cli goes. |
 | `ARMIS_INSTALLER_URL` | GitHub raw | Internal mirror of `scripts/install.sh`. |
@@ -189,7 +189,7 @@ The script runs `armis-cli install jetbrains --project <path>` for each project 
 - **With `--only` or `--skip`**: runs `armis-cli uninstall <clients>`. This removes only those registrations and leaves the shared plugin directory and `.env` in place. When the selection names no client (for example `--only hook`), armis-cli is not called.
 - The managed profile blocks are removed by a full uninstall, or when the selection covers every client. A partial uninstall keeps them, because the remaining clients need `ARMIS_TENANT_ID`, `ARMIS_REGION` and the sign-in method.
 - Uninstall skips the network and disk-space checks, so it also works offline.
-- Also removed: hooks the script installed in `ARMIS_HOOK_REPOS` (`hook init --remove`) and the `armis-appsec` entry in `.jb-mcp.json` of the listed JetBrains projects. With `ARMIS_REMOVE_CLI=1` as root, `/usr/local/bin/armis-cli` too.
+- Also removed: hooks in `ARMIS_HOOK_REPOS` (`hook init --remove`, run before the plugin directory is deleted; `ARMIS_HOOK_ENABLE` is not needed) and the `armis-appsec` entry in `.jb-mcp.json` of the listed JetBrains projects. With `ARMIS_REMOVE_CLI=1` as root, `/usr/local/bin/armis-cli` too.
 - The result is checked: a client that still has the entry is reported as failed.
 
 The script never restores `*.armis-bak.*` files by itself, because that could undo changes the developer made later. To roll a file back by hand, copy the backup over the original, for example `cp -p ~/.cursor/mcp.json.armis-bak.20260101-120000 ~/.cursor/mcp.json`, then restart the editor.

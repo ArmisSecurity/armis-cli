@@ -228,6 +228,26 @@ backups() {
     [[ "$rep" == *'"component":"vscode","detected":"yes","installed":"ok"'* ]]
 }
 
+@test "a config the failed install created is removed" {
+    make_clients
+    export STUB_FAIL_TARGETS="cursor" STUB_FAIL_EXIT=0
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [ ! -e "$HOME/.cursor/mcp.json" ]
+}
+
+@test "a client whose config cannot be backed up is left unchanged" {
+    make_clients
+    echo '{"mcpServers":{"other":{"command":"x"}}}' > "$HOME/.cursor/mcp.json"
+    chmod 555 "$HOME/.cursor"
+    setup_run --only cursor,vscode
+    chmod 755 "$HOME/.cursor"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"could not back up"* ]]
+    ! grep -q '^install .*cursor' "$STUB_LOG/armis-cli.argv"
+    grep -q '^install vscode ' "$STUB_LOG/armis-cli.argv"
+}
+
 @test "a failing doctor check exits 2" {
     make_clients
     cat > "$T/doctor.json" <<'EOF'
@@ -366,6 +386,52 @@ EOF
     grep -q "ARMIS_DEFAULT_AUTH_METHOD='SSO'" "$HOME/.zshenv"
 }
 
+@test "sso mode with a pending sign-in skips the sample scan and exits 1" {
+    make_clients
+    unset ARMIS_CLIENT_ID ARMIS_CLIENT_SECRET
+    export ARMIS_AUTH_MODE=sso ARMIS_TENANT_ID=acme ARMIS_SSO_LOGIN=skip ARMIS_SAMPLE_SCAN=1
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"skipped until"* ]]
+    ! grep -q -- '--deep' "$STUB_LOG/armis-cli.argv"
+    ! grep -q '^scan repo' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "a stored session is checked without the SSO auto sign-in" {
+    make_clients
+    unset ARMIS_CLIENT_ID ARMIS_CLIENT_SECRET
+    export ARMIS_AUTH_MODE=sso ARMIS_TENANT_ID=acme ARMIS_SSO_LOGIN=skip ARMIS_DEFAULT_AUTH_METHOD=SSO
+    mkdir -p "$HOME/.armis"
+    echo '{"refresh_token":"x"}' > "$HOME/.armis/.sessions"
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    ! grep -q '^whoami ARMIS_DEFAULT_AUTH_METHOD=' "$STUB_LOG/env.probe"
+}
+
+@test "ARMIS_SAMPLE_SCAN=1 scans once, through mcp doctor --deep" {
+    make_clients
+    export ARMIS_SAMPLE_SCAN=1
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    grep -q '^mcp doctor -f json --deep' "$STUB_LOG/armis-cli.argv"
+    ! grep -q '^scan repo' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "ARMIS_SAMPLE_SCAN=0 also leaves out mcp doctor --deep" {
+    make_clients
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    grep -q '^mcp doctor -f json' "$STUB_LOG/armis-cli.argv"
+    ! grep -q -- '--deep' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "--bundle copies the support bundle next to the log" {
+    make_clients
+    setup_run --only cursor --bundle
+    [ "$status" -eq 0 ]
+    ls "$LOG_DIR"/doctor-*.zip
+}
+
 @test "--only and --skip choose the clients" {
     make_clients
     setup_run --only cursor,junie
@@ -464,6 +530,23 @@ EOF
     setup_run --uninstall
     [ "$status" -eq 0 ]
     grep -q '^uninstall --force --format json$' "$STUB_LOG/armis-cli.argv"
+}
+
+@test "full uninstall removes the commit gate first, without ARMIS_HOOK_ENABLE" {
+    make_clients
+    mkdir -p "$HOME/repo"
+    git -C "$HOME/repo" init -q
+    export ARMIS_HOOK_ENABLE=1 ARMIS_HOOK_REPOS="$HOME/repo"
+    setup_run --only hook
+    [ -x "$HOME/repo/.git/hooks/pre-commit" ]
+    unset ARMIS_HOOK_ENABLE
+    : > "$STUB_LOG/armis-cli.argv"
+    setup_run --uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/repo/.git/hooks/pre-commit" ]
+    first=$(grep -n '^hook init --remove' "$STUB_LOG/armis-cli.argv" | cut -d: -f1)
+    later=$(grep -n '^uninstall --force' "$STUB_LOG/armis-cli.argv" | cut -d: -f1)
+    [ "$first" -lt "$later" ]
 }
 
 @test "targeted uninstall passes only the chosen targets" {
