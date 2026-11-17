@@ -68,7 +68,11 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 			if ok {
 				name = e.Name
 			}
-			has, _ := hasArmisEntry(id, entry.ConfigFile)
+			has, err := hasArmisEntry(id, entry.ConfigFile)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: %v; the file was not modified", name, err))
+				continue
+			}
 			if !has {
 				continue
 			}
@@ -93,7 +97,7 @@ func (u *Uninstaller) DeregisterAllEditors() (deregistered []string, warnings []
 		}
 		has, err := hasArmisEntry(e.ID, configFile)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: cannot read config: %v", e.Name, err))
+			warnings = append(warnings, fmt.Sprintf("%s: %v; the file was not modified", e.Name, err))
 			continue
 		}
 		if has {
@@ -200,6 +204,10 @@ func deregisterEditor(id EditorID, configFile string) error {
 	}
 }
 
+func unmodifiedErr(err error) error {
+	return fmt.Errorf("%w; the file was not modified", err)
+}
+
 func deregisterFromFile(id EditorID, configFile string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
@@ -210,7 +218,7 @@ func deregisterFromFile(id EditorID, configFile string) error {
 func deregisterMCPServersFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["mcpServers"].(map[string]interface{})
@@ -226,7 +234,7 @@ func deregisterMCPServersFormat(configFile string) error {
 func deregisterVSCodeFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["servers"].(map[string]interface{})
@@ -242,7 +250,7 @@ func deregisterVSCodeFormat(configFile string) error {
 func deregisterZedFormat(configFile string) error {
 	data, err := readAndParseJSON(configFile)
 	if err != nil {
-		return err
+		return unmodifiedErr(err)
 	}
 
 	servers, ok := data["context_servers"].(map[string]interface{})
@@ -265,7 +273,10 @@ func removeContinueEntry(configFile string, names []string) error {
 		return nil
 	}
 
-	data := readYAMLFileAsMap(configFile)
+	data, err := readYAMLFileAsMap(configFile)
+	if err != nil {
+		return unmodifiedErr(err)
+	}
 	existing, ok := data["mcpServers"].([]interface{})
 	if !ok || len(existing) == 0 {
 		return nil
@@ -319,7 +330,7 @@ func removeJSONKey(path, key string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
+		return unmodifiedErr(err)
 	}
 	if _, exists := data[key]; !exists {
 		return nil
@@ -334,7 +345,7 @@ func removeNestedJSONKey(path, parentKey, childKey string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
+		return unmodifiedErr(err)
 	}
 	parent, ok := data[parentKey].(map[string]interface{})
 	if !ok {
@@ -352,7 +363,7 @@ func hasArmisEntry(id EditorID, configFile string) (bool, error) {
 	// Continue stores MCP servers as a YAML list of objects that each carry
 	// their own name, so it cannot go through the JSON reader below.
 	if id == EditorContinue {
-		return continueHasEntry(configFile, mcpServerName), nil
+		return continueHasEntry(configFile, mcpServerName)
 	}
 
 	data, err := readAndParseJSON(configFile)
@@ -376,34 +387,36 @@ func hasArmisEntry(id EditorID, configFile string) (bool, error) {
 }
 
 // continueHasEntry reports whether Continue's config.yaml lists a server with
-// the given name. Returns false for a missing or unparseable file, matching the
-// JSON path's "nothing to remove" behavior.
-func continueHasEntry(configFile, name string) bool {
-	servers, ok := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+// the given name. A missing file has no entry; an unreadable or unparseable
+// file is an error so uninstall can say why it skipped it.
+func continueHasEntry(configFile, name string) (bool, error) {
+	data, err := readYAMLFileAsMap(configFile)
+	if err != nil {
+		return false, err
+	}
+	servers, ok := data["mcpServers"].([]interface{})
 	if !ok {
-		return false
+		return false, nil
 	}
 	for _, s := range servers {
 		if m, ok := s.(map[string]interface{}); ok {
 			if n, _ := m["name"].(string); n == name {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
-// armis:ignore cwe:770 reason:reads bounded local config files from known editor paths (e.g. ~/.cursor/mcp.json); not unbounded input
+// readAndParseJSON reads a JSON/JSONC config for modification. Unlike
+// readJSONFileAsMap, a missing file is returned as an error wrapping
+// os.ErrNotExist so callers can skip it.
 func readAndParseJSON(path string) (map[string]interface{}, error) {
-	b, err := os.ReadFile(filepath.Clean(path))
+	b, err := readEditorConfig(path)
 	if err != nil {
 		return nil, err
 	}
-	var data map[string]interface{}
-	if err := json.Unmarshal(b, &data); err != nil {
-		return nil, fmt.Errorf("cannot parse %s: %w", path, err)
-	}
-	return data, nil
+	return parseJSONConfig(path, b)
 }
 
 func writeJSONAtomic(path string, data interface{}) error {
@@ -411,29 +424,7 @@ func writeJSONAtomic(path string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-	b = append(b, '\n')
-
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil { //nolint:gosec // tmp from CreateTemp, path from caller-validated editor configs
-		_ = os.Remove(tmp) //nolint:gosec // tmp comes from os.CreateTemp in a validated dir
-		return err
-	}
-	return nil
+	return writeFileAtomic(path, string(append(b, '\n')))
 }
 
 // HasKnowledge reports whether the manifest records a knowledge install.

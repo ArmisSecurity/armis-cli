@@ -453,7 +453,7 @@ func loadProbePIDs() map[int]bool {
 }
 
 func readProbePIDLines(path string) []string {
-	b, err := readBoundedConfigFile(path)
+	b, err := readEditorConfig(path)
 	if err != nil {
 		return nil
 	}

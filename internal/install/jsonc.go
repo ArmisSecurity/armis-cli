@@ -13,8 +13,7 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // quotes and comment-like sequences such as "http://...".
 //
 // Without this, a hand-edited mcp.json with a single comment fails to parse:
-// the doctor misreports it as invalid, and a re-registration would start from
-// an empty map and drop every other server in the file.
+// the doctor misreports it as invalid, and registration refuses to touch it.
 func stripJSONC(in []byte) []byte {
 	in = bytes.TrimPrefix(in, utf8BOM)
 	out := make([]byte, 0, len(in))

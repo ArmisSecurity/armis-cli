@@ -332,8 +332,8 @@ func TestCheckManifestEditors(t *testing.T) {
 		},
 	})
 
-	// Malformed JSON: not auto-fixable, since re-registering reads this file
-	// as an empty map and would drop every other server it configures.
+	// Malformed JSON: not auto-fixable, since registration refuses to
+	// overwrite a file it cannot parse.
 	invalidFile := filepath.Join(dir, "invalid.json")
 	_ = os.WriteFile(invalidFile, []byte(`{"mcpServers": {`), 0o600)
 

@@ -139,7 +139,7 @@ func TestRemoveContinueEntryPreservesOtherSettings(t *testing.T) {
 		t.Fatal("config.yaml must be edited, never deleted — it holds all Continue settings")
 	}
 
-	got := readYAMLFileAsMap(configFile)
+	got := mustReadYAML(t, configFile)
 	if got["models"] == nil {
 		t.Error("unrelated Continue settings (models) were lost")
 	}
@@ -167,7 +167,7 @@ func TestRemoveContinueEntryNoArmisEntry(t *testing.T) {
 		t.Fatalf("removeContinueEntry() error: %v", err)
 	}
 
-	got := readYAMLFileAsMap(configFile)
+	got := mustReadYAML(t, configFile)
 	servers, ok := got["mcpServers"].([]interface{})
 	if !ok || len(servers) != 1 {
 		t.Errorf("a config without an Armis entry must be left alone, got: %v", got["mcpServers"])
@@ -226,7 +226,7 @@ func TestDeregisterAllEditorsRemovesContinueYAML(t *testing.T) {
 				t.Errorf("deregistered = %v, want [%s]", deregistered, e.Name)
 			}
 
-			servers, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+			servers, _ := mustReadYAML(t, configFile)["mcpServers"].([]interface{})
 			if len(servers) != 0 {
 				t.Errorf("Armis entry survived uninstall: %v", servers)
 			}
@@ -247,7 +247,7 @@ func TestRegisterContinueFormatIsIdempotent(t *testing.T) {
 		}
 	}
 
-	got := readYAMLFileAsMap(configFile)
+	got := mustReadYAML(t, configFile)
 	servers, ok := got["mcpServers"].([]interface{})
 	if !ok {
 		t.Fatalf("mcpServers missing: %v", got)

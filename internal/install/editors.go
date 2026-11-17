@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -362,7 +363,10 @@ func registerEditorEntry(id EditorID, configFile string, entry mcpEntry) error {
 // registerMCPServersFormat handles {"mcpServers": {"name": {command, args}}}.
 // Shared by the standard mcpServers editors (and JetBrains via RegisterJetBrains).
 func registerMCPServersFormat(configFile string, entry mcpEntry) error {
-	data := readJSONFileAsMap(configFile)
+	data, err := readJSONFileAsMap(configFile)
+	if err != nil {
+		return refuseOverwrite(err)
+	}
 
 	servers, ok := data["mcpServers"].(map[string]interface{})
 	if !ok {
@@ -379,7 +383,10 @@ func registerMCPServersFormat(configFile string, entry mcpEntry) error {
 
 // registerVSCodeFormat handles {"servers": {"name": {type, command, args, envFile}}}.
 func registerVSCodeFormat(configFile string, entry mcpEntry) error {
-	data := readJSONFileAsMap(configFile)
+	data, err := readJSONFileAsMap(configFile)
+	if err != nil {
+		return refuseOverwrite(err)
+	}
 
 	servers, ok := data["servers"].(map[string]interface{})
 	if !ok {
@@ -401,7 +408,10 @@ func registerVSCodeFormat(configFile string, entry mcpEntry) error {
 
 // registerZedFormat handles {"context_servers": {"name": {command: {path, args}}}}.
 func registerZedFormat(configFile string, entry mcpEntry) error {
-	data := readJSONFileAsMap(configFile)
+	data, err := readJSONFileAsMap(configFile)
+	if err != nil {
+		return refuseOverwrite(err)
+	}
 
 	servers, ok := data["context_servers"].(map[string]interface{})
 	if !ok {
@@ -433,7 +443,10 @@ func registerZedFormat(configFile string, entry mcpEntry) error {
 // context providers) survive, and an existing entry with the same name is
 // replaced in place rather than duplicated.
 func registerContinueFormat(configFile string, entry mcpEntry) error {
-	data := readYAMLFileAsMap(configFile)
+	data, err := readYAMLFileAsMap(configFile)
+	if err != nil {
+		return refuseOverwrite(err)
+	}
 
 	// Continue rejects a config without these, so seed them when creating one.
 	if data["name"] == nil {
@@ -475,28 +488,99 @@ func registerContinueFormat(configFile string, entry mcpEntry) error {
 	return writeYAML(configFile, data)
 }
 
-// readYAMLFileAsMap parses a YAML config into a map, returning an empty map when
-// the file is absent, oversized, or unparseable — mirroring readJSONFileAsMap so
-// a corrupt config cannot abort an install.
-func readYAMLFileAsMap(path string) map[string]interface{} {
-	data := make(map[string]interface{})
+// readEditorConfig returns the contents of an editor config file. A missing
+// file is returned as an error wrapping os.ErrNotExist so callers can treat it
+// as an empty config. Non-regular files (devices, FIFOs) are rejected because
+// they can report Size()==0 yet stream unbounded data into os.ReadFile, and
+// oversized files are rejected to bound memory (CWE-770).
+func readEditorConfig(path string) ([]byte, error) {
 	clean := filepath.Clean(path)
-	// Reject non-regular files (devices, FIFOs) and oversized configs, matching
-	// the JSON reader's bounds (CWE-770).
-	// armis:ignore cwe:22 reason:path from homeDir with hardcoded segments; filepath.Clean applied
-	if info, err := os.Stat(clean); err != nil || !info.Mode().IsRegular() || info.Size() > maxEditorConfigSize {
-		return data
-	}
-	// armis:ignore cwe:22 cwe:253 cwe:770 reason:path from homeDir with hardcoded segments; size-bounded by the guard above; parse error handled below
-	b, err := os.ReadFile(clean) //nolint:gosec // path from homeDir with hardcoded segments, size-checked above
+	// armis:ignore cwe:22 reason:path from homeDir/filepath.Join with known base dirs; filepath.Clean applied
+	info, err := os.Stat(clean)
 	if err != nil {
-		return data
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("cannot read %s: %w", clean, err)
 	}
-	// armis:ignore cwe:502 reason:yaml.Unmarshal into map[string]interface{} performs no type resolution; input is the user's own local editor config, size-bounded above
-	if err := yaml.Unmarshal(b, &data); err != nil || data == nil {
-		return make(map[string]interface{})
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("cannot read %s: not a regular file", clean)
 	}
-	return data
+	if info.Size() > maxEditorConfigSize {
+		return nil, fmt.Errorf("cannot read %s: file is %d bytes, over the %d byte limit", clean, info.Size(), maxEditorConfigSize)
+	}
+	// armis:ignore cwe:22 cwe:770 reason:path from known config locations; filepath.Clean applied and the regular-file and size checks above bound the read
+	b, err := os.ReadFile(clean) //nolint:gosec // path from known config locations, size-checked above
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", clean, err)
+	}
+	return b, nil
+}
+
+// parseJSONConfig parses b as a JSON object. VS Code's mcp.json is JSONC, so
+// comments, trailing commas and a BOM are stripped first. An empty or null
+// document has no content to lose and yields an empty map.
+func parseJSONConfig(path string, b []byte) (map[string]interface{}, error) {
+	data := make(map[string]interface{})
+	stripped := stripJSONC(b)
+	if len(bytes.TrimSpace(stripped)) == 0 {
+		return data, nil
+	}
+	// armis:ignore cwe:502 cwe:770 reason:Go encoding/json into map[string]interface{} has no gadget/polymorphic deserialization; input is the user's own local editor config, size-bounded by readEditorConfig
+	if err := json.Unmarshal(stripped, &data); err != nil {
+		return nil, fmt.Errorf("cannot read %s: invalid JSON: %w", filepath.Clean(path), err)
+	}
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	return data, nil
+}
+
+// readJSONFileAsMap loads a JSON/JSONC editor config. A missing file is an
+// empty config. A file that exists but cannot be read or parsed is an error:
+// callers that write the map back must abort, because saving a map built from
+// a file they failed to parse destroys the user's other settings. Read-only
+// callers may ignore the error and use the returned nil map.
+func readJSONFileAsMap(path string) (map[string]interface{}, error) {
+	b, err := readEditorConfig(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return make(map[string]interface{}), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseJSONConfig(path, b)
+}
+
+// readYAMLFileAsMap is the YAML counterpart of readJSONFileAsMap.
+func readYAMLFileAsMap(path string) (map[string]interface{}, error) {
+	b, err := readEditorConfig(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return make(map[string]interface{}), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseYAMLConfig(path, b)
+}
+
+// parseYAMLConfig is the YAML counterpart of parseJSONConfig.
+func parseYAMLConfig(path string, b []byte) (map[string]interface{}, error) {
+	var data map[string]interface{}
+	// armis:ignore cwe:502 reason:yaml.Unmarshal into map[string]interface{} performs no type resolution; input is the user's own local editor config, size-bounded by readEditorConfig
+	if err := yaml.Unmarshal(b, &data); err != nil {
+		return nil, fmt.Errorf("cannot read %s: invalid YAML: %w", filepath.Clean(path), err)
+	}
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	return data, nil
+}
+
+// refuseOverwrite marks a read failure as a refusal to touch the file, so the
+// caller's report tells the user what to do about it.
+func refuseOverwrite(err error) error {
+	return fmt.Errorf("%w; the file was not modified, fix or remove it and re-run", err)
 }
 
 func writeYAML(path string, data interface{}) error {
@@ -507,25 +591,5 @@ func writeYAML(path string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-	// armis:ignore cwe:22 cwe:73 reason:path from homeDir with hardcoded segments; filepath.Clean applied
-	return os.WriteFile(filepath.Clean(path), b, 0o600)
-}
-
-func readJSONFileAsMap(path string) map[string]interface{} {
-	data := make(map[string]interface{})
-	clean := filepath.Clean(path)
-	// armis:ignore cwe:22 reason:path from filepath.Join with known base dirs; filepath.Clean applied
-	// Reject non-regular files (devices, FIFOs): they can report Size()==0 yet
-	// stream unbounded data into os.ReadFile, defeating the size cap (CWE-770).
-	if info, err := os.Stat(clean); err != nil || !info.Mode().IsRegular() || info.Size() > maxEditorConfigSize {
-		return data
-	}
-	// armis:ignore cwe:22 cwe:253 reason:path from filepath.Join with known base dirs; filepath.Clean applied; ReadFile error handled by err == nil guard
-	if b, err := os.ReadFile(clean); err == nil { //nolint:gosec
-		// VS Code's mcp.json is JSONC; strip comments/trailing commas/BOM so a
-		// hand-edited file keeps its other servers instead of parsing as empty.
-		// armis:ignore cwe:502 cwe:770 reason:Go encoding/json into map[string]interface{} has no gadget/polymorphic deserialization; input is the user's own local editor config, size-bounded by the maxEditorConfigSize guard above
-		_ = json.Unmarshal(stripJSONC(b), &data)
-	}
-	return data
+	return writeFileAtomic(path, string(b))
 }

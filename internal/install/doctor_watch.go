@@ -302,7 +302,7 @@ func WatchServerLog(ctx context.Context, w io.Writer, opts WatchOptions) (WatchS
 	var info os.FileInfo
 	if st, err := os.Stat(opts.LogPath); err == nil {
 		offset, info = st.Size(), st
-		if b, err := readBoundedConfigFile(opts.LogPath); err == nil {
+		if b, err := readEditorConfig(opts.LogPath); err == nil {
 			if h := analyzeServerLog(tail(string(b), watchHistoryBytes)); h.calls > 0 {
 				lw.printf("Earlier in this log: %d tool calls, %d never finished, %d slow %s calls.", h.calls, h.unfinished, h.slowDiag, debugConfigTool)
 			}

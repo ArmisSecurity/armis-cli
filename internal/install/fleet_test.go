@@ -161,7 +161,7 @@ func registeredServerNames(t *testing.T, id EditorID, configFile string) map[str
 	names := make(map[string]bool)
 
 	if ConfigFormat(id) == "continue-yaml" {
-		data := readYAMLFileAsMap(configFile)
+		data := mustReadYAML(t, configFile)
 		servers, ok := data["mcpServers"].([]interface{})
 		if !ok {
 			return names

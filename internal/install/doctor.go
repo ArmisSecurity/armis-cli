@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
 )
@@ -73,11 +72,10 @@ const (
 	// FixSetProxy writes a proxy the doctor verified works into the plugin's
 	// .env, so the server uses it on its next start.
 	FixSetProxy FixAction = "set-proxy"
-	// FixBlocked marks a check that --fix cannot safely repair and that
-	// blocks FixReregister/FixReinstall for every editor: re-registering
-	// reads the editor's config as a map first, and a config that fails to
-	// parse reads back as empty, so writing it out again would drop every
-	// other server the user configured in that file.
+	// FixBlocked marks a check that --fix cannot repair and that blocks
+	// FixReregister/FixReinstall for every editor: registration refuses to
+	// overwrite a config it cannot parse, so re-registering would only fail
+	// for that editor while the user still has a file to fix by hand.
 	FixBlocked FixAction = "blocked"
 )
 
@@ -220,9 +218,9 @@ func (r *DoctorReport) Fixes() []FixAction {
 
 // HasBlockedRegistration reports whether any check is marked FixBlocked,
 // meaning at least one editor's config file failed to parse. Reregistering
-// any editor goes through the same manifest-wide update, so this blocks
-// FixReregister/FixReinstall entirely rather than risk rewriting that
-// editor's config from an empty map.
+// goes through the same manifest-wide update, so this withholds
+// FixReregister/FixReinstall instead of running a fix that is known to fail
+// for that editor.
 func (r *DoctorReport) HasBlockedRegistration() bool {
 	for _, c := range r.Checks {
 		if (c.Status == StatusFail || c.Status == StatusWarn) && c.Fix == FixBlocked {
@@ -505,7 +503,7 @@ func checkScannerPlugin(d *doctorRun, ei *EditorInstaller) {
 
 	// Plugin versions that keep their own log write it here; include the
 	// recent part in the support bundle.
-	if b, err := readBoundedConfigFile(filepath.Join(ei.PluginDir(), "logs", "server.log")); err == nil && len(b) > 0 {
+	if b, err := readEditorConfig(filepath.Join(ei.PluginDir(), "logs", "server.log")); err == nil && len(b) > 0 {
 		log := tail(string(b), 64<<10)
 		report.artifact("scanner/server.log", log+"\n")
 		checkServerLogToolCalls(d, component, log, d.scannerVersion)
@@ -551,7 +549,7 @@ func checkCLINetwork(d *doctorRun, component, url string) {
 // pyvenv.cfg records ("" if none).
 func checkVenvBase(report *DoctorReport, component, venvDir string) (string, bool) {
 	cfgPath := filepath.Join(venvDir, "pyvenv.cfg")
-	b, err := readBoundedConfigFile(cfgPath)
+	b, err := readEditorConfig(cfgPath)
 	if err != nil {
 		return "", true // older/unusual venvs may lack it; the handshake still catches a broken one
 	}
@@ -707,7 +705,7 @@ func checkCredentials(report *DoctorReport, component, envFile string) map[strin
 	report.artifact(sanitizeArtifactName(component)+"/env-keys.txt",
 		"Variables set in "+envFile+" (values omitted):\n"+strings.Join(keys, "\n")+"\n")
 
-	if raw, rerr := readBoundedConfigFile(envFile); rerr == nil && bytes.HasPrefix(raw, utf8BOM) {
+	if raw, rerr := readEditorConfig(envFile); rerr == nil && bytes.HasPrefix(raw, utf8BOM) {
 		report.add(component, "credentials file", StatusWarn,
 			fmt.Sprintf("%s starts with a UTF-8 byte-order mark", envFile)).
 			hint("Some editors and the server's .env loader misread the first variable when a BOM is present. Re-save the file as \"UTF-8\" (not \"UTF-8 with BOM\").")
@@ -1106,39 +1104,34 @@ func checkManifestEditors(d *doctorRun, component, identifier string, editors ma
 			name = ed.Name
 		}
 
-		// readBoundedConfigFile applies the same regular-file and size guards as
-		// readJSONFileAsMap/readYAMLFileAsMap, so a non-regular or oversized
-		// config is reported here rather than silently read as empty by
-		// lookupEntry below and misreported as "entry not found".
-		content, err := readBoundedConfigFile(entry.ConfigFile)
-		if err != nil {
+		// A missing file is fixed by re-registering. A non-regular, oversized or
+		// unreadable one is not: registration refuses to overwrite it, so
+		// offering --fix would only fail.
+		content, err := readEditorConfig(entry.ConfigFile)
+		if errors.Is(err, os.ErrNotExist) {
 			report.addEditor(component, name, StatusFail, fmt.Sprintf("config file %s: %v", entry.ConfigFile, err)).
 				fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
 			continue
 		}
-		// readJSONFileAsMap/readYAMLFileAsMap also return an empty map on a
-		// parse error, so a corrupted or non-object config (null, an array,
-		// invalid YAML, ...) would otherwise fall through to the same "entry
-		// not found" warning as a genuinely edited-out entry. Catch that case
-		// explicitly. JSON configs are parsed as JSONC: VS Code's mcp.json
-		// allows comments and trailing commas.
-		var obj map[string]interface{}
+		if err != nil {
+			report.addEditor(component, name, StatusFail, err.Error()).
+				fix(FixBlocked, name+" cannot load a config file that is not a plain, reasonably sized file. Fix or remove it, then re-run this doctor.")
+			continue
+		}
+		// lookupEntry treats an unparseable file as having no entry, which
+		// would misreport a corrupted or non-object config (an array, invalid
+		// YAML, ...) as a genuinely edited-out entry. Parse with the same rules
+		// registration uses, so --fix is withheld exactly when it would refuse.
 		var parseErr error
 		if entry.Format == configFormatContinue {
-			parseErr = yaml.Unmarshal(content, &obj)
+			_, parseErr = parseYAMLConfig(entry.ConfigFile, content)
 		} else {
-			parseErr = json.Unmarshal(stripJSONC(content), &obj)
-		}
-		// Both unmarshalers accept a top-level `null` without error (obj just
-		// stays nil), so an err-only check would miss it — require a non-nil
-		// object too.
-		if parseErr == nil && obj == nil {
-			parseErr = fmt.Errorf("top-level value is not an object")
+			_, parseErr = parseJSONConfig(entry.ConfigFile, content)
 		}
 		if parseErr != nil {
-			// Not auto-fixable: re-registering would start from an empty map
-			// and drop every other server the user configured in this file.
-			report.addEditor(component, name, StatusFail, fmt.Sprintf("config file %s is not valid: %v", entry.ConfigFile, parseErr)).
+			// Not auto-fixable: registration refuses to overwrite a file it
+			// cannot parse, so the user has to repair it by hand.
+			report.addEditor(component, name, StatusFail, parseErr.Error()).
 				fix(FixBlocked, name+" ignores the whole file when it can't be parsed, so no servers in it load. Fix the syntax (often a missing or extra comma), then re-run this doctor.")
 			continue
 		}
@@ -1204,27 +1197,6 @@ func checkClaudeSection(report *DoctorReport, component string, claude *Manifest
 	}
 }
 
-// readBoundedConfigFile reads path the same way editors.go's
-// readJSONFileAsMap/readYAMLFileAsMap do: reject non-regular files (devices,
-// FIFOs, symlinks to either) and cap the size at maxEditorConfigSize before
-// reading, so a doctor check can't block or exhaust memory on a config path
-// that isn't the plain file it's expected to be (CWE-770).
-func readBoundedConfigFile(path string) ([]byte, error) {
-	clean := filepath.Clean(path)
-	info, err := os.Stat(clean)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", clean)
-	}
-	if info.Size() > maxEditorConfigSize {
-		return nil, fmt.Errorf("%s exceeds %d bytes", clean, maxEditorConfigSize)
-	}
-	// armis:ignore cwe:22 cwe:770 reason:path from the install manifest/known config locations; regular-file and size checks above bound the read
-	return os.ReadFile(clean) //nolint:gosec
-}
-
 // claudeRegistryStatus reports whether any plugin key containing
 // pluginKeyPrefix is recorded as installed and/or enabled in Claude Code's
 // own registry files.
@@ -1235,7 +1207,7 @@ func claudeRegistryStatus(claudeDir, pluginKeyPrefix string) (installed, enabled
 	prefix := strings.ToLower(pluginKeyPrefix)
 
 	instFile := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
-	if b, err := readBoundedConfigFile(instFile); err == nil {
+	if b, err := readEditorConfig(instFile); err == nil {
 		var data struct {
 			Plugins map[string]json.RawMessage `json:"plugins"`
 		}
@@ -1250,7 +1222,7 @@ func claudeRegistryStatus(claudeDir, pluginKeyPrefix string) (installed, enabled
 	}
 
 	settingsFile := filepath.Join(claudeDir, "settings.json")
-	if b, err := readBoundedConfigFile(settingsFile); err == nil {
+	if b, err := readEditorConfig(settingsFile); err == nil {
 		var data struct {
 			EnabledPlugins map[string]bool `json:"enabledPlugins"`
 		}
@@ -1270,10 +1242,15 @@ func checkCodexSection(report *DoctorReport, component string, codex *ManifestCo
 	if codex == nil {
 		return
 	}
-	content, err := readBoundedConfigFile(codex.ConfigFile)
-	if err != nil {
+	content, err := readEditorConfig(codex.ConfigFile)
+	if errors.Is(err, os.ErrNotExist) {
 		report.addEditor(component, "Codex CLI", StatusFail, fmt.Sprintf("config file %s: %v", codex.ConfigFile, err)).
 			fix(FixReregister, "Re-register the server: armis-cli mcp doctor --fix")
+		return
+	}
+	if err != nil {
+		report.addEditor(component, "Codex CLI", StatusFail, err.Error()).
+			fix(FixBlocked, "Codex CLI cannot load a config file that is not a plain, reasonably sized file. Fix or remove it, then re-run this doctor.")
 		return
 	}
 	if !strings.Contains(strings.ToLower(string(content)), strings.ToLower(identifier)) {
@@ -1299,6 +1276,14 @@ func lookupEntryCommand(configFile, format, identifier string) (command string, 
 func lookupEntry(configFile, format, identifier, workspace string) (serverLaunch, bool) {
 	identifier = strings.ToLower(identifier)
 
+	// lookupEntry is read-only, so an unreadable or unparseable file is
+	// tolerated here as "no entry"; the doctor reports the parse failure
+	// separately and nothing in this path writes the map back.
+	readJSON := func() map[string]interface{} {
+		data, _ := readJSONFileAsMap(configFile)
+		return data
+	}
+
 	matchEntry := func(servers map[string]interface{}) (map[string]interface{}, bool) {
 		keys := make([]string, 0, len(servers))
 		for k := range servers {
@@ -1316,14 +1301,14 @@ func lookupEntry(configFile, format, identifier, workspace string) (serverLaunch
 
 	switch format {
 	case configFormatVSCode:
-		servers, _ := readJSONFileAsMap(configFile)["servers"].(map[string]interface{})
+		servers, _ := readJSON()["servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
 			return serverLaunch{}, false
 		}
 		return vscodeLaunch(entry, workspace), true
 	case configFormatZed:
-		servers, _ := readJSONFileAsMap(configFile)["context_servers"].(map[string]interface{})
+		servers, _ := readJSON()["context_servers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
 			return serverLaunch{}, false
@@ -1332,7 +1317,8 @@ func lookupEntry(configFile, format, identifier, workspace string) (serverLaunch
 		cmd, _ := cmdObj[jsonKeyPath].(string)
 		return serverLaunch{Command: cmd, Args: stringSlice(cmdObj[jsonKeyArgs]), Env: stringMap(cmdObj["env"])}, true
 	case configFormatContinue:
-		list, _ := readYAMLFileAsMap(configFile)["mcpServers"].([]interface{})
+		yamlData, _ := readYAMLFileAsMap(configFile)
+		list, _ := yamlData["mcpServers"].([]interface{})
 		for _, item := range list {
 			m, ok := item.(map[string]interface{})
 			if !ok {
@@ -1345,7 +1331,7 @@ func lookupEntry(configFile, format, identifier, workspace string) (serverLaunch
 		}
 		return serverLaunch{}, false
 	default: // "mcpServers"
-		servers, _ := readJSONFileAsMap(configFile)["mcpServers"].(map[string]interface{})
+		servers, _ := readJSON()["mcpServers"].(map[string]interface{})
 		entry, ok := matchEntry(servers)
 		if !ok {
 			return serverLaunch{}, false
@@ -1395,7 +1381,7 @@ func isExecutableFile(path string) bool {
 // writeEnvFromEnvironment/WriteEnvFromValues. A leading UTF-8 BOM is ignored
 // so a file re-saved by a Windows editor still parses.
 func parseEnvFile(path string) (map[string]string, error) {
-	b, err := readBoundedConfigFile(path)
+	b, err := readEditorConfig(path)
 	if err != nil {
 		return nil, err
 	}

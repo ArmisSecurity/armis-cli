@@ -504,11 +504,24 @@ func writeJSON(path string, data interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
+	return writeJSONAtomic(path, data)
+}
+
+// checkClaudeRegistryFiles refuses up front when any of the Claude Code
+// registry files cannot be parsed. They are written one after another, and a
+// refusal on the last one would leave the plugin recorded as installed but not
+// enabled; a re-run at the same pin then skips the registry writes entirely.
+func checkClaudeRegistryFiles(claudeDir string) error {
+	for _, p := range []string{
+		filepath.Join(claudeDir, "plugins", "known_marketplaces.json"),
+		filepath.Join(claudeDir, "plugins", "installed_plugins.json"),
+		filepath.Join(claudeDir, "settings.json"),
+	} {
+		if _, err := readJSONFileAsMap(p); err != nil {
+			return refuseOverwrite(err)
+		}
 	}
-	return os.WriteFile(filepath.Clean(path), append(b, '\n'), 0o600)
+	return nil
 }
 
 // registerDirectoryMarketplace writes (or updates) a "source": "directory"
@@ -522,10 +535,9 @@ func writeJSON(path string, data interface{}) error {
 // other installer are preserved — never overwrite the whole file.
 func registerDirectoryMarketplace(claudeDir, marketplaceName, pluginDir string) error {
 	mktsFile := filepath.Join(claudeDir, "plugins", "known_marketplaces.json")
-	data := make(map[string]interface{})
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(mktsFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
+	data, err := readJSONFileAsMap(mktsFile)
+	if err != nil {
+		return refuseOverwrite(err)
 	}
 
 	data[marketplaceName] = map[string]interface{}{
@@ -546,10 +558,12 @@ func registerDirectoryMarketplace(claudeDir, marketplaceName, pluginDir string) 
 // (by this or the other installer) are preserved.
 func registerInstalledPlugin(claudeDir, pluginKey, pluginDir, version string) error {
 	instFile := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
-	data := map[string]interface{}{jsonKeyVersion: 2, "plugins": map[string]interface{}{}}
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(instFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
+	data, err := readJSONFileAsMap(instFile)
+	if err != nil {
+		return refuseOverwrite(err)
+	}
+	if _, ok := data[jsonKeyVersion]; !ok {
+		data[jsonKeyVersion] = 2
 	}
 
 	plugins, ok := data["plugins"].(map[string]interface{})
@@ -577,10 +591,9 @@ func registerInstalledPlugin(claudeDir, pluginKey, pluginDir, version string) er
 // enabled plugin already recorded there.
 func enableInstalledPlugin(claudeDir, pluginKey string) error {
 	settingsFile := filepath.Join(claudeDir, "settings.json")
-	data := make(map[string]interface{})
-	// armis:ignore cwe:770 reason:reads bounded JSON config file from user's ~/.claude dir; not unbounded input
-	if b, err := os.ReadFile(filepath.Clean(settingsFile)); err == nil {
-		_ = json.Unmarshal(b, &data)
+	data, err := readJSONFileAsMap(settingsFile)
+	if err != nil {
+		return refuseOverwrite(err)
 	}
 
 	enabled, ok := data["enabledPlugins"].(map[string]interface{})
@@ -719,7 +732,7 @@ func SetEnvFileVars(envPath string, vars [][2]string) error {
 		if err := copyFile(cleanPath, bakPath); err != nil {
 			return fmt.Errorf("could not back up %s: %w", filepath.Base(cleanPath), err)
 		}
-		existing, err := readBoundedConfigFile(cleanPath)
+		existing, err := readEditorConfig(cleanPath)
 		if err != nil {
 			return fmt.Errorf("reading existing env file: %w", err)
 		}
