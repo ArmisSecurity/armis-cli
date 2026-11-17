@@ -938,7 +938,7 @@ Configure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as [secured repository var
 
 | Code | Meaning |
 |------|---------|
-| `0` | Scan completed, no findings above threshold |
+| `0` | Scan completed, no findings above threshold, or an `--async` scan was accepted |
 | `--exit-code` value (default `1`) | Scan completed, findings exceed `fail-on` threshold |
 | `1` | Error (invalid flags, authentication, network, timeout, failed scan) |
 | `2` | Scan completed, but its results or a requested BOM could not be downloaded |

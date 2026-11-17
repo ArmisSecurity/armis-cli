@@ -16,6 +16,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/spf13/cobra"
@@ -490,6 +491,26 @@ func TestProjectScan_AsyncExitsZeroOnceAccepted(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
+	}
+}
+
+// --async returns before any download, so a --bom scan says its BOMs are
+// generated but not downloaded, as it does for the SBOM and VEX.
+func TestProjectScan_AsyncWarnsTheBOMsAreNotDownloaded(t *testing.T) {
+	setupProjectScan(t, testutil.MockAPIConfig{})
+	prevBOMTypes := bomTypes
+	t.Cleanup(func() { bomTypes = prevBOMTypes })
+	t.Setenv("CI", "true")
+	projectName = testProjectName
+	asyncScan = true
+	bomTypes = []string{scan.BOMTypeAIBOM}
+
+	_, stderr, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil {
+		t.Fatalf("--async must exit 0 once accepted, got %v", err)
+	}
+	if !strings.Contains(stderr, "with --async the BOMs are generated but not downloaded") {
+		t.Errorf("stderr should say the BOMs are not downloaded:\n%s", stderr)
 	}
 }
 

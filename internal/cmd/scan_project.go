@@ -100,6 +100,9 @@ func warnOnAsyncIgnoredFlags(cmd *cobra.Command) {
 	if generateSBOM || generateVEX {
 		cli.PrintWarning("with --async the SBOM/VEX documents are generated but not downloaded")
 	}
+	if len(bomTypes) > 0 {
+		cli.PrintWarning("with --async the BOMs are generated but not downloaded")
+	}
 }
 
 // asyncScanRecord is the JSON written for an accepted --async scan.
