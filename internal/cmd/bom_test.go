@@ -826,3 +826,48 @@ func TestBOMHelp(t *testing.T) {
 		}
 	}
 }
+
+// TestTypedBOMDirRefusesLinkedFile: in a directory from --bom-output or
+// bom --output, a link committed at a BOM's file name is refused, its target
+// is left alone, and the command exits 2.
+func TestTypedBOMDirRefusesLinkedFile(t *testing.T) {
+	const doc = `{"bomFormat":"CycloneDX","components":[{"name":"a"}]}`
+	rows := []struct {
+		name string
+		run  func(t *testing.T, repoDir, dir string) error
+	}{
+		{"scan repo --bom-output", func(t *testing.T, repoDir, dir string) error {
+			bomTypes, bomOutput = []string{scan.BOMTypeSBOM}, dir
+			_, _, err := runRepoScanIn(t, repoDir)
+			return err
+		}},
+		{"bom repo --output", func(t *testing.T, repoDir, dir string) error {
+			bomOnlyTypes, bomOnlyOutput = []string{scan.BOMTypeSBOM}, dir
+			_, _, err := runBOM(t, bomRepoCmd, repoDir)
+			return err
+		}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			setupBOMRunEnv(t, testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{
+				BOMContent: map[string]string{"bom_sbom_results": doc},
+			}))
+			repoDir := createTestRepo(t)
+			dir := t.TempDir()
+			victim := filepath.Join(t.TempDir(), "victim")
+			if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+				t.Fatalf("write victim: %v", err)
+			}
+			if err := os.Symlink(victim, filepath.Join(dir, filepath.Base(repoDir)+"-bom-sbom.json")); err != nil {
+				t.Skipf("cannot create symlink: %v", err)
+			}
+			err := row.run(t, repoDir, dir)
+			if code := mainExitCode(err); code != 2 {
+				t.Errorf("exit code = %d (%v), want 2", code, err)
+			}
+			if got, _ := os.ReadFile(victim); string(got) != "keep" { //nolint:gosec // test path
+				t.Errorf("link target = %q, want it untouched", got)
+			}
+		})
+	}
+}

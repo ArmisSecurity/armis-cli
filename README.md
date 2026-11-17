@@ -585,9 +585,9 @@ Notes:
   and `cbom` or `all` with any SPDX value. A format the server does not offer
   for a type fails the scan request after upload, with exit code 1 and
   `the server refused the BOM request (--bom <types> --bom-format <format>): <message> (<code>)`.
-- `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout. In Windows PowerShell 5.1, `>` saves stdout as UTF-16, which many JSON tools reject; use a directory there, or cmd.exe or PowerShell 7.4 or later, which keep the bytes as written.
+- `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout. The CLI names the files in the directory, so each is written to a temp file and renamed over the old one, and a symlink or a non-regular file at that name is refused, as in `.armis`. The directory itself may be a symlink. In Windows PowerShell 5.1, `>` saves stdout as UTF-16, which many JSON tools reject; use a directory there, or cmd.exe or PowerShell 7.4 or later, which keep the bytes as written.
 - Without `--bom`, a non-default `--bom-format` prints `--bom-format is ignored without --bom flag`, any `--bom-output` prints the same for `--bom-output`, and the scan runs as without them.
-- Each file holds the stored document, pretty-printed. On Linux and macOS, new files get mode 0600, and so does a file replaced in the default `.armis`; on Windows, they take the folder's permissions instead. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
+- Each file holds the stored document, pretty-printed. On Linux and macOS, new files get mode 0600, and so does a replaced file; on Windows, they take the folder's permissions instead. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.

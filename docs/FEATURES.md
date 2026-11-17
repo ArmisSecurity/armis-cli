@@ -423,8 +423,11 @@ Generate SBOM and VEX as part of your CI pipeline:
 - In `scan repo` and `scan image`, the default `.armis` output is refused when
   `.armis` is not a plain directory, such as a symlink (checked before upload),
   or the file there is not a regular file. Files there are written to a temp
-  file and renamed over the old one, with mode 0600 on Linux and macOS. A path
-  given in an output flag is written as given
+  file and renamed over the old one, with mode 0600 on Linux and macOS. BOM
+  files in a `--bom-output` directory are written the same way, and a symlink
+  or non-regular file at their name is refused; the directory itself is used
+  as given, a symlink included. A file path given in `--sbom-output` or
+  `--vex-output` is written as given
 - Maximum download size is 100MB per file
 
 ---
