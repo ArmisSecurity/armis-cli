@@ -149,7 +149,7 @@ The matrix has one row per endpoint, user and component, with these columns: End
 | Exit code | Meaning |
 |---|---|
 | 0 | Everything succeeded. |
-| 1 | Partial: something needs attention (a client failed, Python is missing, sign-in is pending, a JetBrains project is not set up). |
+| 1 | Partial: something needs attention (a client failed, Python is missing, sign-in is pending, a JetBrains project is not set up, or the developer's login shell runs a different `armis-cli` than the one installed). |
 | 2 | A verification failed (`mcp doctor`, the sample scan), or armis-cli could not be installed. |
 | 3 | Bad arguments, an unreadable credentials file, a checksum or signature mismatch, or a preflight failure. |
 

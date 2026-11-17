@@ -704,14 +704,21 @@ stage_preflight() {
 
 # ---- armis-cli --------------------------------------------------------------
 
-cli_version_ok() { # does the installed binary report exactly the wanted version?
-    local got
-    [ -x "$CLI_BIN" ] || return 1
-    got=$("$CLI_BIN" --version 2>/dev/null | awk '{
-        for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+/) { sub(/^v/, "", $i); print $i; exit }
-    }')
-    [ -n "$got" ] && [ "$got" = "$ARMIS_CLI_VERSION" ]
+# parse_version: the first x.y.z on stdin, without a leading v.
+parse_version() {
+    awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+/) { sub(/^v/, "", $i); print $i; exit } }'
 }
+
+# installed_version: what CLI_BIN reports; "unknown" for a build without a
+# version (dev); empty when there is no binary.
+installed_version() {
+    local got
+    [ -x "$CLI_BIN" ] || return 0
+    got=$(ARMIS_NO_UPDATE_CHECK=1 "$CLI_BIN" --version 2>/dev/null | parse_version)
+    printf '%s' "${got:-unknown}"
+}
+
+cli_version_ok() { [ "$(installed_version)" = "$ARMIS_CLI_VERSION" ]; }
 
 # resolve_latest: the version of the latest release, from the redirect of
 # github.com/REPO/releases/latest, so "latest" installs a released tag's installer.
@@ -731,7 +738,7 @@ resolve_latest() {
 }
 
 stage_cli() {
-    local installer_url latest
+    local installer_url latest have plan
     log "armis-cli"
     CLI_BIN="$CLI_DIR/armis-cli"
 
@@ -752,21 +759,28 @@ stage_cli() {
         ARMIS_CLI_VERSION=$latest
     fi
 
-    if cli_version_ok; then
+    have=$(installed_version)
+    if [ "$have" = "$ARMIS_CLI_VERSION" ]; then
         log "armis-cli $ARMIS_CLI_VERSION already installed at $CLI_BIN"
         rec "-" armis-cli detected yes
         rec "-" armis-cli installed ok
         rec "-" armis-cli verified ok
         return 0
     fi
+    if [ -n "$have" ]; then
+        rec "-" armis-cli detected yes
+        plan="replace armis-cli $have at $CLI_BIN with $ARMIS_CLI_VERSION"
+    else
+        rec "-" armis-cli detected no
+        plan="install armis-cli $ARMIS_CLI_VERSION to $CLI_DIR"
+    fi
 
     installer_url="${ARMIS_INSTALLER_URL:-https://raw.githubusercontent.com/$REPO/v$ARMIS_CLI_VERSION/scripts/install.sh}"
 
     if [ "$DRY_RUN" -eq 1 ]; then
-        log "[dry-run] would download $installer_url and install armis-cli $ARMIS_CLI_VERSION to $CLI_DIR"
-        rec "-" armis-cli detected no
+        log "[dry-run] would download $installer_url and $plan"
         rec "-" armis-cli installed skip
-        rec "-" armis-cli action "dry-run: would install armis-cli $ARMIS_CLI_VERSION"
+        rec "-" armis-cli action "dry-run: would $plan"
         return 0
     fi
 
@@ -780,7 +794,7 @@ stage_cli() {
         finish
     fi
 
-    log "Installing armis-cli $ARMIS_CLI_VERSION to $CLI_DIR"
+    log "Going to $plan"
     # CI=1 keeps the installer from editing the invoking account's shell rc;
     # profiles are managed per developer below.
     exec_cmd env CI=1 SHELL="${SHELL:-/bin/bash}" INSTALL_DIR="$CLI_DIR" VERIFY=true \
@@ -800,8 +814,8 @@ stage_cli() {
     fi
     if [ "$IS_ROOT" -eq 1 ]; then chmod 755 "$CLI_BIN"; fi
 
-    rec "-" armis-cli detected yes
     rec "-" armis-cli installed ok
+    [ -z "$have" ] || rec "-" armis-cli action "replaced $have with $ARMIS_CLI_VERSION"
     if ! cli_version_ok; then
         rec "-" armis-cli verified fail
         rec "-" armis-cli action "installed binary does not report version $ARMIS_CLI_VERSION"
@@ -816,6 +830,44 @@ stage_cli() {
         CLI_COSIGN=no
         rec "-" armis-cli action "only the checksum was verified; install cosign for signature verification"
     fi
+}
+
+# ---- the developer's PATH --------------------------------------------------
+
+# ARMIS_LOGIN_SHELL exists for tests.
+login_shell() { # login_shell USER: the account's shell, for a PATH probe
+    local sh
+    if [ -n "${ARMIS_LOGIN_SHELL:-}" ]; then printf '%s' "$ARMIS_LOGIN_SHELL"; return; fi
+    sh=$(dscl . -read "/Users/$1" UserShell 2>/dev/null | awk '{ print $2 }')
+    case $sh in */zsh | */bash | */sh) printf '%s' "$sh" ;; *) printf '/bin/zsh' ;; esac
+}
+
+# check_cli_path USER HOME: which armis-cli the developer's login shell runs.
+# Another copy earlier on PATH (often Homebrew's) shadows the one installed here.
+check_cli_path() {
+    local user=$1 home=$2 sh found got
+    sh=$(login_shell "$user")
+    SEQ=$((SEQ + 1))
+    LAST_OUT="$WORK/out.$SEQ"
+    # A minimal PATH, so only the developer's own profile and /etc/paths decide.
+    # shellcheck disable=SC2016 # expanded by the login shell
+    with_timeout 20 as_user "$user" "$home" 0 0 /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+        "$sh" -l -c 'command -v armis-cli' > "$LAST_OUT" 2>/dev/null
+    found=$(grep '^/' "$LAST_OUT" | tail -n 1)
+    if [ -z "$found" ]; then
+        [ "$DRY_RUN" -eq 1 ] && return 0
+        rec "$user" cli-path installed warn
+        rec "$user" cli-path action "armis-cli is not on $user's PATH in a new $(basename "$sh") login shell; add $CLI_DIR to PATH"
+        return 0
+    fi
+    [ "$found" != "$CLI_BIN" ] || return 0
+    user_cmd "$user" "$home" 0 0 env ARMIS_NO_UPDATE_CHECK=1 "$found" --version
+    got=$(parse_version < "$LAST_OUT")
+    [ "${got:-unknown}" != "$ARMIS_CLI_VERSION" ] || return 0
+    local fix="remove it or move $CLI_DIR earlier in PATH"
+    case $(readlink "$found" 2>/dev/null) in */Cellar/*) fix="run 'brew uninstall armis-cli' or 'brew upgrade armis-cli'" ;; esac
+    rec "$user" cli-path installed warn
+    rec "$user" cli-path action "$found (${got:-unknown}) comes before $CLI_BIN ($ARMIS_CLI_VERSION) on $user's PATH; $fix"
 }
 
 # ---- profiles ---------------------------------------------------------------
@@ -1602,7 +1654,7 @@ build_table() {
             for (i = 1; i <= n; i++) {
                 k = order[i]
                 a = (u[k] in auth) ? auth[u[k]] : ""
-                if (c[k] == "armis-cli" || c[k] == "preflight" || det[k] == "no") a = ""
+                if (c[k] == "armis-cli" || c[k] == "preflight" || c[k] == "cli-path" || c[k] == "profile" || det[k] == "no") a = ""
                 action = act[k]
                 if (c[k] == "mcp-server" && uact[u[k]] != "") action = (action == "" ? uact[u[k]] : action "; " uact[u[k]])
                 printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\n", u[k], c[k], det[k], ins[k], a, ver[k], action
@@ -1866,6 +1918,7 @@ for u in $USERS; do
         network_check "$u" "$h"
     fi
     stage_auth "$u" "$h"
+    check_cli_path "$u" "$h"
     stage_mcp "$u" "$h"
     stage_jetbrains "$u" "$h"
     stage_hook "$u" "$h"

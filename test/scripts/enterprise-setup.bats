@@ -23,6 +23,7 @@ setup() {
     export PATH="$STUBS:/usr/bin:/bin:/usr/sbin:/sbin"
     export ARMIS_SAFE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
     export ARMIS_EXTRA_PATH="$STUBS:$PYSTUB"
+    export ARMIS_LOGIN_SHELL="$STUBS/loginshell"
     export ARMIS_INSTALL_DIR="$INSTALL_DIR"
     export ARMIS_LOG_DIR="$LOG_DIR"
     export ARMIS_CLI_VERSION="1.27.0"
@@ -749,6 +750,61 @@ EOF
     grep -q 'export KEEP=me' "$HOME/.zshenv"
     ! grep -q 'export OLD=1' "$HOME/.zshenv"
     [ "$(grep -c 'armis-cli (managed) >>>' "$HOME/.zshenv")" -eq 1 ]
+}
+
+# fake_brew_cli VERSION: an armis-cli in $T/brew reporting VERSION.
+fake_brew_cli() {
+    mkdir -p "$T/brew"
+    printf '#!/bin/sh\necho "armis-cli version %s (commit: x, built: y)"\n' "$1" > "$T/brew/armis-cli"
+    chmod 755 "$T/brew/armis-cli"
+}
+
+@test "a dry run with an older CLI reports it as found and to be replaced" {
+    make_clients
+    export STUB_CLI_VERSION=1.25.0
+    setup_run --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would replace armis-cli 1.25.0 at $INSTALL_DIR/armis-cli with 1.27.0"* ]]
+    ! printf '%s\n' "$output" | grep -q 'armis-cli .*skip (not installed)'
+}
+
+@test "an older armis-cli earlier on the developer's PATH is reported" {
+    make_clients
+    fake_brew_cli 1.25.0
+    export STUB_USER_PATH="$T/brew:$INSTALL_DIR"
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$T/brew/armis-cli (1.25.0) comes before $INSTALL_DIR/armis-cli (1.27.0)"* ]]
+    [[ "$output" == *"remove it or move"* ]]
+}
+
+@test "a shadowing Homebrew armis-cli gets brew advice" {
+    make_clients
+    fake_brew_cli 1.25.0
+    mkdir -p "$T/Cellar/armis-cli/1.25.0/bin" "$T/hb/bin"
+    mv "$T/brew/armis-cli" "$T/Cellar/armis-cli/1.25.0/bin/armis-cli"
+    ln -s "../../Cellar/armis-cli/1.25.0/bin/armis-cli" "$T/hb/bin/armis-cli"
+    export STUB_USER_PATH="$T/hb/bin:$INSTALL_DIR"
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"brew upgrade armis-cli"* ]]
+}
+
+@test "the same armis-cli version earlier on PATH is not reported" {
+    make_clients
+    fake_brew_cli 1.27.0
+    export STUB_USER_PATH="$T/brew:$INSTALL_DIR"
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"comes before"* ]]
+}
+
+@test "armis-cli missing from the developer's PATH is reported" {
+    make_clients
+    export STUB_USER_PATH="$T/nowhere"
+    setup_run --only cursor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"armis-cli is not on"* ]]
 }
 
 @test "the script runs under bash 3.2 without bash 4 features" {
