@@ -71,6 +71,8 @@ func TestFlagCompletionsMatchValidators(t *testing.T) {
 		{"group-by", scanCmd, "group-by", validGroupBy},
 		{"bom", scanCmd, "bom", scan.BOMTypeOrder},
 		{"bom-format", scanCmd, "bom-format", scan.BOMFormats},
+		{"bom command type", bomCmd, "type", scan.BOMTypeOrder},
+		{"bom command format", bomCmd, "format", scan.BOMFormats},
 	}
 
 	for _, tt := range tests {
@@ -104,6 +106,8 @@ func TestFlagCompletionsHaveDescriptions(t *testing.T) {
 		{"group-by", scanCmd, "group-by"},
 		{"bom", scanCmd, "bom"},
 		{"bom-format", scanCmd, "bom-format"},
+		{"bom command type", bomCmd, "type"},
+		{"bom command format", bomCmd, "format"},
 	}
 
 	for _, tt := range tests {

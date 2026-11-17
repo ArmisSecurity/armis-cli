@@ -18,6 +18,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
@@ -52,6 +53,8 @@ type SBOMVEXDownloader struct {
 	client   *api.Client
 	tenantID string
 	opts     *SBOMVEXOptions
+	// bomWritten lists the BOM types Download wrote, to a file or stdout.
+	bomWritten []string
 }
 
 // NewSBOMVEXDownloader creates a new downloader instance.
@@ -124,7 +127,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	if bom != nil {
 		var failed []string
 		// A 403 refetch hands back fresher links, for --sbom and --vex too.
-		if results, failed = d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
+		if results, failed, d.bomWritten = d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
 			bomErr = &BOMDownloadError{Types: failed}
 		}
 	}
@@ -182,14 +185,58 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	return "", bomErr
 }
 
+// DownloadArtifacts runs the downloads of a finished scan: the SBOM, VEX and
+// BOM files opts asks for, and the scanner-skip warning. It returns the skip
+// reason and the BOM types that could not be downloaded; any other error only
+// warns. Ctrl+C during the BOM downloads returns the context's error, so the
+// scan exits as cancelled, not as a failed download.
+func DownloadArtifacts(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (string, []string, error) {
+	skipReason, bomFailures, _, err := downloadArtifacts(ctx, client, tenantID, scanID, artifactName, opts)
+	return skipReason, bomFailures, err
+}
+
+// downloadArtifacts is DownloadArtifacts that also returns the BOM types
+// written.
+func downloadArtifacts(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (string, []string, []string, error) {
+	d := NewSBOMVEXDownloader(client, tenantID, opts)
+	skipReason, err := d.Download(ctx, scanID, artifactName)
+	bomFailures, err := SplitBOMError(err)
+	if err != nil {
+		// Log warning but don't fail the scan
+		cli.PrintWarningf("%v", err)
+	}
+	if len(bomFailures) > 0 && ctx.Err() != nil {
+		return "", nil, nil, ctx.Err()
+	}
+	return skipReason, bomFailures, d.bomWritten, nil
+}
+
+// BOMOnlyResult downloads the BOMs of a finished BOM-only scan and returns
+// its result: no findings, the BOM types written, and those that could not
+// be downloaded.
+func BOMOnlyResult(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (*model.ScanResult, error) {
+	skipReason, bomFailures, bomWritten, err := downloadArtifacts(ctx, client, tenantID, scanID, artifactName, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &model.ScanResult{
+		ScanID:      scanID,
+		Status:      "completed",
+		Summary:     model.Summary{ScannerSkipReason: skipReason},
+		BOMFailures: bomFailures,
+		BOMWritten:  bomWritten,
+	}, nil
+}
+
 // downloadBOMs downloads each requested BOM type and returns the results it
-// ended with and the types that failed. A type the server did not store (a
-// key not offered, too_large, or a format left out of bom_summary) only warns.
+// ended with, the types that failed and the types written. A type the server
+// did not store (a key not offered, too_large, or a format left out of
+// bom_summary) only warns.
 // A 403, likely an expired presigned link, refetches the results once and
 // retries that type once; the refetched results then serve the remaining
 // types and are returned.
-func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string) {
-	var failed []string
+func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string, []string) {
+	var failed, written []string
 	opts := d.opts.BOM
 	for _, bomType := range opts.Types {
 		label := BOMLabel(bomType)
@@ -236,11 +283,12 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			failed = append(failed, bomType)
 			continue
 		}
+		written = append(written, bomType)
 		if bomIsEmpty(results.BOMSummary, bomType, data, format) {
 			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}
-	return results, failed
+	return results, failed, written
 }
 
 // refetchBOMURL fetches the results again for a fresh presigned link to key.

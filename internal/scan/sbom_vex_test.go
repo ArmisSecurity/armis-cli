@@ -20,6 +20,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
@@ -1478,6 +1479,109 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		}
 		if _, statErr := os.Stat(".armis"); statErr == nil {
 			t.Error("stdout mode must not create .armis")
+		}
+	})
+}
+
+func TestSBOMVEXOptionsBOMOnly(t *testing.T) {
+	rows := []struct {
+		name         string
+		opts         *SBOMVEXOptions
+		wantOnly     bool
+		wantScanType string
+		wantMessage  string
+	}{
+		{"no options", nil, false, "", "Scanning for security issues..."},
+		{"--sbom only", &SBOMVEXOptions{GenerateSBOM: true}, false, "", "Scanning for security issues..."},
+		{"scan --bom", &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"cbom"}}}, false, "", "Scanning for security issues..."},
+		{"bom command", &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"all"}, Only: true}}, true, "bom", "Building BOMs..."},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			if got := row.opts.BOMOnly(); got != row.wantOnly {
+				t.Errorf("BOMOnly() = %v, want %v", got, row.wantOnly)
+			}
+			if got := row.opts.ScanType(); got != row.wantScanType {
+				t.Errorf("ScanType() = %q, want %q", got, row.wantScanType)
+			}
+			if got := row.opts.WaitMessage(); got != row.wantMessage {
+				t.Errorf("WaitMessage() = %q, want %q", got, row.wantMessage)
+			}
+		})
+	}
+}
+
+func TestBOMOnlyResult(t *testing.T) {
+	const cbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
+	skip := "a scanner was skipped"
+	rows := []struct {
+		name         string
+		srv          *bomServer
+		types        []string
+		wantFailures []string
+		wantSkip     string
+		wantFile     bool
+	}{
+		{name: "built and written", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}}, types: []string{"cbom"}, wantFile: true},
+		{name: "one written, one not offered", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}},
+			types: []string{"aibom", "cbom"}, wantFile: true},
+		{name: "not offered only warns", srv: &bomServer{docs: map[string]string{}}, types: []string{"aibom", "cbom"}},
+		{name: "a failed download is a failure", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { return http.StatusNotFound }}, types: []string{"cbom"}, wantFailures: []string{"cbom"}},
+		{name: "results not available fails every type", srv: &bomServer{resultsCode: http.StatusNotFound},
+			types: []string{"sbom", "all"}, wantFailures: []string{"sbom", "all"}},
+		{name: "the skip reason is kept", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, skipReason: &skip},
+			types: []string{"cbom"}, wantSkip: skip, wantFile: true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			dir := t.TempDir()
+			client := row.srv.start(t)
+			opts := &SBOMVEXOptions{BOM: &BOMOptions{Types: row.types, Format: BOMFormatCycloneDX17, Output: dir, Only: true}}
+			var result *model.ScanResult
+			var err error
+			_ = testutil.CaptureStderr(t, func() {
+				result, err = BOMOnlyResult(context.Background(), client, "tenant-123", "scan-456", "app", opts)
+			})
+			if err != nil {
+				t.Fatalf("BOMOnlyResult: %v", err)
+			}
+			if result.ScanID != "scan-456" || len(result.Findings) != 0 || result.Summary.Total != 0 {
+				t.Errorf("result = %+v, want scan-456 with no findings", result)
+			}
+			if !reflect.DeepEqual(result.BOMFailures, row.wantFailures) {
+				t.Errorf("BOMFailures = %v, want %v", result.BOMFailures, row.wantFailures)
+			}
+			if result.Summary.ScannerSkipReason != row.wantSkip {
+				t.Errorf("skip reason = %q, want %q", result.Summary.ScannerSkipReason, row.wantSkip)
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, "app-bom-cbom.json")); (statErr == nil) != row.wantFile {
+				t.Errorf("app-bom-cbom.json exists = %v, want %v", statErr == nil, row.wantFile)
+			}
+			var wantWritten []string
+			if row.wantFile {
+				wantWritten = []string{"cbom"}
+			}
+			if !reflect.DeepEqual(result.BOMWritten, wantWritten) {
+				t.Errorf("BOMWritten = %v, want %v", result.BOMWritten, wantWritten)
+			}
+		})
+	}
+
+	t.Run("Ctrl+C during a download returns the context error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { cancel(); return http.StatusNotFound }}
+		client := srv.start(t)
+		opts := &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"cbom"}, Format: BOMFormatCycloneDX17, Output: t.TempDir(), Only: true}}
+		var result *model.ScanResult
+		var err error
+		_ = testutil.CaptureStderr(t, func() {
+			result, err = BOMOnlyResult(ctx, client, "tenant-123", "scan-456", "app", opts)
+		})
+		if result != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("BOMOnlyResult = %v, %v; want a cancelled result", result, err)
 		}
 	})
 }

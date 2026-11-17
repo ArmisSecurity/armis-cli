@@ -12,11 +12,11 @@ import (
 // checkBOMFlags runs the checks of scan repo and scan image: NormalizeBOMFlags
 // in PersistentPreRunE, then ValidateBOMFlags.
 func checkBOMFlags(types []string, bomSet bool, format, output string) ([]string, string, error) {
-	types, format, err := NormalizeBOMFlags(types, bomSet, format)
+	types, format, err := NormalizeBOMFlags(ScanBOMFlags, types, bomSet, format)
 	if err != nil {
 		return nil, format, err
 	}
-	return types, format, ValidateBOMFlags(types, format, output)
+	return types, format, ValidateBOMFlags(ScanBOMFlags, types, format, output)
 }
 
 func TestValidateBOMFlags(t *testing.T) {
@@ -165,19 +165,111 @@ func TestNormalizeBOMFlagsLeavesPairsAndOutput(t *testing.T) {
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			types, format, err := NormalizeBOMFlags(row.types, true, row.format)
+			types, format, err := NormalizeBOMFlags(ScanBOMFlags, row.types, true, row.format)
 			if err != nil {
 				t.Fatalf("NormalizeBOMFlags: %v, want no error", err)
 			}
-			if err := ValidateBOMFlags(types, format, row.output); err == nil {
+			if err := ValidateBOMFlags(ScanBOMFlags, types, format, row.output); err == nil {
 				t.Fatalf("ValidateBOMFlags passed %s, want an error", row.name)
 			}
 		})
 	}
 
 	t.Run("ValidateBOMFlags without types checks nothing", func(t *testing.T) {
-		if err := ValidateBOMFlags(nil, "spdx", file); err != nil {
+		if err := ValidateBOMFlags(ScanBOMFlags, nil, "spdx", file); err != nil {
 			t.Fatalf("ValidateBOMFlags without types: %v, want nil", err)
 		}
 	})
+}
+
+// TestBOMCommandFlagMessages runs the same checks with the flag names of the
+// bom subcommands: every message names --type, --format and --output, never
+// the scan flags.
+func TestBOMCommandFlagMessages(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "boms.json")
+	if err := os.WriteFile(file, []byte("{}"), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	rows := []struct {
+		name    string
+		types   []string
+		format  string
+		output  string
+		wantErr string
+	}{
+		{"no value", []string{""}, "cyclonedx-1.7", "", "--type requires a value: one of [sbom aibom cbom all]"},
+		{"unknown type", []string{"xbom"}, "cyclonedx-1.7", "", `invalid --type value "xbom": must be one of [sbom aibom cbom all]`},
+		{"unknown format", []string{"all"}, "xml", "", `invalid --format value "xml": must be one of [cyclonedx-1.7 cyclonedx-1.6 spdx-2.3 spdx-3.0.1 cyclonedx spdx]`},
+		{"aibom with spdx-2.3", []string{"aibom"}, "spdx-2.3", "", "--format spdx-2.3 is not available for --type aibom: the AI-BOM's SPDX form is spdx-3.0.1"},
+		{"all with spdx", []string{"all"}, "spdx", "", "--format spdx is not available for --type all: the Combined BOM has no SPDX form"},
+		{"stdout with two types", []string{"cbom", "sbom"}, "cyclonedx-1.7", "-", "--output - takes one BOM type, got 2: sbom,cbom"},
+		{"output is a file", []string{"all"}, "cyclonedx-1.7", file, fmt.Sprintf("invalid --output value %q: not a directory", file)},
+		{"output with ..", []string{"all"}, "cyclonedx-1.7", "../boms", `invalid --output value "../boms": path traversal detected`},
+		{"accepted", []string{"sbom", "aibom"}, "spdx", "", ""},
+	}
+	t.Run("the default type says so", func(t *testing.T) {
+		names := BOMCommandFlags
+		names.DefaultTypes = true
+		err := ValidateBOMFlags(names, []string{"all"}, "spdx", "")
+		want := "--format spdx is not available for --type all (the default): the Combined BOM has no SPDX form"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			types, format, err := NormalizeBOMFlags(BOMCommandFlags, row.types, true, row.format)
+			if err == nil {
+				err = ValidateBOMFlags(BOMCommandFlags, types, format, row.output)
+			}
+			if row.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != row.wantErr {
+				t.Fatalf("error = %v, want %q", err, row.wantErr)
+			}
+			if strings.Contains(err.Error(), "--bom") {
+				t.Errorf("error %q names a scan flag", err)
+			}
+		})
+	}
+}
+
+func TestRefuseFileNameOutput(t *testing.T) {
+	dir := t.TempDir()
+	jsonDir := filepath.Join(dir, "boms.json")
+	if err := os.Mkdir(jsonDir, 0750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const oneTypeHint = "--output takes a directory, not a file name; use --output - to write the BOM to stdout, or name a directory"
+	rows := []struct {
+		name     string
+		output   string
+		types    []string
+		wantHint string // "" for no error
+	}{
+		{"unset", "", []string{"all"}, ""},
+		{"stdout", "-", []string{"all"}, ""},
+		{"a new directory", filepath.Join(dir, "boms"), []string{"all"}, ""},
+		{"a new .json path", filepath.Join(dir, "sbom.json"), []string{"sbom"}, oneTypeHint},
+		{"a new .JSON path", filepath.Join(dir, "sbom.JSON"), []string{"all"}, oneTypeHint},
+		{"an existing directory ending in .json", jsonDir, []string{"all"}, ""},
+		{"a new .spdx.json path", filepath.Join(dir, "sbom.spdx.json"), []string{"sbom"}, oneTypeHint},
+		{"two types get no stdout hint", filepath.Join(dir, "out.json"), []string{"sbom", "cbom"},
+			"--output takes a directory, not a file name; name a directory for the 2 BOM files"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			err := RefuseFileNameOutput(BOMCommandFlags, row.output, row.types)
+			if (err != nil) != (row.wantHint != "") {
+				t.Fatalf("RefuseFileNameOutput(%q) = %v, want error %v", row.output, err, row.wantHint != "")
+			}
+			if err != nil && !strings.HasSuffix(err.Error(), row.wantHint) {
+				t.Errorf("error = %q, want it to end with %q", err, row.wantHint)
+			}
+		})
+	}
 }
