@@ -17,6 +17,9 @@ var mcpUpdateCmd = &cobra.Command{
 	Long: `Update the Armis AppSec MCP server, and every editor it's registered in, to
 the latest version.
 
+If the MCP server was pinned with 'armis-cli install --plugin-version', the pin
+is kept and the pinned release is reinstalled instead.
+
 Reads the install manifest written by 'armis-cli install' to find out what's
 already registered — no editor names needed. Armis Knowledge is updated too
 if it was previously installed, or if --with-knowledge is passed.`,
@@ -60,6 +63,9 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 		return fmt.Errorf("Armis AppSec MCP server is not installed — run: armis-cli install") //nolint:staticcheck // proper noun
 	}
 
+	if pin := install.EffectivePin(); pin != "" {
+		fmt.Fprintf(os.Stderr, "MCP server is pinned to v%s; to follow the latest release run: armis-cli install --plugin-version latest\n", pin)
+	}
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
 	scannerState := "updated"
 	if err := ei.FetchPlugin(force); err != nil {
@@ -115,6 +121,9 @@ func performMCPUpdate(force, withKnowledgeFlag bool) error {
 
 	if manifest.Claude != nil {
 		ci, ciErr := install.NewClaudeInstaller()
+		if ci != nil {
+			ci.SetForce(force)
+		}
 		if ciErr != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
 			failed = append(failed, "Claude Code")

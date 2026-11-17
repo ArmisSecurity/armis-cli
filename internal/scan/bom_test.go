@@ -1,0 +1,240 @@
+package scan
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/ArmisSecurity/armis-cli/internal/api"
+)
+
+func TestResolveBOMFormat(t *testing.T) {
+	tests := []struct {
+		bomType, format, want string
+		wantErr               bool
+	}{
+		{"sbom", "spdx", "spdx-2.3", false},
+		{"aibom", "spdx", "spdx-3.0.1", false},
+		{"all", "cyclonedx", "cyclonedx-1.7", false},
+		{"cbom", "cyclonedx-1.6", "cyclonedx-1.6", false},
+		{"sbom", "spdx-2.3", "spdx-2.3", false},
+		{"aibom", "cyclonedx-1.7", "cyclonedx-1.7", false},
+		{"cbom", "spdx", "", true},
+		{"all", "spdx", "", true},
+		{"sbom", "xml", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.bomType+" "+tt.format, func(t *testing.T) {
+			got, err := ResolveBOMFormat(tt.bomType, tt.format)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ResolveBOMFormat(%q, %q) = %q, want %q", tt.bomType, tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+// bomKeyCases are the type and resolved format pairs the server stores, with
+// the results key the server links and the file armis-cli writes.
+var bomKeyCases = []struct {
+	bomType, format, key, file string
+}{
+	{"sbom", "cyclonedx-1.7", "bom_sbom_results", "repo-bom-sbom.json"},
+	{"sbom", "cyclonedx-1.6", "bom_sbom_cdx16_results", "repo-bom-sbom.json"},
+	{"sbom", "spdx-2.3", "bom_sbom_spdx23_results", "repo-bom-sbom.spdx.json"},
+	{"sbom", "spdx-3.0.1", "bom_sbom_spdx301_results", "repo-bom-sbom.spdx.json"},
+	{"aibom", "cyclonedx-1.7", "aibom_results", "repo-bom-aibom.json"},
+	{"aibom", "cyclonedx-1.6", "aibom_cdx16_results", "repo-bom-aibom.json"},
+	{"aibom", "spdx-3.0.1", "aibom_spdx301_results", "repo-bom-aibom.spdx.json"},
+	{"cbom", "cyclonedx-1.7", "cbom_results", "repo-bom-cbom.json"},
+	{"cbom", "cyclonedx-1.6", "cbom_cdx16_results", "repo-bom-cbom.json"},
+	{"all", "cyclonedx-1.7", "bom_results", "repo-bom-all.json"},
+	{"all", "cyclonedx-1.6", "bom_cdx16_results", "repo-bom-all.json"},
+}
+
+func TestBOMResultKey(t *testing.T) {
+	for _, tt := range bomKeyCases {
+		if got := BOMResultKey(tt.bomType, tt.format); got != tt.key {
+			t.Errorf("BOMResultKey(%q, %q) = %q, want %q", tt.bomType, tt.format, got, tt.key)
+		}
+	}
+	for _, bad := range [][2]string{{"xbom", "cyclonedx-1.7"}, {"cbom", "cyclonedx"}, {"sbom", "spdx"}} {
+		if got := BOMResultKey(bad[0], bad[1]); got != "" {
+			t.Errorf("BOMResultKey(%q, %q) = %q, want empty", bad[0], bad[1], got)
+		}
+	}
+}
+
+func TestIsSPDXFormat(t *testing.T) {
+	want := map[string]bool{
+		"cyclonedx-1.7": false, "cyclonedx-1.6": false, "cyclonedx": false,
+		"spdx-2.3": true, "spdx-3.0.1": true, "spdx": true,
+		"spdx-9": false,
+	}
+	for format, w := range want {
+		if got := IsSPDXFormat(format); got != w {
+			t.Errorf("IsSPDXFormat(%q) = %v, want %v", format, got, w)
+		}
+	}
+}
+
+func TestBOMFileName(t *testing.T) {
+	for _, tt := range bomKeyCases {
+		if got := BOMFileName("repo", tt.bomType, tt.format); got != tt.file {
+			t.Errorf("BOMFileName(repo, %q, %q) = %q, want %q", tt.bomType, tt.format, got, tt.file)
+		}
+	}
+}
+
+func TestBOMLabel(t *testing.T) {
+	want := map[string]string{"sbom": "SBOM", "aibom": "AI-BOM", "cbom": "CBOM", "all": "Combined BOM"}
+	for bomType, label := range want {
+		if got := BOMLabel(bomType); got != label {
+			t.Errorf("BOMLabel(%q) = %q, want %q", bomType, got, label)
+		}
+	}
+}
+
+func TestIsEmptyBOM(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   string
+		format string
+		want   bool
+	}{
+		{"CycloneDX without lists", `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", true},
+		{"CycloneDX with empty lists", `{"components":[],"services":[]}`, "cyclonedx-1.6", true},
+		{"CycloneDX with null components", `{"components":null}`, "cyclonedx-1.7", true},
+		{"CycloneDX with a component", `{"components":[{"name":"a"}]}`, "cyclonedx-1.7", false},
+		{"CycloneDX with only a service", `{"components":[],"services":[{"name":"s"}]}`, "cyclonedx-1.7", false},
+		{"SPDX 2.3 without packages", `{"spdxVersion":"SPDX-2.3"}`, "spdx-2.3", true},
+		{"SPDX 2.3 with empty packages", `{"packages":[]}`, "spdx-2.3", true},
+		{"SPDX 2.3 with a package", `{"packages":[{"name":"p"}]}`, "spdx-2.3", false},
+		{"SPDX 2.3 with only the root package", spdxRootOnly, "spdx-2.3", false},
+		{"SPDX 2.3 ignores components", `{"components":[{"name":"a"}]}`, "spdx-2.3", true},
+		{"SPDX 3.0.1 is not checked", `{"@graph":[]}`, "spdx-3.0.1", false},
+		{"not JSON", `<bom/>`, "cyclonedx-1.7", false},
+		{"a JSON array", `[]`, "cyclonedx-1.7", false},
+		{"components not a list", `{"components":{}}`, "cyclonedx-1.7", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEmptyBOM([]byte(tt.data), tt.format); got != tt.want {
+				t.Errorf("isEmptyBOM(%s, %s) = %v, want %v", tt.data, tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+// spdxRootOnly is an empty SPDX 2.3 SBOM as the server sends it: the scan
+// root is always a package.
+const spdxRootOnly = `{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","name":"my-repo",` +
+	`"packages":[{"SPDXID":"SPDXRef-Package-3f2a","name":"my-repo","downloadLocation":"NONE"}],` +
+	`"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-3f2a"}]}`
+
+func TestBOMIsEmpty(t *testing.T) {
+	summary := func(status string) *api.BOMSummary {
+		return &api.BOMSummary{Types: map[string]api.BOMTypeStatus{"sbom": {Status: status}}}
+	}
+	tests := []struct {
+		name    string
+		summary *api.BOMSummary
+		data    string
+		format  string
+		want    bool
+	}{
+		{"summary empty, SPDX with the root package", summary(api.BOMStatusEmpty), spdxRootOnly, "spdx-2.3", true},
+		{"summary generated, CycloneDX without components", summary(api.BOMStatusGenerated), `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", false},
+		{"summary without the type", &api.BOMSummary{}, `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", false},
+		{"no summary reads the document", nil, `{"bomFormat":"CycloneDX"}`, "cyclonedx-1.7", true},
+		{"no summary, SPDX with the root package", nil, spdxRootOnly, "spdx-2.3", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bomIsEmpty(tt.summary, "sbom", []byte(tt.data), tt.format); got != tt.want {
+				t.Errorf("bomIsEmpty = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJSONDepthAtMost(t *testing.T) {
+	tests := []struct {
+		name  string
+		data  string
+		limit int
+		want  bool
+	}{
+		{"a scalar", `1`, 0, true},
+		{"an object at the limit", `{"a":[1]}`, 2, true},
+		{"one level over", `{"a":[[1]]}`, 2, false},
+		{"siblings do not add up", `[[1],[2],{"a":3}]`, 2, true},
+		{"brackets in a string do not count", `{"a":"[[[{{{"}`, 1, true},
+		{"an escaped quote stays in the string", `{"a":"\"[[["}`, 1, true},
+		{"an escaped backslash ends before the quote", `{"a":"\\"}`, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := jsonDepthAtMost([]byte(tt.data), tt.limit); got != tt.want {
+				t.Errorf("jsonDepthAtMost(%s, %d) = %v, want %v", tt.data, tt.limit, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIndentBOM(t *testing.T) {
+	nested := func(depth int) []byte {
+		return []byte(strings.Repeat("[", depth) + strings.Repeat("]", depth))
+	}
+	if got, want := indentBOM(nested(maxIndentDepth)), IndentJSON(nested(maxIndentDepth)); !bytes.Equal(got, want) {
+		t.Errorf("depth %d is not pretty-printed", maxIndentDepth)
+	}
+	deep := nested(5000)
+	if got := indentBOM(deep); !bytes.Equal(got, deep) {
+		t.Errorf("depth 5000 grew to %d bytes, want it unchanged", len(got))
+	}
+}
+
+func TestEmptyBOMMessage(t *testing.T) {
+	want := map[string]string{
+		"aibom": "No AI components found in .",
+		"cbom":  "No crypto components found in .",
+		"sbom":  "No packages found in .",
+		"all":   "No components found in .",
+	}
+	for bomType, msg := range want {
+		if got := emptyBOMMessage(bomType, "."); got != msg {
+			t.Errorf("emptyBOMMessage(%q) = %q, want %q", bomType, got, msg)
+		}
+	}
+}
+
+func TestSplitBOMError(t *testing.T) {
+	cause := errors.New("results call failed")
+	types, rest := SplitBOMError(fmt.Errorf("wrapped: %w", &BOMDownloadError{Types: []string{"cbom"}, Err: cause}))
+	if !reflect.DeepEqual(types, []string{"cbom"}) || rest != cause {
+		t.Errorf("SplitBOMError(BOMDownloadError) = %v, %v", types, rest)
+	}
+	types, rest = SplitBOMError(&BOMDownloadError{Types: []string{"aibom"}})
+	if !reflect.DeepEqual(types, []string{"aibom"}) || rest != nil {
+		t.Errorf("SplitBOMError without Err = %v, %v; want [aibom], nil", types, rest)
+	}
+	other := errors.New("other")
+	if types, rest = SplitBOMError(other); types != nil || rest != other {
+		t.Errorf("SplitBOMError(other) = %v, %v; want nil, other", types, rest)
+	}
+	if types, rest = SplitBOMError(nil); types != nil || rest != nil {
+		t.Errorf("SplitBOMError(nil) = %v, %v", types, rest)
+	}
+}

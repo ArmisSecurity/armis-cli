@@ -7,7 +7,7 @@
 # Armis CLI
 
 [![Build Status](https://github.com/ArmisSecurity/armis-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ArmisSecurity/armis-cli/actions)
-[![Go Version](https://img.shields.io/badge/go-1.26+-blue)](https://golang.org/dl/)
+[![Go Version](https://img.shields.io/badge/go-1.27.4+-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![Coverage](https://img.shields.io/badge/coverage-check%20CI-blue)](https://github.com/ArmisSecurity/armis-cli/actions/workflows/ci.yml)
@@ -250,7 +250,8 @@ Options:
 ### Shell Completion
 
 `armis-cli` ships tab-completion for commands, subcommands, and flag values (e.g.
-`--format <TAB>` offers `human/json/sarif/junit`). Generate the script for your
+`--format <TAB>` offers `human/json/sarif/junit`, and `--bom <TAB>` offers
+`sbom/aibom/cbom/all`). Generate the script for your
 shell with `armis-cli completion <shell>`; run `armis-cli completion <shell> --help`
 for the full instructions.
 
@@ -504,6 +505,8 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 ```
 
 > The `--sbom`, `--sbom-format`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
+>
+> The `--bom`, `--bom-format`, and `--bom-output` flags apply to `scan repo` and `scan image` — see [BOMs](#boms-ai-bom-cbom-sbom). `scan sbom` and `scan status` ignore them; `--bom` prints a warning there.
 
 ### Scan Repository
 
@@ -529,6 +532,9 @@ armis-cli scan repo ./my-app --sbom --vex
 
 # Generate an SPDX 2.3 SBOM instead of the default CycloneDX
 armis-cli scan repo ./my-app --sbom --sbom-format spdx
+
+# Download an AI-BOM and a CBOM
+armis-cli scan repo ./my-app --bom aibom,cbom
 ```
 
 #### SBOM Format
@@ -550,6 +556,59 @@ Notes:
 - It only takes effect together with `--sbom`. Passing it on its own prints a warning and is ignored.
 - The same flag is available on `scan image`.
 - Use `--sbom-output` to override the default output path.
+
+#### BOMs (AI-BOM, CBOM, SBOM)
+
+`--bom` downloads the BOMs (bills of materials) that Armis builds during the
+scan, one file per type. BOM generation must be enabled for your tenant; on a
+tenant without it, each requested type prints a "not available" warning, and
+the exit code does not change.
+
+| Type | Contents |
+|------|----------|
+| `sbom` | Software BOM: packages |
+| `aibom` | AI-BOM: AI models, AI providers, MCP servers and their tools |
+| `cbom` | CBOM: cryptographic algorithms, certificates and keys |
+| `all` | Combined BOM of all three |
+
+```bash
+# AI-BOM and CBOM → .armis/<artifact>-bom-aibom.json and .armis/<artifact>-bom-cbom.json
+armis-cli scan repo ./my-app --bom aibom,cbom
+
+# Combined BOM as CycloneDX 1.6 into ./boms
+armis-cli scan repo ./my-app --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
+
+# SPDX 2.3 software BOM → .armis/<artifact>-bom-sbom.spdx.json
+armis-cli scan repo ./my-app --bom sbom --bom-format spdx
+
+# One BOM to stdout; the findings report then goes to stderr unless --output is set
+armis-cli scan repo ./my-app --bom cbom --bom-output - > cbom.json
+```
+
+Notes:
+
+- `--bom` takes a comma-separated list and may be repeated: `sbom`, `aibom`, `cbom`, `all`.
+- `--bom-format` applies to every requested type: `cyclonedx-1.7` (default),
+  `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`
+  (CycloneDX 1.7) and `spdx` (SPDX 2.3 for `sbom`, SPDX 3.0.1 for `aibom`).
+- A type with no such form is rejected before upload: `aibom` with `spdx-2.3`,
+  and `cbom` or `all` with any SPDX value. A format the server does not offer
+  for a type fails the scan request after upload, with exit code 1 and
+  `the server refused the BOM request (--bom <types> --bom-format <format>): <message> (<code>)`.
+- `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout. In Windows PowerShell 5.1, `>` saves stdout as UTF-16, which many JSON tools reject; use a directory there, or cmd.exe or PowerShell 7.4 or later, which keep the bytes as written.
+- Without `--bom`, a non-default `--bom-format` prints `--bom-format is ignored without --bom flag`, any `--bom-output` prints the same for `--bom-output`, and the scan runs as without them.
+- Each file holds the stored document, pretty-printed. On Linux and macOS, new files get mode 0600, and so does a file replaced in the default `.armis`; on Windows, they take the folder's permissions instead. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
+- `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
+- An empty BOM is still written, and stderr says so, such as
+  `No AI components found in ./my-app`. The exit code does not change.
+- A type the server did not build, or a BOM too large to store, prints a
+  warning and does not change the exit code. The warning says whether the type
+  is not supported for this scan, failed on the server (with the tools that
+  failed anywhere in the scan, if any), or was too large to store.
+- A BOM that was built but cannot be downloaded prints a warning and the scan
+  exits 2, unless `--fail-on` triggers first (see [Exit Codes](#exit-codes)).
+- With `--changed` or `--include-files`, BOMs cover only the uploaded files.
+- The same flags are available on `scan image`.
 
 #### Scan Only Changed Files
 
@@ -717,7 +776,21 @@ armis-cli scan image nginx:latest
 armis-cli scan image my-app:v1.0.0
 # Scan tarball
 armis-cli scan image --tarball ./image.tar
+# Download the image's SBOM and CBOM (see BOMs under Scan Repository)
+armis-cli scan image python:3.12-slim --bom sbom --bom cbom
+# Write the CBOM of a tarball to stdout
+armis-cli scan image --tarball ./image.tar --bom cbom --bom-output -
 ```
+
+With `--bom`, an image scan sends the image name with the request so it appears
+in its BOMs. For `--tarball`, the name is the first tag in the tarball's
+`manifest.json`, as `docker save` writes it; a tarball without one sends none.
+
+The SBOM, VEX and BOM files of an image scanned by name start with the last
+part of the repository name and the tag, if one was given:
+`ghcr.io/org/app:1.2` gives `app-1.2-sbom.json`, and `python@sha256:...` gives
+`python-sbom.json`. A rerun replaces the same files. With `--tarball`, they
+start with the tarball's file name.
 
 #### Pull Policy
 
@@ -1348,9 +1421,14 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 
 ## Exit Codes
 
-- `0` - Scan completed successfully with no blocking findings, or an `--async` scan was accepted
-- `1` - Scan found blocking findings (configurable with `--fail-on`), or the command failed (for example an invalid `--project` name)
-- `>1` - Error occurred during scan
+- `0` - Scan completed with no blocking findings, or an `--async` scan was accepted
+- `--exit-code` value (default `1`) - Scan found findings at a `--fail-on` severity
+- `1` - Error: invalid flags (such as an invalid `--project` name), authentication, upload, timeout, or a failed scan
+- `2` - Scan completed, but its results or a requested BOM could not be downloaded
+- `130` - Scan cancelled with Ctrl+C
+
+With the default `--exit-code 1`, findings and errors share exit code `1`; set
+`--exit-code` to another value to tell them apart.
 
 ---
 

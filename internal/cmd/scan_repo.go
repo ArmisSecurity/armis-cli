@@ -56,6 +56,8 @@ use; a run on a developer machine is published only with --report.`,
   $ armis-cli scan repo . --format sarif --fail-on HIGH,CRITICAL
   $ armis-cli scan repo . --sbom --sbom-output sbom.json
   $ armis-cli scan repo . --sbom --sbom-format spdx
+  $ armis-cli scan repo . --bom aibom,cbom
+  $ armis-cli scan repo . --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main
@@ -130,6 +132,16 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The BOM type and format pairs, --bom-output, and a default .armis
+	// that is not a plain directory fail before any network call;
+	// PersistentPreRunE has normalized the values.
+	if err = cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+		return err
+	}
+	if err = checkDefaultOutputDir(); err != nil {
+		return err
+	}
+
 	// Validate path exists and is a directory before making network calls
 	// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
 	info, err := os.Stat(repoPath)
@@ -180,18 +192,20 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	}
 
 	warnOnUnusedSBOMVEXFlags()
+	warnOnUnusedBOMFlags()
 	if asyncScan {
 		warnOnAsyncIgnoredFlags(cmd)
 	}
 
-	// Configure SBOM/VEX options if any flags are set
-	if generateSBOM || generateVEX {
+	// Configure SBOM/VEX/BOM options if any flags are set
+	if generateSBOM || generateVEX || len(bomTypes) > 0 {
 		sbomVEXOpts := &scan.SBOMVEXOptions{
 			GenerateSBOM: generateSBOM,
 			SBOMFormat:   sbomFormat,
 			GenerateVEX:  generateVEX,
 			SBOMOutput:   sbomOutput,
 			VEXOutput:    vexOutput,
+			BOM:          bomOptions(repoPath),
 		}
 		scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 	}
@@ -264,6 +278,12 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 		scanner = scanner.WithIncludeFiles(fileList)
 	}
 
+	// A --changed or --include-files upload holds only some files, and the
+	// BOMs are built from the upload.
+	if len(bomTypes) > 0 && (len(includeFiles) > 0 || cmd.Flags().Changed("changed")) {
+		cli.PrintWarning("BOMs cover only the uploaded files")
+	}
+
 	ctx, cancel := NewSignalContext()
 	defer cancel()
 
@@ -329,7 +349,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 		ShowSuppressed:   showSuppressed,
 	}
 
-	return formatScanResult(formatter, result, outputCfg.Writer, opts, minSeverity, failOnSeverities)
+	return bomExit(result, formatScanResult(formatter, result, reportWriter(outputCfg.Writer), opts, minSeverity, failOnSeverities))
 }
 
 func init() {

@@ -328,6 +328,12 @@ type IngestOptions struct {
 	// Empty strings are omitted from the /scan request body.
 	ProjectID string
 	Trigger   string
+	// BOMTypes and BOMFormat request BOMs (--bom, --bom-format). Empty values
+	// are omitted from the /scan request body.
+	BOMTypes  []string
+	BOMFormat string
+	// ImageRef names the scanned image for its BOMs; empty is omitted.
+	ImageRef string
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -554,6 +560,9 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		OriginSHA:    opts.OriginSHA,
 		ProjectID:    opts.ProjectID,
 		Trigger:      opts.Trigger,
+		BOMTypes:     opts.BOMTypes,
+		BOMFormat:    opts.BOMFormat,
+		ImageRef:     opts.ImageRef,
 	}
 	if c.debug && (opts.ProjectID != "" || opts.Trigger != "") {
 		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s\n",
@@ -586,11 +595,14 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if msg, ok := bomRefusal(resp.StatusCode, respBytes, opts); ok {
+			return nil, errors.New(msg)
+		}
 		// 409 from /scan means S3 hasn't seen the upload yet. The most likely
 		// cause is a partial/interrupted multipart POST, but we surface the
-		// server's `detail` for clarity.
+		// server's `detail` for clarity, control characters stripped.
 		return nil, fmt.Errorf("/scan returned %s: %s",
-			resp.Status, strings.TrimSpace(string(respBytes)))
+			util.StripControl(resp.Status), util.StripControl(strings.TrimSpace(string(respBytes))))
 	}
 
 	var result model.IngestUploadResponse
@@ -598,6 +610,36 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		return nil, fmt.Errorf("failed to decode /scan response: %w", err)
 	}
 	return &result, nil
+}
+
+// bomRefusal reads a 422 answer to a /scan request with BOM fields, such as
+// {"detail":{"code":"export_format_unavailable","message":"..."}}, as "the
+// server refused the BOM request (--bom <types> --bom-format <format>):
+// <message> (<code>)", so the message says what was asked. Server text has
+// control characters stripped. ok is false for any other answer, which keeps
+// the raw text.
+func bomRefusal(status int, body []byte, opts IngestOptions) (string, bool) {
+	if status != http.StatusUnprocessableEntity || len(opts.BOMTypes) == 0 {
+		return "", false
+	}
+	var parsed struct {
+		Detail struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Detail.Message == "" {
+		return "", false
+	}
+	asked := "--bom " + strings.Join(opts.BOMTypes, ",")
+	if opts.BOMFormat != "" {
+		asked += " --bom-format " + opts.BOMFormat
+	}
+	msg := "the server refused the BOM request (" + asked + "): " + util.StripControl(parsed.Detail.Message)
+	if code := util.StripControl(parsed.Detail.Code); code != "" {
+		msg += " (" + code + ")"
+	}
+	return msg, true
 }
 
 // GetIngestStatus retrieves the current status of an ingestion.
@@ -910,6 +952,56 @@ type ArtifactScanResultsResponse struct {
 	// (e.g. appsec-v2) was skipped, such as a repository exceeding a file-count
 	// limit for AI-based scanning.
 	SkipReason *string `json:"skip_reason"`
+	// BOMSummary tells why a requested BOM type has no key in Results. Nil
+	// from servers that predate BOMs and for scans without one.
+	BOMSummary *BOMSummary `json:"bom_summary"`
+}
+
+// BOM type statuses in bom_summary.types.<type>.status. These mirror the
+// backend BomStatus enum (Project-Moose).
+const (
+	BOMStatusGenerated    = "generated"
+	BOMStatusEmpty        = "empty"
+	BOMStatusTooLarge     = "too_large"
+	BOMStatusFailed       = "failed"
+	BOMStatusNotSupported = "not_supported"
+)
+
+// BOMSummary is the part of the results response's bom_summary that the CLI
+// reads. FailedTools names the tools that failed during the scan, for every
+// BOM type together.
+type BOMSummary struct {
+	Types       map[string]BOMTypeStatus `json:"types"`
+	FailedTools []string                 `json:"failed_tools,omitempty"`
+}
+
+// BOMTypeStatus is the state of one BOM type. Formats lists the formats that
+// were stored; a format over the size cap is left out while the type stays
+// generated.
+type BOMTypeStatus struct {
+	Status  string   `json:"status"`
+	Formats []string `json:"formats,omitempty"`
+}
+
+// TypeStatus returns the status of bomType, and false when the summary does
+// not list it.
+func (s *BOMSummary) TypeStatus(bomType string) (BOMTypeStatus, bool) {
+	if s == nil {
+		return BOMTypeStatus{}, false
+	}
+	st, ok := s.Types[bomType]
+	return st, ok
+}
+
+// DownloadStatusError is returned by DownloadFromPresignedURL when S3 answers
+// with a status other than 200. A 403 usually means the presigned link has
+// expired.
+type DownloadStatusError struct {
+	StatusCode int
+}
+
+func (e *DownloadStatusError) Error() string {
+	return fmt.Sprintf("download failed with status %d", e.StatusCode)
 }
 
 // SkipMessage returns the human-readable skip reason and true if the backend
@@ -1129,7 +1221,13 @@ func (c *Client) DownloadFromPresignedURL(ctx context.Context, presignedURL stri
 	defer resp.Body.Close() //nolint:errcheck // response body read-only
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+		return nil, &DownloadStatusError{StatusCode: resp.StatusCode}
+	}
+
+	// A declared size over the cap fails before any byte is read; the
+	// LimitReader below still bounds a body without Content-Length.
+	if resp.ContentLength > MaxDownloadSize {
+		return nil, fmt.Errorf("download exceeds maximum allowed size (%d bytes)", MaxDownloadSize)
 	}
 
 	// Use LimitReader to prevent memory exhaustion from large responses

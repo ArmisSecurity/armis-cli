@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Armis CLI is an enterprise-grade security scanning tool written in Go that integrates with Armis Cloud. It scans repositories and container images for security vulnerabilities, secrets, and license risks.
 
-**Prerequisites:** Go 1.26+, [golangci-lint](https://golangci-lint.run/) v2.0+, Make
+**Prerequisites:** Go 1.27.4+, [golangci-lint](https://golangci-lint.run/) v2.0+, Make
 
 ## Build Commands
 
@@ -52,11 +52,11 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`, `WithProject()`, `WithAsync()`.
 - `internal/project/` - AppSec projects (PPSC-1589): `ValidateName()` (1-64 chars `[A-Za-z0-9._/-]`, alphanumeric at both ends, reserved words; never trims/renames), `Decide()` (publish = `--project` && (CI || `--report`); trigger `cli_ci`/`cli_dev`), `Resolve()` (exact-name lookup via the paginated case-insensitive `q` search, refuses case-only matches, creates a `ci_cd` project on a miss, recovers from a create race via the 409's `conflicting_project_id`). Client methods live in `internal/api/projects.go` (`AppSecError` parses the AppSec error envelope and FastAPI 422 lists).
 - `internal/scan/image/` - Image scanner: validates image names via `distribution/reference`, uses docker/podman to export, then uploads. Also supports direct tarball scanning.
-- `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX from presigned S3 URLs).
+- `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX and `--bom` files from presigned S3 URLs), `bom.go` (BOM types and formats, results keys and file names for `--bom`), `image/manifest.go` (reads `image_ref` from the `manifest.json` of a `--tarball`).
 - `internal/progress/` - Braille-dot spinner with timer display, lipgloss styling, cursor hiding, CI detection (auto-disables animation). Context-aware with configurable timeout (default 30min). Upload progress via `NewReader()`/`NewWriter()` wrappers.
 - `internal/update/` - Background version checker against GitHub Releases API with file-based caching (~/.cache/armis-cli/, 24h TTL). Semver comparison. Skipped in CI, dev builds.
 - `internal/httpclient/` - HTTP client with exponential backoff retry (cenkalti/backoff). Retries on 5xx errors.
-- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting.
+- `internal/util/` - Path sanitization (`SanitizePath`, `SafeJoinPath` for traversal prevention), secret masking (12 regex patterns), category formatting, control-character stripping for server text (`StripControl`).
 
 ### Key Interfaces
 

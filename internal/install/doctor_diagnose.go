@@ -289,10 +289,23 @@ func checkPluginVersion(d *doctorRun, component, installed, latest string) {
 			detail += " (latest is v" + latest + ")"
 		}
 		d.report.add(component, "plugin version", StatusWarn, detail).fix(FixReinstall, windowsToolHangHint)
+	case EffectivePin() != "":
+		checkPinnedPluginVersion(d, component, installed, EffectivePin())
 	case latest != "" && versionBefore(installed, latest):
 		d.report.add(component, "plugin version", StatusWarn, fmt.Sprintf("v%s (latest is v%s)", installed, latest)).
 			fix(FixReinstall, "Update to the latest plugin: armis-cli mcp doctor --fix (or armis-cli mcp update), then restart your editor.")
 	default:
 		d.report.add(component, "plugin version", StatusOK, "v"+installed).short("v" + installed)
 	}
+}
+
+// checkPinnedPluginVersion reports a plugin held on one release by a version
+// pin. Matching the pin is intentional, so it is not flagged as outdated.
+func checkPinnedPluginVersion(d *doctorRun, component, installed, pin string) {
+	if installed == pin {
+		d.report.add(component, "plugin version", StatusOK, "v"+installed+" (pinned)").short("v" + installed + " pinned")
+		return
+	}
+	d.report.add(component, "plugin version", StatusWarn, fmt.Sprintf("v%s installed but pinned to v%s", installed, pin)).
+		fix(FixReinstall, "Reinstall the pinned plugin: armis-cli mcp doctor --fix. To follow the latest release instead: armis-cli install --plugin-version latest")
 }

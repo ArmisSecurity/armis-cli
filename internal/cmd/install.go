@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
@@ -37,8 +38,10 @@ Supported editors:
   roocode         Roo Code
   junie           Junie
 
+Per-project setup:
+  jetbrains  JetBrains AI Assistant (writes <project>/.jb-mcp.json; pass --project)
+
 Not auto-configurable (manual setup required):
-  jetbrains  JetBrains IDEs (per-project .jb-mcp.json)
   devin      Devin (cloud-based, configure via web UI)
   openhands  OpenHands (cloud-based, configure via web UI)
   aider      Aider (no MCP support)`,
@@ -58,6 +61,15 @@ Not auto-configurable (manual setup required):
   # Install to Claude Code only
   armis-cli install claude
 
+  # Register the MCP server for a JetBrains project
+  armis-cli install jetbrains --project ~/code/my-repo
+
+  # Pin the MCP server to one release (kept by 'mcp update' and 'mcp doctor --fix')
+  armis-cli install --plugin-version 1.4.2
+
+  # Drop the pin and follow the latest release again
+  armis-cli install --plugin-version latest
+
   # Check installed version
   armis-cli install --version
 
@@ -73,6 +85,8 @@ func init() {
 	installCmd.Flags().Bool("interactive", false, "Force interactive setup wizard (even without TTY)")
 	installCmd.Flags().Bool("non-interactive", false, "Disable interactive prompts (for CI/scripts)")
 	installCmd.Flags().Bool("with-knowledge", false, "Also install the Armis Knowledge plugin for the selected editors")
+	installCmd.Flags().String("plugin-version", "", "Install this MCP server release (e.g. 1.4.2) and keep it on updates; \"latest\" clears the pin. Also read from ARMIS_MCP_VERSION")
+	installCmd.Flags().String("project", "", "Project directory for the jetbrains target (writes <project>/.jb-mcp.json)")
 	installCmd.MarkFlagsMutuallyExclusive("interactive", "non-interactive")
 }
 
@@ -105,6 +119,24 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading --with-knowledge flag: %w", err)
 	}
 
+	pluginVersion, err := cmd.Flags().GetString("plugin-version")
+	if err != nil {
+		return fmt.Errorf("reading --plugin-version flag: %w", err)
+	}
+	if err := install.SetVersionPin(pluginVersion); err != nil {
+		return err
+	}
+	if pluginVersion == "" {
+		if err := install.ValidatePinEnv(); err != nil {
+			return err
+		}
+	}
+
+	project, err := cmd.Flags().GetString("project")
+	if err != nil {
+		return fmt.Errorf("reading --project flag: %w", err)
+	}
+
 	// Interactive mode: explicit flag, or (no args + TTY + not --non-interactive)
 	if interactive || (len(args) == 0 && !nonInteractive && cli.IsInteractive()) {
 		return runInteractiveInstall(force)
@@ -114,7 +146,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return installAll(force, withKnowledge)
 	}
 
-	return installTargets(args, force, withKnowledge)
+	return installTargetsWith(args, installOptions{force: force, withKnowledge: withKnowledge, jetbrainsProject: project})
 }
 
 func showInstalledVersions() error {
@@ -194,6 +226,9 @@ func installAll(force, withKnowledge bool) error {
 	}
 
 	ci, ciErr := install.NewClaudeInstaller()
+	if ci != nil {
+		ci.SetForce(force)
+	}
 	if ciErr != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
 		failed = append(failed, "Claude Code")
@@ -257,7 +292,24 @@ func installAll(force, withKnowledge bool) error {
 	return nil
 }
 
+// installOptions carries the flags that shape a targeted install.
+type installOptions struct {
+	force            bool
+	withKnowledge    bool
+	jetbrainsProject string
+}
+
 func installTargets(targets []string, force, withKnowledge bool) error {
+	return installTargetsWith(targets, installOptions{force: force, withKnowledge: withKnowledge})
+}
+
+// installTargetsWith installs for the named targets. It tries every target and
+// returns one error naming those that failed, so a caller can tell a partial
+// install from a complete one.
+func installTargetsWith(targets []string, opts installOptions) error {
+	force, withKnowledge := opts.force, opts.withKnowledge
+	var failed []string
+	hasJetBrains := false
 	hasClaude := false
 	var editorIDs []install.EditorID
 	var kt knowledgeTargets
@@ -273,10 +325,14 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 		case "copilot":
 			editorIDs = append(editorIDs, install.EditorCopilotCLI)
 		case "jetbrains":
-			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project (no automatic setup).")
-			fmt.Fprintln(os.Stderr, "  1. Install the MCP server first: armis-cli install <editor>")
-			fmt.Fprintln(os.Stderr, "  2. Create a .jb-mcp.json in your project root pointing at the installed")
-			fmt.Fprintln(os.Stderr, "     server, then enable it in your IDE's AI Assistant MCP settings.")
+			if opts.jetbrainsProject != "" {
+				hasJetBrains = true
+				break
+			}
+			fmt.Fprintln(os.Stderr, "JetBrains: MCP servers are configured per-project.")
+			fmt.Fprintln(os.Stderr, "  Run: armis-cli install jetbrains --project <path-to-project>")
+			fmt.Fprintln(os.Stderr, "  This writes <project>/.jb-mcp.json pointing at the installed server;")
+			fmt.Fprintln(os.Stderr, "  then enable it in your IDE's AI Assistant MCP settings.")
 			fmt.Fprintln(os.Stderr, "")
 		case "devin":
 			fmt.Fprintln(os.Stderr, "Devin: MCP servers are configured via the Devin web UI.")
@@ -298,7 +354,16 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 		}
 	}
 
-	needsSharedPlugin := len(editorIDs) > 0 || hasCodex
+	var jetbrainsCfg string
+	if hasJetBrains {
+		cfg, cfgErr := jetbrainsConfigPath(opts.jetbrainsProject)
+		if cfgErr != nil {
+			return cfgErr
+		}
+		jetbrainsCfg = cfg
+	}
+
+	needsSharedPlugin := len(editorIDs) > 0 || hasCodex || hasJetBrains
 	var kres knowledgeResult
 
 	// Both the shared-plugin and Claude paths build a Python venv, so verify the
@@ -339,6 +404,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 			}
 			if err := e.Register(ei.PluginDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", e.Name, err)
+				failed = append(failed, e.Name)
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ %s\n", e.Name)
 				manifest.AddEditor(e.ID, e.ConfigPath(), install.ConfigFormat(e.ID))
@@ -348,13 +414,24 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 			if hc, ok := install.HookClientByID(install.HookClientID(id)); ok {
 				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
 					fmt.Fprintf(os.Stderr, "  ⚠ %s (hooks): %v\n", e.Name, err)
+					failed = append(failed, e.Name+" (hooks)")
 				}
+			}
+		}
+
+		if hasJetBrains {
+			if err := install.RegisterJetBrains(ei.PluginDir(), jetbrainsCfg); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ JetBrains (%s): %v\n", jetbrainsCfg, err)
+				failed = append(failed, "JetBrains")
+			} else {
+				fmt.Fprintf(os.Stderr, "  ✓ JetBrains (%s)\n", jetbrainsCfg)
 			}
 		}
 
 		if hasCodex {
 			if err := install.RegisterCodexMCP(ei.PluginDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ Codex CLI (MCP): %v\n", err)
+				failed = append(failed, "Codex CLI")
 			} else {
 				fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (MCP)\n")
 				manifest.SetCodex(install.CodexConfigPath())
@@ -363,6 +440,7 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 			if hc, ok := install.HookClientByID(install.HookClientCodex); ok {
 				if err := install.InstallNativeHook(hc, ei.PluginDir()); err != nil {
 					fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI (hooks): %v\n", err)
+					failed = append(failed, "Codex CLI (hooks)")
 				} else {
 					fmt.Fprintf(os.Stderr, "  ✓ Codex CLI (hooks)\n")
 				}
@@ -376,39 +454,8 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 		printCredentialStatus(ei)
 	}
 
-	if hasClaude {
-		ci, ciErr := install.NewClaudeInstaller()
-		if ciErr != nil {
-			return fmt.Errorf("Claude Code installation failed: %w", ciErr) //nolint:staticcheck // proper noun
-		}
-		fmt.Fprintln(os.Stderr, "Installing Armis AppSec plugin for Claude Code...")
-		if err := ci.Install(); err != nil {
-			return fmt.Errorf("Claude Code installation failed: %w", err) //nolint:staticcheck // proper noun
-		}
-		fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
-		fmt.Fprintln(os.Stderr, "")
-		kt.claude = true
-
-		pluginDir := install.NewEditorInstaller().PluginDir()
-		manifest := install.ReadManifest(pluginDir)
-		if manifest == nil {
-			manifest = install.NewManifest(pluginDir, ci.InstalledVersion())
-		}
-		manifest.SetClaude(ci.PluginCacheDir())
-		if err := install.WriteManifest(manifest); err != nil {
-			fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
-		}
-
-		if ci.HasExistingEnv() {
-			fmt.Fprintln(os.Stderr, "Credentials configured. Restart Claude Code to pick up the updated plugin.")
-			fmt.Fprintln(os.Stderr, "Run 'armis-cli mcp doctor' to verify the setup works.")
-		} else {
-			fmt.Fprintln(os.Stderr, "Next steps:")
-			fmt.Fprintf(os.Stderr, "  1. Set your credentials in %s:\n", ci.EnvFilePath())
-			fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_ID=<your-client-id>")
-			fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_SECRET=<your-client-secret>")
-			fmt.Fprintln(os.Stderr, "  2. Restart Claude Code")
-		}
+	if hasClaude && !installClaudeTarget(force, &kt) {
+		failed = append(failed, "Claude Code")
 	}
 
 	if withKnowledge {
@@ -427,7 +474,73 @@ func installTargets(targets []string, force, withKnowledge bool) error {
 	}
 
 	printInstallSummary(os.Stderr, installSummary{targets: kt, knowledge: kres.registered})
+	if len(failed) > 0 {
+		return fmt.Errorf("install failed for: %s", strings.Join(failed, ", "))
+	}
 	return nil
+}
+
+// jetbrainsConfigPath resolves project to a real directory and returns the
+// .jb-mcp.json inside it. A .jb-mcp.json that is a symlink or not a regular
+// file is refused, so the write cannot be redirected elsewhere.
+func jetbrainsConfigPath(project string) (string, error) {
+	abs, err := filepath.Abs(project)
+	if err != nil {
+		return "", fmt.Errorf("--project %q: %w", project, err)
+	}
+	dir, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("--project %q is not a directory", project)
+	}
+	if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+		return "", fmt.Errorf("--project %q is not a directory", project)
+	}
+	cfg := filepath.Join(dir, ".jb-mcp.json")
+	if info, lerr := os.Lstat(cfg); lerr == nil && !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s exists but is not a regular file", cfg)
+	}
+	return cfg, nil
+}
+
+// installClaudeTarget installs the Claude Code plugin and records it in the
+// manifest. It reports whether the install succeeded.
+func installClaudeTarget(force bool, kt *knowledgeTargets) bool {
+	ci, ciErr := install.NewClaudeInstaller()
+	if ciErr != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", ciErr)
+		return false
+	}
+	ci.SetForce(force)
+	fmt.Fprintln(os.Stderr, "Installing Armis AppSec plugin for Claude Code...")
+	if err := ci.Install(); err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Claude Code: %v\n", err)
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "  ✓ Claude Code v%s\n", ci.InstalledVersion())
+	fmt.Fprintln(os.Stderr, "")
+	kt.claude = true
+
+	pluginDir := install.NewEditorInstaller().PluginDir()
+	manifest := install.ReadManifest(pluginDir)
+	if manifest == nil {
+		manifest = install.NewManifest(pluginDir, ci.InstalledVersion())
+	}
+	manifest.SetClaude(ci.PluginCacheDir())
+	if err := install.WriteManifest(manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ Could not write install manifest: %v\n", err)
+	}
+
+	if ci.HasExistingEnv() {
+		fmt.Fprintln(os.Stderr, "Credentials configured. Restart Claude Code to pick up the updated plugin.")
+		fmt.Fprintln(os.Stderr, "Run 'armis-cli mcp doctor' to verify the setup works.")
+	} else {
+		fmt.Fprintln(os.Stderr, "Next steps:")
+		fmt.Fprintf(os.Stderr, "  1. Set your credentials in %s:\n", ci.EnvFilePath())
+		fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_ID=<your-client-id>")
+		fmt.Fprintln(os.Stderr, "     ARMIS_CLIENT_SECRET=<your-client-secret>")
+		fmt.Fprintln(os.Stderr, "  2. Restart Claude Code")
+	}
+	return true
 }
 
 func printCredentialStatus(ei *install.EditorInstaller) {

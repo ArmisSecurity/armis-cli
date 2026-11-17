@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo`/`scan image`: new `--bom` flag downloads the BOMs Armis builds during the scan, one file per type: `sbom`, `aibom`, `cbom`, or `all` (combined), comma-separated or repeated. Files go to `.armis/<artifact>-bom-<type>.json` (`.spdx.json` for SPDX). BOM generation must be enabled for the tenant. A type the server did not build only warns; a built BOM that cannot be downloaded exits 2 unless `--fail-on` triggers first. The types are sent in the ingest API's `bom_types` field. (#358)
+- `scan repo`/`scan image`: new `--bom-format` flag selects the BOM format: `cyclonedx-1.7` (default), `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx` and `spdx`. A type with no such form, such as `cbom` with SPDX, is rejected before upload. The value is sent as typed in the ingest API's `bom_format` field. (#358)
+- `scan repo`/`scan image`: new `--bom-output` flag sets the BOM directory (default `.armis`), or `-` to write one BOM to stdout; the findings report then goes to stderr unless `--output` is set. (#358)
+- `scan image`: with `--bom`, the ingest request carries `image_ref`, the image name, or the first `RepoTags` entry of a `--tarball`'s `manifest.json`, so the BOMs name the image. (#358)
 - `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis does not record CLI scans as project runs yet; until it does, the scan does not appear under the project, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
 - `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
 - `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
@@ -27,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scan image <name>`: SBOM, VEX and BOM files are now named after the image, such as `.armis/app-1.2-sbom.json` for `ghcr.io/org/app:1.2`, not after a random temporary file, so a rerun replaces them. `--tarball` still names them after the tarball file. (#358)
+- README and CI guide: the exit codes now match the CLI: `1` on an error, the `--exit-code` value (default `1`) on findings, `2` when results or a requested BOM cannot be downloaded, and `130` on Ctrl+C. (#358)
 - A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
 - A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
 - On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
@@ -34,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `scan repo`/`scan image`: files written to the default `.armis` directory by `--sbom`, `--vex` and `--bom` are refused when `.armis` is not a plain directory, such as a symlink committed in the scanned repository, or when the file there is not a regular file. The directory is checked before upload, so no scan is created, and again at write time. Files there are written to a temp file and renamed over the old one, with mode 0600 on Linux and macOS. Paths given in `--sbom-output`, `--vex-output` and `--bom-output` are written in place. (#358)
 - `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
 
 ---

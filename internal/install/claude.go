@@ -16,6 +16,7 @@ const (
 type ClaudeInstaller struct {
 	claudeDir string
 	plugin    *PluginInstaller
+	force     bool
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
@@ -35,6 +36,19 @@ func (ci *ClaudeInstaller) InstalledVersion() string {
 	return ci.plugin.InstalledVersion()
 }
 
+// SetForce makes Install reinstall even when the pinned version is already in place.
+func (ci *ClaudeInstaller) SetForce(force bool) { ci.force = force }
+
+// alreadyAtPin reports whether the pinned release is installed and usable, so
+// Install can skip the download, the venv rebuild and the registry rewrites.
+func (ci *ClaudeInstaller) alreadyAtPin() bool {
+	pin := ci.plugin.pin
+	if ci.force || pin == "" || ci.GetInstalledVersion() != pin {
+		return false
+	}
+	return isExecutableFile(venvPython(ci.pluginCacheDir()))
+}
+
 // Install downloads and installs the MCP plugin for Claude Code.
 func (ci *ClaudeInstaller) Install() error {
 	// armis:ignore cwe:253 reason:intentionally checks only IsNotExist; other stat errors are irrelevant to user-facing message
@@ -43,6 +57,15 @@ func (ci *ClaudeInstaller) Install() error {
 	}
 
 	pluginDir := ci.pluginCacheDir()
+
+	if ci.alreadyAtPin() {
+		ci.plugin.installedVersion = ci.plugin.pin
+		// armis:ignore cwe:522 reason:env file written with 0600 permissions; credentials sourced from caller's environment variables
+		if err := writeEnvFromEnvironment(ci.EnvFilePath()); err != nil {
+			return fmt.Errorf("failed to write credentials: %w", err)
+		}
+		return nil
+	}
 
 	if err := ci.plugin.FetchAndInstall(pluginDir); err != nil {
 		return err

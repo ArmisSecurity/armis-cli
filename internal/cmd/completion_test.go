@@ -6,6 +6,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/spf13/cobra"
 )
 
@@ -68,6 +69,8 @@ func TestFlagCompletionsMatchValidators(t *testing.T) {
 		{"color", rootCmd, "color", []string{string(cli.ColorModeAuto), string(cli.ColorModeAlways), string(cli.ColorModeNever)}},
 		{"theme", rootCmd, "theme", []string{themeAuto, themeDark, themeLight}},
 		{"group-by", scanCmd, "group-by", validGroupBy},
+		{"bom", scanCmd, "bom", scan.BOMTypeOrder},
+		{"bom-format", scanCmd, "bom-format", scan.BOMFormats},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +102,8 @@ func TestFlagCompletionsHaveDescriptions(t *testing.T) {
 		{"color", rootCmd, "color"},
 		{"theme", rootCmd, "theme"},
 		{"group-by", scanCmd, "group-by"},
+		{"bom", scanCmd, "bom"},
+		{"bom-format", scanCmd, "bom-format"},
 	}
 
 	for _, tt := range tests {
