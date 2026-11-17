@@ -75,6 +75,14 @@ armis-cli scan repo . --bom aibom,cbom --bom-output ./artifacts
 
 A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on` triggers first. See [AI-BOM, CBOM and other BOMs](../CI-INTEGRATION.md#ai-bom-cbom-and-other-boms).
 
+A job that needs only the BOMs can skip the security scan with `armis-cli bom`, which takes less time and has no `--fail-on`:
+
+```bash
+armis-cli bom repo . --type aibom,cbom --output ./artifacts
+```
+
+Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors, including a server that does not offer BOM-only scans yet. A tenant without BOM generation writes no BOM and exits `2`. See [BOMs Without a Security Scan](../../README.md#boms-without-a-security-scan).
+
 ## Quick Start
 
 ### For GitHub Actions

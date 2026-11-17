@@ -348,6 +348,9 @@ armis-cli scan image nginx:latest --sbom --vex
 | `--bom` | BOM types to download, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | none |
 | `--bom-format` | BOM format: `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx`; without `--bom`, a non-default value is ignored with a warning | `cyclonedx-1.7` |
 | `--bom-output` | Directory for BOM files, or `-` to write one BOM to stdout; ignored with a warning without `--bom` | `.armis` |
+| `--type` (`bom repo`, `bom image`) | BOM types to build without a security scan, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | `all` |
+| `--format` (`bom repo`, `bom image`) | BOM format, the values of `--bom-format` | `cyclonedx-1.7` |
+| `--output` (`bom repo`, `bom image`) | Directory for BOM files, or `-` to write one BOM to stdout; a missing path ending in `.json` is refused | `.armis` |
 
 ### Output Location
 
@@ -383,6 +386,23 @@ armis-cli scan image nginx:latest --bom all --bom-format cyclonedx-1.6 --bom-out
   triggers first. A type the server did not build only warns.
 
 See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules.
+
+#### BOMs without a security scan
+
+`armis-cli bom repo` and `armis-cli bom image` build the same BOMs without
+running a security scan, so they take less time. They print no findings and
+take no `--fail-on`. Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors. Without `--type`, they build
+the combined BOM.
+
+```bash
+# Combined BOM → .armis/<artifact>-bom-all.json
+armis-cli bom repo .
+
+# SBOM and CBOM of an image into ./boms
+armis-cli bom image nginx:latest --type sbom,cbom --output ./boms
+```
+
+See [BOMs Without a Security Scan](../README.md#boms-without-a-security-scan).
 
 ### CI/CD Example
 
