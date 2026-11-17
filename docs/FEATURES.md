@@ -422,8 +422,9 @@ Generate SBOM and VEX as part of your CI pipeline:
 - Files are protected against path traversal attacks
 - In `scan repo` and `scan image`, the default `.armis` output is refused when
   `.armis` is not a plain directory, such as a symlink (checked before upload),
-  or the file there is not a regular file. Files there are replaced with mode 0600. A path given in
-  an output flag is written as given
+  or the file there is not a regular file. Files there are written to a temp
+  file and renamed over the old one, with mode 0600 on Linux and macOS. A path
+  given in an output flag is written as given
 - Maximum download size is 100MB per file
 
 ---
