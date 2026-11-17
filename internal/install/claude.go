@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,11 +13,17 @@ const (
 	pluginName      = "armis-appsec"
 )
 
+// ErrClaudeNotInstalled is returned by Install when ~/.claude does not exist.
+var ErrClaudeNotInstalled = errors.New("Claude Code is not installed") //nolint:staticcheck // proper noun
+
 // ClaudeInstaller installs the Armis AppSec MCP plugin for Claude Code.
 type ClaudeInstaller struct {
 	claudeDir string
 	plugin    *PluginInstaller
 	force     bool
+	// alreadyCurrent is set by Install when the pinned release was already
+	// in place and nothing was downloaded.
+	alreadyCurrent bool
 }
 
 // NewClaudeInstaller creates an installer with the default Claude directory.
@@ -36,6 +43,10 @@ func (ci *ClaudeInstaller) InstalledVersion() string {
 	return ci.plugin.InstalledVersion()
 }
 
+// AlreadyCurrent reports whether the last Install found the pinned release
+// already in place and skipped the download.
+func (ci *ClaudeInstaller) AlreadyCurrent() bool { return ci.alreadyCurrent }
+
 // SetForce makes Install reinstall even when the pinned version is already in place.
 func (ci *ClaudeInstaller) SetForce(force bool) { ci.force = force }
 
@@ -53,12 +64,13 @@ func (ci *ClaudeInstaller) alreadyAtPin() bool {
 func (ci *ClaudeInstaller) Install() error {
 	// armis:ignore cwe:253 reason:intentionally checks only IsNotExist; other stat errors are irrelevant to user-facing message
 	if _, err := os.Stat(ci.claudeDir); os.IsNotExist(err) {
-		return fmt.Errorf("Claude Code directory not found at %s — is Claude Code installed?", ci.claudeDir) //nolint:staticcheck // proper noun
+		return fmt.Errorf("%w: Claude Code directory not found at %s", ErrClaudeNotInstalled, ci.claudeDir)
 	}
 
 	pluginDir := ci.pluginCacheDir()
 
-	if ci.alreadyAtPin() {
+	ci.alreadyCurrent = ci.alreadyAtPin()
+	if ci.alreadyCurrent {
 		ci.plugin.installedVersion = ci.plugin.pin
 		// armis:ignore cwe:522 reason:env file written with 0600 permissions; credentials sourced from caller's environment variables
 		if err := writeEnvFromEnvironment(ci.EnvFilePath()); err != nil {

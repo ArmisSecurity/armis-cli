@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -236,6 +237,9 @@ func TestInstallMissingClaudeDir(t *testing.T) {
 	}
 	if got := err.Error(); !contains(got, "Claude Code directory not found") {
 		t.Errorf("unexpected error: %s", got)
+	}
+	if !errors.Is(err, ErrClaudeNotInstalled) {
+		t.Errorf("error %v does not wrap ErrClaudeNotInstalled", err)
 	}
 }
 

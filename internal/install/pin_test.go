@@ -245,6 +245,9 @@ func TestClaudeInstallAtPinIsNoOp(t *testing.T) {
 	if got := ci.InstalledVersion(); got != "1.4.2" {
 		t.Errorf("InstalledVersion() = %q, want 1.4.2", got)
 	}
+	if !ci.AlreadyCurrent() {
+		t.Error("AlreadyCurrent() = false after a no-op install at the pin")
+	}
 
 	ci.SetForce(true)
 	if ci.alreadyAtPin() {

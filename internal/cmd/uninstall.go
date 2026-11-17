@@ -36,7 +36,11 @@ For a list of valid editor names, run: armis-cli install --help`,
   armis-cli uninstall --keep-credentials
 
   # Skip confirmation
-  armis-cli uninstall --force`,
+  armis-cli uninstall --force
+
+  # Machine-readable result (JSON on stdout, progress on stderr; skips the
+  # confirmation prompt)
+  armis-cli uninstall --format json`,
 	RunE: runUninstall,
 }
 
@@ -44,6 +48,7 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	uninstallCmd.Flags().Bool("keep-credentials", false, "Preserve the .env credentials file")
 	uninstallCmd.Flags().Bool("force", false, "Skip confirmation prompt")
+	uninstallCmd.Flags().StringP("format", "f", agentFormatPlain, "Output format: plain, json (json writes one document to stdout; uninstalling everything also needs --force)")
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {
@@ -56,16 +61,32 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading --force flag: %w", err)
 	}
 
-	u := install.NewUninstaller()
-
-	if len(args) > 0 {
-		return uninstallTargets(u, args)
+	formatStr, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return fmt.Errorf("reading --format flag: %w", err)
+	}
+	format, err := parseOutputFormat(formatStr)
+	if err != nil {
+		return err
 	}
 
-	return uninstallAll(u, keepCreds, force)
+	u := install.NewUninstaller()
+	rep := newUninstallReport()
+
+	if len(args) > 0 {
+		err = uninstallTargets(u, args, rep)
+	} else {
+		// Nobody can answer the prompt in JSON mode, and deleting the plugin
+		// and credentials must stay an explicit choice.
+		if format == agentFormatJSON && !force {
+			return finishUninstall(format, nil, rep, fmt.Errorf("--format json without targets removes the plugin and credentials; pass --force to confirm"))
+		}
+		err = uninstallAll(u, keepCreds, force, rep)
+	}
+	return finishUninstall(format, nil, rep, err)
 }
 
-func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
+func uninstallAll(u *install.Uninstaller, keepCreds, force bool, rep *uninstallReport) error {
 	styled := cli.ColorsEnabled()
 
 	var titleStyle, separatorStyle, successMark, warnMark, dimStyle lipgloss.Style
@@ -108,8 +129,11 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	}
 
 	// Remove native hook configs from all AI clients
-	for _, hc := range install.AllHookClients {
-		if err := install.RemoveNativeHook(hc); err != nil {
+	hookErrs := make([]error, len(install.AllHookClients))
+	for i, hc := range install.AllHookClients {
+		err := install.RemoveNativeHook(hc)
+		hookErrs[i] = err
+		if err != nil {
 			if styled {
 				fmt.Fprintf(os.Stderr, "  %s Hook removal (%s): %v\n", warnMark.Render("⚠"), hc.Name, err)
 			} else {
@@ -120,6 +144,9 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 
 	deregistered, warnings := u.DeregisterAllEditors()
 	for _, name := range deregistered {
+		if id, ok := editorIDForName(name); ok {
+			rep.removed(id, name)
+		}
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Removed from %s\n", successMark.Render("✓"), name)
 		} else {
@@ -127,6 +154,7 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 	for _, w := range warnings {
+		rep.editorWarning(w)
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s %s\n", warnMark.Render("⚠"), w)
 		} else {
@@ -135,12 +163,14 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	}
 
 	if err := u.DeregisterClaude(); err != nil {
+		rep.failed(targetClaude, "Claude Code", err.Error())
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Claude Code: %v\n", warnMark.Render("⚠"), err)
 		} else {
 			fmt.Fprintf(os.Stderr, "  ⚠ Claude Code: %v\n", err)
 		}
 	} else {
+		rep.removed(targetClaude, "Claude Code")
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Removed from Claude Code\n", successMark.Render("✓"))
 		} else {
@@ -149,12 +179,14 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 	}
 
 	if removed, err := install.DeregisterCodexMCP(); err != nil {
+		rep.failed(targetCodex, "Codex CLI", err.Error())
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Codex CLI: %v\n", warnMark.Render("⚠"), err)
 		} else {
 			fmt.Fprintf(os.Stderr, "  ⚠ Codex CLI: %v\n", err)
 		}
 	} else if removed {
+		rep.removed(targetCodex, "Codex CLI")
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Removed from Codex CLI\n", successMark.Render("✓"))
 		} else {
@@ -162,10 +194,17 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 
+	// rep.hook only records a successful removal against a client already in
+	// the report, so it runs once the deregistration steps have added them.
+	for i, hc := range install.AllHookClients {
+		rep.hook(hc, hookErrs[i])
+	}
+
 	// Remove Armis Knowledge whenever the manifest records it — no flag. Leaving
 	// an MCP entry pointing at a deleted plugin dir would break the user's agents.
 	if u.HasKnowledge() {
 		kremoved, kwarnings := u.RemoveKnowledge(keepCreds)
+		rep.Knowledge = knowledgeUninstallReport(kremoved, kwarnings)
 		if len(kremoved) > 0 {
 			if styled {
 				fmt.Fprintf(os.Stderr, "  %s Removed Armis Knowledge (%s)\n",
@@ -196,6 +235,7 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		// when a hook was installed before the call and is gone after it.
 		hadHook := install.IsPreCommitInstalled(repoRoot)
 		if err := install.RemovePreCommit(repoRoot); err != nil {
+			rep.PreCommit = &uninstallStep{Status: reportFail, Detail: err.Error()}
 			if styled {
 				fmt.Fprintf(os.Stderr, "  %s Pre-commit hook: %v\n", warnMark.Render("⚠"), err)
 			} else {
@@ -203,10 +243,17 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 			}
 		} else if hadHook {
 			preCommitRemoved = true
+			rep.PreCommit = &uninstallStep{Status: reportOK, Detail: "removed"}
 		}
 	}
+	if rep.PreCommit == nil {
+		rep.PreCommit = &uninstallStep{Status: reportSkip}
+	}
 
+	rep.PluginFiles = &uninstallPluginFiles{Status: reportOK, CredentialsKept: keepCreds}
 	if err := u.RemovePluginFiles(keepCreds); err != nil {
+		rep.PluginFiles.Status = reportFail
+		rep.PluginFiles.Detail = err.Error()
 		if styled {
 			fmt.Fprintf(os.Stderr, "  %s Plugin files: %v\n", warnMark.Render("⚠"), err)
 		} else {
@@ -241,10 +288,10 @@ func uninstallAll(u *install.Uninstaller, keepCreds, force bool) error {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "")
-	return nil
+	return rep.failedStepsError()
 }
 
-func uninstallTargets(u *install.Uninstaller, targets []string) error {
+func uninstallTargets(u *install.Uninstaller, targets []string, rep *uninstallReport) error {
 	styled := cli.ColorsEnabled()
 
 	var successMark, failMark, warnMark, dimStyle lipgloss.Style
@@ -282,45 +329,60 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 		case targetClaude:
 			if err := u.DeregisterClaude(); err != nil {
 				printFail(fmt.Sprintf("Claude Code: %v", err))
+				rep.failed(targetClaude, "Claude Code", err.Error())
 			} else {
 				printSuccess("Claude Code")
+				rep.removed(targetClaude, "Claude Code")
 			}
 		case targetCodex:
 			if removed, err := install.DeregisterCodexMCP(); err != nil {
 				printFail(fmt.Sprintf("Codex CLI: %v", err))
+				rep.failed(targetCodex, "Codex CLI", err.Error())
 			} else if removed {
 				printSuccess("Codex CLI")
+				rep.removed(targetCodex, "Codex CLI")
 			}
 		case targetCopilot:
 			if err := u.DeregisterEditor(install.EditorCopilotCLI); err != nil {
 				printFail(fmt.Sprintf("Copilot CLI: %v", err))
+				rep.failed(targetCopilot, "Copilot CLI", err.Error())
 			} else {
 				printSuccess("Copilot CLI")
+				rep.removed(targetCopilot, "Copilot CLI")
 			}
 		case "jetbrains":
 			printWarn("JetBrains: Remove .jb-mcp.json from your project root manually.")
+			rep.warned("jetbrains", "JetBrains", "Remove .jb-mcp.json from your project root manually.")
 		case "devin":
 			printWarn("Devin: Remove the MCP server via the Devin web UI.")
+			rep.warned("devin", "Devin", "Remove the MCP server via the Devin web UI.")
 		case "openhands":
 			printWarn("OpenHands: Remove the MCP server via the OpenHands web UI.")
+			rep.warned("openhands", "OpenHands", "Remove the MCP server via the OpenHands web UI.")
 		case "aider":
 			printWarn("Aider: No MCP configuration to remove.")
+			rep.client("aider", "Aider").Detail = "no MCP configuration to remove"
 		default:
 			id := install.EditorID(name)
 			e, ok := install.EditorByID(id)
 			if !ok {
 				printFail(fmt.Sprintf("Unknown editor: %s", name))
+				rep.failed(name, name, "unknown editor")
 				continue
 			}
 			if err := u.DeregisterEditor(id); err != nil {
 				printFail(fmt.Sprintf("%s: %v", e.Name, err))
+				rep.failed(string(id), e.Name, err.Error())
 			} else {
 				printSuccess(e.Name)
+				rep.removed(string(id), e.Name)
 			}
 		}
 
 		if hc, ok := install.HookClientByID(install.HookClientID(name)); ok {
-			if err := install.RemoveNativeHook(hc); err != nil {
+			err := install.RemoveNativeHook(hc)
+			rep.hook(hc, err)
+			if err != nil {
 				printWarn(fmt.Sprintf("Hook config (%s): %v", hc.Name, err))
 			}
 		}
@@ -346,6 +408,9 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 		}
 	}
 
+	rep.PluginFiles = &uninstallPluginFiles{Status: reportSkip, Detail: "kept: other editors may still use them", CredentialsKept: true}
+	rep.PreCommit = &uninstallStep{Status: reportSkip}
+
 	fmt.Fprintln(os.Stderr, "")
 	if styled {
 		fmt.Fprintln(os.Stderr, dimStyle.Render("  Plugin files kept (other editors may still use them)."))
@@ -353,7 +418,7 @@ func uninstallTargets(u *install.Uninstaller, targets []string) error {
 		fmt.Fprintln(os.Stderr, "Plugin files kept (other editors may still use them).")
 	}
 	fmt.Fprintln(os.Stderr, "")
-	return nil
+	return rep.failedStepsError()
 }
 
 // confirmOut is where confirm() writes its prompt. It defaults to stderr (all
