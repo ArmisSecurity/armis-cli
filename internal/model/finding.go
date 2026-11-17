@@ -179,6 +179,10 @@ type IngestScanStartRequest struct {
 	// ImageRef names the scanned image, such as python:3.12-slim, at the root
 	// of its BOMs. Sent on image scans with --bom only.
 	ImageRef string `json:"image_ref,omitempty"`
+	// IncludeSBOMFiles asks the backend to scan the repository's SBOM files
+	// alongside the code, at most this many. Omitted (0) without
+	// --include-sbom-files, so the body is unchanged for every other scan.
+	IncludeSBOMFiles int `json:"include_sbom_files,omitempty"`
 }
 
 // IngestStatusData represents the status information for a scan ingestion.

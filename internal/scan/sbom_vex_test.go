@@ -506,6 +506,49 @@ func TestSBOMVEXDownloader_Download(t *testing.T) {
 		}
 	})
 
+	t.Run("prints a warning when some SBOM files were not scanned", func(t *testing.T) {
+		skipMsg := "Repository too large for AI-based scanning."
+
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			response := api.ArtifactScanResultsResponse{
+				ScanStatus:       "COMPLETED",
+				Results:          map[string]string{},
+				SkipReason:       &skipMsg,
+				SBOMScanStatus:   "PARTIAL",
+				SBOMScanReasons:  []string{"file_limit_exceeded"},
+				SBOMSkippedFiles: []api.SkippedSBOMFile{{Path: "z/bom.json", Reason: "file_limit_exceeded"}},
+				SBOMSkippedCount: 1,
+			}
+			testutil.JSONResponse(t, w, http.StatusOK, response)
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+		client, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, api.WithHTTPClient(httpClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		// No SBOM/VEX download requested: the warning must still appear, and a
+		// scanner-skip message alongside it is not lost.
+		downloader := NewSBOMVEXDownloader(client, "tenant-123", nil)
+
+		stderrOut := testutil.CaptureStderr(t, func() {
+			if _, err := downloader.Download(context.Background(), "scan-456", "test-artifact"); err != nil {
+				t.Fatalf("Download failed: %v", err)
+			}
+		})
+
+		if !strings.Contains(stderrOut, "SBOM scan incomplete: 1 SBOM file(s) were not scanned") {
+			t.Errorf("expected the SBOM warning, got: %q", stderrOut)
+		}
+		if !strings.Contains(stderrOut, "z/bom.json") {
+			t.Errorf("expected the skipped path, got: %q", stderrOut)
+		}
+		if !strings.Contains(stderrOut, "Scanner skipped:") {
+			t.Errorf("expected the scanner-skip warning too, got: %q", stderrOut)
+		}
+	})
+
 	t.Run("prints skip reason when scanner was skipped", func(t *testing.T) {
 		skipMsg := "Repository too large for AI-based scanning (6203 files exceeds the 5000-file limit)."
 

@@ -330,6 +330,9 @@ type IngestOptions struct {
 	BOMFormat string
 	// ImageRef names the scanned image for its BOMs; empty is omitted.
 	ImageRef string
+	// IncludeSBOMFiles is the --include-sbom-files limit; 0 leaves SBOM files
+	// out of the scan.
+	IncludeSBOMFiles int
 }
 
 // StatusCallback is called on each poll with the current scan status.
@@ -557,6 +560,8 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		BOMTypes:     opts.BOMTypes,
 		BOMFormat:    opts.BOMFormat,
 		ImageRef:     opts.ImageRef,
+
+		IncludeSBOMFiles: opts.IncludeSBOMFiles,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -894,6 +899,13 @@ type ArtifactScanResultsResponse struct {
 	// BOMSummary tells why a requested BOM type has no key in Results. Nil
 	// from servers that predate BOMs and for scans without one.
 	BOMSummary *BOMSummary `json:"bom_summary"`
+	// SBOM fields are set only when SBOM files were scanned alongside the code
+	// (--include-sbom-files). PARTIAL or FAILED means some SBOM files were not
+	// scanned; their findings keep their previous state.
+	SBOMScanStatus   string            `json:"sbom_scan_status,omitempty"`
+	SBOMScanReasons  []string          `json:"sbom_scan_reasons,omitempty"`
+	SBOMSkippedFiles []SkippedSBOMFile `json:"sbom_skipped_files,omitempty"`
+	SBOMSkippedCount int               `json:"sbom_skipped_count,omitempty"`
 }
 
 // BOM type statuses in bom_summary.types.<type>.status. These mirror the
@@ -943,6 +955,12 @@ func (e *DownloadStatusError) Error() string {
 	return fmt.Sprintf("download failed with status %d", e.StatusCode)
 }
 
+// SkippedSBOMFile is one SBOM file the backend did not scan, and why.
+type SkippedSBOMFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
 // SkipMessage returns the human-readable skip reason and true if the backend
 // reported that a scanner was skipped for this scan.
 func (r *ArtifactScanResultsResponse) SkipMessage() (string, bool) {
@@ -952,6 +970,64 @@ func (r *ArtifactScanResultsResponse) SkipMessage() (string, bool) {
 	msg := strings.TrimSpace(*r.SkipReason)
 	if msg == "" {
 		return "", false
+	}
+	return msg, true
+}
+
+// sbomSkipReasonText turns the backend's SBOM skip reasons into user wording.
+var sbomSkipReasonText = map[string]string{
+	"file_limit_exceeded": "over the SBOM file limit",
+	"file_too_large":      "too large",
+	"grype_timeout":       "timed out",
+	"grype_error":         "could not be scanned",
+	"conversion_failed":   "could not be read",
+}
+
+// maxListedSkippedSBOMFiles caps how many skipped SBOM paths the warning names.
+const maxListedSkippedSBOMFiles = 5
+
+// SBOMScanWarning returns a warning when the backend reported that some SBOM
+// files were not scanned, and true; otherwise "" and false.
+func (r *ArtifactScanResultsResponse) SBOMScanWarning() (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	var lead string
+	switch strings.ToUpper(r.SBOMScanStatus) {
+	case "PARTIAL":
+		lead = fmt.Sprintf("SBOM scan incomplete: %d SBOM file(s) were not scanned", r.SBOMSkippedCount)
+	case "FAILED":
+		lead = "SBOM scan failed: none of the SBOM files could be scanned"
+	default:
+		return "", false
+	}
+
+	var reasons []string
+	for _, reason := range r.SBOMScanReasons {
+		text, ok := sbomSkipReasonText[reason]
+		if !ok {
+			text = strings.ReplaceAll(reason, "_", " ")
+		}
+		reasons = append(reasons, text)
+	}
+	msg := lead
+	if len(reasons) > 0 {
+		msg += " (" + strings.Join(reasons, ", ") + ")"
+	}
+	msg += ". Their findings keep their previous state."
+
+	var paths []string
+	for i, f := range r.SBOMSkippedFiles {
+		if i == maxListedSkippedSBOMFiles {
+			break
+		}
+		paths = append(paths, f.Path)
+	}
+	if len(paths) > 0 {
+		msg += " Skipped: " + strings.Join(paths, ", ")
+		if more := r.SBOMSkippedCount - len(paths); more > 0 {
+			msg += fmt.Sprintf(" and %d more", more)
+		}
 	}
 	return msg, true
 }

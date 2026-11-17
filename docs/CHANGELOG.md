@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo --include-sbom-files N` scans up to N CycloneDX/SPDX files kept in the repository for vulnerabilities, alongside the code, and warns (without changing the exit code) when some SBOM files were skipped
+
 ### Changed
 
 ### Deprecated

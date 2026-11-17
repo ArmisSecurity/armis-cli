@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -47,6 +48,12 @@ type MockAPIConfig struct {
 	// OnBOMDownload, when set, runs before a /_bom/ download is answered,
 	// such as to cancel the scan's context mid-download.
 	OnBOMDownload func(r *http.Request)
+	// OnScanRequest, when set, receives the raw POST /api/v1/ingest/scan body
+	// so tests can assert what the CLI sent.
+	OnScanRequest func(body []byte)
+	// SBOMScan, when set, is merged into the GET /api/v1/ingest/results body
+	// (sbom_scan_status, sbom_skipped_files, ...).
+	SBOMScan map[string]interface{}
 }
 
 // NewMockScanServer creates a mock Armis API server for integration testing.
@@ -136,6 +143,13 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		// POST /api/v1/ingest/scan — confirms upload and triggers scan.
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost {
 			AssertHasAuthorization(t, r)
+			if config.OnScanRequest != nil {
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					t.Errorf("reading /ingest/scan body: %v", err)
+				}
+				config.OnScanRequest(body)
+			}
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,
 				ScanStatus:   "INITIATED",
@@ -212,6 +226,9 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			}
 			if config.BOMSummary != nil {
 				body["bom_summary"] = config.BOMSummary
+			}
+			for key, value := range config.SBOMScan {
+				body[key] = value
 			}
 			JSONResponse(t, w, http.StatusOK, body)
 			return

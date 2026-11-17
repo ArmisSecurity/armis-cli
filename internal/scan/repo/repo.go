@@ -41,6 +41,7 @@ type Scanner struct {
 	includeFiles          *FileList
 	sbomVEXOpts           *scan.SBOMVEXOptions
 	detectGitHints        bool
+	sbomFilesLimit        int
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -79,6 +80,13 @@ func (s *Scanner) WithIncludeFiles(fl *FileList) *Scanner {
 // WithSBOMVEXOptions sets SBOM and VEX generation options.
 func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 	s.sbomVEXOpts = opts
+	return s
+}
+
+// WithSBOMFiles asks the backend to scan the repository's SBOM files alongside
+// the code, at most limit of them (the backend may lower it further).
+func (s *Scanner) WithSBOMFiles(limit int) *Scanner {
+	s.sbomFilesLimit = limit
 	return s
 }
 
@@ -220,6 +228,8 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		Filename:     filepath.Base(absPath) + ".tar.gz",
 		Data:         tmpFile,
 		Size:         tarInfo.Size(),
+
+		IncludeSBOMFiles: s.sbomFilesLimit,
 	}
 	if s.sbomVEXOpts != nil {
 		ingestOpts.GenerateSBOM = s.sbomVEXOpts.GenerateSBOM

@@ -129,6 +129,11 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 		}
 	}
 
+	if msg, ok := results.SBOMScanWarning(); ok {
+		cli.PrintWarning(msg)
+		fmt.Fprintln(os.Stderr)
+	}
+
 	if msg, skipped := results.SkipMessage(); skipped {
 		cli.PrintWarningf("Scanner skipped: %s", msg)
 		fmt.Fprintln(os.Stderr)

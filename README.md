@@ -525,6 +525,9 @@ armis-cli scan repo ./my-app --sbom --sbom-format spdx
 
 # Download an AI-BOM and a CBOM
 armis-cli scan repo ./my-app --bom aibom,cbom
+
+# Also scan up to 20 SBOM files kept in the repository
+armis-cli scan repo ./my-app --include-sbom-files 20
 ```
 
 #### SBOM Format
@@ -655,6 +658,29 @@ Notes:
 - Hints are only sent for a full repository-root scan. They are intentionally
   skipped for `--changed` and `--include-files` partial uploads, and for
   subdirectory scans, since those are not faithful whole-repo snapshots.
+
+#### Scan SBOM Files in the Repository
+
+Repositories sometimes keep SBOM documents, for example one per product release.
+`--include-sbom-files N` scans them for vulnerabilities alongside the code:
+
+```bash
+armis-cli scan repo . --include-sbom-files 20
+```
+
+- `N` is required and is the most SBOM files to scan (at least 1). The server
+  may apply a lower limit for your tenant.
+- Only real SBOMs are scanned: CycloneDX (JSON or XML) and SPDX (JSON or
+  tag-value), recognized by their format. Other JSON/XML files are scanned as
+  regular code.
+- If more SBOMs are found than the limit, the first `N` in path order are
+  scanned. When any SBOM is skipped (over the limit, too large, timed out), the
+  CLI prints a warning naming the skipped files; their findings keep their
+  previous state. The exit code is not affected.
+- Without the flag, SBOM files in the repository are not scanned for
+  vulnerabilities.
+- Not to be confused with `--sbom`, which *generates* an SBOM of the scanned
+  repository.
 
 ### Scan Container Image
 

@@ -22,6 +22,10 @@ var changedRef string
 // showSuppressed controls whether findings suppressed by .armisignore are displayed.
 var showSuppressed bool
 
+// includeSBOMFiles holds the value for the --include-sbom-files flag: the
+// maximum number of SBOM files to scan alongside the code (0 = flag not set).
+var includeSBOMFiles int
+
 var scanRepoCmd = &cobra.Command{
 	Use:   "repo [path]",
 	Short: "Scan a local repository",
@@ -35,7 +39,8 @@ var scanRepoCmd = &cobra.Command{
   $ armis-cli scan repo . --bom all --bom-format cyclonedx-1.6 --bom-output ./boms
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
-  $ armis-cli scan repo . --changed=main`,
+  $ armis-cli scan repo . --changed=main
+  $ armis-cli scan repo . --include-sbom-files 20`,
 	// MaximumNArgs(1) (not ExactArgs(1)) makes the `[path]` in Use honest: the path
 	// is optional and defaults to the current directory, matching every example and
 	// `scan image`'s arg handling.
@@ -54,6 +59,10 @@ var scanRepoCmd = &cobra.Command{
 		repoPath := "."
 		if len(args) > 0 {
 			repoPath = args[0]
+		}
+
+		if err := validateIncludeSBOMFiles(cmd); err != nil {
+			return err
 		}
 
 		// Validate path exists and is a directory before making network calls
@@ -106,6 +115,9 @@ var scanRepoCmd = &cobra.Command{
 		scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 		if pollInterval > 0 {
 			scanner = scanner.WithPollInterval(pollInterval)
+		}
+		if includeSBOMFiles > 0 {
+			scanner = scanner.WithSBOMFiles(includeSBOMFiles)
 		}
 
 		warnOnUnusedSBOMVEXFlags()
@@ -241,8 +253,22 @@ func init() {
 		"Scan only git-changed files: --changed for uncommitted, "+
 			"--changed=staged for staged only, --changed=REF for changes vs a branch/tag "+
 			"(e.g., --changed=main). Note: 'staged' and 'uncommitted' are reserved and cannot be used as ref names")
+	// The limit is required (no NoOptDefVal) so "--include-sbom-files 20" parses
+	// as a limit of 20 rather than as a path argument.
+	scanRepoCmd.Flags().IntVar(&includeSBOMFiles, "include-sbom-files", 0,
+		"Also scan the repository's SBOM files (CycloneDX, SPDX) for vulnerabilities, "+
+			"at most N of them (e.g., --include-sbom-files 20). The server may apply a lower limit")
 	// NoOptDefVal is the value used when --changed is passed without a value
 	scanRepoCmd.Flags().Lookup("changed").NoOptDefVal = "uncommitted"
 	scanRepoCmd.MarkFlagsMutuallyExclusive("include-files", "changed")
 	scanCmd.AddCommand(scanRepoCmd)
+}
+
+// validateIncludeSBOMFiles rejects a --include-sbom-files limit below 1 before
+// any network call.
+func validateIncludeSBOMFiles(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("include-sbom-files") && includeSBOMFiles < 1 {
+		return fmt.Errorf("invalid --include-sbom-files value %d: must be at least 1", includeSBOMFiles)
+	}
+	return nil
 }
