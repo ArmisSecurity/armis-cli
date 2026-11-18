@@ -807,6 +807,11 @@ func TestBOMHelp(t *testing.T) {
 					t.Errorf("help shows %s:\n%s", unwanted, help)
 				}
 			}
+			// Each paragraph of Long ends before a blank line, not run on.
+			if !strings.Contains(help, "with every type.\n\nBOM generation must be enabled") ||
+				!strings.Contains(help, "no BOM is written.\n\nExit codes:") {
+				t.Errorf("help runs paragraphs together:\n%s", help)
+			}
 			for _, line := range strings.Split(c.Example, "\n") {
 				if !strings.HasPrefix(line, "  $ armis-cli bom ") {
 					t.Errorf("example %q is not in the $ armis-cli style", line)
