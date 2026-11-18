@@ -759,8 +759,11 @@ Either way, findings are printed as a table (same shape as `scan repo` / `scan i
 downloads them, without running a security scan, so it takes less time than
 `scan repo --bom` or `scan image --bom`. It uploads what those commands upload
 and writes the same files. BOM generation must be enabled for your tenant;
-without it, each requested type prints a "not available" warning, no BOM is
-written, and the command exits 2.
+without it, the server refuses the request before any scan runs, and the
+command exits 1 with
+`the server refused the BOM request (--type <types> --format <format>): <message> (bom_generation_disabled)`.
+(`scan --bom` on such a tenant runs the scan, and each requested type prints a
+"not available" warning.)
 
 ```bash
 armis-cli bom repo [path]

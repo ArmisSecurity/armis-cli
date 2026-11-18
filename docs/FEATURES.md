@@ -392,7 +392,8 @@ See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules.
 
 `armis-cli bom repo` and `armis-cli bom image` build the same BOMs without
 running a security scan, so they take less time. They print no findings and
-take no `--fail-on`. Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors. Without `--type`, they build
+take no `--fail-on`. On a tenant without BOM generation, the server refuses
+the request (`bom_generation_disabled`) and they exit `1`. Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors. Without `--type`, they build
 the combined BOM.
 
 ```bash

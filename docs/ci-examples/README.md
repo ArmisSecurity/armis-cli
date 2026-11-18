@@ -81,7 +81,7 @@ A job that needs only the BOMs can skip the security scan with `armis-cli bom`, 
 armis-cli bom repo . --type aibom,cbom --output ./artifacts
 ```
 
-Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors, including a server that does not offer BOM-only scans yet. A tenant without BOM generation writes no BOM and exits `2`. See [BOMs Without a Security Scan](../../README.md#boms-without-a-security-scan).
+Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors, including a server that does not offer BOM-only scans yet. A tenant without BOM generation is refused by the server (`bom_generation_disabled`) and exits `1`. See [BOMs Without a Security Scan](../../README.md#boms-without-a-security-scan).
 
 ## Quick Start
 

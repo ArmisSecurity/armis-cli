@@ -37,8 +37,8 @@ func defaultBOMOnlyTypes() []string { return []string{scan.BOMTypeAll} }
 // with a line break, so the paragraph before it in Long ends in one and the
 // help shows a blank line between them.
 const bomTenantNote = `
-BOM generation must be enabled for your tenant; without it, each type
-prints a "not available" warning and no BOM is written.
+BOM generation must be enabled for your tenant; without it, the server
+refuses the request (bom_generation_disabled) and the command exits 1.
 
 Exit codes: 0 when at least one BOM was written and none failed to download;
 2 when no BOM was written or a built BOM could not be downloaded; 1 on errors;

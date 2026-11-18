@@ -535,6 +535,11 @@ func TestBOMRunE_ServerRefusals(t *testing.T) {
 			wantErr: "the server refused the BOM request (--type all --format cyclonedx-1.7): not for this artifact (artifact_type_not_supported)"},
 		{name: "export_format_unavailable", types: []string{"sbom"}, format: "spdx-3.0.1", body: refusal("export_format_unavailable", "not offered"),
 			wantErr: "the server refused the BOM request (--type sbom --format spdx-3.0.1): not offered (export_format_unavailable)"},
+		{name: "bom_generation_disabled, repo", body: refusal("bom_generation_disabled", "BOM generation is not enabled for this tenant."),
+			wantErr: "the server refused the BOM request (--type all --format cyclonedx-1.7): BOM generation is not enabled for this tenant. (bom_generation_disabled)"},
+		{name: "bom_generation_disabled, image", image: true, types: []string{"sbom", "cbom"}, format: "cyclonedx-1.7",
+			body:    refusal("bom_generation_disabled", "BOM generation is not enabled for this tenant."),
+			wantErr: "the server refused the BOM request (--type sbom,cbom --format cyclonedx-1.7): BOM generation is not enabled for this tenant. (bom_generation_disabled)"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -569,8 +574,8 @@ func TestBOMRunE_ServerRefusals(t *testing.T) {
 			if code := mainExitCode(err); code != 1 {
 				t.Errorf("exit code = %d, want 1", code)
 			}
-			if rec.called("/status") || rec.called("/results") {
-				t.Error("polled or fetched results after /scan refused")
+			if rec.called("/status") || rec.called("/results") || rec.called("/_bom/") {
+				t.Error("polled, fetched results or downloaded after /scan refused")
 			}
 		})
 	}
@@ -788,7 +793,7 @@ func TestBOMHelp(t *testing.T) {
 			c.HelpFunc()(c, nil)
 			help := buf.String()
 			for _, want := range []string{
-				"BOM generation must be enabled for your tenant",
+				"BOM generation must be enabled for your tenant", "refuses the request (bom_generation_disabled) and the command exits 1.",
 				"Exit codes: 0 when at least one BOM was written and none failed to download;",
 				"2 when no BOM was written or a built BOM could not be downloaded; 1 on errors;",
 				"quoted to paste into sh, bash or zsh, or into PowerShell on Windows;\ncmd.exe is not supported.",
@@ -810,7 +815,7 @@ func TestBOMHelp(t *testing.T) {
 			}
 			// Each paragraph of Long ends before a blank line, not run on.
 			if !strings.Contains(help, "with every type.\n\nBOM generation must be enabled") ||
-				!strings.Contains(help, "no BOM is written.\n\nExit codes:") {
+				!strings.Contains(help, "the command exits 1.\n\nExit codes:") {
 				t.Errorf("help runs paragraphs together:\n%s", help)
 			}
 			for _, line := range strings.Split(c.Example, "\n") {
