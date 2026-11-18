@@ -59,6 +59,7 @@ Without --type, the combined BOM is built: one file with every type.
 // the placeholder stands in for it.
 func bomImageTarget(args []string) string {
 	if tarballPath != "" {
+		// armis:ignore cwe:78 reason:text printed for the user to paste, never executed; shellArg quotes every value
 		return "--tarball " + shellArg(tarballPath, "<file>")
 	}
 	name := imageTarget(args)
@@ -75,6 +76,7 @@ func bomImagePullFlags() []string {
 	if tarballPath != "" || pullPolicy == defaultPullPolicy {
 		return nil
 	}
+	// armis:ignore cwe:78 reason:text printed for the user to paste, never executed; shellArg quotes every value
 	return []string{"--pull", shellArg(pullPolicy, "<policy>")}
 }
 

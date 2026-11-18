@@ -87,6 +87,7 @@ func repoTargetArg(path string) string {
 func bomRepoUploadFlags() []string {
 	var flags []string
 	if len(includeFiles) > 0 {
+		// armis:ignore cwe:78 reason:text printed for the user to paste, never executed; shellArg quotes every value
 		flags = append(flags, "--include-files", shellArg(strings.Join(includeFiles, ","), "<files>"))
 	}
 	if includeTests {
