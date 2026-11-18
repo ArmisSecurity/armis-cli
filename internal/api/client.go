@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -598,8 +599,13 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if opts.ScanType == ScanTypeBOM && rejectsScanType(resp.StatusCode, respBytes) {
-			return nil, ErrBOMScanUnsupported
+		if opts.ScanType == ScanTypeBOM {
+			if older, msg, ok := scanTypeError(resp.StatusCode, respBytes); ok {
+				if older {
+					return nil, ErrBOMScanUnsupported
+				}
+				return nil, fmt.Errorf("the server refused the BOM-only scan: %s", msg)
+			}
 		}
 		if msg, ok := bomRefusal(resp.StatusCode, respBytes, opts); ok {
 			return nil, errors.New(msg)
@@ -627,29 +633,40 @@ func scanType(opts IngestOptions) string {
 	return opts.ScanType
 }
 
-// rejectsScanType reports whether a 422 answer is a request validation error
-// on the scan_type field, such as
-// {"detail":[{"loc":["body","scan_type"],"msg":"Input should be 'full' or 'custom'"}]},
-// which a server that predates BOM-only scans gives for scan_type "bom".
-func rejectsScanType(status int, body []byte) bool {
+// scanTypeError reads a 422 answer that is a request validation error on the
+// scan_type field, such as
+// {"detail":[{"loc":["body","scan_type"],"msg":"Input should be 'full' or 'custom'"}]}.
+// A server that predates BOM-only scans gives it for scan_type "bom" with a
+// message that lists the values it takes, bom not among them: older is then
+// true. A message that names bom is some other refusal, so msg holds it,
+// control characters stripped. ok is false for any other answer.
+func scanTypeError(status int, body []byte) (older bool, msg string, ok bool) {
 	if status != http.StatusUnprocessableEntity {
-		return false
+		return false, "", false
 	}
 	var parsed struct {
 		Detail []struct {
-			Loc []any `json:"loc"`
+			Loc []any  `json:"loc"`
+			Msg string `json:"msg"`
 		} `json:"detail"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false
+		return false, "", false
 	}
 	for _, d := range parsed.Detail {
-		if n := len(d.Loc); n > 0 && d.Loc[n-1] == "scan_type" {
-			return true
+		if n := len(d.Loc); n == 0 || d.Loc[n-1] != "scan_type" {
+			continue
 		}
+		if !namesBOM.MatchString(d.Msg) {
+			return true, "", true
+		}
+		return false, util.StripControl(d.Msg), true
 	}
-	return false
+	return false, "", false
 }
+
+// namesBOM matches bom as a word, quoted or not, in a validation message.
+var namesBOM = regexp.MustCompile(`(?i)\bbom\b`)
 
 // bomRefusal reads a 422 answer to a /scan request with BOM fields, such as
 // {"detail":{"code":"export_format_unavailable","message":"..."}}, as "the
