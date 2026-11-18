@@ -536,7 +536,9 @@ func TestScanRepoRunE_BOMFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("an older server without the key warns and exits 0", func(t *testing.T) {
+	// scan --bom on an older server or a tenant without BOM generation: the
+	// scan runs and each type warns. (bom is refused on such a tenant.)
+	t.Run("a server or tenant without BOMs warns and exits 0", func(t *testing.T) {
 		setupScanRunEnv(t, testutil.GetMockServerURLWithConfig(t, testutil.MockAPIConfig{}))
 		repoDir := createTestRepo(t)
 		bomTypes, bomOutput = []string{scan.BOMTypeAIBOM, scan.BOMTypeCBOM}, t.TempDir()

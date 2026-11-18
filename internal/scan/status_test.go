@@ -23,6 +23,7 @@ func TestFormatScanStatus(t *testing.T) {
 		{"stopped", "STOPPED", "Scanning...", "Scan was stopped"},
 		{"unknown", "UNKNOWN", "Scanning...", "Scanning... [UNKNOWN]"},
 		{"empty", "", "Scanning...", "Scanning... []"},
+		{"control characters from the server", "queued\x1b[2J\x07\u009b", "Scanning...", "Scanning... [QUEUED[2J]"},
 	}
 
 	for _, tt := range tests {

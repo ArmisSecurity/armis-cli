@@ -326,12 +326,46 @@ func TestNormalizeRepoName(t *testing.T) {
 		{"whitespace only", "   ", ""},
 		{"host only no path", "https://github.com", ""},
 		{"single segment path", "https://github.com/repo.git", ""},
+		{"query with a token", "https://github.com/org/repo.git?access_token=X", "org/repo"},
+		{"fragment", "https://github.com/org/repo.git#main", "org/repo"},
+		{"query and fragment after userinfo", "https://user:pw@github.com/org/repo?a=b@c#frag", "org/repo"},
+		{"query without .git", "https://gitlab.com/group/repo?private_token=X", "group/repo"},
+		{"http with a query", "http://git.example.com/org/repo.git?token=X", "org/repo"},
+		{"HTTPS in capitals", "HTTPS://github.com/org/repo.git?access_token=X", "org/repo"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := normalizeRepoName(tt.url)
 			if got != tt.want {
+				t.Errorf("normalizeRepoName(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+			if strings.ContainsAny(got, "?#") || strings.Contains(got, "token") {
+				t.Errorf("normalizeRepoName(%q) = %q keeps a query or fragment", tt.url, got)
+			}
+		})
+	}
+}
+
+// TestNormalizeRepoNameKeepsPathCharacters: outside http and https, git reads
+// ? and # as part of the path, so the name keeps them, as it always has.
+func TestNormalizeRepoNameKeepsPathCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"ssh with ?", "ssh://git@host/org/re?po.git", "org/re?po"},
+		{"ssh with #", "ssh://git@host:22/org/re#po.git", "org/re#po"},
+		{"git protocol with ?", "git://host/org/re?po.git", "org/re?po"},
+		{"file URL with #", "file:///srv/git/org/re#po.git", "org/re#po"},
+		{"scp-like with ?", "git@host:org/re?po.git", "org/re?po"},
+		{"scp-like with #", "git@host:org/re#po", "org/re#po"},
+		{"local path with #", "/srv/git/c#/repo", "c#/repo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeRepoName(tt.url); got != tt.want {
 				t.Errorf("normalizeRepoName(%q) = %q, want %q", tt.url, got, tt.want)
 			}
 		})

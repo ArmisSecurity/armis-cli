@@ -38,6 +38,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
   - `scan.go` - Parent scan command with shared flags. Its `PersistentPreRunE` manually chains to `rootCmd.PersistentPreRunE` (Cobra does not auto-chain when a child also defines `PersistentPreRunE`).
   - `scan_repo.go` - Repository scanning subcommand
   - `scan_image.go` - Container image scanning subcommand (`--tarball` flag for pre-exported images)
+  - `bom.go`, `bom_repo.go`, `bom_image.go` - BOM-only scans (`bom repo`, `bom image`): `scan_type: "bom"`, BOM downloads through the `--bom` code, no findings
   - `auth.go` - Standalone `auth` command for testing JWT authentication (prints raw token)
   - `context.go` - Signal handling: `NewSignalContext()` creates context canceled on SIGINT/SIGTERM
 

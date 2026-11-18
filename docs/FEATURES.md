@@ -348,6 +348,9 @@ armis-cli scan image nginx:latest --sbom --vex
 | `--bom` | BOM types to download, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | none |
 | `--bom-format` | BOM format: `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx`; without `--bom`, a non-default value is ignored with a warning | `cyclonedx-1.7` |
 | `--bom-output` | Directory for BOM files, or `-` to write one BOM to stdout; ignored with a warning without `--bom` | `.armis` |
+| `--type` (`bom repo`, `bom image`) | BOM types to build without a security scan, comma-separated or repeated: `sbom`, `aibom`, `cbom`, `all` | `all` |
+| `--format` (`bom repo`, `bom image`) | BOM format, the values of `--bom-format` | `cyclonedx-1.7` |
+| `--output` (`bom repo`, `bom image`) | Directory for BOM files, or `-` to write one BOM to stdout; a missing path ending in `.json` is refused | `.armis` |
 
 ### Output Location
 
@@ -379,10 +382,33 @@ armis-cli scan image nginx:latest --bom all --bom-format cyclonedx-1.6 --bom-out
   `all` (combined).
 - Files are named `<artifact>-bom-<type>.json`, or `.spdx.json` for an SPDX format.
 - `scan repo` and `scan image` take these flags; `scan sbom` and `scan status` ignore them.
+- A BOM written while a BOM tool failed on the server prints a warning that it may be incomplete; the exit code does not change.
 - A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on`
   triggers first. A type the server did not build only warns.
 
 See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules.
+
+#### BOMs without a security scan
+
+`armis-cli bom repo` and `armis-cli bom image` build the same BOMs without
+running a security scan, so they take less time. They print no findings and
+take no `--fail-on`. On a tenant without BOM generation, the server refuses
+the request (`bom_generation_disabled`) and they exit `1`. Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors. Without `--type`, they build
+the combined BOM.
+
+```bash
+# Combined BOM → .armis/<artifact>-bom-all.json
+armis-cli bom repo .
+
+# SBOM and CBOM of an image into ./boms
+armis-cli bom image nginx:latest --type sbom,cbom --output ./boms
+```
+
+On a server without BOM-only scans, they exit 1 with the matching `scan --bom`
+command, quoted to paste into sh, bash or zsh, or into PowerShell on Windows
+(not cmd.exe).
+
+See [BOMs Without a Security Scan](../README.md#boms-without-a-security-scan).
 
 ### CI/CD Example
 
@@ -423,8 +449,11 @@ Generate SBOM and VEX as part of your CI pipeline:
 - In `scan repo` and `scan image`, the default `.armis` output is refused when
   `.armis` is not a plain directory, such as a symlink (checked before upload),
   or the file there is not a regular file. Files there are written to a temp
-  file and renamed over the old one, with mode 0600 on Linux and macOS. A path
-  given in an output flag is written as given
+  file and renamed over the old one, with mode 0600 on Linux and macOS. BOM
+  files in a `--bom-output` directory are written the same way, and a symlink
+  or non-regular file at their name is refused; the directory itself is used
+  as given, a symlink included. A file path given in `--sbom-output` or
+  `--vex-output` is written as given
 - Maximum download size is 100MB per file
 
 ---
