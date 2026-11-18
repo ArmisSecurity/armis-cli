@@ -814,7 +814,8 @@ Notes:
   `this Armis server does not support BOM-only scans yet; run: armis-cli scan repo|image <target> [tenant flags] [upload flags] --bom <types> [--bom-format <format>] [--bom-output <dir>]`.
   The command after `run: ` is the matching `scan repo` or `scan image` with
   `--bom`, which runs a security scan as well. It names the target, the
-  `--tenant-id`, `--region` and `--dev` flags you typed, `--include-files`,
+  `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout`
+  flags you typed, `--include-files`,
   `--include-tests` or `--pull`, the format and the directory you gave, and
   single-quotes only the values a shell would read differently: for sh, bash
   and zsh, or for PowerShell on Windows, where a path such as `C:\src\app`

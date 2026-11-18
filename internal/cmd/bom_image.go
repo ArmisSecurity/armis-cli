@@ -45,7 +45,7 @@ Without --type, the combined BOM is built: one file with every type.
 		ctx, cancel := NewSignalContext()
 		defer cancel()
 
-		result, err := scanImageTarget(ctx, scanner, args, bomScanError("image", bomImageTarget(args), append(bomTenantFlags(cmd), bomImagePullFlags()...)))
+		result, err := scanImageTarget(ctx, scanner, args, bomScanError("image", bomImageTarget(args), append(bomTypedFlags(cmd), bomImagePullFlags()...)))
 		if err != nil {
 			return err
 		}

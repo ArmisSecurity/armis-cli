@@ -66,7 +66,7 @@ Without --type, the combined BOM is built: one file with every type.
 		// armis:ignore cwe:22 reason:repoPath is from direct CLI argument; validated as existing directory above
 		result, err := scanner.Scan(ctx, repoPath)
 		if err != nil {
-			return bomScanError("repo", repoTargetArg(repoPath), append(bomTenantFlags(cmd), bomRepoUploadFlags()...))(ctx, err)
+			return bomScanError("repo", repoTargetArg(repoPath), append(bomTypedFlags(cmd), bomRepoUploadFlags()...))(ctx, err)
 		}
 		return bomOnlyExit(result)
 	},

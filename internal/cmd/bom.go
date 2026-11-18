@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -196,12 +197,28 @@ func bomTenantFlags(cmd *cobra.Command) []string {
 	return flags
 }
 
+// bomTypedFlags are the global flags typed on the command line that the scan
+// command of an older server needs as well: the tenant flags, and
+// --scan-timeout and --upload-timeout, since the full scan takes longer.
+func bomTypedFlags(cmd *cobra.Command) []string {
+	flags := bomTenantFlags(cmd)
+	for _, f := range []struct {
+		name  string
+		value int
+	}{{"scan-timeout", scanTimeout}, {"upload-timeout", uploadTimeout}} {
+		if fl := cmd.Flag(f.name); fl != nil && fl.Changed {
+			flags = append(flags, "--"+f.name, strconv.Itoa(f.value))
+		}
+	}
+	return flags
+}
+
 // scanBOMCommand is the scan command that downloads the requested BOMs with
 // a security scan: target as typed (a path, an image name, or --tarball and
-// a file), then flags (the tenant flags typed, and the upload flags given
-// that change what is uploaded, such as --include-files or --pull), then the
-// types, and the format and output directory when they are not the
-// defaults. target and flags are already quoted with shellArg.
+// a file), then flags (the tenant and timeout flags typed, and the upload
+// flags given that change what is uploaded, such as --include-files or
+// --pull), then the types, and the format and output directory when they
+// are not the defaults. target and flags are already quoted with shellArg.
 func scanBOMCommand(kind, target string, flags []string) string {
 	parts := append([]string{"armis-cli", "scan", kind, target}, flags...)
 	parts = append(parts, "--bom", strings.Join(bomOnlyTypes, ","))

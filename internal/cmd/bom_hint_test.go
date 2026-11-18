@@ -305,6 +305,11 @@ func TestOldServerHintTenantFlags(t *testing.T) {
 		{name: "typed tenant, region and dev", args: []string{"--tenant-id", "tenant 7", "--region", "eu1", "--dev", "--token", secret},
 			want: " --tenant-id 'tenant 7' --region eu1 --dev --bom all"},
 		{name: "--dev=false is left out", args: []string{"--dev=false", "--tenant-id", "t-1"}, want: " --tenant-id t-1 --bom all"},
+		{name: "typed timeouts are carried over", args: []string{"--scan-timeout", "90", "--upload-timeout", "30", "--tenant-id", "t-1"},
+			want: " --tenant-id t-1 --scan-timeout 90 --upload-timeout 30 --bom all"},
+		{name: "default timeouts typed as such are still carried", args: []string{"--scan-timeout=60"}, want: " --scan-timeout 60 --bom all"},
+		{name: "bom image carries a typed timeout", image: true, args: []string{"--upload-timeout", "30", "--token", secret},
+			want: " --upload-timeout 30 --bom all"},
 		{name: "bom image with a typed tenant", image: true, args: []string{"--tenant-id", "t-1", "--token", secret},
 			want: " --tenant-id t-1 --bom all"},
 	}
