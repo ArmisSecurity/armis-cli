@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- `scan repo`/`scan image`/`scan status`/`bom`: control characters, such as terminal escapes, are stripped from server text the CLI prints: an unknown scan status in the progress line, a failed scan's error, a scanner-skip reason, and every field of `scan status`. Line breaks and tabs in server text now become one space, so a multi-line error no longer runs its words together.
+- `scan repo`/`scan image`/`scan status`/`bom`: control characters, such as terminal escapes, are stripped from server text the CLI prints: an unknown scan status in the progress line, a failed scan's error, a scanner-skip reason, and every field of `scan status`. Line breaks, tabs, vertical tabs, form feeds and NEL in server text now become one space, so a multi-line error no longer runs its words together.
 - `scan repo`/`scan image` `--bom-output` and `bom repo`/`bom image` `--output`: BOM files written into the directory are now written to a temp file and renamed over the old one, as in the default `.armis`, and a symlink or non-regular file at the BOM's file name is refused, so a link committed in a scanned repository cannot redirect the write. The directory itself is still used as given, a symlinked one included. File paths given in `--sbom-output`, `--vex-output` and `--bom-output -` are written in place as before.
 
 ---
