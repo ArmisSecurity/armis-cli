@@ -13,7 +13,6 @@ import (
 // non-ASCII letters included, is kept as sent.
 func StripControl(s string) string {
 	var b strings.Builder
-	b.Grow(len(s))
 	var run strings.Builder // spaces seen since the last word, not yet written
 	breaks := false         // the run holds a break: \n, \r, \t, \v, \f or NEL
 	for _, r := range s {
