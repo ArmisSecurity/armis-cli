@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -30,16 +31,21 @@ var (
 // --type= stays an error, as --bom= is.
 func defaultBOMOnlyTypes() []string { return []string{scan.BOMTypeAll} }
 
-// bomTenantNote says what every bom command needs from the tenant, and its
-// exit codes. It starts with a line break, so the paragraph before it in Long
-// ends in one and the help shows a blank line between them.
+// bomTenantNote says what every bom command needs from the tenant, its exit
+// codes, and which shells the older-server command is quoted for. It starts
+// with a line break, so the paragraph before it in Long ends in one and the
+// help shows a blank line between them.
 const bomTenantNote = `
 BOM generation must be enabled for your tenant; without it, each type
 prints a "not available" warning and no BOM is written.
 
 Exit codes: 0 when at least one BOM was written and none failed to download;
 2 when no BOM was written or a built BOM could not be downloaded; 1 on errors;
-130 on Ctrl+C.`
+130 on Ctrl+C.
+
+On a server without BOM-only scans, the error ends in the matching scan --bom
+command, quoted to paste into sh, bash or zsh, or into PowerShell on Windows;
+cmd.exe is not supported.`
 
 var bomCmd = &cobra.Command{
 	Use:   "bom",
@@ -208,26 +214,68 @@ func scanBOMCommand(kind, target string, flags []string) string {
 	return strings.Join(parts, " ")
 }
 
-// shellArg returns s ready to paste into a POSIX shell command line. A value
-// that is not valid UTF-8 or has a control character, such as a tab, a line
-// break or a C1 byte that 8-bit terminals read as an escape, cannot be
-// printed as typed, so placeholder (such as <path>) stands in for it rather
-// than a different value. Otherwise s is printed as is when it holds only
+// shellArg returns s ready to paste into the shell the printed command is
+// meant for, quoted by shellQuote. A value that is not valid UTF-8 or has a
+// control character, such as a tab, a line break or a C1 byte that 8-bit
+// terminals read as an escape, cannot be printed as typed, so placeholder
+// (such as <path>) stands in for it rather than a different value.
+func shellArg(s, placeholder string) string {
+	if !utf8.ValidString(s) || strings.ContainsFunc(s, unicode.IsControl) {
+		return placeholder
+	}
+	return shellQuote(s)
+}
+
+// shellQuote quotes a value for the shell of this build: PowerShell on
+// Windows, a POSIX shell (sh, bash, zsh) elsewhere. cmd.exe is not
+// supported: it keeps single quotes as part of the value.
+var shellQuote = shellQuoteFor(runtime.GOOS)
+
+// shellQuoteFor returns the quoting function for goos.
+func shellQuoteFor(goos string) func(string) string {
+	if goos == "windows" {
+		return powerShellQuote
+	}
+	return posixQuote
+}
+
+// posixQuote quotes s for sh, bash and zsh: as is when it holds only
 // letters, digits and _ . / : @ + , -, which no shell treats specially, else
 // in single quotes. So = and ~ are always quoted, as zsh can expand them
 // anywhere in a word (MAGIC_EQUAL_SUBST), and so is a leading #. Inside
 // single quotes only the quote character is special: each one closes the
 // quotes, adds a backslash-escaped quote and opens them again. Single quotes
 // also keep bash's ! history expansion off.
-func shellArg(s, placeholder string) string {
-	if !utf8.ValidString(s) || strings.ContainsFunc(s, unicode.IsControl) {
-		return placeholder
-	}
+func posixQuote(s string) string {
 	const plain = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@+,-"
 	if s != "" && strings.Trim(s, plain) == "" {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// powerShellQuote quotes s for PowerShell: as is when it holds only letters,
+// digits and _ . / \ : + -, so a path such as C:\src\app stays as typed,
+// else in single quotes, inside which nothing expands. A quote inside them
+// is written twice; PowerShell reads the curly single quotes U+2018 to
+// U+201B as quotes too, so they are doubled the same way. , @ # $ ` = ~ and
+// spaces are quoted, as PowerShell reads them as operators, splatting,
+// comments, variables, escapes or separators.
+func powerShellQuote(s string) string {
+	const plain = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./\\:+-"
+	if s != "" && strings.Trim(s, plain) == "" {
+		return s
+	}
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range s {
+		if strings.ContainsRune("'\u2018\u2019\u201a\u201b", r) {
+			b.WriteRune(r)
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('\'')
+	return b.String()
 }
 
 func init() {

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -10,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -17,9 +20,42 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestShellArg: a value pastes back into a POSIX shell, and zsh, as the same
-// argument; a value with a control character becomes the placeholder.
+// TestShellArg: a value that is not valid UTF-8 or holds a control
+// character becomes the placeholder; any other value is quoted for the shell
+// of this build.
 func TestShellArg(t *testing.T) {
+	for _, in := range []string{"my\tapp", "two\nlines", "esc\x1b[2J", "c1\x9bbyte", "bad\xffutf8"} {
+		if got := shellArg(in, "<v>"); got != "<v>" {
+			t.Errorf("shellArg(%q) = %s, want the placeholder", in, got)
+		}
+	}
+	for _, in := range []string{"./app", "my app", "it's", `C:\src\app`} {
+		if got, want := shellArg(in, "<v>"), shellQuoteFor(runtime.GOOS)(in); got != want {
+			t.Errorf("shellArg(%q) = %s, want %s, as quoted for %s", in, got, want, runtime.GOOS)
+		}
+	}
+}
+
+// TestShellQuoteFor: a Windows build quotes for PowerShell, others for a
+// POSIX shell. "it's" tells the two apart.
+func TestShellQuoteFor(t *testing.T) {
+	for goos, want := range map[string]string{
+		"windows": `'it''s'`,
+		"linux":   `'it'\''s'`,
+		"darwin":  `'it'\''s'`,
+	} {
+		if got := shellQuoteFor(goos)("it's"); got != want {
+			t.Errorf("shellQuoteFor(%q)(\"it's\") = %s, want %s", goos, got, want)
+		}
+	}
+	if got, want := shellQuote("it's"), shellQuoteFor(runtime.GOOS)("it's"); got != want {
+		t.Errorf("this build quotes as %s, want %s for %s", got, want, runtime.GOOS)
+	}
+}
+
+// TestPosixQuote: a value pastes back into sh, and zsh, as the same
+// argument. Runs on every OS; the shells only where they exist.
+func TestPosixQuote(t *testing.T) {
 	rows := []struct{ in, want string }{
 		{"./my-app", "./my-app"},
 		{"ghcr.io/org/app:1.2", "ghcr.io/org/app:1.2"},
@@ -34,15 +70,11 @@ func TestShellArg(t *testing.T) {
 		{"a`id`b", "'a`id`b'"},
 		{"it's", `'it'\''s'`},
 		{`back\slash "q"`, `'back\slash "q"'`},
+		{`C:\src\app`, `'C:\src\app'`},
 		{"=t1", "'=t1'"},
 		{"~/boms", "'~/boms'"},
 		{"#tag", "'#tag'"},
 		{"", "''"},
-		{"my\tapp", "<v>"},
-		{"two\nlines", "<v>"},
-		{"esc\x1b[2J", "<v>"},
-		{"c1\x9bbyte", "<v>"},
-		{"bad\xffutf8", "<v>"},
 		{"ok ünïcode 服务", "'ok ünïcode 服务'"},
 	}
 	// Each shell reads the value back; zsh also with MAGIC_EQUAL_SUBST,
@@ -59,18 +91,71 @@ func TestShellArg(t *testing.T) {
 	}
 	for _, row := range rows {
 		t.Run(row.in, func(t *testing.T) {
-			got := shellArg(row.in, "<v>")
+			got := posixQuote(row.in)
 			if got != row.want {
-				t.Fatalf("shellArg(%q) = %s, want %s", row.in, got, row.want)
-			}
-			if got == "<v>" {
-				return
+				t.Fatalf("posixQuote(%q) = %s, want %s", row.in, got, row.want)
 			}
 			for _, sh := range shells {
 				out, err := exec.Command(sh.path, "-c", sh.setup+"printf %s "+got).CombinedOutput() //nolint:gosec // test input from the table
 				if err != nil || string(out) != row.in {
 					t.Errorf("%s %sread %s back as %q (%v), want %q", sh.path, sh.setup, got, out, err, row.in)
 				}
+			}
+		})
+	}
+}
+
+// TestPowerShellQuote: a value pastes back into PowerShell as the same
+// argument. Runs on every OS; the round trip only where PowerShell exists,
+// as on Windows. The script goes in as -EncodedCommand, so no other quoting
+// layer is involved, and passes the value to a function, in argument mode.
+func TestPowerShellQuote(t *testing.T) {
+	rows := []struct{ in, want string }{
+		{`C:\src\app`, `C:\src\app`},
+		{`.\my-app`, `.\my-app`},
+		{"./-x", "./-x"},
+		{"eu1", "eu1"},
+		{"my app", "'my app'"},
+		{`C:\Program Files\app`, `'C:\Program Files\app'`},
+		{"it's", "'it''s'"},
+		{"a\u2019b\u2018c", "'a\u2019\u2019b\u2018\u2018c'"},
+		{"$env:HOME", "'$env:HOME'"},
+		{"a`b", "'a`b'"},
+		{"a,b.go", "'a,b.go'"},
+		{"@splat", "'@splat'"},
+		{"#tag", "'#tag'"},
+		{"a=b", "'a=b'"},
+		{"--%", "'--%'"},
+		{`say "hi"`, `'say "hi"'`},
+		{"", "''"},
+	}
+	var ps string
+	for _, name := range []string{"pwsh", "powershell"} {
+		if path, err := exec.LookPath(name); err == nil {
+			ps = path
+			break
+		}
+	}
+	for _, row := range rows {
+		t.Run(row.in, func(t *testing.T) {
+			got := powerShellQuote(row.in)
+			if got != row.want {
+				t.Fatalf("powerShellQuote(%q) = %s, want %s", row.in, got, row.want)
+			}
+			if ps == "" {
+				return
+			}
+			// f takes the value in argument mode, as a command such as
+			// armis-cli does, then writes it back.
+			script := "[Console]::OutputEncoding = [Text.Encoding]::UTF8; function f { [Console]::Out.Write([string]$args[0]) }; f " + got
+			u16 := utf16.Encode([]rune(script))
+			raw := make([]byte, 2*len(u16))
+			for i, c := range u16 {
+				binary.LittleEndian.PutUint16(raw[2*i:], c)
+			}
+			out, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(raw)).Output() //nolint:gosec // test input from the table
+			if err != nil || strings.TrimPrefix(string(out), "\ufeff") != row.in {
+				t.Errorf("%s read %s back as %q (%v), want %q", ps, got, out, err, row.in)
 			}
 		})
 	}

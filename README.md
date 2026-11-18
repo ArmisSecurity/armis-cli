@@ -816,7 +816,9 @@ Notes:
   `--bom`, which runs a security scan as well. It names the target, the
   `--tenant-id`, `--region` and `--dev` flags you typed, `--include-files`,
   `--include-tests` or `--pull`, the format and the directory you gave, and
-  single-quotes only the values a shell would read differently. It leaves
+  single-quotes only the values a shell would read differently: for sh, bash
+  and zsh, or for PowerShell on Windows, where a path such as `C:\src\app`
+  stays unquoted and a `'` is doubled. cmd.exe is not supported. It leaves
   credentials (`--token`, `--client-id`, `--client-secret`) and values from
   environment variables out of the line, so paste it into a shell where they
   are set, and it uses them from there. A value with a control character is

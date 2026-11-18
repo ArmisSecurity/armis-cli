@@ -403,6 +403,10 @@ armis-cli bom repo .
 armis-cli bom image nginx:latest --type sbom,cbom --output ./boms
 ```
 
+On a server without BOM-only scans, they exit 1 with the matching `scan --bom`
+command, quoted to paste into sh, bash or zsh, or into PowerShell on Windows
+(not cmd.exe).
+
 See [BOMs Without a Security Scan](../README.md#boms-without-a-security-scan).
 
 ### CI/CD Example

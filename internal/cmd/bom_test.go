@@ -791,6 +791,7 @@ func TestBOMHelp(t *testing.T) {
 				"BOM generation must be enabled for your tenant",
 				"Exit codes: 0 when at least one BOM was written and none failed to download;",
 				"2 when no BOM was written or a built BOM could not be downloaded; 1 on errors;",
+				"quoted to paste into sh, bash or zsh, or into PowerShell on Windows;\ncmd.exe is not supported.",
 				"Without --type, the combined BOM is built: one file with every type.",
 				"--type strings", "(default: all)", "sbom, aibom, cbom, all",
 				"--format string", `(default "cyclonedx-1.7")`,
