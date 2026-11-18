@@ -886,6 +886,9 @@ func TestTypedBOMDirRefusesLinkedFile(t *testing.T) {
 // TestFailedToolsWarning: scan repo --bom and bom repo share the warning for
 // a BOM written while a BOM tool failed, and both still exit 0.
 func TestFailedToolsWarning(t *testing.T) {
+	// Plain styles, so the "Warning:" label matches whatever ran before.
+	cli.InitColors(cli.ColorModeNever)
+	output.SyncColors()
 	const doc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
 	const want = "Warning: BOM tools failed on the server: opengrep_bom; CBOM may be incomplete"
 	rows := []struct {
