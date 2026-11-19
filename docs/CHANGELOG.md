@@ -9,13 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scan repo`/`scan image`/`bom repo`/`bom image`: a BOM written while BOM tools failed on the server (`bom_summary.failed_tools`) now prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines, instead of passing silently. The exit code does not change.
-- `bom repo`/`bom image`: new commands build BOMs without a security scan and download them, which takes less time than `scan repo|image --bom`. The upload, file names and `.armis` default are those of `--bom`; there is no findings report and no `--fail-on`. BOM generation must be enabled for the tenant: without it, the server refuses the request (`bom_generation_disabled`) and the command exits 1, while `scan --bom` keeps running the scan and warning per type. The ingest request carries `scan_type: "bom"`.
-- `bom repo`/`bom image`: new `--type` flag takes `sbom`, `aibom`, `cbom` or `all`, comma-separated or repeated; the default is `all`, the combined BOM. A refused pair with the default says `--type all (the default)`.
-- `bom repo`/`bom image`: new `--format` and `--output` flags take the values of `--bom-format` and `--bom-output`. A missing `--output` path that ends in `.json` is refused before upload, with a hint to use `--output -` (for one type) or a directory.
-- `bom repo`/`bom image`: exit codes are 0 when at least one BOM was written and none failed to download, 2 when no BOM was written or a built BOM could not be downloaded, 1 on errors and 130 on Ctrl+C.
-- `bom repo`/`bom image`: a server without BOM-only scans, which rejects `scan_type` with a list of values that leaves out `bom`, exits 1 with `run: armis-cli scan repo|image <target> ... --bom <types> ...`, the matching `scan --bom` command, which runs a security scan as well. It names the target, the `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout` flags typed, `--include-files`, `--include-tests` or `--pull`, the format and the output directory given, and single-quotes only values a shell would read differently, for sh, bash and zsh, or for PowerShell on Windows (cmd.exe is not supported). Credentials and values from the environment are left out of the line, so it uses those of the shell it is pasted into; a value with a control character is shown as a placeholder such as `<path>`. A `scan_type` refusal whose message names `bom` exits 1 with that message instead.
-- `bom repo`: takes `--include-files` and `--include-tests`, and sends the git hints `scan repo` sends (`repo_name`, `git_sha`, `origin_sha` for a full upload of a checkout), so the BOMs name the repository and commit. `bom image`: takes `--pull` and `--tarball`, and sends `image_ref` as `scan image --bom` does.
 - `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis does not record CLI scans as project runs yet; until it does, the scan does not appear under the project, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
 - `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
 - `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
@@ -34,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `scan repo`/`bom repo`: the `repo_name` git hint drops the query and fragment of an `http` or `https` origin URL, so a remote such as `https://github.com/org/repo.git?access_token=...` gives `org/repo`, not `org/repo.git?access_token=...`. Other remotes keep `?` and `#`, which git reads as part of their path.
 - A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
 - A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
 - On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
@@ -42,9 +34,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
+
+---
+
+## [1.28.0] - 2026-11-19
+
+### Added
+
+- `scan repo`/`scan image`/`bom repo`/`bom image`: a BOM written while BOM tools failed on the server (`bom_summary.failed_tools`) now prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines, instead of passing silently. The exit code does not change.
+- `bom repo`/`bom image`: new commands build BOMs without a security scan and download them, which takes less time than `scan repo|image --bom`. The upload, file names and `.armis` default are those of `--bom`; there is no findings report and no `--fail-on`. BOM generation must be enabled for the tenant: without it, the server refuses the request (`bom_generation_disabled`) and the command exits 1, while `scan --bom` keeps running the scan and warning per type. The ingest request carries `scan_type: "bom"`.
+- `bom repo`/`bom image`: new `--type` flag takes `sbom`, `aibom`, `cbom` or `all`, comma-separated or repeated; the default is `all`, the combined BOM. A refused pair with the default says `--type all (the default)`.
+- `bom repo`/`bom image`: new `--format` and `--output` flags take the values of `--bom-format` and `--bom-output`. A missing `--output` path that ends in `.json` is refused before upload, with a hint to use `--output -` (for one type) or a directory.
+- `bom repo`/`bom image`: exit codes are 0 when at least one BOM was written and none failed to download, 2 when no BOM was written or a built BOM could not be downloaded, 1 on errors and 130 on Ctrl+C.
+- `bom repo`/`bom image`: a server without BOM-only scans, which rejects `scan_type` with a list of values that leaves out `bom`, exits 1 with `run: armis-cli scan repo|image <target> ... --bom <types> ...`, the matching `scan --bom` command, which runs a security scan as well. It names the target, the `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout` flags typed, `--include-files`, `--include-tests` or `--pull`, the format and the output directory given, and single-quotes only values a shell would read differently, for sh, bash and zsh, or for PowerShell on Windows (cmd.exe is not supported). Credentials and values from the environment are left out of the line, so it uses those of the shell it is pasted into; a value with a control character is shown as a placeholder such as `<path>`. A `scan_type` refusal whose message names `bom` exits 1 with that message instead.
+- `bom repo`: takes `--include-files` and `--include-tests`, and sends the git hints `scan repo` sends (`repo_name`, `git_sha`, `origin_sha` for a full upload of a checkout), so the BOMs name the repository and commit. `bom image`: takes `--pull` and `--tarball`, and sends `image_ref` as `scan image --bom` does.
+
+### Fixed
+
+- `scan repo`/`bom repo`: the `repo_name` git hint drops the query and fragment of an `http` or `https` origin URL, so a remote such as `https://github.com/org/repo.git?access_token=...` gives `org/repo`, not `org/repo.git?access_token=...`. Other remotes keep `?` and `#`, which git reads as part of their path.
+
+### Security
+
 - `scan repo`/`scan image`/`scan status`/`bom`: control characters, such as terminal escapes, are stripped from server text the CLI prints: an unknown scan status in the progress line, a failed scan's error, a scanner-skip reason, and every field of `scan status`. Line breaks, tabs, vertical tabs, form feeds and NEL in server text now become one space, so a multi-line error no longer runs its words together.
 - `scan repo`/`scan image` `--bom-output` and `bom repo`/`bom image` `--output`: BOM files written into the directory are now written to a temp file and renamed over the old one, as in the default `.armis`, and a symlink or non-regular file at the BOM's file name is refused, so a link committed in a scanned repository cannot redirect the write. The directory itself is still used as given, a symlinked one included. File paths given in `--sbom-output`, `--vex-output` and `--bom-output -` are written in place as before.
-- `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
 
 ---
 
@@ -891,7 +904,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.28.0...HEAD
+[1.28.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...v1.26.0
 [1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
