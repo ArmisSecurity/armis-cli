@@ -158,3 +158,35 @@ func TestFixedCompletions(t *testing.T) {
 		}
 	})
 }
+
+// TestScanCompletesSubcommandsAndPaths runs `armis-cli __complete scan ""`,
+// what the shell scripts call on `armis-cli scan <TAB>`. With the
+// FilterDirs directive the scripts took the first candidate (a subcommand
+// name) as the folder to list, and nothing completed.
+func TestScanCompletesSubcommandsAndPaths(t *testing.T) {
+	var out strings.Builder
+	rootCmd.SetOut(&out)
+	rootCmd.SetArgs([]string{cobra.ShellCompRequestCmd, "scan", ""})
+	t.Cleanup(func() {
+		rootCmd.SetOut(nil)
+		rootCmd.SetArgs(nil)
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("__complete failed: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	directive := lines[len(lines)-1]
+	if directive != ":0" {
+		t.Errorf("directive = %s, want :0 (ShellCompDirectiveDefault: subcommands plus paths)", directive)
+	}
+	got := map[string]bool{}
+	for _, l := range lines[:len(lines)-1] {
+		got[stripDesc(l)] = true
+	}
+	for _, sub := range []string{"image", "repo", "sbom", "status"} {
+		if !got[sub] {
+			t.Errorf("subcommand %q missing from the completions: %q", sub, lines)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestNewClient(t *testing.T) {
@@ -334,5 +335,53 @@ func TestClientDo_ServerErrorBodyIsNotExplainedAsProxyFailure(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "mcp doctor --network") {
 		t.Errorf("5xx body was explained as a transport failure: %v", err)
+	}
+}
+
+func TestClientDo_ServerErrorBodyIsCapped(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantTruncated bool
+	}{
+		{name: "a JSON error detail is kept whole", body: `{"detail":"database unavailable"}`},
+		{name: "exactly at the cap is kept whole", body: strings.Repeat("a", maxErrorBodyBytes)},
+		{name: "an HTML error page is cut", body: "<html>" + strings.Repeat("<p>gateway</p>\n", 1000) + "</html>", wantTruncated: true},
+		// The cap falls inside the two-byte é; the cut must back off to a
+		// valid boundary.
+		{name: "a cut never splits a character", body: strings.Repeat("a", maxErrorBodyBytes-1) + "é" + strings.Repeat("b", 50), wantTruncated: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewClient(Config{DisableRetry: true, Timeout: 5 * time.Second})
+			req, err := http.NewRequest("GET", server.URL, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			_, err = client.Do(req)
+			if err == nil {
+				t.Fatal("want a server error")
+			}
+			msg := err.Error()
+			if !utf8.ValidString(msg) {
+				t.Errorf("the error message is not valid UTF-8: %q", msg)
+			}
+			if tt.wantTruncated {
+				if !strings.HasSuffix(msg, "… (truncated)") {
+					t.Errorf("a long body should be marked as truncated: %.120q", msg)
+				}
+				if len(msg) > maxErrorBodyBytes+100 {
+					t.Errorf("error message is %d bytes, want about %d", len(msg), maxErrorBodyBytes)
+				}
+			} else if !strings.HasSuffix(msg, tt.body) {
+				t.Errorf("the body should be kept whole: %.120q", msg)
+			}
+		})
 	}
 }

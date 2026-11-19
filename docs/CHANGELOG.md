@@ -16,8 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bom repo`/`bom image`: exit codes are 0 when at least one BOM was written and none failed to download, 2 when no BOM was written or a built BOM could not be downloaded, 1 on errors and 130 on Ctrl+C.
 - `bom repo`/`bom image`: a server without BOM-only scans, which rejects `scan_type` with a list of values that leaves out `bom`, exits 1 with `run: armis-cli scan repo|image <target> ... --bom <types> ...`, the matching `scan --bom` command, which runs a security scan as well. It names the target, the `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout` flags typed, `--include-files`, `--include-tests` or `--pull`, the format and the output directory given, and single-quotes only values a shell would read differently, for sh, bash and zsh, or for PowerShell on Windows (cmd.exe is not supported). Credentials and values from the environment are left out of the line, so it uses those of the shell it is pasted into; a value with a control character is shown as a placeholder such as `<path>`. A `scan_type` refusal whose message names `bom` exits 1 with that message instead.
 - `bom repo`: takes `--include-files` and `--include-tests`, and sends the git hints `scan repo` sends (`repo_name`, `git_sha`, `origin_sha` for a full upload of a checkout), so the BOMs name the repository and commit. `bom image`: takes `--pull` and `--tarball`, and sends `image_ref` as `scan image --bom` does.
+- `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis does not record CLI scans as project runs yet; until it does, the scan does not appear under the project, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
+- `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
+- `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
+- `armis-cli scan <path>` is a shorthand for `armis-cli scan repo <path>` and takes the same flags. (PPSC-1589)
+- The GitHub Action has a `project` input. (PPSC-1589)
 
 ### Changed
+
+- `armis-cli scan <path>` now scans the folder. It used to print help and exit 0 without scanning, which passed CI steps silently. `armis-cli scan` given flags but no path now fails instead of exiting 0. (PPSC-1589)
+- CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI` set to `false`, `0`, `no` or `off` as not CI. `AZURE_PIPELINES` no longer marks a CI run: no runner sets it, and Azure Pipelines is detected through `TF_BUILD`. (PPSC-1589)
+- Spinners and the upload progress bar animate only when stderr is a terminal. Otherwise each step is printed once, as in CI, instead of filling a redirected log with redraws. (PPSC-1589)
 
 ### Deprecated
 
@@ -26,11 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `scan repo`/`bom repo`: the `repo_name` git hint drops the query and fragment of an `http` or `https` origin URL, so a remote such as `https://github.com/org/repo.git?access_token=...` gives `org/repo`, not `org/repo.git?access_token=...`. Other remotes keep `?` and `#`, which git reads as part of their path.
+- A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
+- A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
+- On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
+- `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
 
 ### Security
 
 - `scan repo`/`scan image`/`scan status`/`bom`: control characters, such as terminal escapes, are stripped from server text the CLI prints: an unknown scan status in the progress line, a failed scan's error, a scanner-skip reason, and every field of `scan status`. Line breaks, tabs, vertical tabs, form feeds and NEL in server text now become one space, so a multi-line error no longer runs its words together.
 - `scan repo`/`scan image` `--bom-output` and `bom repo`/`bom image` `--output`: BOM files written into the directory are now written to a temp file and renamed over the old one, as in the default `.armis`, and a symlink or non-regular file at the BOM's file name is refused, so a link committed in a scanned repository cannot redirect the write. The directory itself is still used as given, a symlinked one included. File paths given in `--sbom-output`, `--vex-output` and `--bom-output -` are written in place as before.
+- `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
 
 ---
 

@@ -27,6 +27,10 @@ import (
 // MaxRepoSize is the maximum allowed size for repositories.
 const MaxRepoSize = 2 * 1024 * 1024 * 1024
 
+// StatusAccepted is the ScanResult status of an async scan: the upload landed
+// and the scan was triggered, but its results were not waited for.
+const StatusAccepted = "accepted"
+
 // Scanner scans repositories for security vulnerabilities.
 type Scanner struct {
 	client                *api.Client
@@ -41,6 +45,10 @@ type Scanner struct {
 	includeFiles          *FileList
 	sbomVEXOpts           *scan.SBOMVEXOptions
 	detectGitHints        bool
+	projectID             string
+	trigger               string
+	projectResolver       ProjectResolver
+	async                 bool
 }
 
 // NewScanner creates a new repository scanner with the given configuration.
@@ -88,6 +96,37 @@ func (s *Scanner) WithSBOMVEXOptions(opts *scan.SBOMVEXOptions) *Scanner {
 // --include-files partial uploads, which are not faithful whole-repo snapshots.
 func (s *Scanner) WithGitHints() *Scanner {
 	s.detectGitHints = true
+	return s
+}
+
+// WithProject publishes the scan as a run of the AppSec project projectID,
+// stamped with trigger ("cli_ci" or "cli_dev"). Without it the scan is not
+// tied to any project.
+func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
+	s.projectID = projectID
+	s.trigger = trigger
+	return s
+}
+
+// ProjectResolver finds or creates the project a published scan is recorded
+// on, and returns its id and the run's trigger.
+type ProjectResolver func(ctx context.Context) (projectID, trigger string, err error)
+
+// WithProjectResolver publishes the scan to the project resolve returns. Scan
+// calls it once its local checks have passed (path, .armisignore, size) and
+// before it tars and uploads. So a scan that fails those checks never creates
+// a project, while a credential or naming problem still surfaces before the
+// upload. Its error is returned unwrapped.
+func (s *Scanner) WithProjectResolver(resolve ProjectResolver) *Scanner {
+	s.projectResolver = resolve
+	return s
+}
+
+// WithAsync makes Scan return as soon as the scan is accepted (uploaded and
+// triggered) instead of waiting for its results. The returned ScanResult has
+// Status StatusAccepted and no findings.
+func (s *Scanner) WithAsync() *Scanner {
+	s.async = true
 	return s
 }
 
@@ -166,6 +205,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", rawSize, MaxRepoSize)
 	}
 
+	if s.projectResolver != nil {
+		projectID, trigger, err := s.projectResolver(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.projectID, s.trigger = projectID, trigger
+	}
+
 	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
@@ -175,6 +222,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	// body size before sending — gzip output size isn't known up front.
 	// Disk-based buffering also makes the upload retryable in the future
 	// without re-tarring.
+	// armis:ignore cwe:770 reason:one temp tarball per CLI run, removed on return; its input is capped by the MaxRepoSize check above
 	tmpFile, err := os.CreateTemp("", "armis-repo-*.tar.gz")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp tarball: %w", err)
@@ -243,6 +291,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		ingestOpts.OriginSHA = hints.OriginSHA
 	}
 
+	// Only a published scan names a project; otherwise the request carries
+	// nothing project-related.
+	ingestOpts.ProjectID = s.projectID
+	ingestOpts.Trigger = s.trigger
+
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
@@ -265,6 +318,12 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
+
+	// Async: the scan is accepted once /ingest/scan succeeds. Its ID is in the
+	// scan history above, so `scan status` can follow it up.
+	if s.async {
+		return &model.ScanResult{ScanID: scanID, Status: StatusAccepted}, nil
+	}
 
 	waitMessage := s.sbomVEXOpts.WaitMessage()
 	analysisSpinner := progress.NewSpinnerWithContext(ctx, waitMessage, s.noProgress)
@@ -309,7 +368,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			time.Sleep(s.fetchRetryInterval)
 		}
 	}
-	if err != nil {
+	// No result entry at all is decided once the skip reason is known: a
+	// skipped scanner explains it, anything else means the results are gone.
+	noResults := errors.Is(err, api.ErrNoScanResults)
+	if err != nil && !noResults {
 		fetchSpinner.Stop()
 		cli.PrintWarningf("Failed to retrieve results: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
@@ -325,6 +387,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	skipReason, bomFailures, err := scan.DownloadArtifacts(ctx, s.client, s.tenantID, scanID, filepath.Base(absPath), s.sbomVEXOpts)
 	if err != nil {
 		return nil, err
+	}
+	if noResults && skipReason == "" {
+		scan.WarnNoScanResults(scanID)
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
@@ -689,6 +755,10 @@ func isTestFile(name string) bool {
 // isRetryableError returns true for transient errors (timeouts, network errors,
 // 5xx server errors) and false for permanent errors (4xx, decode failures).
 func isRetryableError(err error) bool {
+	// Results may land a moment after the scan reports COMPLETED.
+	if errors.Is(err, api.ErrNoScanResults) {
+		return true
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode >= 500
@@ -756,7 +826,8 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+				// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, util.MaskForDebug(rawJSON))
 			}
 		}
 

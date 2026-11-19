@@ -6,28 +6,20 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestIsCI(t *testing.T) {
-	ciEnvVars := []string{
-		"CI",
-		"CONTINUOUS_INTEGRATION",
-		"GITHUB_ACTIONS",
-		"GITLAB_CI",
-		"CIRCLECI",
-		"JENKINS_URL",
-		"TRAVIS",
-		"BITBUCKET_BUILD_NUMBER",
-		"AZURE_PIPELINES",
-	}
+	ciEnvVars := CIEnvVars()
 
 	tests := []struct {
 		name     string
 		envVars  map[string]string
 		expected bool
+		wantVar  string // DetectCI's reported variable; "" when not CI
 	}{
 		{
 			name:     "no CI env vars",
@@ -69,6 +61,72 @@ func TestIsCI(t *testing.T) {
 			},
 			expected: true,
 		},
+		// Azure Pipelines sets TF_BUILD=True and not CI.
+		{
+			name:     "TF_BUILD (Azure Pipelines) env var set",
+			envVars:  map[string]string{"TF_BUILD": "True"},
+			expected: true,
+			wantVar:  "TF_BUILD",
+		},
+		{
+			name:     "CODEBUILD_BUILD_ID (AWS CodeBuild) env var set",
+			envVars:  map[string]string{"CODEBUILD_BUILD_ID": "proj:123"},
+			expected: true,
+			wantVar:  "CODEBUILD_BUILD_ID",
+		},
+		// CI=false (or 0) is an explicit opt-out, not a CI marker.
+		{
+			name:     "CI=false is not CI",
+			envVars:  map[string]string{"CI": "false"},
+			expected: false,
+		},
+		{
+			name:     "CI=0 is not CI",
+			envVars:  map[string]string{"CI": "0"},
+			expected: false,
+		},
+		{
+			name:     "CONTINUOUS_INTEGRATION=FALSE is not CI",
+			envVars:  map[string]string{"CONTINUOUS_INTEGRATION": "FALSE"},
+			expected: false,
+		},
+		// "no" and "off" are off values too: CI detection decides auto-publishing,
+		// so `CI=off` on a developer machine must not publish.
+		{
+			name:     "CI=no is not CI",
+			envVars:  map[string]string{"CI": "no"},
+			expected: false,
+		},
+		{
+			name:     "CI=OFF is not CI",
+			envVars:  map[string]string{"CI": "OFF"},
+			expected: false,
+		},
+		{
+			name:     "CONTINUOUS_INTEGRATION=Off is not CI",
+			envVars:  map[string]string{"CONTINUOUS_INTEGRATION": "Off"},
+			expected: false,
+		},
+		{
+			name:     "CI=yes is CI",
+			envVars:  map[string]string{"CI": "yes"},
+			expected: true,
+			wantVar:  "CI",
+		},
+		// A non-boolean value (some CI systems put their name in CI) still counts.
+		{
+			name:     "CI with a non-boolean value is CI",
+			envVars:  map[string]string{"CI": "woodpecker"},
+			expected: true,
+			wantVar:  "CI",
+		},
+		// A vendor marker wins over a generic opt-out.
+		{
+			name:     "CI=false does not mask GITHUB_ACTIONS",
+			envVars:  map[string]string{"CI": "false", "GITHUB_ACTIONS": "true"},
+			expected: true,
+			wantVar:  "GITHUB_ACTIONS",
+		},
 	}
 
 	for _, tt := range tests {
@@ -98,6 +156,17 @@ func TestIsCI(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("IsCI() = %v, want %v", result, tt.expected)
 			}
+
+			gotCI, gotVar := DetectCI()
+			if gotCI != tt.expected {
+				t.Errorf("DetectCI() ci = %v, want %v", gotCI, tt.expected)
+			}
+			if tt.wantVar != "" && gotVar != tt.wantVar {
+				t.Errorf("DetectCI() var = %q, want %q", gotVar, tt.wantVar)
+			}
+			if !tt.expected && gotVar != "" {
+				t.Errorf("DetectCI() var = %q, want empty when not CI", gotVar)
+			}
 		})
 	}
 }
@@ -124,7 +193,10 @@ func TestNewReader(t *testing.T) {
 		}
 	})
 
-	t.Run("wraps reader when not disabled and not CI", func(t *testing.T) {
+	t.Run("draws no bar when stderr is not a terminal", func(t *testing.T) {
+		if isTerminalWriter(os.Stderr) {
+			t.Skip("stderr is a terminal")
+		}
 		for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI"} {
 			_ = os.Unsetenv(key)
 		}
@@ -137,8 +209,10 @@ func TestNewReader(t *testing.T) {
 		input := bytes.NewReader([]byte("test data"))
 		result := NewReader(input, 9, "test", false)
 
-		if result == input {
-			t.Error("Expected wrapped reader when not disabled and not CI")
+		// A redirected stderr (here, go test's pipe) gets no progress bar: each
+		// redraw would be a line of noise in a log.
+		if result != input {
+			t.Error("expected the reader unwrapped when stderr is not a terminal")
 		}
 
 		data, err := io.ReadAll(result)
@@ -246,6 +320,7 @@ func TestSpinner(t *testing.T) {
 		var buf bytes.Buffer
 		spinner := NewSpinner("initial", false)
 		spinner.SetWriter(&buf)
+		spinner.forceAnimation = true // drive the animation goroutine on a test writer
 		spinner.Start()
 
 		// Concurrently update the message while the spinner is running
@@ -330,6 +405,7 @@ func TestSpinnerStopIdempotent(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Stop should not panic when called multiple times
@@ -360,6 +436,7 @@ func TestSpinnerWithContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	spinner := NewSpinnerWithContext(ctx, "test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Cancel the context
@@ -394,6 +471,7 @@ func TestSpinnerAutoTimeout(t *testing.T) {
 	// Use a very short timeout for testing
 	spinner := NewSpinnerWithTimeout("test", false, 200*time.Millisecond)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Wait for longer than the timeout
@@ -424,6 +502,7 @@ func TestSpinnerStopBeforeStart(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 
 	// Should not panic - Stop before Start should be safe
 	spinner.Stop()
@@ -450,6 +529,7 @@ func TestSpinnerDoubleStart(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 
 	spinner.Start()
 	spinner.Start() // Second start should be no-op
@@ -478,6 +558,7 @@ func TestSpinnerConcurrentStop(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	var wg sync.WaitGroup
@@ -518,6 +599,7 @@ func TestSpinnerNoGoroutineLeak(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		spinner := NewSpinnerWithTimeout("test", false, time.Second)
 		spinner.SetWriter(io.Discard)
+		spinner.forceAnimation = true // drive the animation goroutine on a test writer
 		spinner.Start()
 		time.Sleep(10 * time.Millisecond)
 		spinner.Stop()
@@ -559,6 +641,7 @@ func TestSpinnerWithContextDeadline(t *testing.T) {
 
 	spinner := NewSpinnerWithContext(ctx, "test", false)
 	spinner.SetWriter(io.Discard)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 
 	// Wait for context deadline
@@ -624,6 +707,7 @@ func TestSpinnerNoCursorSequencesOnNonTTY(t *testing.T) {
 	var buf bytes.Buffer
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(&buf)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 	time.Sleep(150 * time.Millisecond)
 	spinner.Stop()
@@ -664,6 +748,7 @@ func TestSpinnerNoCursorSequencesOnPipe(t *testing.T) {
 
 	spinner := NewSpinner("test", false)
 	spinner.SetWriter(w)
+	spinner.forceAnimation = true // drive the animation goroutine on a test writer
 	spinner.Start()
 	time.Sleep(150 * time.Millisecond)
 	spinner.Stop()
@@ -675,5 +760,33 @@ func TestSpinnerNoCursorSequencesOnPipe(t *testing.T) {
 	}
 	if bytes.Contains(output, []byte("\033[?25h")) {
 		t.Error("cursor show sequence should not be written to pipe")
+	}
+}
+
+// TestSpinnerStaticOnNonTerminal checks that, outside CI, a spinner whose
+// writer is not a terminal (stderr redirected to a file, or a CI system the
+// CLI does not detect) prints its message once and draws no frames: a frame
+// per tick would fill the log with carriage returns and line clears.
+func TestSpinnerStaticOnNonTerminal(t *testing.T) {
+	for _, v := range CIEnvVars() {
+		t.Setenv(v, "")
+	}
+
+	var buf bytes.Buffer
+	spinner := NewSpinner("Scanning", false)
+	spinner.SetWriter(&buf)
+	spinner.Start()
+	spinner.Update("Scanning (still)")
+	time.Sleep(3 * spinnerFrameDelay)
+	spinner.Stop()
+
+	out := buf.String()
+	if !strings.HasPrefix(out, "Scanning (started at ") || strings.Count(out, "\n") != 1 {
+		t.Errorf("want the message once, as a single line; got %q", out)
+	}
+	for _, frame := range []string{"\r", "\033[K", "⠋", "⠙"} {
+		if strings.Contains(out, frame) {
+			t.Errorf("a non-terminal writer got animation output %q: %q", frame, out)
+		}
 	}
 }

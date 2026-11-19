@@ -216,7 +216,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		}
 	}
 	fetchSpinner.Stop()
-	if err != nil {
+	// No result entry at all is decided once the skip reason is known: a
+	// skipped scanner explains it, anything else means the results are gone.
+	noResults := errors.Is(err, api.ErrNoScanResults)
+	if err != nil && !noResults {
 		cli.PrintWarningf("Failed to retrieve findings: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
 		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
@@ -250,6 +253,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 				}
 			}
 		}
+	}
+
+	if noResults && skipReason == "" {
+		scan.WarnNoScanResults(scanID)
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	result := scan.BuildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
@@ -554,6 +562,10 @@ func writeTarFile(tarWriter *tar.Writer, path string, info os.FileInfo, tarName 
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
+	}
+	// Results may land a moment after the scan reports COMPLETED.
+	if errors.Is(err, api.ErrNoScanResults) {
+		return true
 	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {

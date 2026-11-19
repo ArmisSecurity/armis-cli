@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cenkalti/backoff/v4"
 )
@@ -88,10 +89,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			// Limit error body read to 1MB to prevent memory exhaustion from malicious servers
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
+			// Read one byte past the cap to know whether the body was cut.
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
 			_ = resp.Body.Close() // #nosec G104 - error not critical in error path
-			bodyStr := string(body)
+			bodyStr := errorBodyText(body)
 			if readErr != nil {
 				bodyStr = "<body read failed>"
 			}
@@ -129,4 +130,22 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+// maxErrorBodyBytes caps how much of a 5xx response body goes into the error
+// message: enough for an API's JSON error detail, while a proxy's HTML error
+// page cannot flood the terminal or a CI log.
+const maxErrorBodyBytes = 1024
+
+// errorBodyText renders a 5xx body read with a limit of maxErrorBodyBytes+1
+// bytes, cut at a UTF-8 boundary and marked when it was longer.
+func errorBodyText(body []byte) string {
+	if len(body) <= maxErrorBodyBytes {
+		return string(body)
+	}
+	cut := body[:maxErrorBodyBytes]
+	for len(cut) > 0 && !utf8.Valid(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return string(cut) + "… (truncated)"
 }

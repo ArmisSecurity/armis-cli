@@ -276,3 +276,46 @@ func TestResolveOutput(t *testing.T) {
 		_ = fo.Close()
 	})
 }
+
+func TestEffectiveFormat(t *testing.T) {
+	tests := []struct {
+		name       string
+		formatFlag string
+		changed    bool
+		outputPath string
+		want       string
+	}{
+		{name: "default format without an output file", formatFlag: ohFormatHuman, want: ohFormatHuman},
+		{name: "the output file's extension picks the format", formatFlag: ohFormatHuman, outputPath: "results.sarif", want: ohFormatSARIF},
+		{name: "an explicit --format wins over the extension", formatFlag: ohFormatJSON, changed: true, outputPath: "results.sarif", want: ohFormatJSON},
+		{name: "an unknown extension keeps the flag", formatFlag: ohFormatHuman, outputPath: "results.txt", want: ohFormatHuman},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "test"}
+			cmd.Flags().String("format", ohFormatHuman, "output format")
+			if tt.changed {
+				if err := cmd.Flags().Set("format", tt.formatFlag); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := EffectiveFormat(cmd, tt.outputPath, tt.formatFlag); got != tt.want {
+				t.Errorf("EffectiveFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	// ResolveOutput agrees with it, so `scan --async` judges a format the way
+	// a synchronous scan writes it.
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("format", ohFormatHuman, "output format")
+	path := filepath.Join(t.TempDir(), "results.sarif")
+	cfg, err := ResolveOutput(cmd, path, ohFormatHuman, "auto")
+	if err != nil {
+		t.Fatalf("ResolveOutput() error = %v", err)
+	}
+	defer cfg.Cleanup()
+	if got := EffectiveFormat(cmd, path, ohFormatHuman); cfg.Format != got {
+		t.Errorf("ResolveOutput format %q != EffectiveFormat %q", cfg.Format, got)
+	}
+}

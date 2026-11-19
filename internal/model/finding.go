@@ -174,6 +174,11 @@ type IngestScanStartRequest struct {
 	RepoName  string `json:"repo_name,omitempty"`
 	GitSHA    string `json:"git_sha,omitempty"`
 	OriginSHA string `json:"origin_sha,omitempty"`
+	// ProjectID records the scan as a run of this AppSec project, and Trigger
+	// stamps the run ("cli_ci" or "cli_dev"). Both are omitted
+	// unless the scan is published, so a local scan's request is unchanged.
+	ProjectID string `json:"project_id,omitempty"`
+	Trigger   string `json:"trigger,omitempty"`
 	// BOM types and format from --bom and --bom-format. The format is sent
 	// as typed, alias included. Omitted without --bom, so the body is the
 	// same as before for scans that request no BOM.
