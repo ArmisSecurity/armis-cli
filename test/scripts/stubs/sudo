@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fake sudo: records its arguments, then runs the command as the current user.
+printf '%s\n' "$*" >> "${STUB_LOG:?}/sudo.argv"
+while [ $# -gt 0 ]; do
+    case $1 in
+        -n | -H) shift ;;
+        -u) shift 2 ;;
+        --preserve-env=*) shift ;;
+        *) break ;;
+    esac
+done
+exec "$@"

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Fake login shell (ARMIS_LOGIN_SHELL): resolves the command against STUB_USER_PATH.
+[ "$1" = -l ] && shift
+[ "$1" = -c ] && shift
+PATH="${STUB_USER_PATH:-$ARMIS_INSTALL_DIR}" exec /bin/sh -c "$1"
