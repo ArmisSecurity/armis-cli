@@ -97,6 +97,8 @@ Every value can come from the environment, so an MDM can set them as script para
 | `ARMIS_TARGET_USERS` | console user | Comma-separated accounts to configure. |
 | `ARMIS_INSTALL_DIR` | `/usr/local/bin` as root, `~/.local/bin` otherwise | Where armis-cli goes. |
 | `ARMIS_INSTALLER_URL` | GitHub raw | Internal mirror of `scripts/install.sh`. |
+| `ARMIS_INSTALLER_SHA256` | unset | SHA-256 of the installer. A download that does not match is not run (exit 3). Recommended with `ARMIS_INSTALLER_URL`. |
+| `ARMIS_REQUIRE_COSIGN` | `0` | `1` fails the install (exit 3) when cosign is missing or the release signature cannot be verified, so a checksum alone is not enough. |
 | `ARMIS_EXTRA_PATH` | none | Extra directories to search for Python. |
 | `ARMIS_LOG_DIR` | `/Library/Logs/Armis` as root, `~/Library/Logs/Armis` otherwise | Log and report location. |
 | `ARMIS_KEEP_CREDENTIALS`, `ARMIS_REMOVE_CLI` | `0`, `0` | Uninstall options. |
@@ -207,7 +209,7 @@ The script never restores `*.armis-bak.*` files by itself, because that could un
 | VS Code: `chat.mcp.enabled`, `chat.mcp.access` or `chat.agent.enabled` in an `mcp doctor` failure | A VS Code setting or a GitHub organization policy turns MCP or Agent mode off. The script only reports this and never edits settings. |
 | `mcp doctor` failures | Run `armis-cli mcp doctor` as the user. Use `--bundle` here, or `armis-cli mcp doctor --bundle`, to produce a support bundle. In an editor, call the `debug_config` tool. |
 | The sample scan fails | Check `armis-cli auth whoami` and the network. Set `ARMIS_SAMPLE_SCAN=0` to skip it. |
-| `only the checksum was verified` | Install [cosign](https://docs.sigstore.dev/cosign/installation/) to also verify the release signature. This is advice and does not change the exit code. |
+| `only the checksum was verified` | Install [cosign](https://docs.sigstore.dev/cosign/installation/) to also verify the release signature. This is advice and does not change the exit code, unless `ARMIS_REQUIRE_COSIGN=1`. |
 
 Exit code 1 for a missing Python is deliberate: armis-cli itself installed correctly, so the run is partial rather than failed.
 

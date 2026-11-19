@@ -29,5 +29,5 @@ mkdir -p "\$INSTALL_DIR"
 cp "$DIR/armis-cli" "\$INSTALL_DIR/armis-cli"
 cp "$DIR/merge.js" "\$INSTALL_DIR/merge.js"
 chmod 755 "\$INSTALL_DIR/armis-cli"
-echo "ℹ️  cosign not found, verifying checksums only"
+if [ "\${STUB_COSIGN_OK:-0}" = 1 ]; then echo "🔐 Verifying signature with cosign..."; else echo "ℹ️  cosign not found, verifying checksums only"; fi
 INSTALLER

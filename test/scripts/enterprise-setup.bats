@@ -133,6 +133,68 @@ backups() {
     [[ "$output" == *"checksum"* ]]
 }
 
+fake_cosign() {
+    mkdir -p "$T/cosign"
+    printf '#!/bin/sh\nexit 0\n' > "$T/cosign/cosign"
+    chmod 755 "$T/cosign/cosign"
+    export PATH="$T/cosign:$PATH"
+}
+
+@test "ARMIS_INSTALLER_SHA256 mismatch does not run the installer" {
+    rm -f "$INSTALL_DIR/armis-cli"
+    export ARMIS_INSTALLER_SHA256="$(printf '0%.0s' $(seq 64))"
+    setup_run --only cursor
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"not ARMIS_INSTALLER_SHA256"* ]]
+    [ ! -e "$INSTALL_DIR/armis-cli" ]
+}
+
+@test "ARMIS_INSTALLER_SHA256 rejects a malformed value" {
+    export ARMIS_INSTALLER_SHA256=abc
+    setup_run
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"64 hex characters"* ]]
+}
+
+@test "a matching ARMIS_INSTALLER_SHA256 installs the CLI" {
+    rm -f "$INSTALL_DIR/armis-cli"
+    mkdir -p "$T/probe"
+    STUB_LOG="$T/probe" "$STUBS/curl" -fsSL https://x/install.sh -o "$T/install.sh"
+    export ARMIS_INSTALLER_SHA256="$(shasum -a 256 "$T/install.sh" | awk '{print $1}')"
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    [ -x "$INSTALL_DIR/armis-cli" ]
+}
+
+@test "ARMIS_REQUIRE_COSIGN=1 without cosign fails before downloading" {
+    rm -f "$INSTALL_DIR/armis-cli"
+    export ARMIS_REQUIRE_COSIGN=1
+    setup_run --only cursor
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"cosign is not installed"* ]]
+    ! grep -q 'scripts/install.sh' "$STUB_LOG/curl.urls"
+}
+
+@test "ARMIS_REQUIRE_COSIGN=1 removes a binary verified by checksum only" {
+    rm -f "$INSTALL_DIR/armis-cli"
+    fake_cosign
+    export ARMIS_REQUIRE_COSIGN=1
+    setup_run --only cursor
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"signature could not be verified"* ]]
+    [ ! -e "$INSTALL_DIR/armis-cli" ]
+}
+
+@test "ARMIS_REQUIRE_COSIGN=1 installs when cosign verifies the signature" {
+    rm -f "$INSTALL_DIR/armis-cli"
+    fake_cosign
+    export ARMIS_REQUIRE_COSIGN=1 STUB_COSIGN_OK=1
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    [ -x "$INSTALL_DIR/armis-cli" ]
+    [[ "$output" != *"only the checksum was verified"* ]]
+}
+
 @test "a signature failure in the installer exits 3" {
     rm -f "$INSTALL_DIR/armis-cli"
     export STUB_SIGNATURE_FAIL=1

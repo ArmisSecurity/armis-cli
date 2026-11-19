@@ -88,6 +88,10 @@ ARMIS_TARGET_USERS="${ARMIS_TARGET_USERS:-}"
 ARMIS_INSTALL_DIR="${ARMIS_INSTALL_DIR:-}"
 # Internal mirror of scripts/install.sh, for endpoints that cannot reach GitHub raw.
 ARMIS_INSTALLER_URL="${ARMIS_INSTALLER_URL:-}"
+# SHA-256 of that installer. When set, a downloaded installer that does not match is not run.
+ARMIS_INSTALLER_SHA256="${ARMIS_INSTALLER_SHA256:-}"
+# 1: fail instead of installing armis-cli when cosign cannot verify the release signature.
+ARMIS_REQUIRE_COSIGN="${ARMIS_REQUIRE_COSIGN:-0}"
 # Extra directories appended to every user's PATH when looking for Python.
 ARMIS_EXTRA_PATH="${ARMIS_EXTRA_PATH:-}"
 
@@ -784,6 +788,13 @@ stage_cli() {
         return 0
     fi
 
+    if [ "$ARMIS_REQUIRE_COSIGN" = 1 ] && ! PATH="$SAFE_PATH:$CLI_DIR:$PATH" command -v cosign > /dev/null 2>&1; then
+        rec "-" armis-cli installed fail
+        rec "-" armis-cli action "ARMIS_REQUIRE_COSIGN=1 but cosign is not installed"
+        FORCED_EXIT=3
+        finish
+    fi
+
     mkdir -p "$CLI_DIR" || { rec "-" armis-cli installed fail; FORCED_EXIT=2; finish; }
     exec_cmd curl -fsSL "$installer_url" -o "$WORK/install.sh"
     if [ "$LAST_RC" -ne 0 ]; then
@@ -792,6 +803,16 @@ stage_cli() {
         rec "-" armis-cli action "could not download the installer from $installer_url"
         FORCED_EXIT=2
         finish
+    fi
+    if [ -n "$ARMIS_INSTALLER_SHA256" ]; then
+        local got
+        got=$(shasum -a 256 "$WORK/install.sh" | awk '{print $1}')
+        if [ "$got" != "$ARMIS_INSTALLER_SHA256" ]; then
+            rec "-" armis-cli installed fail
+            rec "-" armis-cli action "the installer from $installer_url has SHA-256 $got, not ARMIS_INSTALLER_SHA256; it was not run"
+            FORCED_EXIT=3
+            finish
+        fi
     fi
 
     log "Going to $plan"
@@ -814,6 +835,20 @@ stage_cli() {
     fi
     if [ "$IS_ROOT" -eq 1 ]; then chmod 755 "$CLI_BIN"; fi
 
+    if grep -q "Verifying signature with cosign" "$LAST_OUT" && ! grep -q "verifying checksums only" "$LAST_OUT"; then
+        CLI_COSIGN=yes
+    else
+        CLI_COSIGN=no
+        if [ "$ARMIS_REQUIRE_COSIGN" = 1 ]; then
+            # The release had no signature bundle; don't leave an unsigned binary on the PATH.
+            rm -f "$CLI_BIN"
+            rec "-" armis-cli installed fail
+            rec "-" armis-cli action "ARMIS_REQUIRE_COSIGN=1 but the release signature could not be verified; removed $CLI_BIN"
+            FORCED_EXIT=3
+            finish
+        fi
+    fi
+
     rec "-" armis-cli installed ok
     [ -z "$have" ] || rec "-" armis-cli action "replaced $have with $ARMIS_CLI_VERSION"
     if ! cli_version_ok; then
@@ -823,13 +858,7 @@ stage_cli() {
         finish
     fi
     rec "-" armis-cli verified ok
-
-    if grep -q "Verifying signature with cosign" "$LAST_OUT" && ! grep -q "verifying checksums only" "$LAST_OUT"; then
-        CLI_COSIGN=yes
-    else
-        CLI_COSIGN=no
-        rec "-" armis-cli action "only the checksum was verified; install cosign for signature verification"
-    fi
+    [ "$CLI_COSIGN" = yes ] || rec "-" armis-cli action "only the checksum was verified; install cosign for signature verification"
 }
 
 # ---- the developer's PATH --------------------------------------------------
@@ -1013,6 +1042,10 @@ stage_auth() { # stage_auth USER HOME
 # shellcheck disable=SC2016 # expanded by the inner shell
 PY_PROBE='for p in python3.14 python3.13 python3.12 python3.11 python3 python; do
   b=$(command -v "$p" 2>/dev/null) || continue
+  # Apple'"'"'s /usr/bin/python3 is a stub that pops an install dialog when the developer tools are missing.
+  if [ "$b" = /usr/bin/python3 ]; then
+    d=$(/usr/bin/xcode-select -p 2>/dev/null) && [ -x "$d/usr/bin/python3" ] || continue
+  fi
   if [ "$("$b" -c "import sys; print(sys.version_info >= (3, 11))" 2>/dev/null)" = True ]; then echo "$b"; exit 0; fi
 done
 exit 1'
@@ -1389,9 +1422,12 @@ stage_verify() { # stage_verify USER HOME
     LAST_RC=$?
     show_out "$LAST_OUT"
     if [ -n "$bdir" ]; then
-        if [ -f "$bdir/doctor-$user-$RUN_TS.zip" ] && cp "$bdir/doctor-$user-$RUN_TS.zip" "$LOG_DIR/"; then
+        # Read as the user: bdir is theirs, and root following a planted symlink
+        # would copy a file only root can read into LOG_DIR.
+        if as_user "$user" "$home" 0 0 /bin/cat "$bdir/doctor-$user-$RUN_TS.zip" > "$LOG_DIR/doctor-$user-$RUN_TS.zip" 2> /dev/null; then
             log "[$user] support bundle: $LOG_DIR/doctor-$user-$RUN_TS.zip"
         else
+            rm -f "$LOG_DIR/doctor-$user-$RUN_TS.zip"
             rec "$user" mcp-server action "no support bundle was written; run 'armis-cli mcp doctor --bundle' as $user"
         fi
     fi
@@ -1763,11 +1799,16 @@ done
 
 case $ARMIS_AUTH_MODE in client-credentials | sso) ;; *) die_usage "ARMIS_AUTH_MODE must be client-credentials or sso" ;; esac
 case $ARMIS_SSO_LOGIN in auto | now | skip) ;; *) die_usage "ARMIS_SSO_LOGIN must be auto, now or skip" ;; esac
-for v in ARMIS_ALLOW_LATEST ARMIS_HOOK_ENABLE ARMIS_HOOK_FAIL_OPEN ARMIS_WITH_KNOWLEDGE ARMIS_SAMPLE_SCAN ARMIS_KEEP_CREDENTIALS ARMIS_REMOVE_CLI; do
+for v in ARMIS_ALLOW_LATEST ARMIS_HOOK_ENABLE ARMIS_HOOK_FAIL_OPEN ARMIS_WITH_KNOWLEDGE ARMIS_SAMPLE_SCAN ARMIS_KEEP_CREDENTIALS ARMIS_REMOVE_CLI ARMIS_REQUIRE_COSIGN; do
     case ${!v} in 0 | 1) ;; *) die_usage "$v must be 0 or 1" ;; esac
 done
 [ -z "$ARMIS_TENANT_ID" ] || require_ident ARMIS_TENANT_ID "$ARMIS_TENANT_ID"
 [ -z "$ARMIS_REGION" ] || require_ident ARMIS_REGION "$ARMIS_REGION"
+if [ -n "$ARMIS_INSTALLER_SHA256" ]; then
+    ARMIS_INSTALLER_SHA256=$(printf '%s' "$ARMIS_INSTALLER_SHA256" | tr 'A-F' 'a-f')
+    printf '%s' "$ARMIS_INSTALLER_SHA256" | grep -Eq '^[0-9a-f]{64}$' \
+        || die_usage "ARMIS_INSTALLER_SHA256 must be 64 hex characters"
+fi
 if [ -n "$ARMIS_MCP_VERSION" ]; then
     ARMIS_MCP_VERSION=${ARMIS_MCP_VERSION#v}
     printf '%s' "$ARMIS_MCP_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
