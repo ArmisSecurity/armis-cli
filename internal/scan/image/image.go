@@ -213,6 +213,7 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 			ingestOpts.BOMFormat = s.sbomVEXOpts.BOM.Format
 			ingestOpts.ImageRef = s.imageRef(ctx, tarballPath)
 		}
+		ingestOpts.ScanType = s.sbomVEXOpts.ScanType()
 	}
 
 	scanID, err := s.client.StartIngest(ctx, ingestOpts)
@@ -233,13 +234,14 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
 
-	spinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
+	waitMessage := s.sbomVEXOpts.WaitMessage()
+	spinner := progress.NewSpinnerWithContext(ctx, waitMessage, s.noProgress)
 	spinner.Start()
 	defer spinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			spinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning for security issues..."))
+			spinner.Update(scan.FormatScanStatus(status.ScanStatus, waitMessage))
 		})
 	elapsed := spinner.GetElapsed()
 	if err != nil {
@@ -250,6 +252,11 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
+
+	// A BOM-only scan has no findings to fetch.
+	if s.sbomVEXOpts.BOMOnly() {
+		return scan.BOMOnlyResult(ctx, s.client, s.tenantID, scanID, s.fileArtifactName(tarballPath), s.sbomVEXOpts)
+	}
 
 	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Retrieving results...", s.noProgress)
 	fetchSpinner.Start()
@@ -280,30 +287,26 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	// (e.g. appsec-v2 skipped for exceeding a file-count limit) even when the
 	// user didn't request SBOM/VEX generation. Download() no-ops the SBOM/VEX
 	// download steps when s.sbomVEXOpts is nil.
-	artifactName := s.artifactName
-	if artifactName == "" {
-		artifactName = filepath.Base(tarballPath)
-		if ext := filepath.Ext(artifactName); ext != "" {
-			artifactName = artifactName[:len(artifactName)-len(ext)]
-		}
-	}
-	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
-	skipReason, err := downloader.Download(ctx, scanID, artifactName)
-	bomFailures, err := scan.SplitBOMError(err)
+	skipReason, bomFailures, err := scan.DownloadArtifacts(ctx, s.client, s.tenantID, scanID, s.fileArtifactName(tarballPath), s.sbomVEXOpts)
 	if err != nil {
-		// Log warning but don't fail the scan
-		cli.PrintWarningf("%v", err)
-	}
-	if len(bomFailures) > 0 && ctx.Err() != nil {
-		// Ctrl+C during the BOM downloads: exit as cancelled, not as a
-		// failed download.
-		return nil, ctx.Err()
+		return nil, err
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
 	result.Summary.ScannerSkipReason = skipReason
 	result.BOMFailures = bomFailures
 	return result, nil
+}
+
+// fileArtifactName starts the names of the SBOM, VEX and BOM files: the
+// name ScanImage set from the image reference, else the tarball's file name
+// without its extension.
+func (s *Scanner) fileArtifactName(tarballPath string) string {
+	if s.artifactName != "" {
+		return s.artifactName
+	}
+	name := filepath.Base(tarballPath)
+	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
 func (s *Scanner) exportImage(ctx context.Context, imageName, outputPath string) error {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
 
 // FormatScanStatus returns a human-readable message for the current scan phase.
@@ -26,7 +27,9 @@ func FormatScanStatus(scanStatus, inProgressMsg string) string {
 	case "STOPPED":
 		return "Scan was stopped"
 	default:
-		return fmt.Sprintf("Scanning... [%s]", strings.ToUpper(scanStatus))
+		// The status is server text; drop control characters such as
+		// terminal escapes before the spinner prints it.
+		return fmt.Sprintf("Scanning... [%s]", strings.ToUpper(util.StripControl(scanStatus)))
 	}
 }
 

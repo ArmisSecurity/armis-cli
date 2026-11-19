@@ -20,6 +20,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/httpclient"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
 
@@ -621,10 +622,10 @@ func TestIndentJSON(t *testing.T) {
 func TestSaveArtifactOutputPaths(t *testing.T) {
 	const doc = `{"bomFormat":"CycloneDX"}`
 	d := &SBOMVEXDownloader{}
-	save := func(t *testing.T, path string, defaultDir bool) error {
+	save := func(t *testing.T, path string, mode writeMode) error {
 		t.Helper()
 		var err error
-		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", IndentJSON([]byte(doc)), defaultDir) })
+		_ = testutil.CaptureStderr(t, func() { err = d.saveArtifact(path, "SBOM", IndentJSON([]byte(doc)), mode) })
 		return err
 	}
 	defaultPath := filepath.Join(".armis", "repo-sbom.json")
@@ -635,7 +636,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.Symlink(outside, ".armis"); err != nil {
 			t.Skipf("cannot create symlink: %v", err)
 		}
-		err := save(t, defaultPath, true)
+		err := save(t, defaultPath, writeDefaultDir)
 		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
 			t.Fatalf("error = %v, want the symlinked .armis refused", err)
 		}
@@ -649,7 +650,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.WriteFile(".armis", []byte("keep"), 0600); err != nil {
 			t.Fatalf("write .armis: %v", err)
 		}
-		err := save(t, defaultPath, true)
+		err := save(t, defaultPath, writeDefaultDir)
 		if err == nil || !strings.Contains(err.Error(), ".armis is not a plain directory") {
 			t.Fatalf("error = %v, want the non-directory .armis refused", err)
 		}
@@ -672,7 +673,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 			}
 		}
 		t.Cleanup(func() { beforeDefaultDirOpen = nil })
-		err := save(t, defaultPath, true)
+		err := save(t, defaultPath, writeDefaultDir)
 		if err == nil || !strings.Contains(err.Error(), ".armis changed while it was opened") {
 			t.Fatalf("error = %v, want the swapped .armis refused", err)
 		}
@@ -688,7 +689,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.MkdirAll(defaultPath, 0750); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		err := save(t, defaultPath, true)
+		err := save(t, defaultPath, writeDefaultDir)
 		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
 			t.Fatalf("error = %v, want the non-regular target refused", err)
 		}
@@ -706,7 +707,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.Symlink(victim, defaultPath); err != nil {
 			t.Skipf("cannot create symlink: %v", err)
 		}
-		err := save(t, defaultPath, true)
+		err := save(t, defaultPath, writeDefaultDir)
 		if err == nil || !strings.Contains(err.Error(), "repo-sbom.json is not a regular file") {
 			t.Fatalf("error = %v, want the symlinked target refused", err)
 		}
@@ -721,7 +722,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		}
 		t.Chdir(t.TempDir())
 		path := filepath.Join(".armis", strings.Repeat("n", 235)+".json")
-		if err := save(t, path, true); err != nil {
+		if err := save(t, path, writeDefaultDir); err != nil {
 			t.Fatalf("saveArtifact with a 240-byte name failed: %v", err)
 		}
 		assertBOMFile(t, path, doc)
@@ -741,7 +742,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.Chmod(defaultPath, 0644); err != nil { //nolint:gosec // test sets a loose mode on purpose
 			t.Fatalf("chmod: %v", err)
 		}
-		if err := save(t, defaultPath, true); err != nil {
+		if err := save(t, defaultPath, writeDefaultDir); err != nil {
 			t.Fatalf("saveArtifact failed: %v", err)
 		}
 		assertBOMFile(t, defaultPath, doc)
@@ -753,13 +754,13 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 	// On macOS t.TempDir is under /var, a link to /private/var, as /tmp is.
 	t.Run("t.TempDir paths are used, from a flag and as the default", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "repo-sbom.json")
-		if err := save(t, path, false); err != nil {
+		if err := save(t, path, writeInPlace); err != nil {
 			t.Fatalf("saveArtifact with a flag path failed: %v", err)
 		}
 		assertBOMFile(t, path, doc)
 
 		t.Chdir(t.TempDir())
-		if err := save(t, defaultPath, true); err != nil {
+		if err := save(t, defaultPath, writeDefaultDir); err != nil {
 			t.Fatalf("saveArtifact with the default .armis failed: %v", err)
 		}
 		assertBOMFile(t, defaultPath, doc)
@@ -769,7 +770,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("no /dev/stdout on Windows")
 		}
-		if err := save(t, "/dev/stdout", false); err != nil {
+		if err := save(t, "/dev/stdout", writeInPlace); err != nil {
 			t.Fatalf("saveArtifact to /dev/stdout failed: %v", err)
 		}
 	})
@@ -777,7 +778,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 	t.Run("a FIFO from a flag is written in place and stays a FIFO", func(t *testing.T) {
 		fifo := filepath.Join(t.TempDir(), "sbom.fifo")
 		r := openFIFO(t, fifo)
-		if err := save(t, fifo, false); err != nil {
+		if err := save(t, fifo, writeInPlace); err != nil {
 			t.Fatalf("saveArtifact to a FIFO failed: %v", err)
 		}
 		got, err := io.ReadAll(r)
@@ -798,10 +799,77 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.Symlink(target, link); err != nil {
 			t.Skipf("cannot create symlink: %v", err)
 		}
-		if err := save(t, filepath.Join(link, "repo-sbom.json"), false); err != nil {
+		for _, mode := range []writeMode{writeInPlace, writeInTypedDir} {
+			if err := save(t, filepath.Join(link, "repo-sbom.json"), mode); err != nil {
+				t.Fatalf("saveArtifact (mode %d) failed: %v", mode, err)
+			}
+			assertBOMFile(t, filepath.Join(target, "repo-sbom.json"), doc)
+		}
+	})
+
+	t.Run("a symlinked target in a typed directory is refused and its target untouched", func(t *testing.T) {
+		dir := t.TempDir()
+		victim := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		path := filepath.Join(dir, "repo-bom-sbom.json")
+		if err := os.Symlink(victim, path); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		err := save(t, path, writeInTypedDir)
+		if err == nil || !strings.Contains(err.Error(), "repo-bom-sbom.json is not a regular file") {
+			t.Fatalf("error = %v, want the symlinked target refused", err)
+		}
+		if got, _ := os.ReadFile(victim); string(got) != "keep" { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("link target = %q, want it untouched", got)
+		}
+		if info, err := os.Lstat(path); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			t.Errorf("link is now %v (%v), want it left a link", info, err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+			t.Errorf("%s holds %v, want only the link", dir, entries)
+		}
+	})
+
+	t.Run("a directory as the target in a typed directory is refused", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "repo-bom-sbom.json")
+		if err := os.Mkdir(path, 0750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		err := save(t, path, writeInTypedDir)
+		if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+			t.Fatalf("error = %v, want the non-regular target refused", err)
+		}
+	})
+
+	t.Run("a typed directory that does not exist is created", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "new", "repo-bom-sbom.json")
+		if err := save(t, path, writeInTypedDir); err != nil {
 			t.Fatalf("saveArtifact failed: %v", err)
 		}
-		assertBOMFile(t, filepath.Join(target, "repo-sbom.json"), doc)
+		assertBOMFile(t, path, doc)
+	})
+
+	t.Run("an existing 0644 file in a typed directory is replaced with mode 0600", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("file modes are not POSIX on Windows")
+		}
+		dir := t.TempDir()
+		path := filepath.Join(dir, "repo-bom-sbom.json")
+		if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+			t.Fatalf("write old file: %v", err)
+		}
+		if err := os.Chmod(path, 0644); err != nil { //nolint:gosec // test sets a loose mode on purpose
+			t.Fatalf("chmod: %v", err)
+		}
+		if err := save(t, path, writeInTypedDir); err != nil {
+			t.Fatalf("saveArtifact failed: %v", err)
+		}
+		assertBOMFile(t, path, doc)
+		if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+			t.Errorf("%s holds %v, want only the output file", dir, entries)
+		}
 	})
 
 	t.Run("a symlinked target from a flag is written through, as before", func(t *testing.T) {
@@ -810,7 +878,7 @@ func TestSaveArtifactOutputPaths(t *testing.T) {
 		if err := os.Symlink(victim, link); err != nil {
 			t.Skipf("cannot create symlink: %v", err)
 		}
-		if err := save(t, link, false); err != nil {
+		if err := save(t, link, writeInPlace); err != nil {
 			t.Fatalf("saveArtifact failed: %v", err)
 		}
 		assertBOMFile(t, victim, doc)
@@ -990,6 +1058,50 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 		if !strings.Contains(stderr, "AI-BOM saved to:") || !strings.Contains(stderr, "CBOM saved to:") {
 			t.Errorf("stderr = %q, want both saved lines", stderr)
 		}
+	})
+
+	t.Run("a link committed at the file name in a typed directory is refused", func(t *testing.T) {
+		const sbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"a"}]}`
+		dir := t.TempDir()
+		victim := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		if err := os.Symlink(victim, filepath.Join(dir, "test-artifact-bom-sbom.json")); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		srv := &bomServer{docs: map[string]string{"bom_sbom_results": sbomDoc, "cbom_results": cbomDoc}}
+		client := srv.start(t)
+		_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"sbom", "cbom"}, Format: "cyclonedx-1.7", Output: dir,
+		}})
+		var bomErr *BOMDownloadError
+		if !errors.As(err, &bomErr) || !reflect.DeepEqual(bomErr.Types, []string{"sbom"}) {
+			t.Fatalf("error = %v, want the SBOM refused", err)
+		}
+		if !strings.Contains(stderr, "test-artifact-bom-sbom.json is not a regular file") {
+			t.Errorf("stderr = %q, want the refusal", stderr)
+		}
+		if got, _ := os.ReadFile(victim); string(got) != "keep" { //nolint:gosec // test path from t.TempDir()
+			t.Errorf("link target = %q, want it untouched", got)
+		}
+		assertBOMFile(t, filepath.Join(dir, "test-artifact-bom-cbom.json"), cbomDoc)
+	})
+
+	t.Run("a symlinked typed directory is written through", func(t *testing.T) {
+		target := t.TempDir()
+		link := filepath.Join(t.TempDir(), "boms")
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc}}
+		client := srv.start(t)
+		if _, _, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+			Types: []string{"cbom"}, Format: "cyclonedx-1.7", Output: link,
+		}}); err != nil {
+			t.Fatalf("Download failed: %v", err)
+		}
+		assertBOMFile(t, filepath.Join(target, "test-artifact-bom-cbom.json"), cbomDoc)
 	})
 
 	t.Run("cyclonedx-1.6 reads the _cdx16_ key", func(t *testing.T) {
@@ -1383,7 +1495,7 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 			Types: []string{"aibom"}, Format: "cyclonedx-1.7", Output: t.TempDir(),
 		}})
 		assertBOMFailed(t, err, []string{"aibom"}, "")
-		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31mrequest") {
+		if !strings.Contains(stderr, "refetching expired link: fetch results failed with status 400: bad[2J]0;title31m request") {
 			t.Errorf("stderr = %q, want the server text without control characters", stderr)
 		}
 		if strings.ContainsAny(stderr, "\x1b\x07\u009b\r") {
@@ -1523,4 +1635,187 @@ func TestSBOMVEXDownloader_DownloadBOMs(t *testing.T) {
 			t.Error("stdout mode must not create .armis")
 		}
 	})
+}
+
+func TestSBOMVEXOptionsBOMOnly(t *testing.T) {
+	rows := []struct {
+		name         string
+		opts         *SBOMVEXOptions
+		wantOnly     bool
+		wantScanType string
+		wantMessage  string
+	}{
+		{"no options", nil, false, "", "Scanning for security issues..."},
+		{"--sbom only", &SBOMVEXOptions{GenerateSBOM: true}, false, "", "Scanning for security issues..."},
+		{"scan --bom", &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"cbom"}}}, false, "", "Scanning for security issues..."},
+		{"bom command", &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"all"}, Only: true}}, true, "bom", "Building BOMs..."},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			if got := row.opts.BOMOnly(); got != row.wantOnly {
+				t.Errorf("BOMOnly() = %v, want %v", got, row.wantOnly)
+			}
+			if got := row.opts.ScanType(); got != row.wantScanType {
+				t.Errorf("ScanType() = %q, want %q", got, row.wantScanType)
+			}
+			if got := row.opts.WaitMessage(); got != row.wantMessage {
+				t.Errorf("WaitMessage() = %q, want %q", got, row.wantMessage)
+			}
+		})
+	}
+}
+
+func TestBOMOnlyResult(t *testing.T) {
+	const cbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
+	skip := "a scanner was skipped"
+	controlSkip := "a scanner\x1b[2J was\u009b skipped\x07"
+	rows := []struct {
+		name         string
+		srv          *bomServer
+		types        []string
+		wantFailures []string
+		wantSkip     string
+		wantFile     bool
+	}{
+		{name: "built and written", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}}, types: []string{"cbom"}, wantFile: true},
+		{name: "one written, one not offered", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}},
+			types: []string{"aibom", "cbom"}, wantFile: true},
+		{name: "not offered only warns", srv: &bomServer{docs: map[string]string{}}, types: []string{"aibom", "cbom"}},
+		{name: "a failed download is a failure", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { return http.StatusNotFound }}, types: []string{"cbom"}, wantFailures: []string{"cbom"}},
+		{name: "results not available fails every type", srv: &bomServer{resultsCode: http.StatusNotFound},
+			types: []string{"sbom", "all"}, wantFailures: []string{"sbom", "all"}},
+		{name: "the skip reason is kept", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, skipReason: &skip},
+			types: []string{"cbom"}, wantSkip: skip, wantFile: true},
+		{name: "the skip reason loses control characters", srv: &bomServer{docs: map[string]string{"cbom_results": cbomDoc}, skipReason: &controlSkip},
+			types: []string{"cbom"}, wantSkip: "a scanner[2J was skipped", wantFile: true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			dir := t.TempDir()
+			client := row.srv.start(t)
+			opts := &SBOMVEXOptions{BOM: &BOMOptions{Types: row.types, Format: BOMFormatCycloneDX17, Output: dir, Only: true}}
+			var result *model.ScanResult
+			var err error
+			_ = testutil.CaptureStderr(t, func() {
+				result, err = BOMOnlyResult(context.Background(), client, "tenant-123", "scan-456", "app", opts)
+			})
+			if err != nil {
+				t.Fatalf("BOMOnlyResult: %v", err)
+			}
+			if result.ScanID != "scan-456" || len(result.Findings) != 0 || result.Summary.Total != 0 {
+				t.Errorf("result = %+v, want scan-456 with no findings", result)
+			}
+			if !reflect.DeepEqual(result.BOMFailures, row.wantFailures) {
+				t.Errorf("BOMFailures = %v, want %v", result.BOMFailures, row.wantFailures)
+			}
+			if result.Summary.ScannerSkipReason != row.wantSkip {
+				t.Errorf("skip reason = %q, want %q", result.Summary.ScannerSkipReason, row.wantSkip)
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, "app-bom-cbom.json")); (statErr == nil) != row.wantFile {
+				t.Errorf("app-bom-cbom.json exists = %v, want %v", statErr == nil, row.wantFile)
+			}
+			var wantWritten []string
+			if row.wantFile {
+				wantWritten = []string{"cbom"}
+			}
+			if !reflect.DeepEqual(result.BOMWritten, wantWritten) {
+				t.Errorf("BOMWritten = %v, want %v", result.BOMWritten, wantWritten)
+			}
+		})
+	}
+
+	t.Run("Ctrl+C during a download returns the context error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		srv := &bomServer{docs: map[string]string{"cbom_results": cbomDoc},
+			downloadCode: func(string, int) int { cancel(); return http.StatusNotFound }}
+		client := srv.start(t)
+		opts := &SBOMVEXOptions{BOM: &BOMOptions{Types: []string{"cbom"}, Format: BOMFormatCycloneDX17, Output: t.TempDir(), Only: true}}
+		var result *model.ScanResult
+		var err error
+		_ = testutil.CaptureStderr(t, func() {
+			result, err = BOMOnlyResult(ctx, client, "tenant-123", "scan-456", "app", opts)
+		})
+		if result != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("BOMOnlyResult = %v, %v; want a cancelled result", result, err)
+		}
+	})
+}
+
+// TestDownloadBOMsWarnsOnFailedTools: a BOM written while BOM tools failed on
+// the server gets one warning after the BOM lines, naming the tools (control
+// characters stripped, deduplicated, sorted) and the written types; the
+// download still succeeds.
+func TestDownloadBOMsWarnsOnFailedTools(t *testing.T) {
+	const cbomDoc = `{"bomFormat":"CycloneDX","components":[{"name":"AES"}]}`
+	const emptyAIBOM = `{"bomFormat":"CycloneDX","components":[]}`
+	const prefix = "BOM tools failed on the server: "
+	status := func(types map[string]string, tools ...string) *api.BOMSummary {
+		s := &api.BOMSummary{Types: map[string]api.BOMTypeStatus{}, FailedTools: tools}
+		for t, st := range types {
+			s.Types[t] = api.BOMTypeStatus{Status: st}
+		}
+		return s
+	}
+	rows := []struct {
+		name     string
+		docs     map[string]string
+		summary  *api.BOMSummary
+		types    []string
+		want     string // the whole warning line; "" for none
+		wantAlso string
+	}{
+		{name: "generated with a failed tool", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"cbom": api.BOMStatusGenerated}, "opengrep_bom"), types: []string{"cbom"},
+			want: prefix + "opengrep_bom; CBOM may be incomplete"},
+		{name: "empty with failed tools, deduplicated and sorted", docs: map[string]string{"aibom_results": emptyAIBOM},
+			summary: status(map[string]string{"aibom": api.BOMStatusEmpty}, "zz_tool", "a_tool\x1b[2J", "zz_tool", " "), types: []string{"aibom"},
+			want: prefix + "a_tool[2J, zz_tool; AI-BOM may be incomplete", wantAlso: "No AI components found"},
+		{name: "a failed type only: its own warning, no extra line",
+			summary: status(map[string]string{"cbom": api.BOMStatusFailed}, "opengrep_bom"), types: []string{"cbom"},
+			wantAlso: "CBOM failed on the server (tools that failed in this scan: opengrep_bom)"},
+		{name: "a failed type beside a written one names the written one", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"aibom": api.BOMStatusFailed, "cbom": api.BOMStatusGenerated}, "opengrep_bom"),
+			types:   []string{"aibom", "cbom"}, want: prefix + "opengrep_bom; CBOM may be incomplete"},
+		{name: "no failed tools", docs: map[string]string{"cbom_results": cbomDoc},
+			summary: status(map[string]string{"cbom": api.BOMStatusGenerated}), types: []string{"cbom"}},
+		{name: "no summary", docs: map[string]string{"cbom_results": cbomDoc}, types: []string{"cbom"}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			srv := &bomServer{docs: row.docs, summary: row.summary}
+			if srv.docs == nil {
+				srv.docs = map[string]string{}
+			}
+			client := srv.start(t)
+			_, stderr, err := downloadBOMs(t, client, &SBOMVEXOptions{BOM: &BOMOptions{
+				Types: row.types, Format: BOMFormatCycloneDX17, Output: t.TempDir(), Target: ".",
+			}})
+			if err != nil {
+				t.Fatalf("Download = %v, want no failure", err)
+			}
+			wantCount := 0
+			if row.want != "" {
+				wantCount = 1
+			}
+			if n := strings.Count(stderr, prefix); n != wantCount {
+				t.Errorf("stderr has %d failed-tools warnings, want %d:\n%s", n, wantCount, stderr)
+			}
+			if row.want != "" {
+				if !strings.Contains(stderr, "Warning: "+row.want+"\n") {
+					t.Errorf("stderr = %q, want the line %q", stderr, row.want)
+				}
+				if saved := strings.LastIndex(stderr, "saved to:"); saved > strings.Index(stderr, prefix) {
+					t.Errorf("the warning comes before a BOM line:\n%s", stderr)
+				}
+			}
+			if row.wantAlso != "" && !strings.Contains(stderr, row.wantAlso) {
+				t.Errorf("stderr = %q, want %q", stderr, row.wantAlso)
+			}
+			if strings.ContainsAny(stderr, "\x1b") {
+				t.Errorf("stderr holds a control character: %q", stderr)
+			}
+		})
+	}
 }

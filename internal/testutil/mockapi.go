@@ -48,9 +48,16 @@ type MockAPIConfig struct {
 	// OnBOMDownload, when set, runs before a /_bom/ download is answered,
 	// such as to cancel the scan's context mid-download.
 	OnBOMDownload func(r *http.Request)
-	// OnScanRequest, when set, receives the raw POST /api/v1/ingest/scan body
-	// so tests can assert what the CLI sent.
+	// OnRequest, when set, runs first for every request, such as to count
+	// the calls to one endpoint.
+	OnRequest func(r *http.Request)
+	// OnScanRequest, when set, receives the body of each POST
+	// /api/v1/ingest/scan.
 	OnScanRequest func(body []byte)
+	// ScanStatus, when non-zero, answers POST /api/v1/ingest/scan with this
+	// status and ScanBody instead of starting the scan.
+	ScanStatus int
+	ScanBody   string
 	// SBOMScan, when set, is merged into the GET /api/v1/ingest/results body
 	// (sbom_scan_status, sbom_skipped_files, ...).
 	SBOMScan map[string]interface{}
@@ -104,6 +111,10 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 	var pollCount int32
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if config.OnRequest != nil {
+			config.OnRequest(r)
+		}
+
 		// POST /api/v1/ingest/presigned-url — reserves scan_id, returns a
 		// presigned POST that points back at this same server's /_s3/... path.
 		// `host` is set when the handler runs since httptest's URL is
@@ -146,9 +157,15 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			if config.OnScanRequest != nil {
 				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 				if err != nil {
-					t.Errorf("reading /ingest/scan body: %v", err)
+					t.Errorf("read /scan body: %v", err)
 				}
 				config.OnScanRequest(body)
+			}
+			if config.ScanStatus != 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(config.ScanStatus)
+				_, _ = w.Write([]byte(config.ScanBody))
+				return
 			}
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,

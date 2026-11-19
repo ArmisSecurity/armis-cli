@@ -126,6 +126,7 @@ func detectDefaultBranch(repoRoot string) string {
 //   - https://github.com/org/repo.git       (https)
 //   - https://user@host/org/repo.git        (https with userinfo)
 //   - ssh://git@host:22/org/repo.git         (ssh with port)
+//   - https://host/org/repo.git?x=1#y        (http(s) URL with a query or fragment)
 func normalizeRepoName(rawURL string) string {
 	s := strings.TrimSpace(rawURL)
 	if s == "" {
@@ -138,9 +139,19 @@ func normalizeRepoName(rawURL string) string {
 	// detection silently drops repo_name. Harmless for genuine URLs.
 	s = strings.ReplaceAll(s, "\\", "/")
 
-	// Strip a scheme prefix ("https://", "ssh://", "git://", ...).
+	// Strip a scheme prefix ("https://", "ssh://", "git://", ...). For http
+	// and https, also drop the query and fragment, which can carry a token
+	// (?access_token=...) and are no part of the repository's name. git
+	// reads ? and # as path characters in ssh://, git:// and file:// URLs,
+	// scp-like remotes and local paths, so those are left alone.
 	if i := strings.Index(s, "://"); i != -1 {
+		scheme := strings.ToLower(s[:i])
 		s = s[i+3:]
+		if scheme == "http" || scheme == "https" {
+			if j := strings.IndexAny(s, "?#"); j != -1 {
+				s = s[:j]
+			}
+		}
 	}
 
 	// Strip userinfo ("git@", "user@").
