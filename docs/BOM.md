@@ -701,7 +701,7 @@ trap 'rm -rf "$work"' EXIT
 # 1. Get a token and write it to a header file
 jq -n '{client_id: env.ARMIS_CLIENT_ID, client_secret: env.ARMIS_CLIENT_SECRET}' \
   | curl -sSf -X POST "$BASE/api/v1/auth/token" -H 'Content-Type: application/json' --data @- \
-  | jq -er '"Authorization: Bearer " + .token' > "$work/auth.hdr"
+  | jq -er '.token | strings | select(length > 0) | "Authorization: Bearer " + .' > "$work/auth.hdr"
 
 # 2. Pack the folder and reserve an upload
 tar -czf "$work/app.tar.gz" --exclude .git --exclude node_modules --exclude .armis -C "$SRC" .
