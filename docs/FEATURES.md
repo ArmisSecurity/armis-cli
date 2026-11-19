@@ -386,7 +386,7 @@ armis-cli scan image nginx:latest --bom all --bom-format cyclonedx-1.6 --bom-out
 - A BOM that was built but cannot be downloaded exits `2`, unless `--fail-on`
   triggers first. A type the server did not build only warns.
 
-See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules.
+See [BOMs in the README](../README.md#boms-ai-bom-cbom-sbom) for the full rules, and the [BOM Guide](BOM.md) for formats, output files, warnings, CI examples, how to read the files and the API flow.
 
 #### BOMs without a security scan
 
@@ -408,7 +408,7 @@ On a server without BOM-only scans, they exit 1 with the matching `scan --bom`
 command, quoted to paste into sh, bash or zsh, or into PowerShell on Windows
 (not cmd.exe).
 
-See [BOMs Without a Security Scan](../README.md#boms-without-a-security-scan).
+See [BOMs Without a Security Scan](../README.md#boms-without-a-security-scan) and the [BOM Guide](BOM.md).
 
 ### CI/CD Example
 
