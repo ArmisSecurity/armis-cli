@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+---
+
+## [1.28.0] - 2026-11-19
+
+### Added
+
 - `scan repo`/`scan image`/`bom repo`/`bom image`: a BOM written while BOM tools failed on the server (`bom_summary.failed_tools`) now prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines, instead of passing silently. The exit code does not change.
 - `bom repo`/`bom image`: new commands build BOMs without a security scan and download them, which takes less time than `scan repo|image --bom`. The upload, file names and `.armis` default are those of `--bom`; there is no findings report and no `--fail-on`. BOM generation must be enabled for the tenant: without it, the server refuses the request (`bom_generation_disabled`) and the command exits 1, while `scan --bom` keeps running the scan and warning per type. The ingest request carries `scan_type: "bom"`.
 - `bom repo`/`bom image`: new `--type` flag takes `sbom`, `aibom`, `cbom` or `all`, comma-separated or repeated; the default is `all`, the combined BOM. A refused pair with the default says `--type all (the default)`.
@@ -16,12 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bom repo`/`bom image`: exit codes are 0 when at least one BOM was written and none failed to download, 2 when no BOM was written or a built BOM could not be downloaded, 1 on errors and 130 on Ctrl+C.
 - `bom repo`/`bom image`: a server without BOM-only scans, which rejects `scan_type` with a list of values that leaves out `bom`, exits 1 with `run: armis-cli scan repo|image <target> ... --bom <types> ...`, the matching `scan --bom` command, which runs a security scan as well. It names the target, the `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout` flags typed, `--include-files`, `--include-tests` or `--pull`, the format and the output directory given, and single-quotes only values a shell would read differently, for sh, bash and zsh, or for PowerShell on Windows (cmd.exe is not supported). Credentials and values from the environment are left out of the line, so it uses those of the shell it is pasted into; a value with a control character is shown as a placeholder such as `<path>`. A `scan_type` refusal whose message names `bom` exits 1 with that message instead.
 - `bom repo`: takes `--include-files` and `--include-tests`, and sends the git hints `scan repo` sends (`repo_name`, `git_sha`, `origin_sha` for a full upload of a checkout), so the BOMs name the repository and commit. `bom image`: takes `--pull` and `--tarball`, and sends `image_ref` as `scan image --bom` does.
-
-### Changed
-
-### Deprecated
-
-### Removed
 
 ### Fixed
 
@@ -877,7 +887,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.28.0...HEAD
+[1.28.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...v1.26.0
 [1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
