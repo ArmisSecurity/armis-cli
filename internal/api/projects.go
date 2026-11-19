@@ -157,6 +157,7 @@ func (c *Client) doAppSec(ctx context.Context, method, path string, params url.V
 
 	var reqBody io.Reader
 	if body != nil {
+		// armis:ignore cwe:770 reason:the only body is CreateProject's request, a name ValidateName caps at 64 characters and the constant project type; the GET calls send none
 		bodyBytes, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request: %w", err)
