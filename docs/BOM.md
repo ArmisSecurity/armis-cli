@@ -254,16 +254,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Armis CLI
-        run: curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash -s -- v1.28.0
+        run: curl -sSfL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/v1.28.0/scripts/install.sh | bash -s -- v1.28.0
       - name: Build BOMs
         env:
           ARMIS_CLIENT_ID: ${{ secrets.ARMIS_CLIENT_ID }}
           ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
         run: armis-cli bom repo . --type sbom,aibom,cbom --output ./boms
       - name: Keep the BOMs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: boms
           path: ./boms/
@@ -446,6 +446,7 @@ A certificate:
 
 ```json
 {
+  "bom-ref": "crypto:certificate:sha256:018e13f0772532cf809bd1b17281867283fc48c6e13be9c69812854a490c1b05",
   "type": "cryptographic-asset",
   "name": "DigiCert TLS ECC P384 Root G5",
   "evidence": {
@@ -489,6 +490,7 @@ An algorithm (the certificate's signature algorithm) and a public key:
 
 ```json
 {
+  "bom-ref": "crypto:key:public:spki-sha256:05570ae6eb0fceb4210e6db79486b7094caf200401e149b6677441b5f25e449b",
   "type": "cryptographic-asset",
   "name": "RSA-4096 public key",
   "cryptoProperties": {
@@ -683,43 +685,66 @@ Poll until `data[0].scan_status` is `COMPLETED`, `FAILED` or `STOPPED`. A real r
 
 ### Example with curl and jq
 
-A BOM-only scan of a repository:
+A BOM-only scan of a repository. The script keeps the client secret, the token, the signed upload fields and the download link off every command line, and removes its working files on exit, error included. It stops with an error on any failed call.
 
 ```bash
-BASE=https://moose.armis.com   # EU tenants: https://eu.moose.armis.com
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
 
-TOKEN=$(jq -n --arg id "$ARMIS_CLIENT_ID" --arg secret "$ARMIS_CLIENT_SECRET" \
-    '{client_id: $id, client_secret: $secret}' \
-  | curl -s -X POST "$BASE/api/v1/auth/token" -H 'Content-Type: application/json' --data @- \
-  | jq -r .token)
+BASE=${BASE:-https://moose.armis.com}   # EU tenants: https://eu.moose.armis.com
+SRC=${SRC:-./my-app}                    # the folder to build BOMs for
 
-tar -czf app.tar.gz --exclude .git --exclude node_modules --exclude .armis -C ./my-app .
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 
-curl -s -X POST "$BASE/api/v1/ingest/presigned-url" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"artifact_type": "repo", "filename": "app.tar.gz"}' > presigned.json
-SCAN_ID=$(jq -r .scan_id presigned.json)
-TENANT_ID=$(jq -r .tenant_id presigned.json)
+# 1. Get a token and write it to a header file
+jq -n '{client_id: env.ARMIS_CLIENT_ID, client_secret: env.ARMIS_CLIENT_SECRET}' \
+  | curl -sSf -X POST "$BASE/api/v1/auth/token" -H 'Content-Type: application/json' --data @- \
+  | jq -er '"Authorization: Bearer " + .token' > "$work/auth.hdr"
 
-form=()
-while IFS= read -r field; do form+=(--form-string "$field"); done \
-  < <(jq -r '.fields | to_entries[] | "\(.key)=\(.value)"' presigned.json)
-curl -s -o /dev/null -w '%{http_code}\n' "${form[@]}" -F "file=@app.tar.gz" \
-  "$(jq -r .presigned_url presigned.json)"
+# 2. Pack the folder and reserve an upload
+tar -czf "$work/app.tar.gz" --exclude .git --exclude node_modules --exclude .armis -C "$SRC" .
+curl -sSf -X POST "$BASE/api/v1/ingest/presigned-url" -H @"$work/auth.hdr" \
+  -H 'Content-Type: application/json' \
+  -d '{"artifact_type": "repo", "filename": "app.tar.gz"}' > "$work/presigned.json"
+scan_id=$(jq -er .scan_id "$work/presigned.json")
+tenant_id=$(jq -er .tenant_id "$work/presigned.json")
 
-curl -s -X POST "$BASE/api/v1/ingest/scan" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"scan_id\": \"$SCAN_ID\", \"scan_type\": \"bom\", \"bom_types\": [\"aibom\", \"cbom\"], \"bom_format\": \"cyclonedx-1.7\"}"
+# 3. Upload; the signed form fields go in a curl config file
+jq -er '(.fields | to_entries[]
+          | "form-string = \"\(.key)=\(.value | gsub("\\\\"; "\\\\") | gsub("\""; "\\\""))\""),
+        "url = \"\(.presigned_url)\""' "$work/presigned.json" > "$work/upload.cfg"
+curl -sSf -o /dev/null -K "$work/upload.cfg" -F "file=@$work/app.tar.gz"
 
-until s=$(curl -s "$BASE/api/v1/ingest/status/?tenant_id=$TENANT_ID&scan_id=$SCAN_ID" \
-            -H "Authorization: Bearer $TOKEN" | jq -r '.data[0].scan_status');
-      [ "$s" = COMPLETED ] || [ "$s" = FAILED ] || [ "$s" = STOPPED ]; do sleep 10; done
+# 4. Start the BOM build
+jq -n --arg id "$scan_id" \
+    '{scan_id: $id, scan_type: "bom", bom_types: ["aibom", "cbom"], bom_format: "cyclonedx-1.7"}' \
+  | curl -sSf -X POST "$BASE/api/v1/ingest/scan" -H @"$work/auth.hdr" \
+      -H 'Content-Type: application/json' --data @- > /dev/null
 
-curl -s "$BASE/api/v1/ingest/results?tenant_id=$TENANT_ID&scan_id=$SCAN_ID" \
-  -H "Authorization: Bearer $TOKEN" > results.json
-jq '.bom_summary.types' results.json
-curl -s -o aibom.json "$(jq -r .results.aibom_results results.json)"
+# 5. Wait up to 20 minutes (120 tries, 10 seconds apart)
+status=""
+for _ in $(seq 120); do
+  status=$(curl -sSf -H @"$work/auth.hdr" \
+      "$BASE/api/v1/ingest/status/?tenant_id=$tenant_id&scan_id=$scan_id" \
+    | jq -er '.data[0].scan_status')
+  case "$status" in COMPLETED|FAILED|STOPPED) break ;; esac
+  sleep 10
+done
+if [ "$status" != COMPLETED ]; then
+  echo "error: scan $scan_id did not complete (last status: ${status:-none})" >&2
+  exit 1
+fi
+
+# 6. Read the summary and download the AI-BOM; the link goes through curl's stdin
+curl -sSf -H @"$work/auth.hdr" \
+  "$BASE/api/v1/ingest/results?tenant_id=$tenant_id&scan_id=$scan_id" > "$work/results.json"
+jq '.bom_summary.types' "$work/results.json"
+jq -er '"url = \"\(.results.aibom_results)\""' "$work/results.json" | curl -sSf -o aibom.json -K -
 ```
+
+Run it with `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` set. It needs bash, curl 7.55 or later (for `-H @file`) and jq 1.6 or later.
 
 The API reference also lists `GET /api/v1/tenant/{tenant_id}/artifact/bom`. It is off by default and answers 404 while it is off for your tenant.
 
