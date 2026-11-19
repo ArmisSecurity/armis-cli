@@ -50,7 +50,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 - `internal/model/` - Data structures: `Finding` (23 fields), `ScanResult`, `Summary`, `Fix`, `FindingValidation` (with taint/reachability analysis), API response types (`NormalizedFinding`, pagination).
 - `internal/output/` - Output formatters (human, json, sarif, junit) implementing the `Formatter` interface. `styles.go` defines ~50 lipgloss styles using Tailwind CSS color palette. `icons.go` defines Unicode constants (severity dots, box-drawing chars). `SyncColors()` switches between full-color and plain styles based on `cli.ColorsEnabled()`.
 - `internal/cli/` - Centralized color state management. `InitColors(mode)` resolves `--color` flag (auto/always/never) with `NO_COLOR` env, `TERM=dumb`, and TTY detection on stderr. `PrintError()`/`PrintWarning()` parse JSON `{"detail":"..."}` from API errors for clean display.
-- `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`, `WithProject()`, `WithAsync()`.
+- `internal/scan/repo/` - Repository scanner: creates tar.gz (with `.armisignore` support via go-git gitignore matcher), uploads, polls, fetches paginated results. Builder pattern with `WithPollInterval()`, `WithIncludeFiles()`, `WithSBOMVEXOptions()`, `WithProject()`, `WithProjectResolver()` (resolves the project after the local checks, just before the upload), `WithAsync()`.
 - `internal/project/` - AppSec projects (PPSC-1589): `ValidateName()` (1-64 chars `[A-Za-z0-9._/-]`, alphanumeric at both ends, reserved words; never trims/renames), `Decide()` (publish = `--project` && (CI || `--report`); trigger `cli_ci`/`cli_dev`), `Resolve()` (exact-name lookup via the paginated case-insensitive `q` search, refuses case-only matches, creates a `ci_cd` project on a miss, recovers from a create race via the 409's `conflicting_project_id`). Client methods live in `internal/api/projects.go` (`AppSecError` parses the AppSec error envelope and FastAPI 422 lists).
 - `internal/scan/image/` - Image scanner: validates image names via `distribution/reference`, uses docker/podman to export, then uploads. Also supports direct tarball scanning.
 - `internal/scan/` - Shared scan utilities: `status.go` (status formatting, severity mapping), `finding_type.go` (classifies findings as VULNERABILITY/SCA/SECRET/MISCONFIG/LICENSE), `sbom_vex.go` (downloads SBOM/VEX and `--bom` files from presigned S3 URLs), `bom.go` (BOM types and formats, results keys and file names for `--bom`), `image/manifest.go` (reads `image_ref` from the `manifest.json` of a `--tarball`).
@@ -66,7 +66,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
 
 ### Scan Flow
 
-1. `scan repo`/`scan <path>` only: if the scan is published (`--project` in CI, or with `--report`), the project is looked up or created via `/api/v1/appsec/projects` before the upload, and its `project_id` + `trigger` are sent on `/ingest/scan`. Unpublished scans never call the projects API and send neither field.
+1. `scan repo`/`scan <path>` only: if the scan is published (`--project` in CI, or with `--report`), the project is looked up or created via `/api/v1/appsec/projects` once the scanner's local checks (path, `.armisignore`, size) pass and before the upload, and its `project_id` + `trigger` are sent on `/ingest/scan`. Unpublished scans never call the projects API and send neither field.
 2. Scanner creates compressed archive (repo tar.gz with `.armisignore` filtering) or exports image to tarball via docker/podman
 3. For user-supplied tarballs (`scan image --tarball`), client validates extension + magic bytes before upload (`internal/scan/validate.go`)
 4. API client runs the **split-flow ingest** (PPSC-894/895):
@@ -136,7 +136,7 @@ Tests use table-driven patterns. Mock HTTP responses with `internal/testutil/htt
 ### PPSC-1589 projects — gotchas worth remembering
 
 - **The backend does not attach CLI runs yet.** `/ingest/scan` accepts (and ignores) `project_id`/`trigger` — verified on dev. Until the backend records them, a published scan creates/resolves the project but its run does not show up under it.
-- **CI detection drives publishing.** `progress.DetectCI()` is the single source of truth (vendor vars incl. `TF_BUILD`; `CI=false`/`0` is not CI). Command tests must clear every var in `progress.CIEnvVars()` — CI itself sets `CI`/`GITHUB_ACTIONS`, so a test that forgets would publish.
+- **CI detection drives publishing.** `progress.DetectCI()` is the single source of truth (vendor vars incl. `TF_BUILD`; `CI`/`CONTINUOUS_INTEGRATION` set to `false`, `0`, `no` or `off` is not CI). Command tests must clear every var in `progress.CIEnvVars()` — CI itself sets `CI`/`GITHUB_ACTIONS`, so a test that forgets would publish.
 - **Flag `Changed` bits leak between `cmd` tests** (globals + shared `*cobra.Command`s). Tests that depend on whether a flag was "set" should use `setupProjectScan` (clears and restores every `Changed` bit) — run `go test -shuffle=on ./internal/cmd/` to catch leaks.
 
 ## Linting
