@@ -1804,6 +1804,11 @@ for v in ARMIS_ALLOW_LATEST ARMIS_HOOK_ENABLE ARMIS_HOOK_FAIL_OPEN ARMIS_WITH_KN
 done
 [ -z "$ARMIS_TENANT_ID" ] || require_ident ARMIS_TENANT_ID "$ARMIS_TENANT_ID"
 [ -z "$ARMIS_REGION" ] || require_ident ARMIS_REGION "$ARMIS_REGION"
+# Also keeps a value starting with "-" from reaching curl as an option.
+if [ -n "${ARMIS_API_URL:-}" ]; then
+    printf '%s' "$ARMIS_API_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' \
+        || die_usage "ARMIS_API_URL must be an https:// URL with no query or credentials: '$ARMIS_API_URL'"
+fi
 if [ -n "$ARMIS_INSTALLER_SHA256" ]; then
     ARMIS_INSTALLER_SHA256=$(printf '%s' "$ARMIS_INSTALLER_SHA256" | tr 'A-F' 'a-f')
     printf '%s' "$ARMIS_INSTALLER_SHA256" | grep -Eq '^[0-9a-f]{64}$' \

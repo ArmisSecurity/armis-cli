@@ -38,7 +38,7 @@ A client that is not installed is reported as `skip (not installed)` and is not 
 - Network access to the endpoints below, directly or through your proxy:
   - `moose.armis.com` (`eu.moose.armis.com` for region `eu1`)
   - `github.com` and `raw.githubusercontent.com`. Set `ARMIS_INSTALLER_URL` to an internal mirror of `scripts/install.sh` if you cannot reach `raw.githubusercontent.com`.
-- A proxy or TLS inspection is supported through `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (upper or lower case) and `SSL_CERT_FILE` (a PEM file with your root CA). The script passes them, and `ARMIS_API_URL` when set, to `curl` and to every armis-cli command.
+- A proxy or TLS inspection is supported through `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (upper or lower case) and `SSL_CERT_FILE` (a PEM file with your root CA). The script passes them, and `ARMIS_API_URL` when set (it must be an `https://` URL), to `curl` and to every armis-cli command.
 - armis-cli 1.27.0 or later. The script reads the `install --format json` report and uses `--rotate-credentials`, and it exits 3 when `ARMIS_CLI_VERSION` is older.
 
 ## Quick start

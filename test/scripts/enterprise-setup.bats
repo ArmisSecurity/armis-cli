@@ -370,6 +370,32 @@ EOF
     grep -q "ARMIS_TENANT_ID='acme'" "$HOME/.zshenv"
 }
 
+@test "a tenant ID with a quote is rejected before any profile is written" {
+    make_clients
+    export ARMIS_TENANT_ID="x'; touch $T/pwned; '"
+    setup_run --only cursor
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"ARMIS_TENANT_ID has invalid characters"* ]]
+    ! grep -rqs 'ARMIS_TENANT_ID' "$HOME"/.zshrc "$HOME"/.bash_profile "$HOME"/.profile
+}
+
+@test "ARMIS_API_URL must be https" {
+    for u in http://moose.example.com -K/etc/passwd file:///etc/passwd 'https://u:p@moose.example.com' 'https://moose.example.com/?a=b'; do
+        ARMIS_API_URL="$u" run /bin/bash "$SCRIPT" --non-interactive --only cursor
+        [ "$status" -eq 3 ]
+        [[ "$output" == *"ARMIS_API_URL must be an https:// URL"* ]]
+    done
+    ! grep -qs -- '-K/etc/passwd' "$STUB_LOG/curl.urls"
+}
+
+@test "an https ARMIS_API_URL with a port and path is accepted" {
+    make_clients
+    export ARMIS_API_URL="https://moose.internal.example.com:8443/api"
+    setup_run --only cursor
+    [ "$status" -eq 0 ]
+    grep -q '^https://moose.internal.example.com:8443/api$' "$STUB_LOG/curl.urls"
+}
+
 @test "as root, ARMIS_API_URL and lowercase proxy variables reach armis-cli" {
     make_clients
     export STUB_ROOT=1
