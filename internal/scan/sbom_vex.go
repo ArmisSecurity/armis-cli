@@ -18,6 +18,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 )
@@ -52,6 +53,8 @@ type SBOMVEXDownloader struct {
 	client   *api.Client
 	tenantID string
 	opts     *SBOMVEXOptions
+	// bomWritten lists the BOM types Download wrote, to a file or stdout.
+	bomWritten []string
 }
 
 // NewSBOMVEXDownloader creates a new downloader instance.
@@ -124,12 +127,14 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	if bom != nil {
 		var failed []string
 		// A 403 refetch hands back fresher links, for --sbom and --vex too.
-		if results, failed = d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
+		if results, failed, d.bomWritten = d.downloadBOMs(ctx, scanID, results, sanitizedName); len(failed) > 0 {
 			bomErr = &BOMDownloadError{Types: failed}
 		}
 	}
 
 	if msg, skipped := results.SkipMessage(); skipped {
+		// Server text, printed here and in the scan summary.
+		msg = util.StripControl(msg)
 		cli.PrintWarningf("Scanner skipped: %s", msg)
 		fmt.Fprintln(os.Stderr)
 		return msg, bomErr
@@ -155,7 +160,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 			if outputPath == "" {
 				outputPath = filepath.Join(".armis", defaultName)
 			}
-			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM", d.opts.SBOMOutput == ""); err != nil {
+			if err := d.downloadAndSave(ctx, sbomURL, outputPath, "SBOM", filePathMode(d.opts.SBOMOutput)); err != nil {
 				cli.PrintWarningf("%v", err)
 			}
 		} else {
@@ -171,7 +176,7 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 			if outputPath == "" {
 				outputPath = filepath.Join(".armis", sanitizedName+"-vex.json")
 			}
-			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX", d.opts.VEXOutput == ""); err != nil {
+			if err := d.downloadAndSave(ctx, vexURL, outputPath, "VEX", filePathMode(d.opts.VEXOutput)); err != nil {
 				cli.PrintWarningf("%v", err)
 			}
 		} else {
@@ -182,14 +187,58 @@ func (d *SBOMVEXDownloader) Download(ctx context.Context, scanID, artifactName s
 	return "", bomErr
 }
 
+// DownloadArtifacts runs the downloads of a finished scan: the SBOM, VEX and
+// BOM files opts asks for, and the scanner-skip warning. It returns the skip
+// reason and the BOM types that could not be downloaded; any other error only
+// warns. Ctrl+C during the BOM downloads returns the context's error, so the
+// scan exits as cancelled, not as a failed download.
+func DownloadArtifacts(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (string, []string, error) {
+	skipReason, bomFailures, _, err := downloadArtifacts(ctx, client, tenantID, scanID, artifactName, opts)
+	return skipReason, bomFailures, err
+}
+
+// downloadArtifacts is DownloadArtifacts that also returns the BOM types
+// written.
+func downloadArtifacts(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (string, []string, []string, error) {
+	d := NewSBOMVEXDownloader(client, tenantID, opts)
+	skipReason, err := d.Download(ctx, scanID, artifactName)
+	bomFailures, err := SplitBOMError(err)
+	if err != nil {
+		// Log warning but don't fail the scan
+		cli.PrintWarningf("%v", err)
+	}
+	if len(bomFailures) > 0 && ctx.Err() != nil {
+		return "", nil, nil, ctx.Err()
+	}
+	return skipReason, bomFailures, d.bomWritten, nil
+}
+
+// BOMOnlyResult downloads the BOMs of a finished BOM-only scan and returns
+// its result: no findings, the BOM types written, and those that could not
+// be downloaded.
+func BOMOnlyResult(ctx context.Context, client *api.Client, tenantID, scanID, artifactName string, opts *SBOMVEXOptions) (*model.ScanResult, error) {
+	skipReason, bomFailures, bomWritten, err := downloadArtifacts(ctx, client, tenantID, scanID, artifactName, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &model.ScanResult{
+		ScanID:      scanID,
+		Status:      "completed",
+		Summary:     model.Summary{ScannerSkipReason: skipReason},
+		BOMFailures: bomFailures,
+		BOMWritten:  bomWritten,
+	}, nil
+}
+
 // downloadBOMs downloads each requested BOM type and returns the results it
-// ended with and the types that failed. A type the server did not store (a
-// key not offered, too_large, or a format left out of bom_summary) only warns.
+// ended with, the types that failed and the types written. A type the server
+// did not store (a key not offered, too_large, or a format left out of
+// bom_summary) only warns.
 // A 403, likely an expired presigned link, refetches the results once and
 // retries that type once; the refetched results then serve the remaining
 // types and are returned.
-func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string) {
-	var failed []string
+func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, results *api.ArtifactScanResultsResponse, artifact string) (*api.ArtifactScanResultsResponse, []string, []string) {
+	var failed, written []string
 	opts := d.opts.BOM
 	for _, bomType := range opts.Types {
 		label := BOMLabel(bomType)
@@ -236,11 +285,46 @@ func (d *SBOMVEXDownloader) downloadBOMs(ctx context.Context, scanID string, res
 			failed = append(failed, bomType)
 			continue
 		}
+		written = append(written, bomType)
 		if bomIsEmpty(results.BOMSummary, bomType, data, format) {
 			_, _ = fmt.Fprintln(os.Stderr, emptyBOMMessage(bomType, opts.Target))
 		}
 	}
-	return results, failed
+	if len(written) > 0 {
+		warnFailedTools(results.BOMSummary, written)
+	}
+	return results, failed, written
+}
+
+// warnFailedTools warns, after the BOM lines, that BOMs were written while
+// BOM tools failed on the server: a generated or empty BOM may then lack what
+// the failed tools would have found. failed_tools covers the whole scan, so
+// the warning names the written types. A type whose status is failed and
+// that wrote nothing has said so in its own warning. The exit code does not
+// change.
+func warnFailedTools(summary *api.BOMSummary, written []string) {
+	if summary == nil {
+		return
+	}
+	seen := make(map[string]bool)
+	var tools []string
+	for _, tool := range summary.FailedTools {
+		tool = strings.TrimSpace(util.StripControl(tool))
+		if tool != "" && !seen[tool] {
+			seen[tool] = true
+			tools = append(tools, tool)
+		}
+	}
+	if len(tools) == 0 {
+		return
+	}
+	slices.Sort(tools)
+	labels := make([]string, 0, len(written))
+	for _, t := range written {
+		labels = append(labels, BOMLabel(t))
+	}
+	cli.PrintWarningf("BOM tools failed on the server: %s; %s may be incomplete",
+		strings.Join(tools, ", "), strings.Join(labels, ", "))
 }
 
 // refetchBOMURL fetches the results again for a fresh presigned link to key.
@@ -295,7 +379,8 @@ func warnBOMNotOffered(summary *api.BOMSummary, bomType, format string) {
 
 // writeBOM writes one BOM to stdout as fetched, or to its file under the
 // --bom-output directory (DefaultBOMDir when unset) pretty-printed by
-// indentBOM.
+// indentBOM. The CLI picks the file name in either directory, so the file is
+// replaced, never written through.
 func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format string, data []byte) error {
 	label := BOMLabel(bomType)
 	if opts.Output == BOMOutputStdout {
@@ -310,7 +395,11 @@ func (d *SBOMVEXDownloader) writeBOM(opts *BOMOptions, artifact, bomType, format
 		_, _ = fmt.Fprintln(os.Stderr, styles.SuccessText.Render(label+" written to stdout"))
 		return nil
 	}
-	return d.saveArtifact(bomFilePath(opts, artifact, bomType, format), label, indentBOM(data), opts.Output == "")
+	mode := writeInTypedDir
+	if opts.Output == "" {
+		mode = writeDefaultDir
+	}
+	return d.saveArtifact(bomFilePath(opts, artifact, bomType, format), label, indentBOM(data), mode)
 }
 
 // bomFilePath is the file of one BOM under the --bom-output directory, or
@@ -337,17 +426,42 @@ func warnEarlierBOMFile(opts *BOMOptions, artifact, bomType, format string) {
 	}
 }
 
+// writeMode says how saveArtifact writes a file, by who chose its path.
+type writeMode int
+
+const (
+	// writeInPlace writes a file path from an output flag (--sbom-output,
+	// --vex-output) as given, so /dev/stdout, a FIFO or a device still work.
+	writeInPlace writeMode = iota
+	// writeDefaultDir replaces a file the CLI named in DefaultBOMDir, which
+	// must be a plain directory.
+	writeDefaultDir
+	// writeInTypedDir replaces a file the CLI named in a directory from an
+	// output flag (--bom-output, bom --output). The directory is used as
+	// given, a symbolic link included.
+	writeInTypedDir
+)
+
+// filePathMode is the write mode of an --sbom-output or --vex-output value:
+// a typed file path is written in place, and unset is the default .armis.
+func filePathMode(output string) writeMode {
+	if output == "" {
+		return writeDefaultDir
+	}
+	return writeInPlace
+}
+
 // downloadAndSave downloads from a URL and saves to a file. The output path
 // is checked before the download, so a bad path costs no request.
-func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string, defaultDir bool) error {
-	if _, err := prepareOutputPath(outputPath, docType, defaultDir); err != nil {
+func (d *SBOMVEXDownloader) downloadAndSave(ctx context.Context, url, outputPath, docType string, mode writeMode) error {
+	if _, err := prepareOutputPath(outputPath, docType, mode); err != nil {
 		return err
 	}
 	data, err := d.fetchArtifact(ctx, url, docType)
 	if err != nil {
 		return err
 	}
-	return d.saveArtifact(outputPath, docType, IndentJSON(data), defaultDir)
+	return d.saveArtifact(outputPath, docType, IndentJSON(data), mode)
 }
 
 // fetchArtifact checks a presigned link and downloads it, within the client's
@@ -367,19 +481,23 @@ func (d *SBOMVEXDownloader) fetchArtifact(ctx context.Context, url, docType stri
 }
 
 // saveArtifact writes content to outputPath, creating its directory with
-// mode 0750. A path from an output flag is the user's own and is written in
-// place with mode 0600, as before, so /dev/stdout, a FIFO or a device still
-// work. A path the CLI picked itself under .armis (defaultDir) goes through
-// replaceInDefaultDir.
-func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, content []byte, defaultDir bool) error {
-	outputPath, err := prepareOutputPath(outputPath, docType, defaultDir)
+// mode 0750. A file path from an output flag is the user's own and is
+// written in place with mode 0600 (writeInPlace), as before, so /dev/stdout,
+// a FIFO or a device still work. A file the CLI named goes through
+// replaceInDefaultDir under .armis (writeDefaultDir), or replaceInTypedDir in
+// a directory from an output flag (writeInTypedDir).
+func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, content []byte, mode writeMode) error {
+	outputPath, err := prepareOutputPath(outputPath, docType, mode)
 	if err != nil {
 		return err
 	}
 
-	if defaultDir {
+	switch mode {
+	case writeDefaultDir:
 		err = replaceInDefaultDir(outputPath, content)
-	} else {
+	case writeInTypedDir:
+		err = replaceInTypedDir(outputPath, content)
+	default:
 		// Write with secure permissions (owner read/write only)
 		err = os.WriteFile(outputPath, content, 0600)
 	}
@@ -395,11 +513,11 @@ func (d *SBOMVEXDownloader) saveArtifact(outputPath, docType string, content []b
 }
 
 // prepareOutputPath sanitizes an output path and creates its parent
-// directory. For a path the CLI picked itself (defaultDir), the directory is
+// directory. For a path the CLI picked itself (writeDefaultDir), the directory is
 // .armis, which a scanned repository can commit as a symbolic link or another
 // non-directory, so it is checked before MkdirAll could follow it. A path from
 // an output flag is trusted, as before.
-func prepareOutputPath(outputPath, docType string, defaultDir bool) (string, error) {
+func prepareOutputPath(outputPath, docType string, mode writeMode) (string, error) {
 	// armis:ignore cwe:22 reason:SanitizePath IS the path traversal prevention; outputPath from user flag then sanitized
 	sanitizedPath, err := util.SanitizePath(outputPath)
 	if err != nil {
@@ -407,7 +525,7 @@ func prepareOutputPath(outputPath, docType string, defaultDir bool) (string, err
 	}
 
 	dir := filepath.Dir(sanitizedPath)
-	if defaultDir {
+	if mode == writeDefaultDir {
 		if err := checkDefaultDir(dir, docType); err != nil {
 			return "", err
 		}
@@ -464,12 +582,10 @@ var beforeDefaultDirOpen func(dir string)
 
 // replaceInDefaultDir writes data to path, in the directory the CLI picked
 // itself. The directory must be a plain directory, and the one os.OpenRoot
-// then opens, so a swap between the check and the open is refused. Inside it,
-// an existing target must be a regular file. data goes to a new 0600 temp file
-// that is renamed over the target, so the target is replaced, never written
-// through, and ends with mode 0600.
+// then opens, so a swap between the check and the open is refused. The file
+// is then written by replaceInRoot.
 func replaceInDefaultDir(path string, data []byte) error {
-	dir, name := filepath.Dir(path), filepath.Base(path)
+	dir := filepath.Dir(path)
 	checked, err := plainDir(dir)
 	if err != nil {
 		return err
@@ -489,7 +605,28 @@ func replaceInDefaultDir(path string, data []byte) error {
 	if !os.SameFile(checked, opened) {
 		return fmt.Errorf("%s changed while it was opened", dir)
 	}
+	return replaceInRoot(root, path, data)
+}
 
+// replaceInTypedDir writes data to path, a file name the CLI picked in a
+// directory from an output flag. The directory is the user's own and is
+// opened as given, through a symbolic link too; the file in it is written by
+// replaceInRoot, since a scanned repository can commit a link at that name.
+func replaceInTypedDir(path string, data []byte) error {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck // directory handle only
+	return replaceInRoot(root, path, data)
+}
+
+// replaceInRoot writes data to the file of path in root. An existing target
+// must be a regular file. data goes to a new 0600 temp file that is renamed
+// over the target, so the target is replaced, never written through, and
+// ends with mode 0600.
+func replaceInRoot(root *os.Root, path string, data []byte) error {
+	name := filepath.Base(path)
 	if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file", path)
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {

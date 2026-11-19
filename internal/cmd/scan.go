@@ -131,7 +131,7 @@ that project, and a developer-machine run is published only with --report.`,
 		// format pairs and --bom-output are checked by scan repo and scan
 		// image only: scan status and scan sbom ignore the BOM flags.
 		bomFlag := cmd.Flag("bom")
-		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.NormalizeBOMFlags(bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat)
+		normalizedBOMTypes, normalizedBOMFormat, err := cmdutil.NormalizeBOMFlags(cmdutil.ScanBOMFlags, bomTypes, bomFlag != nil && bomFlag.Changed, bomFormat)
 		if err != nil {
 			return err
 		}
@@ -142,20 +142,8 @@ that project, and a developer-machine run is published only with --report.`,
 			return fmt.Errorf("invalid --exit-code value %d: must be between 1 and 255", exitCode)
 		}
 
-		// Validate timeout values: must be positive and bounded
-		if scanTimeout < 1 {
-			return fmt.Errorf("invalid --scan-timeout value %d: must be at least 1 minute", scanTimeout)
-		}
-		const maxScanTimeout = 1440 // 24 hours
-		if scanTimeout > maxScanTimeout {
-			return fmt.Errorf("invalid --scan-timeout value %d: must not exceed %d minutes (24 hours)", scanTimeout, maxScanTimeout)
-		}
-		if uploadTimeout < 1 {
-			return fmt.Errorf("invalid --upload-timeout value %d: must be at least 1 minute", uploadTimeout)
-		}
-		const maxUploadTimeout = 120 // 2 hours
-		if uploadTimeout > maxUploadTimeout {
-			return fmt.Errorf("invalid --upload-timeout value %d: must not exceed %d minutes", uploadTimeout, maxUploadTimeout)
+		if err := validateTimeouts(); err != nil {
+			return err
 		}
 
 		// Validate --fail-on early so a typo (e.g. HIGHT) surfaces as a flag error
@@ -176,6 +164,80 @@ that project, and a developer-machine run is published only with --report.`,
 
 		return nil
 	},
+}
+
+// Defaults of --scan-timeout and --upload-timeout, in minutes.
+const (
+	defaultScanTimeout   = 60
+	defaultUploadTimeout = 10
+)
+
+// Usage of --include-tests and --include-files, which scan and bom share.
+const (
+	includeTestsUsage = "Include test files in the scan (test files are excluded by default)"
+	includeFilesUsage = "Comma-separated list of file paths to include in scan (relative to repository root)"
+)
+
+// validateTimeouts checks --scan-timeout and --upload-timeout: they must be
+// positive and bounded.
+func validateTimeouts() error {
+	if scanTimeout < 1 {
+		return fmt.Errorf("invalid --scan-timeout value %d: must be at least 1 minute", scanTimeout)
+	}
+	const maxScanTimeout = 1440 // 24 hours
+	if scanTimeout > maxScanTimeout {
+		return fmt.Errorf("invalid --scan-timeout value %d: must not exceed %d minutes (24 hours)", scanTimeout, maxScanTimeout)
+	}
+	if uploadTimeout < 1 {
+		return fmt.Errorf("invalid --upload-timeout value %d: must be at least 1 minute", uploadTimeout)
+	}
+	const maxUploadTimeout = 120 // 2 hours
+	if uploadTimeout > maxUploadTimeout {
+		return fmt.Errorf("invalid --upload-timeout value %d: must not exceed %d minutes", uploadTimeout, maxUploadTimeout)
+	}
+	return nil
+}
+
+// addUploadFlags registers the persistent flags of a command whose
+// subcommands upload an artifact and wait for the server: --no-progress,
+// --scan-timeout, --upload-timeout and the hidden --poll-interval. scan and
+// bom both call it, binding the same variables with the same defaults, so the
+// order of their init functions does not matter.
+func addUploadFlags(cmd *cobra.Command) {
+	fs := cmd.PersistentFlags()
+	fs.BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
+	fs.IntVar(&scanTimeout, "scan-timeout", defaultScanTimeout, "Maximum time in minutes to wait for scan analysis to complete")
+	fs.IntVar(&uploadTimeout, "upload-timeout", defaultUploadTimeout, "Maximum time in minutes to wait for artifact upload to complete")
+	// poll-interval overrides the Scanner's default status-poll interval (5s in
+	// repo/image/sbom Scanners). Hidden: it exists solely so RunE-level tests can
+	// avoid burning a real poll tick, the same way package-level tests already do
+	// via each Scanner's WithPollInterval builder, without going through cobra
+	// flag parsing (RunE tests call scanXCmd.RunE directly, not cmd.Execute()).
+	fs.DurationVar(&pollInterval, "poll-interval", 0, "Override the scan status poll interval (0 = use default)")
+	_ = fs.MarkHidden("poll-interval")
+}
+
+// bomTypeCompletions and bomFormatCompletions return the completion functions
+// for the BOM type and format flags: --bom and --bom-format on scan, --type
+// and --format on bom.
+func bomTypeCompletions() cobra.CompletionFunc {
+	return fixedCompletions(scan.BOMTypeOrder, map[string]string{
+		scan.BOMTypeSBOM:  "Software BOM",
+		scan.BOMTypeAIBOM: "AI BOM: models, AI services and MCP servers",
+		scan.BOMTypeCBOM:  "Cryptographic BOM",
+		scan.BOMTypeAll:   "Combined BOM of all types",
+	})
+}
+
+func bomFormatCompletions() cobra.CompletionFunc {
+	return fixedCompletions(scan.BOMFormats, map[string]string{
+		scan.BOMFormatCycloneDX17: "CycloneDX 1.7 JSON (default)",
+		scan.BOMFormatCycloneDX16: "CycloneDX 1.6 JSON",
+		scan.BOMFormatSPDX23:      "SPDX 2.3 JSON, sbom only",
+		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom",
+		scan.BOMFormatCycloneDX:   "Alias of cyclonedx-1.7",
+		scan.BOMFormatSPDX:        "Alias: spdx-2.3 for sbom, spdx-3.0.1 for aibom",
+	})
 }
 
 // warnOnUnusedSBOMVEXFlags emits a warning when --sbom-output / --vex-output
@@ -371,7 +433,7 @@ func init() {
 	// registrations. `supply-chain check` re-registers the subset it consumes
 	// locally (see supply_chain_check.go), since it is a sibling of scan.
 	scanCmd.PersistentFlags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
-	scanCmd.PersistentFlags().BoolVar(&noProgress, "no-progress", false, "Suppress progress output (for CI/scripts)")
+	addUploadFlags(scanCmd)
 	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
 	scanCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
 	scanCmd.PersistentFlags().StringVar(&minSeverity, "min-severity", "", "Only display findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)")
@@ -382,9 +444,7 @@ func init() {
 	_ = scanCmd.RegisterFlagCompletionFunc("fail-on", severityCompletions())
 	_ = scanCmd.RegisterFlagCompletionFunc("min-severity", severityCompletions())
 
-	scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, "Include test files in the scan (test files are excluded by default)")
-	scanCmd.PersistentFlags().IntVar(&scanTimeout, "scan-timeout", 60, "Maximum time in minutes to wait for scan analysis to complete")
-	scanCmd.PersistentFlags().IntVar(&uploadTimeout, "upload-timeout", 10, "Maximum time in minutes to wait for artifact upload to complete")
+	scanCmd.PersistentFlags().BoolVar(&includeTests, "include-tests", false, includeTestsUsage)
 	scanCmd.PersistentFlags().BoolVar(&includeNonExploitable, "include-non-exploitable", false, "Show low/medium exploitability findings (hidden by default; high and ungraded findings always shown)")
 	scanCmd.PersistentFlags().StringVar(&groupBy, "group-by", "none", "Group findings by: none, cwe, severity, file")
 	_ = scanCmd.RegisterFlagCompletionFunc("group-by", fixedCompletions(validGroupBy, map[string]string{
@@ -404,30 +464,11 @@ func init() {
 	scanCmd.PersistentFlags().StringVar(&vexOutput, "vex-output", "", "Output file path for VEX (default: .armis/<artifact>-vex.json)")
 	scanCmd.PersistentFlags().StringSliceVar(&bomTypes, "bom", nil, "Download BOMs of these types, comma-separated or repeated: sbom, aibom, cbom, all (combined); BOM generation must be enabled for your tenant")
 	scanCmd.PersistentFlags().StringVar(&bomFormat, "bom-format", scan.BOMFormatCycloneDX17, "BOM format: cyclonedx-1.7, cyclonedx-1.6, spdx-2.3, spdx-3.0.1, or the aliases cyclonedx, spdx (requires --bom; BOM generation must be enabled for your tenant)")
-	_ = scanCmd.RegisterFlagCompletionFunc("bom", fixedCompletions(scan.BOMTypeOrder, map[string]string{
-		scan.BOMTypeSBOM:  "Software BOM",
-		scan.BOMTypeAIBOM: "AI BOM: models, AI services and MCP servers",
-		scan.BOMTypeCBOM:  "Cryptographic BOM",
-		scan.BOMTypeAll:   "Combined BOM of all types",
-	}))
-	_ = scanCmd.RegisterFlagCompletionFunc("bom-format", fixedCompletions(scan.BOMFormats, map[string]string{
-		scan.BOMFormatCycloneDX17: "CycloneDX 1.7 JSON (default)",
-		scan.BOMFormatCycloneDX16: "CycloneDX 1.6 JSON",
-		scan.BOMFormatSPDX23:      "SPDX 2.3 JSON, sbom only",
-		scan.BOMFormatSPDX301:     "SPDX 3.0.1 JSON, sbom and aibom",
-		scan.BOMFormatCycloneDX:   "Alias of cyclonedx-1.7",
-		scan.BOMFormatSPDX:        "Alias: spdx-2.3 for sbom, spdx-3.0.1 for aibom",
-	}))
+	_ = scanCmd.RegisterFlagCompletionFunc("bom", bomTypeCompletions())
+	_ = scanCmd.RegisterFlagCompletionFunc("bom-format", bomFormatCompletions())
 	scanCmd.PersistentFlags().StringVar(&bomOutput, "bom-output", "", "Directory for BOM files, or - to write one BOM to stdout (default: .armis; requires --bom; BOM generation must be enabled for your tenant)")
 	scanCmd.PersistentFlags().BoolVar(&summaryTop, "summary-top", false, "Display summary at the top of output (before findings)")
 	scanCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "Write output to file (auto-detects format from extension: .json, .sarif, .xml)")
-	// poll-interval overrides the Scanner's default status-poll interval (5s in
-	// repo/image/sbom Scanners). Hidden: it exists solely so RunE-level tests can
-	// avoid burning a real poll tick, the same way package-level tests already do
-	// via each Scanner's WithPollInterval builder, without going through cobra
-	// flag parsing (RunE tests call scanXCmd.RunE directly, not cmd.Execute()).
-	scanCmd.PersistentFlags().DurationVar(&pollInterval, "poll-interval", 0, "Override the scan status poll interval (0 = use default)")
-	_ = scanCmd.PersistentFlags().MarkHidden("poll-interval")
 	if rootCmd != nil {
 		rootCmd.AddCommand(scanCmd)
 	}

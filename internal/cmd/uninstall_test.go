@@ -92,21 +92,21 @@ func TestUninstallTargets(t *testing.T) {
 	t.Run("advisory editors do not error", func(t *testing.T) {
 		advisoryEditors := []string{"jetbrains", "devin", "openhands", "aider"}
 		for _, name := range advisoryEditors {
-			if err := uninstallTargets(u, []string{name}); err != nil {
+			if err := uninstallTargets(u, []string{name}, newUninstallReport()); err != nil {
 				t.Errorf("uninstallTargets(%q) unexpected error: %v", name, err)
 			}
 		}
 	})
 
-	t.Run("unknown editor prints warning without error", func(t *testing.T) {
-		err := uninstallTargets(u, []string{"nonexistent-editor"})
-		if err != nil {
-			t.Errorf("uninstallTargets(unknown) unexpected error: %v", err)
+	t.Run("unknown editor fails", func(t *testing.T) {
+		err := uninstallTargets(u, []string{"nonexistent-editor"}, newUninstallReport())
+		if err == nil || !strings.Contains(err.Error(), "nonexistent-editor") {
+			t.Errorf("uninstallTargets(unknown) error = %v, want one naming the editor", err)
 		}
 	})
 
 	t.Run("copilot maps to copilot cli", func(t *testing.T) {
-		err := uninstallTargets(u, []string{"copilot"})
+		err := uninstallTargets(u, []string{"copilot"}, newUninstallReport())
 		if err != nil {
 			t.Errorf("uninstallTargets(copilot) unexpected error: %v", err)
 		}
@@ -131,7 +131,7 @@ func TestUninstallAllForce(t *testing.T) {
 
 	t.Run("force skips confirmation and removes files", func(t *testing.T) {
 		u := install.NewUninstaller()
-		err := uninstallAll(u, false, true)
+		err := uninstallAll(u, false, true, newUninstallReport())
 		if err != nil {
 			t.Errorf("uninstallAll(force=true) unexpected error: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestUninstallAllForce(t *testing.T) {
 		}
 
 		u := install.NewUninstaller()
-		err := uninstallAll(u, true, true)
+		err := uninstallAll(u, true, true, newUninstallReport())
 		if err != nil {
 			t.Errorf("uninstallAll(keepCreds=true, force=true) unexpected error: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestUninstallAllRemovesPreCommitHook(t *testing.T) {
 	}
 
 	u := install.NewUninstaller()
-	if err := uninstallAll(u, false, true); err != nil {
+	if err := uninstallAll(u, false, true, newUninstallReport()); err != nil {
 		t.Fatalf("uninstallAll: %v", err)
 	}
 

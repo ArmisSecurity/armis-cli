@@ -277,6 +277,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 			ingestOpts.BOMTypes = s.sbomVEXOpts.BOM.Types
 			ingestOpts.BOMFormat = s.sbomVEXOpts.BOM.Format
 		}
+		ingestOpts.ScanType = s.sbomVEXOpts.ScanType()
 	}
 
 	// Best-effort git hints for incremental-scan baseline resolution. Detection
@@ -324,13 +325,14 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return &model.ScanResult{ScanID: scanID, Status: StatusAccepted}, nil
 	}
 
-	analysisSpinner := progress.NewSpinnerWithContext(ctx, "Scanning for security issues...", s.noProgress)
+	waitMessage := s.sbomVEXOpts.WaitMessage()
+	analysisSpinner := progress.NewSpinnerWithContext(ctx, waitMessage, s.noProgress)
 	analysisSpinner.Start()
 	defer analysisSpinner.Stop()
 
 	_, err = s.client.WaitForIngest(ctx, s.tenantID, scanID, s.pollInterval, s.timeout,
 		func(status model.IngestStatusData) {
-			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, "Scanning for security issues..."))
+			analysisSpinner.Update(scan.FormatScanStatus(status.ScanStatus, waitMessage))
 		})
 	elapsed := analysisSpinner.GetElapsed()
 	analysisSpinner.Stop()
@@ -341,6 +343,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan completed in"),
 		styles.Duration.Render(scan.FormatElapsed(elapsed)))
+
+	// A BOM-only scan has no findings to fetch.
+	if s.sbomVEXOpts.BOMOnly() {
+		return scan.BOMOnlyResult(ctx, s.client, s.tenantID, scanID, filepath.Base(absPath), s.sbomVEXOpts)
+	}
 
 	fetchSpinner := progress.NewSpinnerWithContext(ctx, "Retrieving results...", s.noProgress)
 	fetchSpinner.Start()
@@ -377,17 +384,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	// (e.g. appsec-v2 skipped for exceeding a file-count limit) even when the
 	// user didn't request SBOM/VEX generation. Download() no-ops the SBOM/VEX
 	// download steps when s.sbomVEXOpts is nil.
-	downloader := scan.NewSBOMVEXDownloader(s.client, s.tenantID, s.sbomVEXOpts)
-	skipReason, err := downloader.Download(ctx, scanID, filepath.Base(absPath))
-	bomFailures, err := scan.SplitBOMError(err)
+	skipReason, bomFailures, err := scan.DownloadArtifacts(ctx, s.client, s.tenantID, scanID, filepath.Base(absPath), s.sbomVEXOpts)
 	if err != nil {
-		// Log warning but don't fail the scan
-		cli.PrintWarningf("%v", err)
-	}
-	if len(bomFailures) > 0 && ctx.Err() != nil {
-		// Ctrl+C during the BOM downloads: exit as cancelled, not as a
-		// failed download.
-		return nil, ctx.Err()
+		return nil, err
 	}
 	if noResults && skipReason == "" {
 		scan.WarnNoScanResults(scanID)

@@ -15,6 +15,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/history"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -218,6 +219,7 @@ const statusLabelWidth = 15
 // each other whether or not color is enabled.
 func renderHumanStatus(w io.Writer, d model.IngestStatusData, historyEntry *history.Entry) {
 	styles := output.GetStyles()
+	d = stripStatusText(d)
 
 	statusVal := strings.ToUpper(d.ScanStatus)
 	statusRendered := styles.Bold.Render(statusVal)
@@ -274,6 +276,23 @@ func renderHumanStatus(w io.Writer, d model.IngestStatusData, historyEntry *hist
 	if historyEntry != nil {
 		_, _ = fmt.Fprintln(w, styles.MutedText.Render(fmt.Sprintf("Resolved scan_id from local history (%s).", historyEntry.Artifact)))
 	}
+}
+
+// stripStatusText returns d with control characters, such as terminal
+// escapes, stripped from every string the server sent, before the human
+// block prints them. The JSON output encodes them instead.
+func stripStatusText(d model.IngestStatusData) model.IngestStatusData {
+	for _, f := range []*string{&d.ArtifactType, &d.ExpirationTime, &d.FileName, &d.ScanID,
+		&d.ScanStatus, &d.ScanType, &d.StartedAt, &d.TenantID, &d.UpdatedAt} {
+		*f = util.StripControl(*f)
+	}
+	for _, f := range []**string{&d.CompletedAt, &d.LastError} {
+		if *f != nil {
+			v := util.StripControl(**f)
+			*f = &v
+		}
+	}
+	return d
 }
 
 // scanStatusHint returns a one-line, user-facing description of the current

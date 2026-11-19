@@ -625,7 +625,7 @@ func systemInfo() string {
 			fmt.Fprintf(&b, "%s=%s\n", k, maskURLUserinfo(v))
 		}
 	}
-	for _, k := range []string{"ARMIS_CLIENT_ID", "ARMIS_CLIENT_SECRET", "ARMIS_API_TOKEN"} {
+	for _, k := range []string{envClientID, envClientSecret, "ARMIS_API_TOKEN"} {
 		state := "not set"
 		if os.Getenv(k) != "" {
 			state = "set"

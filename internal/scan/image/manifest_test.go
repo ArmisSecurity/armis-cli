@@ -355,6 +355,83 @@ func TestScanTarball_ImageRef(t *testing.T) {
 	})
 }
 
+// TestScanTarball_BOMOnly covers the request of bom image: scan_type bom,
+// the BOM fields and image_ref as scan image --bom sends them, and no SBOM or
+// VEX generation.
+func TestScanTarball_BOMOnly(t *testing.T) {
+	rows := []struct {
+		name      string
+		byName    string // set: bom image <name>, as ScanImage records it
+		tags      []string
+		wantRef   string
+		wantNoRef bool
+	}{
+		{name: "by name sends the normalized reference", byName: "python:3.12-slim", wantRef: "python:3.12-slim"},
+		{name: "--tarball sends the manifest tag", tags: []string{"myorg/app:2.0"}, wantRef: "myorg/app:2.0"},
+		{name: "--tarball without a tag sends no image_ref", wantNoRef: true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+			server, get := newScanBodyServer(t)
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+			uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+			c, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, time.Minute,
+				api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			s := NewScanner(c, true, "tenant-456", 0, false, time.Minute, false).WithPollInterval(10 * time.Millisecond).
+				WithSBOMVEXOptions(&scan.SBOMVEXOptions{BOM: &scan.BOMOptions{
+					Types: []string{scan.BOMTypeSBOM, scan.BOMTypeCBOM}, Format: scan.BOMFormatCycloneDX16, Output: t.TempDir(), Only: true,
+				}})
+			tarball := writeImageTar(t, "app.tar", dockerSave(row.tags...))
+			if row.byName != "" {
+				normalized, err := validateImageName(row.byName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.useImageName(row.byName, normalized)
+			}
+
+			var result *model.ScanResult
+			_ = testutil.CaptureStderr(t, func() { result, err = s.ScanTarball(context.Background(), tarball) })
+			if err != nil {
+				t.Fatalf("ScanTarball: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Errorf("findings = %v, want none", result.Findings)
+			}
+			got := get()
+			if got["scan_type"] != "bom" {
+				t.Errorf("scan_type = %v, want bom", got["scan_type"])
+			}
+			if types, _ := got["bom_types"].([]any); len(types) != 2 || types[0] != "sbom" || types[1] != "cbom" {
+				t.Errorf("bom_types = %v, want [sbom cbom]", got["bom_types"])
+			}
+			if got["bom_format"] != scan.BOMFormatCycloneDX16 {
+				t.Errorf("bom_format = %v, want %s", got["bom_format"], scan.BOMFormatCycloneDX16)
+			}
+			if got["sbom_generate"] != false || got["vex_generate"] != false {
+				t.Errorf("sbom_generate = %v, vex_generate = %v, want false", got["sbom_generate"], got["vex_generate"])
+			}
+			for _, key := range []string{"custom_scans", "sbom_format"} {
+				if _, ok := got[key]; ok {
+					t.Errorf("%s = %v, want it omitted", key, got[key])
+				}
+			}
+			ref, ok := got["image_ref"]
+			if row.wantNoRef {
+				if ok {
+					t.Errorf("image_ref = %v, want it omitted", ref)
+				}
+			} else if ref != row.wantRef {
+				t.Errorf("image_ref = %v, want %s", ref, row.wantRef)
+			}
+		})
+	}
+}
+
 func TestImageArtifactName(t *testing.T) {
 	const digest = "sha256:05a9f2b1c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c4177"
 	tests := []struct {

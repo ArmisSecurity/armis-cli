@@ -2089,7 +2089,14 @@ func TestGenerateFindingTitle(t *testing.T) {
 // upload, and a deferred Remove() must run even when the context is
 // cancelled mid-flight.
 func TestScan_TempFileCleanedUpOnCancel(t *testing.T) {
-	t.Parallel()
+	// Point the scanner's temp files at a directory of this test's own: other
+	// tests and packages that scan at the same time create armis-repo-*
+	// files in the shared temp directory, which the glob below would report
+	// as leaks. t.Setenv rules out t.Parallel.
+	privateTmp := t.TempDir()
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} { // Unix, Windows
+		t.Setenv(name, privateTmp)
+	}
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
 		t.Fatalf("create main.go: %v", err)

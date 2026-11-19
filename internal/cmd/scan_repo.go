@@ -76,8 +76,7 @@ use; a run on a developer machine is published only with --report.`,
 // and the `scan <path>` shorthand both run runRepoScan, so they take the same
 // flags, bound to the same variables.
 func addRepoScanFlags(cmd *cobra.Command) {
-	cmd.Flags().StringSliceVar(&includeFiles, "include-files", nil,
-		"Comma-separated list of file paths to include in scan (relative to repository root)")
+	cmd.Flags().StringSliceVar(&includeFiles, "include-files", nil, includeFilesUsage)
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false,
 		"Show findings suppressed by .armisignore directives")
 	cmd.Flags().StringVar(&changedRef, "changed", "",
@@ -120,10 +119,7 @@ func (e *scanTargetError) Unwrap() error { return e.Err }
 
 // runRepoScan is the RunE of `scan repo` and of the `scan <path>` shorthand.
 func runRepoScan(cmd *cobra.Command, args []string) error {
-	repoPath := "."
-	if len(args) > 0 {
-		repoPath = args[0]
-	}
+	repoPath := repoArg(args)
 
 	// Check the publishing flags first, so an invalid --project fails before
 	// anything is read, authenticated or uploaded.
@@ -135,7 +131,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	// The BOM type and format pairs, --bom-output, and a default .armis
 	// that is not a plain directory fail before any network call;
 	// PersistentPreRunE has normalized the values.
-	if err = cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+	if err = cmdutil.ValidateBOMFlags(cmdutil.ScanBOMFlags, bomTypes, bomFormat, bomOutput); err != nil {
 		return err
 	}
 	if err = checkDefaultOutputDir(); err != nil {
@@ -210,29 +206,15 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 		scanner = scanner.WithSBOMVEXOptions(sbomVEXOpts)
 	}
 
-	// Enable best-effort git-hint detection (repo_name / git_sha / origin_sha)
-	// for incremental-scan baseline resolution — but only for a full-repo-root
-	// upload. A --changed or --include-files partial upload is not a faithful
-	// whole-repo snapshot, so a full-repo baseline diff against it would be
-	// meaningless; skip detection entirely in those modes. DetectGitHints
-	// additionally verifies the target is the repository root.
-	if len(includeFiles) == 0 && !cmd.Flags().Changed("changed") {
+	if wantGitHints(cmd) {
 		scanner = scanner.WithGitHints()
 	}
 
 	// Handle --include-files flag for targeted file scanning
-	// Security: Path traversal protection is enforced by ParseFileList which
-	// validates all paths using SafeJoinPath to ensure they don't escape the
-	// repository root. Invalid or traversal paths are rejected with an error.
 	if len(includeFiles) > 0 {
-		absPath, err := filepath.Abs(repoPath) // armis:ignore cwe:770 reason:no bound needed here, this only resolves a path; scanner flags this line but the actual MaxFiles=1000 bound is enforced by ParseFileList below
+		fileList, err := parseIncludeFiles(repoPath)
 		if err != nil {
-			return fmt.Errorf("failed to resolve path: %w", err)
-		}
-		// armis:ignore cwe:22 cwe:770 reason:absPath is derived from filepath.Abs() immediately above; ParseFileList validates paths via SafeJoinPath and enforces MaxFiles=1000
-		fileList, err := repo.ParseFileList(absPath, includeFiles)
-		if err != nil {
-			return fmt.Errorf("invalid --include-files: %w", err)
+			return err
 		}
 		scanner = scanner.WithIncludeFiles(fileList)
 	}
@@ -350,6 +332,63 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	}
 
 	return bomExit(result, formatScanResult(formatter, result, reportWriter(outputCfg.Writer), opts, minSeverity, failOnSeverities))
+}
+
+// repoArg returns the repository path of scan repo and bom repo: the
+// argument, or the current directory.
+func repoArg(args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	return "."
+}
+
+// wantGitHints reports whether a repo upload sends git hints. It enables
+// best-effort git-hint detection (repo_name / git_sha / origin_sha) for
+// incremental-scan baseline resolution, and for the name and version at the
+// root of the BOMs, but only for a full-repo-root upload. A --changed or
+// --include-files partial upload is not a faithful whole-repo snapshot, so a
+// full-repo baseline diff against it would be meaningless; skip detection
+// entirely in those modes. DetectGitHints additionally verifies the target
+// is the repository root. bom repo has no --changed, which then reads as
+// not given.
+func wantGitHints(cmd *cobra.Command) bool {
+	return len(includeFiles) == 0 && !cmd.Flags().Changed("changed")
+}
+
+// checkRepoPath checks that repoPath is an existing directory, before any
+// network call.
+func checkRepoPath(repoPath string) error {
+	// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path is from direct CLI arg, not untrusted input
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("path does not exist: %s", repoPath)
+		}
+		return fmt.Errorf("cannot access path %s: %w", repoPath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory: %s", repoPath)
+	}
+	return nil
+}
+
+// parseIncludeFiles returns the --include-files list for the repository at
+// repoPath.
+// Security: Path traversal protection is enforced by ParseFileList which
+// validates all paths using SafeJoinPath to ensure they don't escape the
+// repository root. Invalid or traversal paths are rejected with an error.
+func parseIncludeFiles(repoPath string) (*repo.FileList, error) {
+	absPath, err := filepath.Abs(repoPath) // armis:ignore cwe:770 reason:no bound needed here, this only resolves a path; scanner flags this line but the actual MaxFiles=1000 bound is enforced by ParseFileList below
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+	// armis:ignore cwe:22 cwe:770 reason:absPath is derived from filepath.Abs() immediately above; ParseFileList validates paths via SafeJoinPath and enforces MaxFiles=1000
+	fileList, err := repo.ParseFileList(absPath, includeFiles)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --include-files: %w", err)
+	}
+	return fileList, nil
 }
 
 func init() {

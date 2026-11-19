@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -19,6 +20,13 @@ import (
 var tarballPath string
 var pullPolicy string
 
+// The --tarball and --pull flags, which scan image and bom image share.
+const (
+	tarballUsage      = "Path to a container image tarball"
+	defaultPullPolicy = "missing"
+	pullUsage         = "Image pull policy: 'always', 'missing' (default), or 'never'. Ignored when --tarball is used"
+)
+
 var scanImageCmd = &cobra.Command{
 	Use:   "image [image-name]",
 	Short: "Scan a container image",
@@ -35,56 +43,15 @@ var scanImageCmd = &cobra.Command{
 		// The BOM type and format pairs, --bom-output, and a default .armis
 		// that is not a plain directory fail before any network call;
 		// PersistentPreRunE has normalized the values.
-		if err := cmdutil.ValidateBOMFlags(bomTypes, bomFormat, bomOutput); err != nil {
+		if err := cmdutil.ValidateBOMFlags(cmdutil.ScanBOMFlags, bomTypes, bomFormat, bomOutput); err != nil {
 			return err
 		}
 		if err := checkDefaultOutputDir(); err != nil {
 			return err
 		}
 
-		// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
-		// flag error rather than hiding behind an auth failure. This mirrors the
-		// allowlist in determinePullBehavior, which only runs after auth + the docker
-		// check; "" is excluded here because the flag default is "missing".
-		//
-		// Only validate on the image-name path: --pull is documented as "Ignored
-		// when --tarball is used" (tarball scans never pull), so rejecting a bad
-		// --pull alongside --tarball would contradict the flag's contract.
-		if tarballPath == "" {
-			switch pullPolicy {
-			case "always", "missing", "never":
-				// valid
-			default:
-				return fmt.Errorf("invalid --pull value %q: must be one of [always missing never]", pullPolicy)
-			}
-		}
-
-		if tarballPath == "" && len(args) == 0 {
-			return fmt.Errorf("missing target: specify an image name or use --tarball")
-		}
-
-		// Validate tarball path exists before making network calls
-		if tarballPath != "" {
-			// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path sanitized via util.SanitizePath() before filesystem write
-			// armis:ignore cwe:367 reason:TOCTOU benign here; tarball read later via docker/podman, not direct open after stat
-			info, err := os.Stat(tarballPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return fmt.Errorf("tarball does not exist: %s", tarballPath)
-				}
-				return fmt.Errorf("cannot access tarball %s: %w", tarballPath, err)
-			}
-			if info.IsDir() {
-				return fmt.Errorf("tarball path is a directory, not a file: %s", tarballPath)
-			}
-		}
-
-		// Surface a missing container runtime before auth. Scanning by image name
-		// exports via Docker/Podman, so a dev with no runtime would otherwise hit
-		// the auth error first and never learn the real blocker. --tarball bypasses
-		// the daemon, so skip this check on that path.
-		if tarballPath == "" && !image.IsDockerAvailable() {
-			return image.ErrRuntimeNotFound
+		if err := checkImageTarget(args); err != nil {
+			return err
 		}
 
 		authProvider, err := getAuthProvider(cmd.Context())
@@ -146,30 +113,9 @@ var scanImageCmd = &cobra.Command{
 		ctx, cancel := NewSignalContext()
 		defer cancel()
 
-		var result *model.ScanResult
-
-		// Warn if both tarball and image name are provided
-		if tarballPath != "" && len(args) > 0 {
-			cli.PrintWarning("both --tarball and image name provided; using tarball (image name ignored)")
-		}
-
-		if tarballPath != "" {
-			// armis:ignore cwe:22 reason:tarballPath is immediately sanitized by SanitizePath; only sanitizedPath is used
-			sanitizedPath, pathErr := util.SanitizePath(tarballPath)
-			if pathErr != nil {
-				return fmt.Errorf("invalid tarball path: %w", pathErr)
-			}
-			result, err = scanner.ScanTarball(ctx, sanitizedPath)
-			if err != nil {
-				return handleScanError(ctx, err)
-			}
-		} else {
-			// armis:ignore cwe:20 reason:imageName validated by distribution/reference.ParseNormalizedNamed in ScanImage
-			imageName := args[0]
-			result, err = scanner.ScanImage(ctx, imageName) // armis:ignore cwe:20 reason:validated by reference.ParseNormalizedNamed in ScanImage
-			if err != nil {
-				return handleScanError(ctx, err)
-			}
+		result, err := scanImageTarget(ctx, scanner, args, handleScanError)
+		if err != nil {
+			return err
 		}
 
 		// Resolve output destination and format (handles file creation, format auto-detection, colors)
@@ -196,6 +142,85 @@ var scanImageCmd = &cobra.Command{
 	},
 }
 
+// checkImageTarget checks the target of scan image and bom image before auth
+// and upload: --pull, a target to scan, the --tarball file, and a container
+// runtime to export an image name.
+func checkImageTarget(args []string) error {
+	// Validate --pull before auth so a bad value (e.g. "badvalue") surfaces as a
+	// flag error rather than hiding behind an auth failure. This mirrors the
+	// allowlist in determinePullBehavior, which only runs after auth + the docker
+	// check; "" is excluded here because the flag default is "missing".
+	//
+	// Only validate on the image-name path: --pull is documented as "Ignored
+	// when --tarball is used" (tarball scans never pull), so rejecting a bad
+	// --pull alongside --tarball would contradict the flag's contract.
+	if tarballPath == "" {
+		switch pullPolicy {
+		case "always", "missing", "never":
+			// valid
+		default:
+			return fmt.Errorf("invalid --pull value %q: must be one of [always missing never]", pullPolicy)
+		}
+	}
+
+	if tarballPath == "" && len(args) == 0 {
+		return fmt.Errorf("missing target: specify an image name or use --tarball")
+	}
+
+	// Validate tarball path exists before making network calls
+	if tarballPath != "" {
+		// armis:ignore cwe:22 reason:os.Stat is read-only existence check; path sanitized via util.SanitizePath() before filesystem write
+		// armis:ignore cwe:367 reason:TOCTOU benign here; tarball read later via docker/podman, not direct open after stat
+		info, err := os.Stat(tarballPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("tarball does not exist: %s", tarballPath)
+			}
+			return fmt.Errorf("cannot access tarball %s: %w", tarballPath, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("tarball path is a directory, not a file: %s", tarballPath)
+		}
+	}
+
+	// Surface a missing container runtime before auth. Scanning by image name
+	// exports via Docker/Podman, so a dev with no runtime would otherwise hit
+	// the auth error first and never learn the real blocker. --tarball bypasses
+	// the daemon, so skip this check on that path.
+	if tarballPath == "" && !image.IsDockerAvailable() {
+		return image.ErrRuntimeNotFound
+	}
+	return nil
+}
+
+// scanImageTarget scans the --tarball, which wins over an image name, or the
+// image named in args. onScanErr gives the command's error for a failed scan.
+func scanImageTarget(ctx context.Context, scanner *image.Scanner, args []string, onScanErr func(context.Context, error) error) (*model.ScanResult, error) {
+	// Warn if both tarball and image name are provided
+	if tarballPath != "" && len(args) > 0 {
+		cli.PrintWarning("both --tarball and image name provided; using tarball (image name ignored)")
+	}
+
+	var result *model.ScanResult
+	var err error
+	if tarballPath != "" {
+		// armis:ignore cwe:22 reason:tarballPath is immediately sanitized by SanitizePath; only sanitizedPath is used
+		sanitizedPath, pathErr := util.SanitizePath(tarballPath)
+		if pathErr != nil {
+			return nil, fmt.Errorf("invalid tarball path: %w", pathErr)
+		}
+		result, err = scanner.ScanTarball(ctx, sanitizedPath)
+	} else {
+		// armis:ignore cwe:20 reason:imageName validated by distribution/reference.ParseNormalizedNamed in ScanImage
+		imageName := args[0]
+		result, err = scanner.ScanImage(ctx, imageName) // armis:ignore cwe:20 reason:validated by reference.ParseNormalizedNamed in ScanImage
+	}
+	if err != nil {
+		return nil, onScanErr(ctx, err)
+	}
+	return result, nil
+}
+
 // imageTarget returns the scan target as typed: the --tarball path, which
 // wins over an image name, else the image name.
 func imageTarget(args []string) string {
@@ -206,7 +231,7 @@ func imageTarget(args []string) string {
 }
 
 func init() {
-	scanImageCmd.Flags().StringVar(&tarballPath, "tarball", "", "Path to a container image tarball")
-	scanImageCmd.Flags().StringVar(&pullPolicy, "pull", "missing", "Image pull policy: 'always', 'missing' (default), or 'never'. Ignored when --tarball is used")
+	scanImageCmd.Flags().StringVar(&tarballPath, "tarball", "", tarballUsage)
+	scanImageCmd.Flags().StringVar(&pullPolicy, "pull", defaultPullPolicy, pullUsage)
 	scanCmd.AddCommand(scanImageCmd)
 }

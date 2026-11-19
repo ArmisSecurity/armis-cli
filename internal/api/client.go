@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -334,7 +335,20 @@ type IngestOptions struct {
 	BOMFormat string
 	// ImageRef names the scanned image for its BOMs; empty is omitted.
 	ImageRef string
+	// ScanType is the scan_type sent to /scan: ScanTypeBOM for a BOM-only
+	// scan (armis-cli bom); empty sends ScanTypeFull.
+	ScanType string
 }
+
+// Values of the /scan request's scan_type field.
+const (
+	ScanTypeFull = "full" // a security scan, as before scan_type was settable
+	ScanTypeBOM  = "bom"  // builds the requested BOMs only, with no findings
+)
+
+// ErrBOMScanUnsupported is returned by StartIngest when the server rejects
+// scan_type "bom" as an unknown value: the server predates BOM-only scans.
+var ErrBOMScanUnsupported = errors.New("this Armis server does not support BOM-only scans yet")
 
 // StatusCallback is called on each poll with the current scan status.
 // It allows callers to react to status changes (e.g., updating a spinner).
@@ -551,7 +565,7 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	body := model.IngestScanStartRequest{
 		ScanID:       scanID,
 		TenantID:     opts.TenantID,
-		ScanType:     "full", // matches the prior /tar behavior; flag-driven scan_type is a future change
+		ScanType:     scanType(opts),
 		SBOMGenerate: opts.GenerateSBOM,
 		SBOMFormat:   opts.SBOMFormat,
 		VEXGenerate:  opts.GenerateVEX,
@@ -595,6 +609,14 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if opts.ScanType == ScanTypeBOM {
+			if older, msg, ok := scanTypeError(resp.StatusCode, respBytes); ok {
+				if older {
+					return nil, ErrBOMScanUnsupported
+				}
+				return nil, fmt.Errorf("the server refused the BOM-only scan: %s", msg)
+			}
+		}
 		if msg, ok := bomRefusal(resp.StatusCode, respBytes, opts); ok {
 			return nil, errors.New(msg)
 		}
@@ -612,14 +634,60 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	return &result, nil
 }
 
+// scanType returns the scan_type of a /scan request: ScanTypeFull unless
+// opts asks for another.
+func scanType(opts IngestOptions) string {
+	if opts.ScanType == "" {
+		return ScanTypeFull
+	}
+	return opts.ScanType
+}
+
+// scanTypeError reads a 422 answer that is a request validation error on the
+// scan_type field, such as
+// {"detail":[{"loc":["body","scan_type"],"msg":"Input should be 'full' or 'custom'"}]}.
+// A server that predates BOM-only scans gives it for scan_type "bom" with a
+// message that lists the values it takes, bom not among them: older is then
+// true. A message that names bom is some other refusal, so msg holds it,
+// control characters stripped. ok is false for any other answer.
+func scanTypeError(status int, body []byte) (older bool, msg string, ok bool) {
+	if status != http.StatusUnprocessableEntity {
+		return false, "", false
+	}
+	var parsed struct {
+		Detail []struct {
+			Loc []any  `json:"loc"`
+			Msg string `json:"msg"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, "", false
+	}
+	for _, d := range parsed.Detail {
+		if n := len(d.Loc); n == 0 || d.Loc[n-1] != "scan_type" {
+			continue
+		}
+		if !namesBOM.MatchString(d.Msg) {
+			return true, "", true
+		}
+		return false, util.StripControl(d.Msg), true
+	}
+	return false, "", false
+}
+
+// namesBOM matches bom as a word, quoted or not, in a validation message.
+var namesBOM = regexp.MustCompile(`(?i)\bbom\b`)
+
 // bomRefusal reads a 422 answer to a /scan request with BOM fields, such as
 // {"detail":{"code":"export_format_unavailable","message":"..."}}, as "the
 // server refused the BOM request (--bom <types> --bom-format <format>):
-// <message> (<code>)", so the message says what was asked. Server text has
+// <message> (<code>)", so the message says what was asked. A BOM-only scan
+// names the flags of armis-cli bom, --type and --format. Server text has
 // control characters stripped. ok is false for any other answer, which keeps
 // the raw text.
 func bomRefusal(status int, body []byte, opts IngestOptions) (string, bool) {
-	if status != http.StatusUnprocessableEntity || len(opts.BOMTypes) == 0 {
+	bomOnly := opts.ScanType == ScanTypeBOM
+	if status != http.StatusUnprocessableEntity || (len(opts.BOMTypes) == 0 && !bomOnly) {
 		return "", false
 	}
 	var parsed struct {
@@ -631,11 +699,22 @@ func bomRefusal(status int, body []byte, opts IngestOptions) (string, bool) {
 	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Detail.Message == "" {
 		return "", false
 	}
-	asked := "--bom " + strings.Join(opts.BOMTypes, ",")
-	if opts.BOMFormat != "" {
-		asked += " --bom-format " + opts.BOMFormat
+	typeFlag, formatFlag := "--bom", "--bom-format"
+	if bomOnly {
+		typeFlag, formatFlag = "--type", "--format"
 	}
-	msg := "the server refused the BOM request (" + asked + "): " + util.StripControl(parsed.Detail.Message)
+	var asked []string
+	if len(opts.BOMTypes) > 0 {
+		asked = append(asked, typeFlag+" "+strings.Join(opts.BOMTypes, ","))
+	}
+	if opts.BOMFormat != "" {
+		asked = append(asked, formatFlag+" "+opts.BOMFormat)
+	}
+	msg := "the server refused the BOM request"
+	if len(asked) > 0 {
+		msg += " (" + strings.Join(asked, " ") + ")"
+	}
+	msg += ": " + util.StripControl(parsed.Detail.Message)
 	if code := util.StripControl(parsed.Detail.Code); code != "" {
 		msg += " (" + code + ")"
 	}
@@ -766,7 +845,7 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 
 			if statusUpper == "FAILED" {
 				if status.LastError != nil && *status.LastError != "" {
-					return nil, fmt.Errorf("scan failed: %s", *status.LastError)
+					return nil, fmt.Errorf("scan failed: %s", util.StripControl(*status.LastError))
 				}
 				return nil, fmt.Errorf("scan failed with no error message (scan_id: %s)", scanID)
 			}

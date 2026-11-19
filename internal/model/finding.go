@@ -82,6 +82,9 @@ type ScanResult struct {
 	// could not be downloaded; a non-empty list makes the scan exit 2. Kept
 	// out of the JSON report.
 	BOMFailures []string `json:"-"`
+	// BOMWritten lists the BOM types written to a file or stdout. A BOM-only
+	// scan that wrote none exits 2. Kept out of the JSON report.
+	BOMWritten []string `json:"-"`
 }
 
 // Summary provides aggregate statistics about scan findings.

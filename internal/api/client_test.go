@@ -664,6 +664,83 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("BOM-only scans send scan_type bom and read the 422 answers", func(t *testing.T) {
+		const oldServer = `{"detail":[{"type":"enum","loc":["body","scan_type"],"msg":"Input should be 'full' or 'custom'","input":"bom"}]}`
+		rows := []struct {
+			name         string
+			scanType     string
+			status       int
+			body         string
+			wantScanType string
+			wantErr      string // "" for success
+			wantOld      bool   // want ErrBOMScanUnsupported
+		}{
+			{name: "a full scan sends full", wantScanType: "full"},
+			{name: "a BOM-only scan sends bom", scanType: ScanTypeBOM, wantScanType: "bom"},
+			{name: "an old server rejects scan_type bom", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity, body: oldServer,
+				wantScanType: "bom", wantErr: "failed to trigger scan: this Armis server does not support BOM-only scans yet", wantOld: true},
+			{name: "a scan_type error on a full scan keeps the raw text", status: http.StatusUnprocessableEntity, body: oldServer,
+				wantScanType: "full", wantErr: `/scan returned 422 Unprocessable Entity: {"detail":[`},
+			{name: "a validation error on another field keeps the raw text", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body: `{"detail":[{"loc":["body","bom_format"],"msg":"bad"}]}`, wantScanType: "bom", wantErr: `/scan returned 422 Unprocessable Entity: {"detail":[`},
+			{name: "a 400 naming scan_type keeps the raw text", scanType: ScanTypeBOM, status: http.StatusBadRequest, body: oldServer,
+				wantScanType: "bom", wantErr: "/scan returned 400 Bad Request"},
+			{name: "a scan_type error without a message reads as an older server", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body: `{"detail":[{"loc":["body","scan_type"]}]}`, wantScanType: "bom", wantErr: "does not support BOM-only scans yet", wantOld: true},
+			{name: "a scan_type error that names bom keeps the server text", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body:         `{"detail":[{"loc":["body","scan_type"],"msg":"Value error, scan_type 'bom' is not offered for this\u001b[2J artifact\ntype"}]}`,
+				wantScanType: "bom", wantErr: "failed to trigger scan: the server refused the BOM-only scan: Value error, scan_type 'bom' is not offered for this[2J artifact type"},
+			{name: "an enum that allows bom is not an older server", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body:         `{"detail":[{"loc":["body","scan_type"],"msg":"Input should be 'full', 'custom' or 'bom'"}]}`,
+				wantScanType: "bom", wantErr: "the server refused the BOM-only scan: Input should be 'full', 'custom' or 'bom'"},
+			{name: "bom inside another word does not count", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body:         `{"detail":[{"loc":["body","scan_type"],"msg":"Input should be 'full' or 'bombastic'"}]}`,
+				wantScanType: "bom", wantErr: "does not support BOM-only scans yet", wantOld: true},
+			{name: "a refusal names the bom flags", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body: `{"detail":{"code":"sbom_vex_not_allowed","message":"SBOM and VEX are not built by a BOM-only scan"}}`, wantScanType: "bom",
+				wantErr: "the server refused the BOM request (--type aibom,cbom --format spdx): SBOM and VEX are not built by a BOM-only scan (sbom_vex_not_allowed)"},
+			{name: "a refusal without types still names the bom flags", scanType: ScanTypeBOM, status: http.StatusUnprocessableEntity,
+				body: `{"detail":{"code":"bom_types_required","message":"bom_types must not be empty"}}`, wantScanType: "bom",
+				wantErr: "the server refused the BOM request: bom_types must not be empty (bom_types_required)"},
+		}
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				t.Parallel()
+				srv, state := newIngestFlowServer(t)
+				if row.status != 0 {
+					state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+						w.WriteHeader(row.status)
+						_, _ = io.WriteString(w, row.body)
+					}
+				}
+				client := newIngestFlowClient(t, srv.URL)
+				opts := IngestOptions{
+					TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+					Data: bytes.NewReader([]byte("test")), Size: 4, ScanType: row.scanType,
+				}
+				if !strings.Contains(row.name, "without types") {
+					opts.BOMTypes, opts.BOMFormat = []string{"aibom", "cbom"}, "spdx"
+				}
+				_, err := client.StartIngest(context.Background(), opts)
+				if got := scanBody(t, state)["scan_type"]; got != row.wantScanType {
+					t.Errorf("scan_type = %v, want %s", got, row.wantScanType)
+				}
+				if row.wantErr == "" {
+					if err != nil {
+						t.Fatalf("StartIngest: %v", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), row.wantErr) {
+					t.Fatalf("error = %v, want it to contain %q", err, row.wantErr)
+				}
+				if errors.Is(err, ErrBOMScanUnsupported) != row.wantOld {
+					t.Errorf("errors.Is(err, ErrBOMScanUnsupported) = %v, want %v", !row.wantOld, row.wantOld)
+				}
+			})
+		}
+	})
+
 	t.Run("the raw /scan error has no control characters", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)
@@ -676,7 +753,7 @@ func TestClient_StartIngest(t *testing.T) {
 			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
 			Data: bytes.NewReader([]byte("test")), Size: 4,
 		})
-		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: upload[2J not foundretry") {
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: upload[2J not found retry") {
 			t.Fatalf("error = %v, want the body without control characters", err)
 		}
 		if strings.ContainsAny(err.Error(), "\x1b\x07\r\n\u009b") {

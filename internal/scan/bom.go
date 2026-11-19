@@ -50,13 +50,46 @@ var BOMFormats = []string{
 const DefaultBOMDir = ".armis"
 
 // BOMOptions configures the BOM downloads of a scan (--bom, --bom-format,
-// --bom-output).
+// --bom-output), or of a BOM-only scan (armis-cli bom: --type, --format,
+// --output).
 type BOMOptions struct {
 	Types  []string  // normalized by cmdutil.NormalizeBOMFlags, in BOMTypeOrder
 	Format string    // as typed, alias included; resolved per type
 	Output string    // directory, BOMOutputStdout, or "" for DefaultBOMDir
 	Target string    // the scan target as typed, for the empty-BOM line
 	Stdout io.Writer // stdout mode destination; nil means os.Stdout
+	// Only makes the scan BOM-only: the server builds the BOMs and runs no
+	// security scan, and the scanner fetches no findings.
+	Only bool
+}
+
+// Progress messages for the wait on the server.
+const (
+	scanningMessage     = "Scanning for security issues..."
+	buildingBOMsMessage = "Building BOMs..."
+)
+
+// BOMOnly reports whether opts asks for a BOM-only scan.
+func (o *SBOMVEXOptions) BOMOnly() bool {
+	return o != nil && o.BOM != nil && o.BOM.Only
+}
+
+// ScanType returns the scan_type to send for opts: api.ScanTypeBOM for a
+// BOM-only scan, else "" for the default.
+func (o *SBOMVEXOptions) ScanType() string {
+	if o.BOMOnly() {
+		return api.ScanTypeBOM
+	}
+	return ""
+}
+
+// WaitMessage is the progress message while the server works on a scan
+// with opts: "Building BOMs..." for a BOM-only scan.
+func (o *SBOMVEXOptions) WaitMessage() string {
+	if o.BOMOnly() {
+		return buildingBOMsMessage
+	}
+	return scanningMessage
 }
 
 // BOMDownloadError lists the BOM types that could not be downloaded. Err is

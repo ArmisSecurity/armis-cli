@@ -50,6 +50,7 @@ Enterprise-grade CLI for static application security scanning with Armis Cloud. 
 - Multiple output formats: human, JSON, SARIF, JUnit XML
 - **SBOM generation**: Generate a Software Bill of Materials in CycloneDX (default) or SPDX 2.3 format
 - **VEX generation**: Generate Vulnerability Exploitability eXchange documents
+- **BOMs without a security scan**: `armis-cli bom repo` and `armis-cli bom image` build a software BOM, AI-BOM, CBOM or combined BOM
 - **Supply chain protection**: Block packages published too recently (typosquatting, compromised maintainers, dependency confusion) across npm, Python, and Java — no Armis Cloud auth required
 - CI/CD ready: GitHub Actions, Jenkins, GitLab, Azure, Bitbucket, CircleCI
 - Configurable exit codes and fail-on severity
@@ -507,6 +508,8 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 > The `--sbom`, `--sbom-format`, `--vex`, `--sbom-output`, and `--vex-output` flags are specific to the `scan` commands — see [Scan Repository](#scan-repository). Their meaning differs on [Scan SBOM](#scan-sbom), which takes an SBOM as input rather than generating one.
 >
 > The `--bom`, `--bom-format`, and `--bom-output` flags apply to `scan repo` and `scan image` — see [BOMs](#boms-ai-bom-cbom-sbom). `scan sbom` and `scan status` ignore them; `--bom` prints a warning there.
+>
+> `bom repo` and `bom image` take these values as `--type`, `--format` and `--output`, and none of the findings flags — see [BOMs Without a Security Scan](#boms-without-a-security-scan).
 
 ### Scan Repository
 
@@ -595,9 +598,9 @@ Notes:
   and `cbom` or `all` with any SPDX value. A format the server does not offer
   for a type fails the scan request after upload, with exit code 1 and
   `the server refused the BOM request (--bom <types> --bom-format <format>): <message> (<code>)`.
-- `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout. In Windows PowerShell 5.1, `>` saves stdout as UTF-16, which many JSON tools reject; use a directory there, or cmd.exe or PowerShell 7.4 or later, which keep the bytes as written.
+- `--bom-output` names a directory (default `.armis`), or `-` to write one type to stdout. The CLI names the files in the directory, so each is written to a temp file and renamed over the old one, and a symlink or a non-regular file at that name is refused, as in `.armis`. The directory itself may be a symlink. In Windows PowerShell 5.1, `>` saves stdout as UTF-16, which many JSON tools reject; use a directory there, or cmd.exe or PowerShell 7.4 or later, which keep the bytes as written.
 - Without `--bom`, a non-default `--bom-format` prints `--bom-format is ignored without --bom flag`, any `--bom-output` prints the same for `--bom-output`, and the scan runs as without them.
-- Each file holds the stored document, pretty-printed. On Linux and macOS, new files get mode 0600, and so does a file replaced in the default `.armis`; on Windows, they take the folder's permissions instead. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
+- Each file holds the stored document, pretty-printed. On Linux and macOS, new files get mode 0600, and so does a replaced file; on Windows, they take the folder's permissions instead. SPDX files end in `.spdx.json`. With `--bom-output -`, stdout gets the document as the server stored it, without pretty-printing.
 - `--sbom` is separate and unchanged: it still writes `<artifact>-sbom.json`.
 - An empty BOM is still written, and stderr says so, such as
   `No AI components found in ./my-app`. The exit code does not change.
@@ -605,10 +608,12 @@ Notes:
   warning and does not change the exit code. The warning says whether the type
   is not supported for this scan, failed on the server (with the tools that
   failed anywhere in the scan, if any), or was too large to store.
+- A BOM written while BOM tools failed on the server, such as `generated` or `empty` with `failed_tools` set, prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines; the exit code does not change. `bom repo` and `bom image` do the same.
 - A BOM that was built but cannot be downloaded prints a warning and the scan
   exits 2, unless `--fail-on` triggers first (see [Exit Codes](#exit-codes)).
 - With `--changed` or `--include-files`, BOMs cover only the uploaded files.
 - The same flags are available on `scan image`.
+- To build BOMs without the security scan, use [`armis-cli bom`](#boms-without-a-security-scan).
 
 #### Scan Only Changed Files
 
@@ -849,9 +854,86 @@ Either way, findings are printed as a table (same shape as `scan repo` / `scan i
 >
 > `--sbom` is a no-op on `scan sbom` (you can't generate an SBOM from an SBOM) and prints a warning if passed.
 
+### BOMs Without a Security Scan
+
+`armis-cli bom` builds the BOMs of a repository or a container image and
+downloads them, without running a security scan, so it takes less time than
+`scan repo --bom` or `scan image --bom`. It uploads what those commands upload
+and writes the same files. BOM generation must be enabled for your tenant;
+without it, the server refuses the request before any scan runs, and the
+command exits 1 with
+`the server refused the BOM request (--type <types> --format <format>): <message> (bom_generation_disabled)`.
+(`scan --bom` on such a tenant runs the scan, and each requested type prints a
+"not available" warning.)
+
+```bash
+armis-cli bom repo [path]
+armis-cli bom image [image-name]
+armis-cli bom image --tarball [path-to-tarball]
+```
+
+**Examples**:
+
+```bash
+# Combined BOM (the default) → .armis/<artifact>-bom-all.json
+armis-cli bom repo ./my-app
+
+# AI-BOM and CBOM as CycloneDX 1.6 into ./boms
+armis-cli bom repo ./my-app --type aibom,cbom --format cyclonedx-1.6 --output ./boms
+
+# SPDX 2.3 software BOM of an image → .armis/python-3.12-slim-bom-sbom.spdx.json
+armis-cli bom image python:3.12-slim --type sbom --format spdx
+
+# The CBOM of a tarball to stdout
+armis-cli bom image --tarball ./image.tar --type cbom --output - > cbom.json
+```
+
+| Flag | Values | Default |
+|------|--------|---------|
+| `--type` | `sbom`, `aibom`, `cbom`, `all` (the combined BOM), comma-separated or repeated | `all` |
+| `--format` | `cyclonedx-1.7`, `cyclonedx-1.6`, `spdx-2.3`, `spdx-3.0.1`, or the aliases `cyclonedx`, `spdx` | `cyclonedx-1.7` |
+| `--output` | A directory, or `-` to write one BOM to stdout. A path that does not exist and ends in `.json` is refused, with a hint to use `--output -` (one type) or a directory | `.armis` |
+
+Notes:
+
+- The values and their rules are those of `--bom`, `--bom-format` and
+  `--bom-output` (see [BOMs](#boms-ai-bom-cbom-sbom)): `cbom` and `all` have no
+  SPDX form, so `--format spdx` needs `--type sbom` or `aibom`; without
+  `--type`, the message says `--type all (the default)`. A rejected value exits
+  1 before upload.
+- In an `--output` directory, as in `.armis`, each file is written to a temp
+  file and renamed over the old one, and a symlink or a non-regular file at its
+  name is refused. The directory itself may be a symlink.
+- `bom repo` also takes `--include-files` and `--include-tests`, and sends the
+  git hints `scan repo` sends (see [Incremental Scan Git Hints](#incremental-scan-git-hints)),
+  so the BOMs name the repository and commit; `bom image` takes `--pull` and
+  `--tarball`, and sends the image name as `scan image` does. Both take
+  `--scan-timeout`, `--upload-timeout` and `--no-progress`.
+- There is no findings report, and no `--fail-on`. stderr shows the progress
+  and one line per file written; stdout gets a BOM only with `--output -`.
+- Exit codes: `0` when at least one BOM was written and none failed to download; `2` when no BOM was written or a built BOM could not be downloaded; `1` on errors; `130` on Ctrl+C. A type not offered only warns,
+  and `--output -` with nothing to write writes nothing and exits `2`.
+- On a server that predates BOM-only scans, the command exits 1 after the
+  upload with
+  `this Armis server does not support BOM-only scans yet; run: armis-cli scan repo|image <target> [tenant flags] [upload flags] --bom <types> [--bom-format <format>] [--bom-output <dir>]`.
+  The command after `run: ` is the matching `scan repo` or `scan image` with
+  `--bom`, which runs a security scan as well. It names the target, the
+  `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout`
+  flags you typed, `--include-files`,
+  `--include-tests` or `--pull`, the format and the directory you gave, and
+  single-quotes only the values a shell would read differently: for sh, bash
+  and zsh, or for PowerShell on Windows, where a path such as `C:\src\app`
+  stays unquoted and a `'` is doubled. cmd.exe is not supported. It leaves
+  credentials (`--token`, `--client-id`, `--client-secret`) and values from
+  environment variables out of the line, so paste it into a shell where they
+  are set, and it uses them from there. A value with a control character is
+  shown as a placeholder such as `<path>`, to fill in. A request the server
+  refuses exits 1 with
+  `the server refused the BOM request (--type <types> --format <format>): <message> (<code>)`.
+
 ### Check Scan Status
 
-Fetch the current status of a scan initiated with `scan repo`, `scan image`, or `scan sbom`.
+Fetch the current status of a scan initiated with `scan repo`, `scan image`, `scan sbom`, or `bom`.
 
 ```bash
 armis-cli scan status [scan_id]
@@ -885,6 +967,48 @@ armis-cli install        # install and register with detected editors
 armis-cli mcp update     # update the server and re-register editors
 armis-cli mcp doctor     # diagnose why an editor doesn't see or can't use the server
 ```
+
+#### Scripted installs and credential rotation
+
+For CI and device-management rollouts, `install` and `uninstall` can report their result as one JSON document on stdout. Spinners and human text stay on stderr, `--format json` implies `--non-interactive`, and the exit code is the same as without it.
+
+```bash
+armis-cli install --format json            # -f json also works
+armis-cli uninstall --format json --force  # --force is required to uninstall everything
+```
+
+Install output:
+
+```json
+{
+  "clients": [
+    {
+      "client": "cursor",
+      "label": "Cursor",
+      "status": "ok",
+      "files": ["/Users/me/.cursor/mcp.json"],
+      "hook": {"status": "warn", "detail": "hook adapter not found: ..."}
+    },
+    {"client": "vscode", "label": "VS Code", "status": "fail", "detail": "writing ...: permission denied"}
+  ],
+  "plugin": {"name": "armis-appsec-mcp", "version": "1.4.2", "path": "/Users/me/.armis/plugins/armis-appsec-mcp", "already_current": false, "pinned": false},
+  "knowledge": null,
+  "credentials": {
+    "status": "kept",
+    "files": [{"path": "/Users/me/.armis/plugins/armis-appsec-mcp/.env", "status": "kept"}]
+  }
+}
+```
+
+`clients[].client` is a stable lowercase id (`cursor`, `vscode`, `copilot`, `codex`, `claude`, `antigravity`, `junie`, `jetbrains`, and so on). `status` is `ok`, `fail`, `warn` (manual setup needed, as for JetBrains) or `skip`. `hook` appears for clients with a native hook and is `ok` or `warn`. `plugin.version` is the installed release (the pinned one when `--plugin-version` or `ARMIS_MCP_VERSION` is set, and `pinned` is then `true`). A failed client or a hook warning makes the command exit non-zero and is named in `error`; in a full install, Claude Code is `skip` when `~/.claude` does not exist. `uninstall` does the same for clients, hooks, the pre-commit hook and plugin files it could not remove. `knowledge` is `null` unless `--with-knowledge` was given. `credentials.status` is `written`, `kept`, `rotated`, `none` or `failed`. A fatal error adds an `error` field and still exits non-zero.
+
+`install` keeps an existing `.env` as it is. To replace the client ID and secret, set `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` and pass `--rotate-credentials`:
+
+```bash
+ARMIS_CLIENT_ID=... ARMIS_CLIENT_SECRET=... armis-cli install --rotate-credentials
+```
+
+This overwrites the two values in every `.env` the run manages: the shared plugin (`~/.armis/plugins/armis-appsec-mcp/.env`), the Claude Code plugin cache copy, and Armis Knowledge when it is installed. Other keys such as `HTTPS_PROXY` are kept, the file is replaced atomically with mode `0600`, and no `.env.bak` is left (an old one is deleted). A file that already holds the values is not rewritten. The secret is never printed. If the variables are not both set, the command fails before installing anything. A failed write makes the command exit non-zero.
 
 #### Troubleshooting with `mcp doctor`
 
@@ -1424,7 +1548,7 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 - `0` - Scan completed with no blocking findings, or an `--async` scan was accepted
 - `--exit-code` value (default `1`) - Scan found findings at a `--fail-on` severity
 - `1` - Error: invalid flags (such as an invalid `--project` name), authentication, upload, timeout, or a failed scan
-- `2` - Scan completed, but its results or a requested BOM could not be downloaded
+- `2` - Scan completed, but its results or a requested BOM could not be downloaded, or `bom` wrote no BOM
 - `130` - Scan cancelled with Ctrl+C
 
 With the default `--exit-code 1`, findings and errors share exit code `1`; set

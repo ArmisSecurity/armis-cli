@@ -40,16 +40,21 @@ func (e *ErrResultsIncomplete) Error() string {
 }
 
 // ErrBOMIncomplete indicates the scan completed but one or more BOMs requested
-// with --bom could not be downloaded. Like ErrResultsIncomplete it exits 2, so
-// CI does not pass without the files it asked for. Labels are the BOM type
-// labels (such as "AI-BOM"), given by the caller since output cannot import
-// scan.
+// with --bom could not be downloaded, or, with NotWritten, that a BOM-only
+// scan wrote none of the BOMs it asked for. Like ErrResultsIncomplete it exits
+// 2, so CI does not pass without the files it asked for. Labels are the BOM
+// type labels (such as "AI-BOM"), given by the caller since output cannot
+// import scan.
 type ErrBOMIncomplete struct {
-	ScanID string
-	Labels []string
+	ScanID     string
+	Labels     []string
+	NotWritten bool
 }
 
 func (e *ErrBOMIncomplete) Error() string {
+	if e.NotWritten {
+		return fmt.Sprintf("scan completed but no BOM was written: %s not available (scan ID: %s)", strings.Join(e.Labels, ", "), e.ScanID)
+	}
 	return fmt.Sprintf("scan completed but %s could not be downloaded (scan ID: %s)", strings.Join(e.Labels, ", "), e.ScanID)
 }
 

@@ -39,6 +39,7 @@ go test -v ./internal/output/... -run TestHumanFormatter
   - `scan_repo.go` - Repository scanning subcommand. `addRepoScanFlags()` registers its flags on both `scan repo` and `scan` (shared package vars).
   - `scan_project.go` - `--project`/`--report`/`--sync`/`--async` validation (before any I/O), project announcement, and the `--async` acceptance record (PPSC-1589)
   - `scan_image.go` - Container image scanning subcommand (`--tarball` flag for pre-exported images)
+  - `bom.go`, `bom_repo.go`, `bom_image.go` - BOM-only scans (`bom repo`, `bom image`): `scan_type: "bom"`, BOM downloads through the `--bom` code, no findings
   - `auth.go` - Standalone `auth` command for testing JWT authentication (prints raw token)
   - `context.go` - Signal handling: `NewSignalContext()` creates context canceled on SIGINT/SIGTERM
 
