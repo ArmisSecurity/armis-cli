@@ -4,9 +4,11 @@ This guide covers the bills of materials (BOMs) that Armis builds from the code 
 
 ## Contents
 
+- [Where your BOMs come from](#where-your-boms-come-from)
 - [BOM types](#bom-types)
 - [Before you start](#before-you-start)
 - [Choose a command](#choose-a-command)
+- [Download the BOMs of your nightly scans](#download-the-boms-of-your-nightly-scans)
 - [BOMs with a security scan: `scan --bom`](#boms-with-a-security-scan-scan---bom)
 - [BOMs without a security scan: `bom repo` and `bom image`](#boms-without-a-security-scan-bom-repo-and-bom-image)
 - [Formats](#formats)
@@ -20,6 +22,30 @@ This guide covers the bills of materials (BOMs) that Armis builds from the code 
 - [Limits](#limits)
 - [Data handling](#data-handling)
 - [Troubleshooting](#troubleshooting)
+
+## Where your BOMs come from
+
+Armis builds BOMs in two places, and they reach you in two ways.
+
+| Source | How you get the BOMs | Stored copy kept |
+|--------|----------------------|------------------|
+| armis-cli and ingest API scans (`scan --bom`, `bom repo`, `bom image`) | The CLI, or your own API client, downloads them through the links in the scan results. The CLI writes them to `.armis/`. | 30 days |
+| Nightly scans of repositories connected through a source code provider | You download them through the BOM download API. See [Download the BOMs of your nightly scans](#download-the-boms-of-your-nightly-scans). | 30 days |
+
+### armis-cli and API scans
+
+1. The CLI packs the folder, or exports the image, and uploads it to Armis.
+2. Armis builds the BOMs you asked for and stores them.
+3. The CLI asks for the scan results. They hold a download link for each BOM, valid for 15 minutes.
+4. The CLI downloads each BOM through its link and writes it to `.armis/<artifact>-bom-<type>.json`.
+5. The stored copies expire 30 days after they are written.
+
+### Nightly scans of connected repositories
+
+1. Every day, starting at 04:00 UTC, Armis scans the repositories connected through GitHub, GitLab, Bitbucket, Azure DevOps or AWS CodeCommit. On Saturdays it scans every connected repository. On other days it skips the repositories whose latest commit is unchanged since their last scan; new repositories are scanned too.
+2. When BOM generation is on, each of these scans builds the SBOM, AI-BOM, CBOM and combined BOM for the repository's default branch, and stores them.
+3. You download them with the BOM download API. The Armis Centrix UI has no AI-BOM, CBOM or combined BOM download yet, and no armis-cli command fetches these BOMs. The SBOM export in the AppSec UI is a different file: the SBOM of the security scan.
+4. The stored copies expire 30 days after they are written. A repository that does not change still gets new BOMs on the next Saturday scan.
 
 ## BOM types
 
@@ -61,8 +87,191 @@ Every BOM is a JSON file. The default format is CycloneDX 1.7. The SBOM is also 
 | Only the BOMs, as fast as possible | `armis-cli bom repo <path>` or `armis-cli bom image <image>` |
 | A `--fail-on` gate on findings | `scan --bom` (`bom` has no findings and no `--fail-on`) |
 | BOMs of only some files of a repository | `scan repo --changed` or `--include-files`, or `bom repo --include-files` |
+| The BOMs of the nightly scans of your connected repositories | The BOM download API: see [Download the BOMs of your nightly scans](#download-the-boms-of-your-nightly-scans) |
 
 Both build the same BOMs from the same upload and write the same files. `bom` skips the security scan, so it takes less time. In our tests on two small public repositories, `bom repo` took 9 to 40 seconds, and `scan repo --bom` usually took 45 seconds to about 10 minutes (one test run took 28 minutes).
+
+## Download the BOMs of your nightly scans
+
+The BOMs of nightly scans are fetched with one API call per BOM: `GET /api/v1/tenant/{tenant_id}/artifact/bom`. It returns a download link to the stored BOM. The Armis Centrix UI has no AI-BOM, CBOM or combined BOM download yet, and the CLI has no command for these BOMs, so the API is the way today.
+
+### What you need
+
+- **API credentials.** A client ID and secret, created in Armis Centrix under **Settings > API Access > Create API Credentials**, with the developer or admin role.
+- **Your tenant ID.** The route takes the tenant that your token belongs to: the token's `customer_id` claim. The example script reads it from the token. `armis-cli auth whoami` also prints it on its `Tenant:` line.
+- **The repository name, as the provider names it.**
+
+  | Provider | `artifact_name` |
+  |----------|-----------------|
+  | GitHub | `<owner>/<repo>` |
+  | GitLab | the project's full path, such as `<group>/<subgroup>/<project>` |
+  | Bitbucket | `<workspace>/<repository name>` |
+  | Azure DevOps | `<repository>`, or `<project>/<repository>` |
+  | AWS CodeCommit | `<repository>` |
+
+- **Tools.** bash, curl 7.76 or later, and jq 1.6 or later.
+
+### The request
+
+```text
+GET /api/v1/tenant/<tenant-id>/artifact/bom?artifact_name=<org>/<repo>&type=<type>[&format=<format>][&scan_id=<scan-id>]
+Authorization: Bearer <token>
+```
+
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `artifact_name` | The repository name, as above. It may contain `/`. | required |
+| `type` | `sbom`, `aibom`, `cbom`, or `all` (the combined BOM) | required |
+| `format` | `cyclonedx-1.7`, `cyclonedx-1.6`, or `spdx-2.3` (SBOM only); the aliases `cyclonedx` and `spdx` | `cyclonedx-1.7` |
+| `scan_id` | The ID of one completed scan of the repository | the newest scan with BOMs |
+
+Call it on `https://moose.armis.com`, or on `https://eu.moose.armis.com` when the token response gives region `eu1`.
+
+### Which scan answers
+
+- Without `scan_id`, the newest completed scan of the repository that has BOMs. Nightly scans build BOMs for the repository's default branch, and the route takes no branch.
+- To pick an older scan, pass its `scan_id`. List your tenant's scans with `GET /api/v1/scan/tenant/status?tenant_id=<tenant-id>`: each entry under `data[0].results` has `scan_id`, `scan_type` (`daily` for nightly scans), `scan_status`, `started_at` and `completed_at`. The `s_...` run IDs of AppSec projects are different IDs and do not work here.
+- If that scan found nothing of a type, the route returns a valid empty BOM.
+- If the tools that build a type failed in that scan, the route answers 404 `bom_type_unavailable`. It does not fall back to an older scan.
+
+### The response
+
+```json
+{
+  "bom": [
+    {
+      "repo_name": "example-org/example-repo",
+      "repo_owner": "example-org",
+      "bom_details": [
+        {
+          "type": "aibom",
+          "format": "cyclonedx-1.7",
+          "presigned_url": "<link>",
+          "expires_in": 3600,
+          "size_bytes": 48211,
+          "branch": "main",
+          "scan_commit": "4f1c2a9e8b7d6c5f4e3d2c1b0a9f8e7d6c5b4a39",
+          "completed_at": "2026-11-01T12:00:00Z",
+          "validation": "passed",
+          "lossy": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+- Fetch `presigned_url` with a plain HTTPS GET within `expires_in` seconds (one hour). Send no `Authorization` header with it.
+- Anyone who has the link can fetch the BOM until it expires. Keep it private. For a new link, call the route again.
+- `branch`, `scan_commit` and `completed_at` say which scan the BOM comes from. `size_bytes` is the size of the file.
+
+### Example script
+
+This script downloads the SBOM, AI-BOM, CBOM and combined BOM of one repository, plus the SBOM in SPDX 2.3. It keeps the client secret, the token and the download links off every command line, and removes its working files on exit, error included. It sends the credentials and the token only to `https://moose.armis.com` or `https://eu.moose.armis.com`. It stops on any failed call. When the route refuses, it prints the route's error code and message.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+REPO=${REPO:?set REPO to the repository name, such as my-org/my-repo}
+OUT=${OUT:-./nightly-boms}
+AUTH_BASE=${AUTH_BASE:-https://moose.armis.com}
+
+armis_host() {   # refuse any host but the two public API hosts
+  case "$1" in
+    https://moose.armis.com | https://eu.moose.armis.com) ;;
+    *) echo "error: $2 must be https://moose.armis.com or https://eu.moose.armis.com" >&2; exit 1 ;;
+  esac
+}
+armis_host "$AUTH_BASE" AUTH_BASE
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# 1. Get a token; keep it in files only
+jq -n '{client_id: env.ARMIS_CLIENT_ID, client_secret: env.ARMIS_CLIENT_SECRET}' \
+  | curl -sSf -X POST "$AUTH_BASE/api/v1/auth/token" -H 'Content-Type: application/json' \
+      --data @- > "$work/token.json"
+jq -er '.token | strings | select(length > 0) | "Authorization: Bearer " + .' "$work/token.json" \
+  > "$work/auth.hdr" || { echo "error: the token response has no token" >&2; exit 1; }
+
+# 2. Pick the regional host and read the tenant from the token's customer_id claim
+if [ -z "${BASE:-}" ]; then
+  if [ "$(jq -r '.region // ""' "$work/token.json")" = eu1 ]; then
+    BASE=https://eu.moose.armis.com
+  else
+    BASE=https://moose.armis.com
+  fi
+fi
+armis_host "$BASE" BASE
+tenant_id=$(jq -Rer 'sub("^Authorization: Bearer "; "") | split(".")[1]
+    | gsub("-"; "+") | gsub("_"; "/") | . + ("=" * ((4 - length % 4) % 4))
+    | @base64d | fromjson | .customer_id' "$work/auth.hdr")
+
+mkdir -p "$OUT"
+
+# 3. Get a link to one BOM, then download it through curl's stdin
+fetch() {
+  local type=$1 format=${2:-cyclonedx-1.7} file
+  if ! curl -sS --fail-with-body -G -o "$work/link.json" -H @"$work/auth.hdr" \
+      --data-urlencode "artifact_name=$REPO" --data-urlencode "type=$type" \
+      --data-urlencode "format=$format" \
+      "$BASE/api/v1/tenant/$tenant_id/artifact/bom"; then
+    jq -r '"error: " + (.detail | if type == "object" then .code + ": " + .message else tostring end)' \
+      "$work/link.json" >&2 || true
+    exit 1
+  fi
+  file="$OUT/${REPO##*/}-bom-$type.json"
+  case "$format" in spdx*) file="$OUT/${REPO##*/}-bom-$type.spdx.json" ;; esac
+  jq -er '"url = \"\(.bom[0].bom_details[0].presigned_url)\""' "$work/link.json" \
+    | curl -sSf -o "$file" -K -
+  jq -r --arg file "$file" '.bom[0].bom_details[0]
+      | "\($file): \(.type) \(.format), branch \(.branch), commit \(.scan_commit), scan \(.completed_at)"' \
+    "$work/link.json"
+}
+
+for type in sbom aibom cbom all; do
+  fetch "$type"
+done
+fetch sbom spdx-2.3
+```
+
+Run it with `ARMIS_CLIENT_ID`, `ARMIS_CLIENT_SECRET` and `REPO` set:
+
+```bash
+REPO=my-org/my-repo ./download-nightly-boms.sh
+```
+
+### Auth rules
+
+- Send `Authorization: Bearer <token>` with the route call, and nothing with the download link.
+- The token must have the developer or admin role.
+- The tenant in the path must be the token's own: its `customer_id` claim or your tenant ID. Any other tenant gets 403 `tenant_mismatch`.
+- Get a token at `POST /api/v1/auth/token` on `https://moose.armis.com`. Get a new one when it expires.
+
+### Errors
+
+| Status | `detail` | Meaning | What to do |
+|--------|----------|---------|------------|
+| 401 | "Missing or invalid Authorization header" | No bearer token was sent. | Send `Authorization: Bearer <token>`. |
+| 401 | "Invalid authentication token" | The token is not valid. | Get a new token. |
+| 401 | "Token has expired" | The token expired. | Get a new token. |
+| 403 | "Access denied: insufficient role permissions" | The credentials lack the developer or admin role. | Use credentials with one of these roles. |
+| 403 | `tenant_mismatch` | The path names another tenant. | Use the token's `customer_id` claim. |
+| 404 | "Not Found" | The download API is not on for your tenant. | Contact Armis. |
+| 404 | `scan_not_found` | No completed scan of this repository, or an unknown `scan_id`. | Check `artifact_name` against the provider's name for the repository, and check `scan_id`. |
+| 404 | `bom_not_generated` | The scan has no BOMs: it did not build them, or its BOM step failed. | Wait for the next nightly scan, or check that BOM generation is on. |
+| 404 | `bom_type_unavailable` | The scan has no valid BOM of this type in this format. | Try another format, or wait for the next scan. |
+| 404 | `bom_too_large` | The BOM is over 50 MB, so it was not stored. | None for this scan. |
+| 404 | `bom_expired` | The stored BOM expired after 30 days and was deleted. | Wait for the next scan of the repository. |
+| 409 | `scan_not_completed` | `scan_id` names a scan that has not completed. | Wait, or leave out `scan_id`. |
+| 422 | A list of validation errors | A missing or unknown query value. | Check `artifact_name`, `type` and `format`. |
+| 422 | `export_format_unavailable` | The type is not offered in this format, such as `aibom` with SPDX. | Use CycloneDX, or `spdx-2.3` for the SBOM only. |
+| 429 | "Too many authentication failures. Try again later." | Too many failed sign-ins from your address. | Wait, then retry. |
+| 500 | "Authentication failed" or "Internal server error" | A server error. | Retry later. |
+| 502 | `storage_unavailable` | BOM storage could not be reached. | Retry later. |
+| 503 | "Authentication service temporarily unavailable" | The sign-in service is down. | Retry later. |
 
 ## BOMs with a security scan: `scan --bom`
 
@@ -746,7 +955,7 @@ jq -er '"url = \"\(.results.aibom_results)\""' "$work/results.json" | curl -sSf 
 
 Run it with `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` set. It needs bash, curl 7.55 or later (for `-H @file`) and jq 1.6 or later.
 
-The API reference also lists `GET /api/v1/tenant/{tenant_id}/artifact/bom`. It is off by default and answers 404 while it is off for your tenant.
+To download the BOMs of the nightly scans of connected repositories, see [Download the BOMs of your nightly scans](#download-the-boms-of-your-nightly-scans).
 
 ## Limits
 
@@ -802,7 +1011,7 @@ A BOM does not contain source code files, private keys or prompt text. Agent-ins
 
 ### Access
 
-With API credentials, the token is tied to your tenant: the API returns status, results and download links only for your tenant's scans. Download links expire 15 minutes after the results call. A link works for whoever holds it until it expires, so treat it as a secret.
+With API credentials, the token is tied to your tenant: the API returns status, results and download links only for your tenant's scans. Download links expire 15 minutes after the results call; links from the BOM download API expire after one hour. A link works for whoever holds it until it expires, so treat it as a secret.
 
 ## Troubleshooting
 

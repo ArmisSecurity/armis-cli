@@ -576,6 +576,8 @@ Notes:
 
 For the full guide, with formats, output files, warnings, CI examples, how to read the files and the API flow, see the [BOM Guide](docs/BOM.md).
 
+To download the BOMs of the nightly scans of your connected repositories, see [Download the BOMs of your nightly scans](docs/BOM.md#download-the-boms-of-your-nightly-scans).
+
 `--bom` downloads the BOMs (bills of materials) that Armis builds during the
 scan, one file per type. BOM generation must be enabled for your tenant; on a
 tenant without it, each requested type prints a "not available" warning, and
