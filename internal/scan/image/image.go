@@ -277,7 +277,10 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 		}
 	}
 	fetchSpinner.Stop()
-	if err != nil {
+	// No result entry at all is decided once the skip reason is known: a
+	// skipped scanner explains it, anything else means the results are gone.
+	noResults := errors.Is(err, api.ErrNoScanResults)
+	if err != nil && !noResults {
 		cli.PrintWarningf("Failed to retrieve results: %v", err)
 		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
 		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
@@ -290,6 +293,10 @@ func (s *Scanner) ScanTarball(ctx context.Context, tarballPath string) (*model.S
 	skipReason, bomFailures, err := scan.DownloadArtifacts(ctx, s.client, s.tenantID, scanID, s.fileArtifactName(tarballPath), s.sbomVEXOpts)
 	if err != nil {
 		return nil, err
+	}
+	if noResults && skipReason == "" {
+		scan.WarnNoScanResults(scanID)
+		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
 	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
@@ -477,6 +484,10 @@ func determinePullBehavior(policy string, localExists bool) (shouldPull bool, er
 // isRetryableError returns true for transient errors (timeouts, network errors,
 // 5xx server errors) and false for permanent errors (4xx, decode failures).
 func isRetryableError(err error) bool {
+	// Results may land a moment after the scan reports COMPLETED.
+	if errors.Is(err, api.ErrNoScanResults) {
+		return true
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode >= 500
@@ -543,7 +554,8 @@ func convertNormalizedFindings(normalizedFindings []model.NormalizedFinding, deb
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d JSON Marshal Error: %v ===\n\n", i+1, err)
 			} else {
-				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, string(rawJSON))
+				// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+				fmt.Fprintf(os.Stderr, "\n=== DEBUG: Finding #%d Raw JSON ===\n%s\n=== END DEBUG ===\n\n", i+1, util.MaskForDebug(rawJSON))
 			}
 		}
 

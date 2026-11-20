@@ -207,7 +207,8 @@ func scanBodyCapturingServer(t *testing.T, lastScanBody *[]byte, mu *sync.Mutex)
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
 			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
-				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
+				// A clean scan still gets its own entry, as on the real API.
+				Data: model.NormalizedResultsData{TenantID: "tenant-456", ScanResults: []model.ScanResultData{{ScanID: testScanID}}},
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
 			w.WriteHeader(http.StatusNotFound)

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -539,6 +540,61 @@ func TestClient_StartIngest(t *testing.T) {
 		for _, key := range []string{"bom_types", "bom_format", "image_ref"} {
 			if _, ok := got[key]; ok {
 				t.Errorf("expected %s to be omitted, got body: %v", key, got)
+			}
+		}
+	})
+
+	t.Run("forwards project_id and trigger to /scan when publishing", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if req.ProjectID != "p_123" {
+			t.Errorf("project_id = %q, want %q", req.ProjectID, "p_123")
+		}
+		if req.Trigger != "cli_ci" {
+			t.Errorf("trigger = %q, want %q", req.Trigger, "cli_ci")
+		}
+	})
+
+	t.Run("omits project_id and trigger for a local scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		// A scan that is not published must send no project fields at all.
+		for _, key := range []string{"project_id", "trigger"} {
+			if strings.Contains(string(body), key) {
+				t.Errorf("expected %s to be omitted, got body: %s", key, body)
 			}
 		}
 	})
@@ -1123,6 +1179,56 @@ func TestClient_FetchAllNormalizedResults(t *testing.T) {
 			t.Errorf("Expected 2 API calls, got %d", callCount)
 		}
 	})
+
+	// The two shapes the API returns for a completed scan with no findings,
+	// both seen live on dev.
+	results := func(entries ...model.ScanResultData) model.NormalizedResultsResponse {
+		return model.NormalizedResultsResponse{Data: model.NormalizedResultsData{ScanResults: entries}}
+	}
+	tests := []struct {
+		name    string
+		pages   []model.NormalizedResultsResponse
+		wantErr bool
+	}{
+		{
+			name:  "a clean scan has an entry with no findings",
+			pages: []model.NormalizedResultsResponse{results(model.ScanResultData{ScanID: "scan-456", Findings: []model.NormalizedFinding{}})},
+		},
+		{
+			name:    "no entry at all means the results are unavailable, not clean",
+			pages:   []model.NormalizedResultsResponse{results()},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				testutil.JSONResponse(t, w, http.StatusOK, tt.pages[0])
+			})
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+			client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+			if err != nil {
+				t.Fatalf("NewClient failed: %v", err)
+			}
+
+			findings, err := client.FetchAllNormalizedResults(context.Background(), "tenant-123", "scan-456", 100)
+			if tt.wantErr {
+				if !errors.Is(err, ErrNoScanResults) {
+					t.Fatalf("err = %v, want ErrNoScanResults", err)
+				}
+				if !strings.Contains(err.Error(), "scan-456") {
+					t.Errorf("the error should name the scan: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FetchAllNormalizedResults failed: %v", err)
+			}
+			if len(findings) != 0 {
+				t.Errorf("got %d findings, want 0", len(findings))
+			}
+		})
+	}
 }
 
 func TestFormatBytes(t *testing.T) {
@@ -1184,6 +1290,84 @@ func TestClient_GetScanResult(t *testing.T) {
 			t.Errorf("Expected status '%s', got %s", statusCompletedLower, result.Status)
 		}
 	})
+}
+
+// TestClient_StartIngest_DebugLogsProjectFields: --debug shows whether a scan
+// was sent with a project, which is what a backend integration needs to see.
+// Not parallel: it captures the process-wide stderr.
+func TestClient_StartIngest_DebugLogsProjectFields(t *testing.T) {
+	srv, _ := newIngestFlowServer(t)
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	// The mock only checks that an Authorization header is present, so any
+	// placeholder value works; none is hard-coded.
+	client, err := NewClient(srv.URL, testutil.NewTestAuthProvider(t.Name()), true, time.Minute,
+		WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	ingest := func(projectID, trigger string) string {
+		return testutil.CaptureStderr(t, func() {
+			if _, err := client.StartIngest(context.Background(), IngestOptions{
+				TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+				Data: bytes.NewReader([]byte("test")), Size: 4,
+				ProjectID: projectID, Trigger: trigger,
+			}); err != nil {
+				t.Errorf("StartIngest failed: %v", err)
+			}
+		})
+	}
+
+	if out := ingest("p_123", "cli_ci"); !strings.Contains(out, "[DEBUG] /ingest/scan scan_id="+testScanID+" project_id=p_123 trigger=cli_ci") {
+		t.Errorf("debug output should name the project fields, got:\n%s", out)
+	}
+	if out := ingest("", ""); strings.Contains(out, "project_id=") {
+		t.Errorf("an unpublished scan should log no project fields, got:\n%s", out)
+	}
+}
+
+func TestClient_DebugModeRedactsPresignedURLs(t *testing.T) {
+	// The results API hands back presigned S3 URLs carrying a signature and a
+	// session token (seen on dev); --debug output can land in a CI log, so the
+	// dump must not let a reader fetch the results.
+	const signature, token = "EXAMPLEsignature%3D", "EXAMPLEsessiontoken%2F%2F" // #nosec G101 -- synthetic test fixture, not a credential
+	server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		testutil.JSONResponse(t, w, http.StatusOK, ArtifactScanResultsResponse{
+			ScanStatus: "COMPLETED",
+			Results: map[string]string{
+				"all_results": "https://bucket.s3.amazonaws.com/ingest/t/s/results/x.json?AWSAccessKeyId=EXAMPLEACCESSKEYID&Signature=" + signature + "&x-amz-security-token=" + token + "&Expires=1794561080",
+			},
+		})
+	})
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+	client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), true, 0, WithHTTPClient(httpClient))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	var results *ArtifactScanResultsResponse
+	stderr := testutil.CaptureStderr(t, func() {
+		results, err = client.FetchArtifactScanResults(context.Background(), "tenant-123", "scan-456")
+	})
+	if err != nil {
+		t.Fatalf("FetchArtifactScanResults failed: %v", err)
+	}
+	if !strings.Contains(stderr, "Artifact Scan Results API Response") {
+		t.Fatalf("expected a debug dump, got:\n%s", stderr)
+	}
+	for _, leaked := range []string{signature, token, "EXAMPLEACCESSKEYID"} {
+		if strings.Contains(stderr, leaked) {
+			t.Errorf("debug output leaks %q:\n%s", leaked, stderr)
+		}
+	}
+	if !strings.Contains(stderr, "Signature=REDACTED") {
+		t.Errorf("debug output should show the redacted parameter:\n%s", stderr)
+	}
+	// Only the dump is redacted: the URL the CLI downloads from is intact.
+	if !strings.Contains(results.Results["all_results"], signature) {
+		t.Error("the parsed URL must keep its signature")
+	}
 }
 
 func TestClient_DebugMode(t *testing.T) {
@@ -1917,6 +2101,53 @@ func TestClient_WaitForIngest(t *testing.T) {
 			t.Fatal("Expected error for failed status check")
 		}
 	})
+
+	// A failed poll is not a failed scan (seen live on dev: one status call
+	// outlived the client timeout and the scan then completed).
+	pollTests := []struct {
+		name      string
+		failures  int // polls that fail before the scan reports COMPLETED
+		failWith  int // HTTP status of a failing poll
+		wantErr   bool
+		wantPolls int32
+	}{
+		{name: "polls through a few transient failures", failures: 3, failWith: http.StatusServiceUnavailable, wantPolls: 4},
+		{name: "polls through rate limiting", failures: 2, failWith: http.StatusTooManyRequests, wantPolls: 3},
+		{name: "gives up after too many failures in a row", failures: 100, failWith: http.StatusBadGateway, wantErr: true, wantPolls: maxConsecutivePollErrors},
+		{name: "fails at once on a client error", failures: 100, failWith: http.StatusUnauthorized, wantErr: true, wantPolls: 1},
+	}
+	for _, tt := range pollTests {
+		t.Run(tt.name, func(t *testing.T) {
+			var polls atomic.Int32
+			server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				if int(polls.Add(1)) <= tt.failures {
+					testutil.ErrorResponse(w, tt.failWith, "poll failed")
+					return
+				}
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: "scan-123", ScanStatus: "COMPLETED"}},
+				})
+			})
+			// No transport retries, so each poll is one request.
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: time.Second, DisableRetry: true})
+			client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient)) // armis:ignore cwe:798 reason:test fixture literal, not a real credential; matches existing tests in this file
+			if err != nil {
+				t.Fatalf("NewClient failed: %v", err)
+			}
+
+			status, err := client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 5*time.Millisecond, 10*time.Second, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got status %+v", status)
+				}
+			} else if err != nil || status == nil || status.ScanStatus != "COMPLETED" {
+				t.Fatalf("WaitForIngest = %+v, %v; want COMPLETED", status, err)
+			}
+			if got := polls.Load(); got != tt.wantPolls {
+				t.Errorf("polled %d times, want %d", got, tt.wantPolls)
+			}
+		})
+	}
 
 	t.Run("lowercase status handling", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {

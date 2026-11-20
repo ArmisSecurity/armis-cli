@@ -5,6 +5,7 @@ completions/
 *.log
 nohup.out
 armis-cli
+!test/scripts/stubs/armis-cli
 moose
 armis
 .idea/

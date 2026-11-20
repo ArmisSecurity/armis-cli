@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1477,7 +1478,8 @@ func TestScan(t *testing.T) {
 
 		// No WithSBOMVEXOptions call — mirrors a plain `scan repo` with no
 		// --generate-sbom/--generate-vex flags.
-		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond)
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
 
 		stderrOut := testutil.CaptureStderr(t, func() {
 			if _, err := scanner.Scan(context.Background(), tmpDir); err != nil {
@@ -1643,6 +1645,77 @@ func TestScan(t *testing.T) {
 		}
 		if incompleteErr.ScanID != testScanID {
 			t.Errorf("ScanID = %s, want scan-123", incompleteErr.ScanID)
+		}
+	})
+
+	// Seen live on dev: when a newer scan of identical content takes over the
+	// results, the API answers 200 with no result entry for this scan. That
+	// must fail the gate closed (exit 2), not report a clean scan.
+	t.Run("a completed scan with no results entry is not reported as clean", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0600); err != nil {
+			t.Fatalf("failed to create main.go: %v", err)
+		}
+
+		var resultsCalls atomic.Int32
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+				scheme := testhelpers.SchemeFromRequest(r)
+				testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+					ScanID:       testScanID,
+					ArtifactType: "repo",
+					TenantID:     "tenant-456",
+					PresignedURL: scheme + "://" + r.Host + "/_s3/upload",
+					Fields: map[string]string{
+						"key": "ingest/tenant-456/" + testScanID + "/test.tar.gz",
+					},
+					MaxUploadBytes: 2 << 30,
+					ExpiresIn:      1800,
+				})
+			case strings.HasPrefix(r.URL.Path, "/_s3/"):
+				testutil.AssertValidS3Upload(t, r)
+				w.WriteHeader(http.StatusNoContent)
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+					ScanID: testScanID, ScanStatus: "INITIATED",
+				})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+					Data: []model.IngestStatusData{{ScanID: testScanID, ScanStatus: "completed"}},
+				})
+			case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
+				resultsCalls.Add(1)
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
+					Data: model.NormalizedResultsData{TenantID: "tenant-456", ScanResults: []model.ScanResultData{}},
+				})
+			}
+		})
+
+		httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, RetryMax: 1, RetryWaitMin: 10 * time.Millisecond, RetryWaitMax: 50 * time.Millisecond})
+		uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+		apiClient, err := api.NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 1*time.Minute,
+			api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+		scanner := NewScanner(apiClient, true, "tenant-456", 100, true, 1*time.Minute, false).
+			WithPollInterval(10 * time.Millisecond).
+			WithFetchRetryInterval(10 * time.Millisecond)
+
+		var result *model.ScanResult
+		stderr := testutil.CaptureStderr(t, func() {
+			result, err = scanner.Scan(context.Background(), tmpDir)
+		})
+		var incompleteErr *output.ErrResultsIncomplete
+		if !errors.As(err, &incompleteErr) {
+			t.Fatalf("expected ErrResultsIncomplete, got: %T: %v (result %+v)", err, err, result)
+		}
+		if got := resultsCalls.Load(); got != 5 {
+			t.Errorf("results were fetched %d times, want 5 (the results may land just after COMPLETED)", got)
+		}
+		if !strings.Contains(stderr, "not reported as clean") || strings.Contains(stderr, "Results are available") {
+			t.Errorf("the warning should say the scan is not clean, and not that results are available:\n%s", stderr)
 		}
 	})
 }

@@ -325,6 +325,10 @@ type IngestOptions struct {
 	RepoName  string
 	GitSHA    string
 	OriginSHA string
+	// ProjectID and Trigger publish the scan as a run of an AppSec project.
+	// Empty strings are omitted from the /scan request body.
+	ProjectID string
+	Trigger   string
 	// BOMTypes and BOMFormat request BOMs (--bom, --bom-format). Empty values
 	// are omitted from the /scan request body.
 	BOMTypes  []string
@@ -571,11 +575,17 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		RepoName:     opts.RepoName,
 		GitSHA:       opts.GitSHA,
 		OriginSHA:    opts.OriginSHA,
+		ProjectID:    opts.ProjectID,
+		Trigger:      opts.Trigger,
 		BOMTypes:     opts.BOMTypes,
 		BOMFormat:    opts.BOMFormat,
 		ImageRef:     opts.ImageRef,
 
 		IncludeSBOMFiles: opts.IncludeSBOMFiles,
+	}
+	if c.debug && (opts.ProjectID != "" || opts.Trigger != "") {
+		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s\n",
+			scanID, opts.ProjectID, opts.Trigger)
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -759,8 +769,26 @@ func (c *Client) GetIngestStatus(ctx context.Context, tenantID, scanID string) (
 	return &result, nil
 }
 
+// maxConsecutivePollErrors bounds how many status polls in a row may fail
+// before WaitForIngest gives up. A failed poll is not a failed scan: the server
+// finishes the scan either way, and on dev a single status call that outlived
+// the client timeout used to fail a scan that then completed.
+const maxConsecutivePollErrors = 5
+
+// isTransientPollError reports whether a failed status poll is worth repeating:
+// a transport error, a timeout, a server error or rate limiting. Any other API
+// answer (bad credentials, unknown scan) will not change on the next poll.
+func isTransientPollError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= http.StatusInternalServerError || apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	return true
+}
+
 // WaitForIngest polls until the ingestion is complete or times out.
 // If onStatus is non-nil, it is called on each poll with the current status.
+// Up to maxConsecutivePollErrors transient poll failures in a row are retried.
 func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pollInterval time.Duration, timeout time.Duration, onStatus StatusCallback) (*model.IngestStatusData, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
@@ -772,18 +800,37 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	// doneErr is the result once timeoutCtx is done: the scan timed out or the
+	// caller cancelled.
+	doneErr := func() error {
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("scan %s (tenant %s) timed out after %v", scanID, tenantID, timeout)
+		}
+		return timeoutCtx.Err()
+	}
+
+	failedPolls := 0
 	for {
 		select {
 		case <-timeoutCtx.Done():
-			if timeoutCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("scan %s (tenant %s) timed out after %v", scanID, tenantID, timeout)
-			}
-			return nil, timeoutCtx.Err()
+			return nil, doneErr()
 		case <-ticker.C:
 			statusResp, err := c.GetIngestStatus(timeoutCtx, tenantID, scanID)
 			if err != nil {
+				if timeoutCtx.Err() != nil {
+					return nil, doneErr()
+				}
+				failedPolls++
+				if isTransientPollError(err) && failedPolls < maxConsecutivePollErrors {
+					if c.debug {
+						fmt.Fprintf(os.Stderr, "[DEBUG] status poll %d of %d for scan %s failed, polling again: %v\n",
+							failedPolls, maxConsecutivePollErrors, scanID, err)
+					}
+					continue
+				}
 				return nil, fmt.Errorf("failed to check scan status: %w", err)
 			}
+			failedPolls = 0
 
 			if len(statusResp.Data) == 0 {
 				return nil, fmt.Errorf("no status data returned for scan %s", scanID)
@@ -855,7 +902,8 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	}
 
 	if c.debug {
-		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Normalized Results API Response ===\n%s\n=== END DEBUG ===\n\n", util.MaskForDebug(bodyBytes))
 	}
 
 	var result model.NormalizedResultsResponse
@@ -866,10 +914,19 @@ func (c *Client) FetchNormalizedResults(ctx context.Context, tenantID, scanID st
 	return &result, nil
 }
 
+// ErrNoScanResults means the results API returned no result entry at all for a
+// completed scan. A scan with no findings still gets an entry, with an empty
+// findings list, so an empty response means the results are unavailable and
+// must not be reported as a clean scan. Seen on dev when a newer scan of
+// identical content (same folder name and files) took over the results.
+var ErrNoScanResults = errors.New("the API returned no results for this scan")
+
 // FetchAllNormalizedResults retrieves all normalized scan results with pagination.
+// It returns ErrNoScanResults when no page holds a result entry for the scan.
 func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID string, pageLimit int) ([]model.NormalizedFinding, error) {
 	var allFindings []model.NormalizedFinding
 	cursor := ""
+	entries := 0
 
 	for {
 		page, err := c.FetchNormalizedResults(ctx, tenantID, scanID, pageLimit, cursor)
@@ -877,6 +934,7 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 			return nil, err
 		}
 
+		entries += len(page.Data.ScanResults)
 		for _, scanResult := range page.Data.ScanResults {
 			allFindings = append(allFindings, scanResult.Findings...)
 		}
@@ -888,6 +946,9 @@ func (c *Client) FetchAllNormalizedResults(ctx context.Context, tenantID, scanID
 		cursor = *page.Pagination.NextCursor
 	}
 
+	if entries == 0 {
+		return nil, fmt.Errorf("%w (scan %s)", ErrNoScanResults, scanID)
+	}
 	return allFindings, nil
 }
 
@@ -1148,7 +1209,8 @@ func (c *Client) FetchArtifactScanResults(ctx context.Context, tenantID, scanID 
 	}
 
 	if c.debug {
-		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", string(bodyBytes))
+		// armis:ignore cwe:532 reason:--debug dump of an API body; util.MaskForDebug redacts presigned URL credentials and masks secrets before it is printed
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Artifact Scan Results API Response ===\n%s\n=== END DEBUG ===\n\n", util.MaskForDebug(bodyBytes))
 	}
 
 	if resp.StatusCode != http.StatusOK {

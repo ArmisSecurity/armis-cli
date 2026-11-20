@@ -60,6 +60,10 @@ inputs:
     description: 'Comma-separated list of file paths to scan (relative to repository root)'
     required: false
     default: ''
+  project:
+    description: 'Publish the scan to this Armis AppSec project, created on first use (repo scans only). Empty keeps the scan local-only.'
+    required: false
+    default: ''
   build-from-source:
     description: 'Build CLI from source instead of downloading release (for testing)'
     required: false
@@ -176,6 +180,7 @@ runs:
         IMAGE_TARBALL: ${{ inputs.image-tarball }}
         OUTPUT_FILE: ${{ inputs.output-file }}
         INCLUDE_FILES: ${{ inputs.include-files }}
+        PROJECT: ${{ inputs.project }}
       run: |
         set +e
 
@@ -241,6 +246,15 @@ runs:
 
         if [ -n "$INCLUDE_FILES" ]; then
           SCAN_ARGS+=("--include-files" "$INCLUDE_FILES")
+        fi
+
+        # Publish to a project (repo scans only). The CLI validates the name.
+        if [ -n "$PROJECT" ]; then
+          if [ "$SCAN_TYPE" != "repo" ]; then
+            echo "Error: 'project' is only supported for repo scans."
+            exit 1
+          fi
+          SCAN_ARGS+=("--project" "$PROJECT")
         fi
 
         # Execute command safely without eval

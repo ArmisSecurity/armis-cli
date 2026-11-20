@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint lint-clean scan help tools coverage release try-fleet
+.PHONY: build install clean test test-scripts lint lint-clean scan help tools coverage release try-fleet
 
 BINARY_NAME=armis-cli
 BUILD_DIR=bin
@@ -14,6 +14,7 @@ help:
 	@echo "  install    - Install the binary to $(INSTALL_DIR)"
 	@echo "  clean      - Remove build artifacts"
 	@echo "  test       - Run tests with coverage"
+	@echo "  test-scripts - Run the shell script tests (needs bats and shellcheck; macOS)"
 	@echo "  coverage   - Show coverage report"
 	@echo "  lint       - Run linters"
 	@echo "  lint-clean - Clear the golangci-lint cache, then run linters"
@@ -64,6 +65,11 @@ coverage:
 tools:
 	@echo "Installing dev tools..."
 	go install gotest.tools/gotestsum@v1.13.0
+
+# scripts/enterprise-setup.sh targets macOS and its stock bash 3.2; run the tests there.
+test-scripts:
+	shellcheck -s bash scripts/enterprise-setup.sh
+	bats test/scripts
 
 lint:
 	@echo "Running linters..."

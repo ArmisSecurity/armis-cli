@@ -102,6 +102,21 @@ jobs:
           try { .\scripts\install.ps1 -Version "not-a-version" } catch { $message = $_.Exception.Message }
           if ($message -notmatch "Invalid version format") { throw "expected 'Invalid version format' error, got: $message" }
 
+  # scripts/enterprise-setup.sh runs on macOS with the stock bash 3.2, so it is
+  # tested only there. The tests fake armis-cli, curl and sudo and use a temporary HOME.
+  script-tests-macos:
+    name: Script tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install bats and shellcheck
+        run: brew install bats-core shellcheck
+
+      - name: Shellcheck and bats
+        run: make test-scripts
+
   lint:
     uses: ./.github/workflows/reusable-lint.yml
 

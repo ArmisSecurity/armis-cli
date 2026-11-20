@@ -251,7 +251,7 @@ func newScanBodyServer(t *testing.T) (*httptest.Server, func() map[string]any) {
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
 			testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
-				Data: model.NormalizedResultsData{TenantID: "tenant-456"},
+				Data: model.NormalizedResultsData{TenantID: "tenant-456", ScanResults: []model.ScanResultData{{ScanID: "scan-123"}}},
 			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
 			testutil.JSONResponse(t, w, http.StatusOK, api.ArtifactScanResultsResponse{ScanStatus: "COMPLETED", Results: map[string]string{}})

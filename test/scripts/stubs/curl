@@ -1,0 +1,33 @@
+#!/bin/bash
+# Fake curl: answers reachability probes and serves a fake installer.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="${STUB_LOG:?}"
+url="" out="" probe=0
+while [ $# -gt 0 ]; do
+    case $1 in
+        -o) out=$2; shift ;;
+        -w) probe=1; shift ;;
+        http*) url=$1 ;;
+    esac
+    shift
+done
+printf '%s\n' "$url" >> "$LOG/curl.urls"
+if [ "$probe" = 1 ]; then
+    case $url in
+        */releases/latest)
+            [ "${STUB_CURL_FAIL:-0}" != 1 ] || exit 7
+            printf '%s' "${url%/latest}/tag/v${STUB_LATEST:-1.28.0}"; exit 0 ;;
+    esac
+    if [ "${STUB_CURL_FAIL:-0}" = 1 ]; then printf '000'; exit 7; fi
+    printf '200'; exit 0
+fi
+cat > "$out" <<INSTALLER
+#!/bin/bash
+if [ "\${STUB_CHECKSUM_FAIL:-0}" = 1 ]; then echo "❌ Checksum verification failed!"; exit 1; fi
+if [ "\${STUB_SIGNATURE_FAIL:-0}" = 1 ]; then echo "❌ Signature verification failed:"; exit 1; fi
+mkdir -p "\$INSTALL_DIR"
+cp "$DIR/armis-cli" "\$INSTALL_DIR/armis-cli"
+cp "$DIR/merge.js" "\$INSTALL_DIR/merge.js"
+chmod 755 "\$INSTALL_DIR/armis-cli"
+if [ "\${STUB_COSIGN_OK:-0}" = 1 ]; then echo "🔐 Verifying signature with cosign..."; else echo "ℹ️  cosign not found, verifying checksums only"; fi
+INSTALLER

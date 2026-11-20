@@ -105,6 +105,22 @@ export ARMIS_DEFAULT_AUTH_METHOD="SSO"
 export ARMIS_REGION="eu1"
 ```
 
+To do the whole rollout (CLI, MCP server in every detected editor, and the
+variables above) in one step, run `scripts/enterprise-setup.sh` as root from
+your MDM (macOS) with `ARMIS_AUTH_MODE=sso`:
+
+```bash
+ARMIS_AUTH_MODE="sso" ARMIS_TENANT_ID="acme" ARMIS_CLI_VERSION="1.27.0" \
+    ./scripts/enterprise-setup.sh --non-interactive
+```
+
+Pin `ARMIS_CLI_VERSION` so every machine gets the same reviewed release, and set
+`ARMIS_INSTALLER_URL` to an internal mirror if endpoints cannot reach GitHub.
+The MCP server needs Python 3.11+ on each developer's `PATH`. Use
+`ARMIS_SSO_LOGIN=now` to open the sign-in page in the logged-in user's session.
+See [ENTERPRISE-DEPLOYMENT.md](ENTERPRISE-DEPLOYMENT.md) for every option, the
+report format and uninstall.
+
 The first Armis command a developer runs then opens the browser for sign-in
 (they can also run `armis-cli auth login`). The session is shared across
 `armis-cli` and the Armis MCP plugins, and tokens refresh silently.

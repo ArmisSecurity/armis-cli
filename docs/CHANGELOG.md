@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis does not record CLI scans as project runs yet; until it does, the scan does not appear under the project, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
+- `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
+- `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
+- `armis-cli scan <path>` is a shorthand for `armis-cli scan repo <path>` and takes the same flags. (PPSC-1589)
+- The GitHub Action has a `project` input. (PPSC-1589)
+- `scan repo --include-sbom-files N` scans up to N CycloneDX/SPDX files kept in the repository for vulnerabilities, alongside the code, and warns (without changing the exit code) when some SBOM files were skipped (#370)
+
+### Changed
+
+- `armis-cli scan <path>` now scans the folder. It used to print help and exit 0 without scanning, which passed CI steps silently. `armis-cli scan` given flags but no path now fails instead of exiting 0. (PPSC-1589)
+- CI detection now recognizes Azure Pipelines (`TF_BUILD`), AWS CodeBuild, TeamCity, Buildkite, Bamboo, Drone, Semaphore, AppVeyor, Bitrise and GoCD, and treats `CI` set to `false`, `0`, `no` or `off` as not CI. `AZURE_PIPELINES` no longer marks a CI run: no runner sets it, and Azure Pipelines is detected through `TF_BUILD`. (PPSC-1589)
+- Spinners and the upload progress bar animate only when stderr is a terminal. Otherwise each step is printed once, as in CI, instead of filling a redirected log with redraws. (PPSC-1589)
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
+- A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
+- On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
+- `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
+
+### Security
+
+- `--debug` no longer prints the credentials of the presigned S3 URLs the results API returns (access key id, signature, session token). It also masks secrets in the API bodies and finding JSON it dumps, as the regular output does. (PPSC-1589)
+
+---
+
+## [1.28.0] - 2026-11-19
+
+### Added
+
 - `scan repo`/`scan image`/`bom repo`/`bom image`: a BOM written while BOM tools failed on the server (`bom_summary.failed_tools`) now prints `BOM tools failed on the server: <tools>; <types> may be incomplete` after the BOM lines, instead of passing silently. The exit code does not change.
 - `bom repo`/`bom image`: new commands build BOMs without a security scan and download them, which takes less time than `scan repo|image --bom`. The upload, file names and `.armis` default are those of `--bom`; there is no findings report and no `--fail-on`. BOM generation must be enabled for the tenant: without it, the server refuses the request (`bom_generation_disabled`) and the command exits 1, while `scan --bom` keeps running the scan and warning per type. The ingest request carries `scan_type: "bom"`.
 - `bom repo`/`bom image`: new `--type` flag takes `sbom`, `aibom`, `cbom` or `all`, comma-separated or repeated; the default is `all`, the combined BOM. A refused pair with the default says `--type all (the default)`.
@@ -16,13 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bom repo`/`bom image`: exit codes are 0 when at least one BOM was written and none failed to download, 2 when no BOM was written or a built BOM could not be downloaded, 1 on errors and 130 on Ctrl+C.
 - `bom repo`/`bom image`: a server without BOM-only scans, which rejects `scan_type` with a list of values that leaves out `bom`, exits 1 with `run: armis-cli scan repo|image <target> ... --bom <types> ...`, the matching `scan --bom` command, which runs a security scan as well. It names the target, the `--tenant-id`, `--region`, `--dev`, `--scan-timeout` and `--upload-timeout` flags typed, `--include-files`, `--include-tests` or `--pull`, the format and the output directory given, and single-quotes only values a shell would read differently, for sh, bash and zsh, or for PowerShell on Windows (cmd.exe is not supported). Credentials and values from the environment are left out of the line, so it uses those of the shell it is pasted into; a value with a control character is shown as a placeholder such as `<path>`. A `scan_type` refusal whose message names `bom` exits 1 with that message instead.
 - `bom repo`: takes `--include-files` and `--include-tests`, and sends the git hints `scan repo` sends (`repo_name`, `git_sha`, `origin_sha` for a full upload of a checkout), so the BOMs name the repository and commit. `bom image`: takes `--pull` and `--tarball`, and sends `image_ref` as `scan image --bom` does.
-- `scan repo --include-sbom-files N` scans up to N CycloneDX/SPDX files kept in the repository for vulnerabilities, alongside the code, and warns (without changing the exit code) when some SBOM files were skipped (#370)
-
-### Changed
-
-### Deprecated
-
-### Removed
 
 ### Fixed
 
@@ -878,7 +905,8 @@ Manual entries for significant releases:
 
 -->
 
-[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...HEAD
+[Unreleased]: https://github.com/ArmisSecurity/armis-cli/compare/v1.28.0...HEAD
+[1.28.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.2...v1.26.0
 [1.25.2]: https://github.com/ArmisSecurity/armis-cli/compare/v1.25.1...v1.25.2
