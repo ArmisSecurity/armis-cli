@@ -574,6 +574,8 @@ Notes:
 
 #### BOMs (AI-BOM, CBOM, SBOM)
 
+For the full guide, with formats, output files, warnings, CI examples, how to read the files and the API flow, see the [BOM Guide](docs/BOM.md).
+
 `--bom` downloads the BOMs (bills of materials) that Armis builds during the
 scan, one file per type. BOM generation must be enabled for your tenant; on a
 tenant without it, each requested type prints a "not available" warning, and
@@ -867,6 +869,8 @@ Either way, findings are printed as a table (same shape as `scan repo` / `scan i
 > `--sbom` is a no-op on `scan sbom` (you can't generate an SBOM from an SBOM) and prints a warning if passed.
 
 ### BOMs Without a Security Scan
+
+See also the [BOM Guide](docs/BOM.md).
 
 `armis-cli bom` builds the BOMs of a repository or a container image and
 downloads them, without running a security scan, so it takes less time than
