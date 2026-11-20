@@ -1142,13 +1142,17 @@ func (r *ArtifactScanResultsResponse) SBOMScanWarning() (string, bool) {
 		return "", false
 	}
 
+	// Server text and repository file names reach the terminal, so control
+	// characters are stripped from everything not worded here.
 	var reasons []string
 	for _, reason := range r.SBOMScanReasons {
 		text, ok := sbomSkipReasonText[reason]
 		if !ok {
-			text = strings.ReplaceAll(reason, "_", " ")
+			text = util.StripControl(strings.ReplaceAll(reason, "_", " "))
 		}
-		reasons = append(reasons, text)
+		if text != "" {
+			reasons = append(reasons, text)
+		}
 	}
 	msg := lead
 	if len(reasons) > 0 {
@@ -1157,11 +1161,13 @@ func (r *ArtifactScanResultsResponse) SBOMScanWarning() (string, bool) {
 	msg += ". Their findings keep their previous state."
 
 	var paths []string
-	for i, f := range r.SBOMSkippedFiles {
-		if i == maxListedSkippedSBOMFiles {
+	for _, f := range r.SBOMSkippedFiles {
+		if len(paths) == maxListedSkippedSBOMFiles {
 			break
 		}
-		paths = append(paths, f.Path)
+		if path := util.StripControl(f.Path); path != "" {
+			paths = append(paths, path)
+		}
 	}
 	if len(paths) > 0 {
 		msg += " Skipped: " + strings.Join(paths, ", ")

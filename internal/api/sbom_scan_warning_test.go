@@ -107,3 +107,46 @@ func TestSBOMScanWarningNilResponse(t *testing.T) {
 		t.Errorf("nil response: got (%q, %v), want (\"\", false)", msg, ok)
 	}
 }
+
+func TestSBOMScanWarningStripsControlCharactersFromRepositoryText(t *testing.T) {
+	// A repository file name can hold terminal escapes: erase the line and move
+	// the cursor up, over the findings summary printed above the warning.
+	r := &ArtifactScanResultsResponse{
+		SBOMScanStatus:  "PARTIAL",
+		SBOMScanReasons: []string{"file_too_large", "odd\x1b[31m_reason"},
+		SBOMSkippedFiles: []SkippedSBOMFile{
+			{Path: "findings, scan clean\x1b[2K\x1b[1Abom.json", Reason: "file_too_large"},
+			{Path: "\x1b\x07\x00", Reason: "file_too_large"},
+		},
+		SBOMSkippedCount: 2,
+	}
+
+	msg, ok := r.SBOMScanWarning()
+
+	if !ok {
+		t.Fatal("expected a warning")
+	}
+	if strings.ContainsAny(msg, "\x1b\r\n") {
+		t.Fatalf("warning still holds control characters: %q", msg)
+	}
+	if !strings.Contains(msg, "bom.json") || !strings.Contains(msg, "odd") {
+		t.Fatalf("expected the cleaned path and reason in the warning, got: %q", msg)
+	}
+	if !strings.Contains(msg, "and 1 more") {
+		t.Fatalf("a path that is empty once cleaned is counted, not listed: %q", msg)
+	}
+}
+
+func TestSBOMScanWarningBoundsAVeryLongPath(t *testing.T) {
+	r := &ArtifactScanResultsResponse{
+		SBOMScanStatus:   "PARTIAL",
+		SBOMSkippedFiles: []SkippedSBOMFile{{Path: strings.Repeat("a/", 1<<20) + "bom.json"}},
+		SBOMSkippedCount: 1,
+	}
+
+	msg, _ := r.SBOMScanWarning()
+
+	if len(msg) > 1<<17 {
+		t.Fatalf("warning not bounded: %d bytes", len(msg))
+	}
+}
