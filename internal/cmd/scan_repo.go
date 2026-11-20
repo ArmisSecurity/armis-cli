@@ -24,6 +24,14 @@ var changedRef string
 // showSuppressed controls whether findings suppressed by .armisignore are displayed.
 var showSuppressed bool
 
+// includeSBOMFiles holds the value for the --include-sbom-files flag: the
+// maximum number of SBOM files to scan alongside the code (0 = flag not set).
+var includeSBOMFiles int
+
+// maxIncludeSBOMFiles is the largest --include-sbom-files value, the most SBOM
+// files the server scans for any tenant.
+const maxIncludeSBOMFiles = 1000
+
 // Project publishing flags, shared by `scan repo` and the
 // `scan <path>` shorthand.
 var (
@@ -61,6 +69,7 @@ use; a run on a developer machine is published only with --report.`,
   $ armis-cli scan repo . --changed
   $ armis-cli scan repo . --changed=staged
   $ armis-cli scan repo . --changed=main
+  $ armis-cli scan repo . --include-sbom-files 20
 
   # Publish to a project (in CI; add --report on a developer machine)
   $ armis-cli scan repo . --project checkout-service
@@ -86,6 +95,11 @@ func addRepoScanFlags(cmd *cobra.Command) {
 	// NoOptDefVal is the value used when --changed is passed without a value
 	cmd.Flags().Lookup("changed").NoOptDefVal = "uncommitted"
 	cmd.MarkFlagsMutuallyExclusive("include-files", "changed")
+	// The limit is required (no NoOptDefVal) so "--include-sbom-files 20" parses
+	// as a limit of 20 rather than as a path argument.
+	cmd.Flags().IntVar(&includeSBOMFiles, "include-sbom-files", 0,
+		"Also scan the repository's SBOM files (CycloneDX, SPDX) for vulnerabilities, "+
+			"at most N of them, 1 to 1000 (e.g., --include-sbom-files 20). The server may apply a lower limit")
 
 	cmd.Flags().StringVar(&projectName, "project", "",
 		"AppSec project to publish the scan to, created on first use (1-64 letters, digits, '.', '_', '-', '/'). "+
@@ -120,6 +134,9 @@ func (e *scanTargetError) Unwrap() error { return e.Err }
 // runRepoScan is the RunE of `scan repo` and of the `scan <path>` shorthand.
 func runRepoScan(cmd *cobra.Command, args []string) error {
 	repoPath := repoArg(args)
+	if err := validateIncludeSBOMFiles(cmd); err != nil {
+		return err
+	}
 
 	// Check the publishing flags first, so an invalid --project fails before
 	// anything is read, authenticated or uploaded.
@@ -185,6 +202,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	scanner := repo.NewScanner(client, noProgress, tid, limit, includeTests, scanTimeoutDuration, includeNonExploitable)
 	if pollInterval > 0 {
 		scanner = scanner.WithPollInterval(pollInterval)
+	}
+	if includeSBOMFiles > 0 {
+		scanner = scanner.WithSBOMFiles(includeSBOMFiles)
 	}
 
 	warnOnUnusedSBOMVEXFlags()
@@ -394,4 +414,17 @@ func parseIncludeFiles(repoPath string) (*repo.FileList, error) {
 func init() {
 	addRepoScanFlags(scanRepoCmd)
 	scanCmd.AddCommand(scanRepoCmd)
+}
+
+// validateIncludeSBOMFiles rejects a --include-sbom-files limit outside 1 to
+// maxIncludeSBOMFiles before any network call.
+func validateIncludeSBOMFiles(cmd *cobra.Command) error {
+	if !cmd.Flags().Changed("include-sbom-files") {
+		return nil
+	}
+	if includeSBOMFiles < 1 || includeSBOMFiles > maxIncludeSBOMFiles {
+		return fmt.Errorf("invalid --include-sbom-files value %d: must be between 1 and %d",
+			includeSBOMFiles, maxIncludeSBOMFiles)
+	}
+	return nil
 }

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
 - `armis-cli scan <path>` is a shorthand for `armis-cli scan repo <path>` and takes the same flags. (PPSC-1589)
 - The GitHub Action has a `project` input. (PPSC-1589)
+- `scan repo --include-sbom-files N` scans up to N CycloneDX/SPDX files kept in the repository for vulnerabilities, alongside the code, and warns (without changing the exit code) when some SBOM files were skipped (#370)
 
 ### Changed
 
