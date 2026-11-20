@@ -697,7 +697,7 @@ Repositories sometimes keep SBOM documents, for example one per product release.
 armis-cli scan repo . --include-sbom-files 20
 ```
 
-- `N` is required and is the most SBOM files to scan (at least 1). The server
+- `N` is required and is the most SBOM files to scan (1 to 1000). The server
   may apply a lower limit for your tenant.
 - Only real SBOMs are scanned: CycloneDX (JSON or XML) and SPDX (JSON or
   tag-value), recognized by their format. Other JSON/XML files are scanned as

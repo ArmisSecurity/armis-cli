@@ -129,8 +129,8 @@ func TestScanRepoRunE_WithoutTheFlagNoSBOMFieldIsSent(t *testing.T) {
 	}
 }
 
-func TestScanRepoRunE_IncludeSBOMFilesBelowOneIsRejected(t *testing.T) {
-	for _, value := range []string{"0", "-3"} {
+func TestScanRepoRunE_IncludeSBOMFilesOutOfRangeIsRejected(t *testing.T) {
+	for _, value := range []string{"0", "-3", "1001", "2147483647"} {
 		t.Run(value, func(t *testing.T) {
 			t.Cleanup(func() { resetIncludeSBOMFilesFlag(t) })
 			if err := scanRepoCmd.Flags().Set("include-sbom-files", value); err != nil {
@@ -176,5 +176,16 @@ func TestIncludeSBOMFilesIsARepoOnlyFlag(t *testing.T) {
 	}
 	if scanCmd.PersistentFlags().Lookup("include-sbom-files") != nil {
 		t.Error("--include-sbom-files must not be shared by every scan subcommand")
+	}
+}
+
+func TestIncludeSBOMFilesAcceptsTheServerMaximum(t *testing.T) {
+	t.Cleanup(func() { resetIncludeSBOMFilesFlag(t) })
+	if err := scanRepoCmd.Flags().Set("include-sbom-files", "1000"); err != nil {
+		t.Fatalf("set flag: %v", err)
+	}
+
+	if err := validateIncludeSBOMFiles(scanRepoCmd); err != nil {
+		t.Fatalf("expected 1000 to be accepted, got: %v", err)
 	}
 }
