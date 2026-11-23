@@ -150,3 +150,39 @@ func TestSBOMScanWarningBoundsAVeryLongPath(t *testing.T) {
 		t.Fatalf("warning not bounded: %d bytes", len(msg))
 	}
 }
+
+func TestSBOMScanWarningWhenOnlyTheDetectionLimitWasHit(t *testing.T) {
+	r := &ArtifactScanResultsResponse{
+		SBOMScanStatus:  "PARTIAL",
+		SBOMScanReasons: []string{"detection_limit_reached"},
+	}
+
+	msg, ok := r.SBOMScanWarning()
+
+	if !ok {
+		t.Fatal("expected a warning")
+	}
+	want := "SBOM scan incomplete: not every file was checked for SBOMs, so some " +
+		"SBOM files may not have been scanned. Their findings keep their previous state."
+	if msg != want {
+		t.Fatalf("got  %q\nwant %q", msg, want)
+	}
+}
+
+func TestSBOMScanWarningWithSkippedFilesAndTheDetectionLimit(t *testing.T) {
+	r := &ArtifactScanResultsResponse{
+		SBOMScanStatus:   "PARTIAL",
+		SBOMScanReasons:  []string{"detection_limit_reached", "file_limit_exceeded"},
+		SBOMSkippedFiles: []SkippedSBOMFile{{Path: "z/bom.json", Reason: "file_limit_exceeded"}},
+		SBOMSkippedCount: 1,
+	}
+
+	msg, _ := r.SBOMScanWarning()
+
+	want := "SBOM scan incomplete: 1 SBOM file(s) were not scanned (not every file was " +
+		"checked for SBOMs, over the SBOM file limit). Their findings keep their previous " +
+		"state. Skipped: z/bom.json"
+	if msg != want {
+		t.Fatalf("got  %q\nwant %q", msg, want)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -1116,12 +1117,18 @@ func (r *ArtifactScanResultsResponse) SkipMessage() (string, bool) {
 
 // sbomSkipReasonText turns the backend's SBOM skip reasons into user wording.
 var sbomSkipReasonText = map[string]string{
-	"file_limit_exceeded": "over the SBOM file limit",
-	"file_too_large":      "too large",
-	"grype_timeout":       "timed out",
-	"grype_error":         "could not be scanned",
-	"conversion_failed":   "could not be read",
+	"file_limit_exceeded":    "over the SBOM file limit",
+	"file_too_large":         "too large",
+	"grype_timeout":          "timed out",
+	"grype_error":            "could not be scanned",
+	"conversion_failed":      "could not be read",
+	sbomDetectionLimitReason: "not every file was checked for SBOMs",
 }
+
+// sbomDetectionLimitReason is the reason the backend sends when it stopped
+// looking for SBOM files early: SBOMs it never reached are not counted as
+// skipped, so the skipped count alone can be 0.
+const sbomDetectionLimitReason = "detection_limit_reached"
 
 // maxListedSkippedSBOMFiles caps how many skipped SBOM paths the warning names.
 const maxListedSkippedSBOMFiles = 5
@@ -1135,6 +1142,10 @@ func (r *ArtifactScanResultsResponse) SBOMScanWarning() (string, bool) {
 	var lead string
 	switch strings.ToUpper(r.SBOMScanStatus) {
 	case "PARTIAL":
+		if r.SBOMSkippedCount == 0 && slices.Contains(r.SBOMScanReasons, sbomDetectionLimitReason) {
+			return "SBOM scan incomplete: not every file was checked for SBOMs, so some " +
+				"SBOM files may not have been scanned. Their findings keep their previous state.", true
+		}
 		lead = fmt.Sprintf("SBOM scan incomplete: %d SBOM file(s) were not scanned", r.SBOMSkippedCount)
 	case "FAILED":
 		lead = "SBOM scan failed: none of the SBOM files could be scanned"

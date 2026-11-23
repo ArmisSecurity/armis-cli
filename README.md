@@ -706,6 +706,8 @@ armis-cli scan repo . --include-sbom-files 20
   scanned. When any SBOM is skipped (over the limit, too large, timed out), the
   CLI prints a warning naming the skipped files; their findings keep their
   previous state. The exit code is not affected.
+- In a very large repository the server may stop looking for SBOMs early; the
+  warning then says not every file was checked for SBOMs.
 - Without the flag, SBOM files in the repository are not scanned for
   vulnerabilities.
 - Not to be confused with `--sbom`, which *generates* an SBOM of the scanned
