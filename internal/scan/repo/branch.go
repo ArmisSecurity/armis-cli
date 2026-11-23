@@ -11,7 +11,7 @@ const maxBranchLength = 255
 // ciBranchVars are the CI variables that name the branch a pipeline builds,
 // most specific first: a pull or merge request's source branch before the
 // branch a build ran on. A value may be a full ref ("refs/heads/main").
-// GitHub Actions' own come first, in ciBranch.
+// GitHub Actions' own come first, and Jenkins' last, in ciBranch.
 var ciBranchVars = []string{
 	"CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",    // GitLab, merge request pipelines
 	"CI_COMMIT_BRANCH",                       // GitLab, branch pipelines
@@ -30,17 +30,32 @@ var ciBranchVars = []string{
 	"APPVEYOR_PULL_REQUEST_HEAD_REPO_BRANCH", // AppVeyor, pull requests
 	"APPVEYOR_REPO_BRANCH",                   // AppVeyor
 	"BITRISE_GIT_BRANCH",                     // Bitrise
-	"BRANCH_NAME",                            // Jenkins multibranch pipelines
 }
 
-// jenkinsGitBranch names the remote branch a Jenkins git checkout built, such
-// as "origin/main".
-const jenkinsGitBranch = "GIT_BRANCH"
+// The Jenkins variables jenkinsBranch reads.
+const (
+	// jenkinsChangeBranch names a change request's source branch, in a
+	// multibranch build of a pull request.
+	jenkinsChangeBranch = "CHANGE_BRANCH"
+	// jenkinsChangeID is set in a multibranch build of a change request.
+	jenkinsChangeID = "CHANGE_ID"
+	// jenkinsTagName is set in a multibranch build of a tag.
+	jenkinsTagName = "TAG_NAME"
+	// jenkinsBranchName names what a multibranch build builds: a branch, a
+	// change request ("PR-12") or a tag.
+	jenkinsBranchName = "BRANCH_NAME"
+	// jenkinsGitBranch names the remote branch a Jenkins git checkout built,
+	// such as "origin/main", or in a multibranch build its BRANCH_NAME.
+	jenkinsGitBranch = "GIT_BRANCH"
+)
 
 // ciBranchEnvVars returns every environment variable ciBranch consults, so
 // tests can clear them all to simulate a run outside CI.
 func ciBranchEnvVars() []string {
-	vars := []string{"GITHUB_HEAD_REF", "GITHUB_REF_TYPE", "GITHUB_REF_NAME", jenkinsGitBranch}
+	vars := []string{
+		"GITHUB_HEAD_REF", "GITHUB_REF_TYPE", "GITHUB_REF_NAME",
+		jenkinsChangeBranch, jenkinsChangeID, jenkinsTagName, jenkinsBranchName, jenkinsGitBranch,
+	}
 	return append(vars, ciBranchVars...)
 }
 
@@ -50,8 +65,10 @@ func ciBranchEnvVars() []string {
 // to the CI variables that name the branch the pipeline builds. A name git
 // would refuse as a branch is never returned, so the server never refuses it.
 func DetectBranch(scanPath string) string {
-	if out, err := runGit(scanPath, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
-		if branch := strings.TrimSpace(out); validBranch(branch) {
+	// The full ref, not --short: that prints "heads/main" for refs/heads/main
+	// when a tag named main exists too.
+	if out, err := runGit(scanPath, "symbolic-ref", "--quiet", "HEAD"); err == nil {
+		if branch, ok := strings.CutPrefix(strings.TrimSpace(out), "refs/heads/"); ok && validBranch(branch) {
 			return branch
 		}
 	}
@@ -74,6 +91,23 @@ func ciBranch(getenv func(string) string) string {
 		if branch := branchOfRef(getenv(name)); branch != "" {
 			return branch
 		}
+	}
+	return jenkinsBranch(getenv)
+}
+
+// jenkinsBranch is the branch a Jenkins build names. A multibranch build of a
+// pull request names its source branch in CHANGE_BRANCH, while its
+// BRANCH_NAME and GIT_BRANCH name the change itself ("PR-12"), as a tag
+// build's name the tag: those two are read only for a build of a branch.
+func jenkinsBranch(getenv func(string) string) string {
+	if branch := branchOfRef(getenv(jenkinsChangeBranch)); branch != "" {
+		return branch
+	}
+	if getenv(jenkinsChangeID) != "" || getenv(jenkinsTagName) != "" {
+		return ""
+	}
+	if branch := branchOfRef(getenv(jenkinsBranchName)); branch != "" {
+		return branch
 	}
 	return branchOfRef(strings.TrimPrefix(getenv(jenkinsGitBranch), "origin/"))
 }

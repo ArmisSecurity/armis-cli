@@ -68,8 +68,24 @@ func TestCIBranch(t *testing.T) {
 		{"CircleCI", map[string]string{"CIRCLE_BRANCH": "develop"}, "develop"},
 		{"a Jenkins remote branch", map[string]string{"GIT_BRANCH": "origin/feature/z"}, "feature/z"},
 		{"a Jenkins multibranch name before the remote one", map[string]string{
-			"BRANCH_NAME": "PR-12", "GIT_BRANCH": "origin/main",
-		}, "PR-12"},
+			"BRANCH_NAME": "release/2", "GIT_BRANCH": "origin/main",
+		}, "release/2"},
+		{"a Jenkins multibranch branch build", map[string]string{
+			"BRANCH_NAME": "main", "GIT_BRANCH": "main",
+		}, "main"},
+		{"a Jenkins pull request's source branch, not its PR-12", map[string]string{
+			"CHANGE_ID": "12", "CHANGE_BRANCH": "feature/login", "CHANGE_TARGET": "main",
+			"BRANCH_NAME": "PR-12", "GIT_BRANCH": "PR-12",
+		}, "feature/login"},
+		{"a Jenkins pull request without its source branch names none", map[string]string{
+			"CHANGE_ID": "12", "BRANCH_NAME": "PR-12", "GIT_BRANCH": "PR-12",
+		}, ""},
+		{"a Jenkins tag build names no branch", map[string]string{
+			"TAG_NAME": "v1.2", "BRANCH_NAME": "v1.2", "GIT_BRANCH": "v1.2",
+		}, ""},
+		{"another CI's branch before Jenkins'", map[string]string{
+			"CIRCLE_BRANCH": "develop", "CHANGE_ID": "12", "CHANGE_BRANCH": "feature/login",
+		}, "develop"},
 		{"a name git refuses is skipped", map[string]string{
 			"CIRCLE_BRANCH": "bad..name", "BUILDKITE_BRANCH": "good",
 		}, "good"},
@@ -93,6 +109,22 @@ func TestDetectBranch_TheCheckoutsBranch(t *testing.T) {
 
 	if got := DetectBranch(dir); got != "feature/login" {
 		t.Errorf("DetectBranch() = %q, want the checkout's own branch", got)
+	}
+}
+
+func TestDetectBranch_ABranchNamedLikeATag(t *testing.T) {
+	// A release branch with a tag of its name: git's short name for the branch
+	// is then "heads/v1.2", a branch that doesn't exist.
+	clearCIBranchEnv(t)
+	dir := setupGitRepo(t)
+	for _, args := range [][]string{{"checkout", "-b", "v1.2"}, {"tag", "v1.2"}} {
+		if err := runGitCmd(t, dir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	if got := DetectBranch(dir); got != "v1.2" {
+		t.Errorf("DetectBranch() = %q, want the branch v1.2", got)
 	}
 }
 
