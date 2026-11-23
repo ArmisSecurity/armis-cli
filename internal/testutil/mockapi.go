@@ -66,6 +66,9 @@ type MockAPIConfig struct {
 	// status and ScanBody instead of starting the scan.
 	ScanStatus int
 	ScanBody   string
+	// SBOMScan, when set, is merged into the GET /api/v1/ingest/results body
+	// (sbom_scan_status, sbom_skipped_files, ...).
+	SBOMScan map[string]interface{}
 	// Projects seeds the AppSec projects store behind /api/v1/appsec/projects.
 	// The mock behaves like the API: GET filters with `q` as a case-insensitive
 	// substring of the name, POST creates a ci_cd project (source "cli") and
@@ -426,6 +429,9 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 			}
 			if config.BOMSummary != nil {
 				body["bom_summary"] = config.BOMSummary
+			}
+			for key, value := range config.SBOMScan {
+				body[key] = value
 			}
 			JSONResponse(t, w, http.StatusOK, body)
 			return

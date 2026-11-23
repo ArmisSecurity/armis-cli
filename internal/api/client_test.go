@@ -344,6 +344,55 @@ func TestClient_StartIngest(t *testing.T) {
 		}
 	})
 
+	t.Run("forwards include_sbom_files to /scan when set", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			IncludeSBOMFiles: 20,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		var req model.IngestScanStartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal /scan body: %v", err)
+		}
+		if req.IncludeSBOMFiles != 20 {
+			t.Errorf("include_sbom_files = %d, want 20", req.IncludeSBOMFiles)
+		}
+	})
+
+	t.Run("omits include_sbom_files when unset", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+
+		state.mu.Lock()
+		body := state.lastScanRequestBody
+		state.mu.Unlock()
+
+		if strings.Contains(string(body), "include_sbom_files") {
+			t.Errorf("expected include_sbom_files to be omitted, got body: %s", body)
+		}
+	})
+
 	t.Run("forwards git hints to /scan when set", func(t *testing.T) {
 		t.Parallel()
 		srv, state := newIngestFlowServer(t)
