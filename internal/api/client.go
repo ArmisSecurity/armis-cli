@@ -634,7 +634,10 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	// The last attempt that failed, when the client retried: a later answer is
+	// then the retry's.
+	var failedAttempt error
+	resp, err := c.httpClient.DoObserved(req, func(attemptErr error) { failedAttempt = attemptErr })
 	if err != nil {
 		return nil, fmt.Errorf("failed to call /scan: %w", err)
 	}
@@ -646,6 +649,12 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if failedAttempt != nil && resp.StatusCode == http.StatusConflict && scanAlreadyStarted(respBytes) {
+			return nil, startedThenFailed(failedAttempt)
+		}
+		if msg, ok := projectScanRefusal(resp.StatusCode, respBytes, opts); ok {
+			return nil, errors.New(msg)
+		}
 		if opts.ScanType == ScanTypeBOM {
 			if older, msg, ok := scanTypeError(resp.StatusCode, respBytes); ok {
 				if older {
@@ -669,6 +678,62 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		return nil, fmt.Errorf("failed to decode /scan response: %w", err)
 	}
 	return &result, nil
+}
+
+// scanAlreadyStarted reports whether a 409 from /scan says the scan has left
+// PENDING_UPLOAD: "Scan … is already in status INITIATED; …", or "Scan status
+// changed concurrently; …". The 409 for an upload S3 has not seen is neither.
+func scanAlreadyStarted(body []byte) bool {
+	var parsed struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false
+	}
+	detail := strings.ToLower(parsed.Detail)
+	return strings.Contains(detail, "already in status") || strings.Contains(detail, "changed concurrently")
+}
+
+// startedThenFailed is the error of a /scan call whose retry the server
+// refused because an earlier attempt had already started the scan. The server
+// starts the scan (PENDING_UPLOAD to INITIATED) before it dispatches it, so an
+// attempt can fail after that: a 5xx when the dispatch failed, or an answer
+// lost on the way. That failure is what happened, not the retry's 409. A 5xx
+// keeps the server's body last, where the error output shows its detail.
+func startedThenFailed(attemptErr error) error {
+	var status *httpclient.StatusError
+	if errors.As(attemptErr, &status) {
+		code := strings.TrimSpace(fmt.Sprintf("%d %s", status.StatusCode, http.StatusText(status.StatusCode)))
+		return fmt.Errorf("/scan returned %s after starting the scan (a retry found it already started): %s",
+			code, util.StripControl(status.Body))
+	}
+	return fmt.Errorf("failed to call /scan: %w; a retry found the scan already started, so it may still run", attemptErr)
+}
+
+// projectScanRefusal reads the 422 that /scan answers when it refuses the
+// project fields of a published scan, such as a branch git would refuse:
+// {"detail":{"code":"invalid_project_scan","message":"…"}}. It returns "the
+// server refused to record the scan as a run of its project: <message>
+// (invalid_project_scan)", control characters stripped. ok is false for any
+// other answer, and for a scan that names no project.
+func projectScanRefusal(status int, body []byte, opts IngestOptions) (string, bool) {
+	if status != http.StatusUnprocessableEntity || opts.ProjectID == "" {
+		return "", false
+	}
+	var parsed struct {
+		Detail struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Detail.Code != "invalid_project_scan" {
+		return "", false
+	}
+	msg := "the server refused to record the scan as a run of its project"
+	if message := util.StripControl(parsed.Detail.Message); message != "" {
+		msg += ": " + message
+	}
+	return msg + " (invalid_project_scan)", true
 }
 
 // scanType returns the scan_type of a /scan request: ScanTypeFull unless

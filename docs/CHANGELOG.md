@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
 - On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
 - `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
+- When the server fails after it has started a scan, for example because it could not dispatch the scan, the CLI reports that failure and the server's reason. It used to retry, and reported the retry's refusal instead: `409 Conflict … already in status INITIATED`. When the answer to the start request is lost, the CLI says the scan may still run. (PPSC-1589)
+- When the server refuses to record a published scan as a run of its project (`invalid_project_scan`), the CLI shows the server's reason instead of its raw JSON answer. (PPSC-1589)
 
 ### Security
 

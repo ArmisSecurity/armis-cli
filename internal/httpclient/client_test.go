@@ -3,6 +3,7 @@ package httpclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -383,5 +384,97 @@ func TestClientDo_ServerErrorBodyIsCapped(t *testing.T) {
 				t.Errorf("the body should be kept whole: %.120q", msg)
 			}
 		})
+	}
+}
+
+func TestClientDoObserved_TellsEachFailedAttempt(t *testing.T) {
+	answers := []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusOK}
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		status := answers[min(attempts, len(answers)-1)]
+		attempts++
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"detail":"try ` + http.StatusText(status) + `"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{RetryMax: 5, RetryWaitMin: time.Millisecond, RetryWaitMax: 5 * time.Millisecond})
+	req, err := http.NewRequest(http.MethodPost, server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	var failed []error
+	resp, err := client.DoObserved(req, func(attemptErr error) { failed = append(failed, attemptErr) })
+	if err != nil {
+		t.Fatalf("DoObserved failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if len(failed) != 2 {
+		t.Fatalf("want the 2 failed attempts, got %v", failed)
+	}
+	for i, want := range []int{http.StatusServiceUnavailable, http.StatusInternalServerError} {
+		var status *StatusError
+		if !errors.As(failed[i], &status) || status.StatusCode != want {
+			t.Errorf("attempt %d: want a *StatusError %d, got %v", i+1, want, failed[i])
+		}
+	}
+	if !strings.Contains(failed[0].Error(), `server error: 503 - {"detail":"try Service Unavailable"}`) {
+		t.Errorf("the error text must not change, got %q", failed[0])
+	}
+}
+
+func TestClientDo_LastServerErrorIsAStatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("bad gateway"))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{DisableRetry: true, Timeout: 5 * time.Second})
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	var failed []error
+	_, err = client.DoObserved(req, func(attemptErr error) { failed = append(failed, attemptErr) })
+
+	var status *StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusBadGateway || status.Body != "bad gateway" {
+		t.Fatalf("want a *StatusError 502, got %#v", err)
+	}
+	if len(failed) != 1 || failed[0] != err {
+		t.Errorf("the one attempt's failure should be told too, got %v", failed)
+	}
+}
+
+func TestClientDoObserved_NotToldOfASuccessOrABodyItCannotRebuild(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer server.Close()
+	client := NewClient(Config{RetryWaitMin: time.Millisecond, RetryWaitMax: 5 * time.Millisecond})
+
+	req, err := http.NewRequest(http.MethodPost, server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	told := 0
+	resp, err := client.DoObserved(req, func(error) { told++ })
+	if err != nil {
+		t.Fatalf("a 4xx is an answer, not a failure: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	broken, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader("x"))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	broken.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("no body") }
+	if _, err := client.DoObserved(broken, func(error) { told++ }); err == nil {
+		t.Fatal("want the body error")
+	}
+	if told != 0 {
+		t.Errorf("told %d times, want 0", told)
 	}
 }
