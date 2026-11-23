@@ -326,10 +326,12 @@ type IngestOptions struct {
 	RepoName  string
 	GitSHA    string
 	OriginSHA string
-	// ProjectID and Trigger publish the scan as a run of an AppSec project.
-	// Empty strings are omitted from the /scan request body.
+	// ProjectID and Trigger publish the scan as a run of an AppSec project,
+	// filed under Branch when it is known. Empty strings are omitted from the
+	// /scan request body, and Branch is sent only with ProjectID.
 	ProjectID string
 	Trigger   string
+	Branch    string
 	// BOMTypes and BOMFormat request BOMs (--bom, --bom-format). Empty values
 	// are omitted from the /scan request body.
 	BOMTypes  []string
@@ -370,9 +372,28 @@ type StatusCallback func(status model.IngestStatusData)
 //
 // Returns the scan_id reserved at step 1 (and confirmed at step 3).
 func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, error) {
+	started, err := c.StartIngestScan(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	return started.ScanID, nil
+}
+
+// IngestStarted is what /ingest/scan answers for a confirmed upload.
+type IngestStarted struct {
+	ScanID string
+	// ProjectRun says whether a scan that names its project was recorded as a
+	// run of it: nil when the request named none, or when the server predates
+	// project runs.
+	ProjectRun *model.ProjectRun
+}
+
+// StartIngestScan is StartIngest, returning all /ingest/scan says of the
+// started scan.
+func (c *Client) StartIngestScan(ctx context.Context, opts IngestOptions) (*IngestStarted, error) {
 	// armis:ignore cwe:770 reason:this IS the resource exhaustion prevention; MaxUploadSize bounds upload size
 	if opts.Size > MaxUploadSize {
-		return "", fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
+		return nil, fmt.Errorf("upload size (%d bytes) exceeds maximum allowed (%d bytes)", opts.Size, MaxUploadSize)
 	}
 
 	uploadCtx, cancel := context.WithTimeout(ctx, c.uploadTimeout)
@@ -383,13 +404,13 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	// Step 1: reserve a scan_id and get the presigned POST.
 	presigned, err := c.createPresignedUpload(uploadCtx, opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to reserve upload: %w", err)
+		return nil, fmt.Errorf("failed to reserve upload: %w", err)
 	}
 
 	// Server's content-length-range cap takes precedence over our local limit.
 	// Surface a clear error before we waste bandwidth on a doomed upload.
 	if presigned.MaxUploadBytes > 0 && opts.Size > presigned.MaxUploadBytes {
-		return "", fmt.Errorf(
+		return nil, fmt.Errorf(
 			"upload size %d bytes exceeds server limit %d bytes",
 			opts.Size, presigned.MaxUploadBytes,
 		)
@@ -403,17 +424,17 @@ func (c *Client) StartIngest(ctx context.Context, opts IngestOptions) (string, e
 	// Step 2: multipart-POST the file directly to S3.
 	if err := c.uploadToPresignedURL(uploadCtx, presigned, opts.Filename, opts.Data, opts.Size); err != nil {
 		elapsed := time.Since(start).Round(time.Millisecond)
-		return "", fmt.Errorf("S3 upload failed after %s (size=%s): %w",
+		return nil, fmt.Errorf("S3 upload failed after %s (size=%s): %w",
 			elapsed, formatBytes(opts.Size), err)
 	}
 
 	// Step 3: trigger the scan workflow.
 	scanResp, err := c.startArtifactScan(uploadCtx, presigned.ScanID, opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to trigger scan: %w", err)
+		return nil, fmt.Errorf("failed to trigger scan: %w", err)
 	}
 
-	return scanResp.ScanID, nil
+	return &IngestStarted{ScanID: scanResp.ScanID, ProjectRun: scanResp.ProjectRun}, nil
 }
 
 // createPresignedUpload reserves a scan_id on the API and returns the
@@ -560,6 +581,15 @@ func buildMultipartEnvelope(fields map[string]string, filename string) (prefix, 
 	return prefixBuf.Bytes(), suffix, contentType, nil
 }
 
+// projectBranch is the branch a scan's run is filed under: a branch names no
+// run without the project it is a run of.
+func projectBranch(opts IngestOptions) string {
+	if opts.ProjectID == "" {
+		return ""
+	}
+	return opts.Branch
+}
+
 // startArtifactScan calls /api/v1/ingest/scan with the reserved scan_id and
 // the scan options. The server head_objects the upload, transitions the
 // scan record to INITIATED, and dispatches to Prefect or SQS.
@@ -578,6 +608,7 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		OriginSHA:    opts.OriginSHA,
 		ProjectID:    opts.ProjectID,
 		Trigger:      opts.Trigger,
+		Branch:       projectBranch(opts),
 		BOMTypes:     opts.BOMTypes,
 		BOMFormat:    opts.BOMFormat,
 		ImageRef:     opts.ImageRef,
@@ -585,8 +616,8 @@ func (c *Client) startArtifactScan(ctx context.Context, scanID string, opts Inge
 		IncludeSBOMFiles: opts.IncludeSBOMFiles,
 	}
 	if c.debug && (opts.ProjectID != "" || opts.Trigger != "") {
-		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s\n",
-			scanID, opts.ProjectID, opts.Trigger)
+		fmt.Fprintf(os.Stderr, "[DEBUG] /ingest/scan scan_id=%s project_id=%s trigger=%s branch=%q\n",
+			scanID, opts.ProjectID, opts.Trigger, body.Branch)
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

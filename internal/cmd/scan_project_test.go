@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -339,11 +340,180 @@ func TestProjectScan_ExistingProjectIsReused(t *testing.T) {
 	if !strings.Contains(stderr, "Using project") {
 		t.Errorf("stderr should announce the existing project:\n%s", stderr)
 	}
-	// The backend does not record CLI runs yet; the log must not suggest it does.
-	if !strings.Contains(stderr, "does not record CLI scans as runs") {
+	// The mock answers as a server that predates project runs: the log must
+	// not suggest the scan is recorded under the project.
+	if !strings.Contains(stderr, "does not record CLI scans as runs of a project yet") {
 		t.Errorf("stderr should say the scan is not recorded as a run yet:\n%s", stderr)
 	}
 }
+
+// recordedRun answers a scan that names its project as recorded, as a server
+// that records CLI scans as project runs does.
+func recordedRun(req model.IngestScanStartRequest) *model.ProjectRun {
+	return &model.ProjectRun{Recorded: true, ProjectID: req.ProjectID, RunID: "s_run1"}
+}
+
+// skippedRun answers a scan that names its project as not recorded, for reason.
+func skippedRun(reason string) func(model.IngestScanStartRequest) *model.ProjectRun {
+	return func(req model.IngestScanStartRequest) *model.ProjectRun {
+		return &model.ProjectRun{ProjectID: req.ProjectID, Reason: reason}
+	}
+}
+
+func TestProjectScan_SaysWhatTheServerRecorded(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		status  string
+		run     func(model.IngestScanStartRequest) *model.ProjectRun
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "recorded",
+			status:  model.ProjectStatusActive,
+			run:     recordedRun,
+			want:    []string{"Recorded as run s_run1 of project " + testProjectName},
+			notWant: []string{"does not record", "Warning", "paused"},
+		},
+		{
+			name:   "recorded on a paused project",
+			status: model.ProjectStatusPaused,
+			run:    recordedRun,
+			want: []string{"Using project", "Recorded as run s_run1 of project " + testProjectName,
+				"is paused: its schedules are stopped, but runs that name it, like this one, are still recorded"},
+			notWant: []string{"Warning", "Found project"},
+		},
+		{
+			name:    "a tenant that does not record CLI runs yet",
+			status:  model.ProjectStatusActive,
+			run:     skippedRun(model.ProjectRunDisabled),
+			want:    []string{"does not record CLI scans as runs of a project for this tenant yet"},
+			notWant: []string{"Recorded as run", "Warning"},
+		},
+		{
+			name:   "a project deleted after it was found",
+			status: model.ProjectStatusActive,
+			run:    skippedRun(model.ProjectRunProjectNotFound),
+			want: []string{"was not found when the scan started", "not recorded as a run of it",
+				"It still runs and gates as usual"},
+			notWant: []string{"Recorded as run"},
+		},
+		{
+			name:    "a project archived after it was found",
+			status:  model.ProjectStatusActive,
+			run:     skippedRun(model.ProjectRunProjectArchived),
+			want:    []string{"is archived, so this scan is not recorded as a run of it"},
+			notWant: []string{"Recorded as run"},
+		},
+		{
+			name:    "a recording failure",
+			status:  model.ProjectStatusActive,
+			run:     skippedRun(model.ProjectRunNotRecorded),
+			want:    []string{"could not record this scan as a run of project", "(not_recorded)"},
+			notWant: []string{"Recorded as run"},
+		},
+		{
+			name:    "an archived project is warned of once",
+			status:  model.ProjectStatusArchived,
+			run:     skippedRun(model.ProjectRunProjectArchived),
+			want:    []string{"Found project", "is archived: this scan still runs and gates"},
+			notWant: []string{"Recorded as run", "is archived, so this scan"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setupProjectScan(t, testutil.MockAPIConfig{
+				Projects: []model.Project{{
+					ProjectID: "p_existing", Name: testProjectName, Status: tt.status,
+					ProjectType: model.ProjectTypeCICD,
+				}},
+				ProjectRun: tt.run,
+			})
+			t.Setenv("CI", "true")
+			projectName = testProjectName
+
+			_, stderr, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+			if err != nil {
+				t.Fatalf("scan failed: %v", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr missing %q:\n%s", want, stderr)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(stderr, notWant) {
+					t.Errorf("stderr should not contain %q:\n%s", notWant, stderr)
+				}
+			}
+		})
+	}
+}
+
+// A project of another type (an scm project) takes no CLI runs: the scan says
+// so before the upload, and the server's answer is not repeated.
+func TestProjectScan_AProjectThatIsNotACLIProjectWarns(t *testing.T) {
+	env := setupProjectScan(t, testutil.MockAPIConfig{
+		Projects: []model.Project{{
+			ProjectID: "p_scm", Name: testProjectName, Status: model.ProjectStatusActive, ProjectType: "scm",
+		}},
+		ProjectRun: skippedRun(model.ProjectRunProjectNotCLI),
+	})
+	t.Setenv("CI", "true")
+	projectName = testProjectName
+
+	_, stderr, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if !strings.Contains(stderr, "Found project") || !strings.Contains(stderr, "is not a CLI project (it is a scm project)") {
+		t.Errorf("stderr should warn the project is not a CLI project:\n%s", stderr)
+	}
+	if strings.Count(stderr, "not a CLI project") != 1 {
+		t.Errorf("the warning should be given once:\n%s", stderr)
+	}
+	if body, _ := env.scanBody(t); body.ProjectID != "p_scm" {
+		t.Errorf("project_id = %q, want p_scm: the server decides", body.ProjectID)
+	}
+}
+
+func TestProjectScan_AsyncRecordNamesTheRun(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		run      func(model.IngestScanStartRequest) *model.ProjectRun
+		recorded *bool
+		runID    string
+		reason   string
+	}{
+		{"recorded", recordedRun, ptr(true), "s_run1", ""},
+		{"not recorded", skippedRun(model.ProjectRunDisabled), ptr(false), "", model.ProjectRunDisabled},
+		{"a server that predates project runs", nil, nil, "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setupProjectScan(t, testutil.MockAPIConfig{ProjectRun: tt.run})
+			t.Setenv("CI", "true")
+			projectName = testProjectName
+			asyncScan = true
+
+			stdout, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+			if err != nil {
+				t.Fatalf("scan failed: %v", err)
+			}
+			var record asyncScanRecord
+			if err := json.Unmarshal([]byte(stdout), &record); err != nil {
+				t.Fatalf("stdout is not the JSON record: %v\n%s", err, stdout)
+			}
+			got := record.Project
+			if got == nil || !reflect.DeepEqual(got.Recorded, tt.recorded) || got.RunID != tt.runID || got.Reason != tt.reason {
+				t.Errorf("project record = %+v, want recorded %v, run %q, reason %q", got, tt.recorded, tt.runID, tt.reason)
+			}
+			if tt.recorded == nil && strings.Contains(stdout, `"recorded"`) {
+				t.Errorf("a server that does not say must leave recorded out:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // --report publishes a developer-machine scan, stamped cli_dev.
 func TestProjectScan_ReportPublishesALocalScan(t *testing.T) {

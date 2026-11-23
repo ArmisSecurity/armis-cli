@@ -152,15 +152,18 @@ func TestResolve_FollowsPagination(t *testing.T) {
 }
 
 func TestResolve_StatusWarnings(t *testing.T) {
+	scm := proj("p_1", testName, model.ProjectStatusActive)
+	scm.ProjectType = "scm"
 	for _, tt := range []struct {
-		status string
-		want   string
+		name    string
+		project model.Project
+		want    string
 	}{
-		{model.ProjectStatusPaused, "is paused"},
-		{model.ProjectStatusArchived, "is archived"},
+		{"archived", proj("p_1", testName, model.ProjectStatusArchived), "is archived"},
+		{"not a CLI project", scm, "is not a CLI project (it is a scm project)"},
 	} {
-		t.Run(tt.status, func(t *testing.T) {
-			f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("", proj("p_1", testName, tt.status))}}
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("", tt.project)}}
 			res, err := Resolve(context.Background(), f, testTenant, testName)
 			if err != nil {
 				t.Fatalf("Resolve failed: %v", err)
@@ -170,9 +173,27 @@ func TestResolve_StatusWarnings(t *testing.T) {
 				t.Errorf("warning = %q, want it to mention %q and that the gate still applies", w, tt.want)
 			}
 			if len(f.createCalls) != 0 {
-				t.Error("a paused or archived project must not be re-created")
+				t.Error("a found project must not be re-created")
 			}
 		})
+	}
+}
+
+// A paused project's schedules stop, but the runs that name it still record
+// (AppSec spec 11 Q2), so a CLI scan that names it is no cause for a warning.
+func TestResolve_APausedProjectRecordsTheRun(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
+		"": page("", proj("p_1", testName, model.ProjectStatusPaused)),
+	}}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if w := res.StatusWarning(); w != "" {
+		t.Errorf("warning = %q, want none for a paused project", w)
+	}
+	if len(f.createCalls) != 0 {
+		t.Error("a paused project must not be re-created")
 	}
 }
 

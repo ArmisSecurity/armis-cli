@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -596,6 +597,88 @@ func TestClient_StartIngest(t *testing.T) {
 			if strings.Contains(string(body), key) {
 				t.Errorf("expected %s to be omitted, got body: %s", key, body)
 			}
+		}
+	})
+
+	t.Run("forwards the branch of a published scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci", Branch: "feature/login",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got := scanBody(t, state); got["branch"] != "feature/login" {
+			t.Errorf("branch = %v, want feature/login", got["branch"])
+		}
+	})
+
+	t.Run("omits the branch of a scan that names no project", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4, Branch: "main",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got, ok := scanBody(t, state)["branch"]; ok {
+			t.Errorf("branch = %v, want it omitted without a project", got)
+		}
+	})
+
+	t.Run("returns what /scan says of the project run", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+			testutil.JSONResponse(t, w, http.StatusOK, map[string]any{
+				"scan_id": testScanID, "scan_status": "INITIATED", "artifact_type": "repo",
+				"tenant_id": "tenant-456", "filename": "upload", "message": "ok",
+				"project_run": map[string]any{
+					"recorded": true, "project_id": "p_123", "run_id": "s_456", "reason": nil,
+				},
+			})
+		}
+		client := newIngestFlowClient(t, srv.URL)
+
+		started, err := client.StartIngestScan(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngestScan failed: %v", err)
+		}
+		want := &model.ProjectRun{Recorded: true, ProjectID: "p_123", RunID: "s_456"}
+		if started.ScanID != testScanID || !reflect.DeepEqual(started.ProjectRun, want) {
+			t.Errorf("started = %+v (run %+v), want scan %s and run %+v",
+				started, started.ProjectRun, testScanID, want)
+		}
+	})
+
+	t.Run("a server that predates project runs says nothing of the run", func(t *testing.T) {
+		t.Parallel()
+		srv, _ := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		started, err := client.StartIngestScan(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngestScan failed: %v", err)
+		}
+		if started.ProjectRun != nil {
+			t.Errorf("ProjectRun = %+v, want nil", started.ProjectRun)
 		}
 	})
 

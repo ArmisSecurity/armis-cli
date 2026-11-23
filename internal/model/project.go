@@ -9,12 +9,39 @@ const (
 
 	// ProjectStatusActive is a project that records runs.
 	ProjectStatusActive = "active"
-	// ProjectStatusPaused is a project that does not record runs until resumed.
+	// ProjectStatusPaused is a project whose schedules and repository sweeps
+	// stop; a CLI scan that names it is still recorded as one of its runs.
 	ProjectStatusPaused = "paused"
 	// ProjectStatusArchived is a hidden project that does not record runs; its
 	// name stays reserved until it is deleted.
 	ProjectStatusArchived = "archived"
 )
+
+// Why /ingest/scan recorded no run of the project a scan names
+// (ProjectRun.Reason).
+const (
+	// ProjectRunDisabled: the tenant does not record CLI scans as runs yet.
+	ProjectRunDisabled = "disabled"
+	// ProjectRunProjectNotFound: the tenant has no project with the id.
+	ProjectRunProjectNotFound = "project_not_found"
+	// ProjectRunProjectArchived: an archived project records no runs.
+	ProjectRunProjectArchived = "project_archived"
+	// ProjectRunProjectNotCLI: only a CLI (ci_cd) project takes CLI runs.
+	ProjectRunProjectNotCLI = "project_not_cli"
+	// ProjectRunNotRecorded: recording failed; the scan was dispatched anyway.
+	ProjectRunNotRecorded = "not_recorded"
+)
+
+// ProjectRun is what /ingest/scan answers for a scan that names its project:
+// whether the scan was recorded as a run of it, as which run, or why not.
+type ProjectRun struct {
+	Recorded  bool   `json:"recorded"`
+	ProjectID string `json:"project_id"`
+	// RunID is the run's id ("s_" and 24 hex characters) when Recorded.
+	RunID string `json:"run_id,omitempty"`
+	// Reason is one of the ProjectRun* reasons when not Recorded.
+	Reason string `json:"reason,omitempty"`
+}
 
 // Project is an AppSec project as the /api/v1/appsec/projects endpoints return
 // it, trimmed to the fields the CLI reads.

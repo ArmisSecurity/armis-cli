@@ -135,7 +135,8 @@ Tests use table-driven patterns. Mock HTTP responses with `internal/testutil/htt
 
 ### PPSC-1589 projects — gotchas worth remembering
 
-- **The backend does not attach CLI runs yet.** `/ingest/scan` accepts (and ignores) `project_id`/`trigger` — verified on dev. Until the backend records them, a published scan creates/resolves the project but its run does not show up under it.
+- **The backend says whether it recorded the run.** `/ingest/scan` answers `project_run` (`recorded`, `run_id`, or a `reason`) for a request that names a project, behind the per-tenant flag `appsec_cli_project_runs`. A server that predates project runs sends no `project_run`; `reportProjectRun` then prints the "not recorded yet" note. Keep that path: older servers stay in the field.
+- **`branch` goes only with `project_id`, and must pass git's rule.** The server answers 422 `invalid_project_scan` for a branch `git check-ref-format --branch` refuses, which would fail the scan. `repo.DetectBranch` only returns names `validBranch` accepts (printable ASCII); anything else is dropped. Branch tests must clear `ciBranchEnvVars()` — CI sets `GITHUB_REF_NAME` and friends.
 - **CI detection drives publishing.** `progress.DetectCI()` is the single source of truth (vendor vars incl. `TF_BUILD`; `CI`/`CONTINUOUS_INTEGRATION` set to `false`, `0`, `no` or `off` is not CI). Command tests must clear every var in `progress.CIEnvVars()` — CI itself sets `CI`/`GITHUB_ACTIONS`, so a test that forgets would publish.
 - **Flag `Changed` bits leak between `cmd` tests** (globals + shared `*cobra.Command`s). Tests that depend on whether a flag was "set" should use `setupProjectScan` (clears and restores every `Changed` bit) — run `go test -shuffle=on ./internal/cmd/` to catch leaks.
 

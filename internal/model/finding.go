@@ -134,6 +134,10 @@ type IngestUploadResponse struct {
 	TenantID     string `json:"tenant_id"`
 	Filename     string `json:"filename"`
 	Message      string `json:"message"`
+	// ProjectRun says whether a scan that names its project was recorded as a
+	// run of it. Nil when the request named no project, or when the server
+	// predates project runs.
+	ProjectRun *ProjectRun `json:"project_run,omitempty"`
 }
 
 // PresignedUploadRequest is the JSON body for POST /api/v1/ingest/presigned-url.
@@ -179,6 +183,9 @@ type IngestScanStartRequest struct {
 	// unless the scan is published, so a local scan's request is unchanged.
 	ProjectID string `json:"project_id,omitempty"`
 	Trigger   string `json:"trigger,omitempty"`
+	// Branch is the branch of the uploaded tree, which the run is filed
+	// under. Sent only with ProjectID, and only when it is known.
+	Branch string `json:"branch,omitempty"`
 	// BOM types and format from --bom and --bom-format. The format is sent
 	// as typed, alias included. Omitted without --bom, so the body is the
 	// same as before for scans that request no BOM.
