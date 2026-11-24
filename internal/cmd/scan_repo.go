@@ -11,6 +11,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/api"
 	"github.com/ArmisSecurity/armis-cli/internal/cli"
 	"github.com/ArmisSecurity/armis-cli/internal/cmd/cmdutil"
+	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -295,6 +296,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	// still fails before the upload. If the upload or /ingest/scan itself
 	// fails, the project exists with no runs and the next run reuses it.
 	var published *project.Resolution
+	var publishedRun *model.ProjectRun
 	var resolveErr error
 	if decision.Publish {
 		scanner = scanner.WithProjectResolver(func(ctx context.Context) (string, string, error) {
@@ -304,6 +306,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 			}
 			announceProject(published, decision)
 			return published.Project.ProjectID, decision.Trigger, nil
+		}).WithProjectRunReporter(func(run *model.ProjectRun) {
+			publishedRun = run
+			reportProjectRun(published, run)
 		})
 	} else if projectName != "" {
 		cli.PrintWarning(fmt.Sprintf("--project %s: this scan runs locally and is not published, "+
@@ -327,7 +332,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if asyncScan {
-		return renderAsyncAccepted(cmd, result, published, decision)
+		return renderAsyncAccepted(cmd, result, published, decision, publishedRun)
 	}
 
 	// Resolve output destination and format (handles file creation, format auto-detection, colors)

@@ -49,6 +49,7 @@ type Scanner struct {
 	projectID             string
 	trigger               string
 	projectResolver       ProjectResolver
+	projectRunReporter    ProjectRunReporter
 	async                 bool
 }
 
@@ -127,6 +128,18 @@ type ProjectResolver func(ctx context.Context) (projectID, trigger string, err e
 // upload. Its error is returned unwrapped.
 func (s *Scanner) WithProjectResolver(resolve ProjectResolver) *Scanner {
 	s.projectResolver = resolve
+	return s
+}
+
+// ProjectRunReporter hears what /ingest/scan said of a published scan's run:
+// nil when the server predates project runs.
+type ProjectRunReporter func(run *model.ProjectRun)
+
+// WithProjectRunReporter hands report whether the published scan was recorded
+// as a run of its project, once the scan is initiated and before its results
+// are waited for. A scan that is not published reports nothing.
+func (s *Scanner) WithProjectRunReporter(report ProjectRunReporter) *Scanner {
+	s.projectRunReporter = report
 	return s
 }
 
@@ -301,15 +314,19 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		ingestOpts.OriginSHA = hints.OriginSHA
 	}
 
-	// Only a published scan names a project; otherwise the request carries
-	// nothing project-related.
+	// Only a published scan names a project, and the branch its run is filed
+	// under; otherwise the request carries nothing project-related.
 	ingestOpts.ProjectID = s.projectID
 	ingestOpts.Trigger = s.trigger
+	if s.projectID != "" {
+		ingestOpts.Branch = DetectBranch(absPath)
+	}
 
-	scanID, err := s.client.StartIngest(ctx, ingestOpts)
+	started, err := s.client.StartIngestScan(ctx, ingestOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload repository: %w", err)
 	}
+	scanID := started.ScanID
 	scan.RecordScanStarted(s.client.BaseURL(), s.tenantID, scanID, "repo", filepath.Base(absPath))
 
 	// Close the tarball explicitly now that StartIngest has finished reading it.
@@ -328,6 +345,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fmt.Fprintf(os.Stderr, "%s %s\n\n",
 		styles.MutedText.Render("Scan initiated with ID:"),
 		styles.ScanID.Render(scanID))
+	if s.projectID != "" && s.projectRunReporter != nil {
+		s.projectRunReporter(started.ProjectRun)
+	}
 
 	// Async: the scan is accepted once /ingest/scan succeeds. Its ID is in the
 	// scan history above, so `scan status` can follow it up.

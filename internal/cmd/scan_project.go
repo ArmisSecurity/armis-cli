@@ -12,6 +12,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
+	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -57,19 +58,21 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 	return decision, nil
 }
 
-// projectRunsRecorded says whether Armis records a published CLI scan as a run
-// of its project. /ingest/scan accepts project_id and trigger but does not
-// record a run from them yet; set this once it does, and the note goes away.
-const projectRunsRecorded = false
-
-// projectRunsNote tells the user what publishing does not do yet, so a CI log
-// does not suggest the scan will show up under the project.
+// projectRunsNote tells the user, when the server does not say whether the
+// scan was recorded as a run of its project, that it was not: a server that
+// predates project runs records none, so a CI log must not suggest the scan
+// will show up under the project.
 const projectRunsNote = "Note: Armis does not record CLI scans as runs of a project yet, " +
 	"so this scan will not appear under it. It still runs and gates as usual."
 
+// projectRunsDisabledNote is the note for a tenant that does not record CLI
+// scans as project runs yet.
+const projectRunsDisabledNote = "Note: Armis does not record CLI scans as runs of a project " +
+	"for this tenant yet, so this scan will not appear under it. It still runs and gates as usual."
+
 // announceProject tells the user which project the scan is published to. A
-// paused or archived project does not record runs, so it is announced as
-// found, with a warning, rather than as used.
+// project that cannot record the scan as one of its runs (archived, or not a
+// CLI project) is announced as found, with a warning, rather than as used.
 func announceProject(res *project.Resolution, decision project.Decision) {
 	styles := output.GetStyles()
 	name := styles.Bold.Render(res.Project.Name)
@@ -83,11 +86,63 @@ func announceProject(res *project.Resolution, decision project.Decision) {
 		verb = "Found project"
 	}
 	fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render(verb), name, detail)
-	switch {
-	case warning != "":
+	if warning != "" {
 		cli.PrintWarning(warning)
-	case !projectRunsRecorded:
+	}
+}
+
+// reportProjectRun tells the user whether the scan was recorded as a run of
+// its project, as /ingest/scan said: run is nil when the server predates
+// project runs. What announceProject already warned of is not repeated.
+func reportProjectRun(res *project.Resolution, run *model.ProjectRun) {
+	styles := output.GetStyles()
+	name := res.Project.Name
+	warned := res.StatusWarning() != ""
+	switch {
+	case run == nil:
+		if warned {
+			return
+		}
 		fmt.Fprintln(os.Stderr, styles.MutedText.Render(projectRunsNote))
+	case run.Recorded:
+		fmt.Fprintf(os.Stderr, "%s %s %s %s\n",
+			styles.MutedText.Render("Recorded as run"),
+			styles.ScanID.Render(util.StripControl(run.RunID)),
+			styles.MutedText.Render("of project"),
+			styles.Bold.Render(name))
+		if res.Project.Status == model.ProjectStatusPaused {
+			fmt.Fprintln(os.Stderr, styles.MutedText.Render(fmt.Sprintf(
+				"Project %q is paused: its schedules are stopped, but runs that name it, "+
+					"like this one, are still recorded.", name)))
+		}
+	case warned && (run.Reason == model.ProjectRunProjectArchived || run.Reason == model.ProjectRunProjectNotCLI):
+		// announceProject warned of it.
+		return
+	case run.Reason == model.ProjectRunDisabled:
+		fmt.Fprintln(os.Stderr, styles.MutedText.Render(projectRunsDisabledNote))
+	default:
+		cli.PrintWarning(projectRunWarning(name, run.Reason))
+	}
+	// Set off from the scan's progress, as "Scan initiated" is.
+	fmt.Fprintln(os.Stderr)
+}
+
+// projectRunWarning explains why a scan was not recorded as a run of the
+// project it names.
+func projectRunWarning(name, reason string) string {
+	const still = "It still runs and gates as usual."
+	switch reason {
+	case model.ProjectRunProjectArchived:
+		return fmt.Sprintf("project %q is archived, so this scan is not recorded as a run of it. %s", name, still)
+	case model.ProjectRunProjectNotCLI:
+		return fmt.Sprintf("project %q is not a CLI project, so this scan is not recorded as a run of it. %s "+
+			"Name a project of its own for CLI scans.", name, still)
+	case model.ProjectRunProjectNotFound:
+		return fmt.Sprintf("project %q was not found when the scan started (was it deleted?), "+
+			"so this scan is not recorded as a run of it. %s", name, still)
+	default:
+		return fmt.Sprintf("Armis could not record this scan as a run of project %q (%s). %s",
+			name, util.StripControl(reason), still)
 	}
 }
 
@@ -112,19 +167,25 @@ type asyncScanRecord struct {
 	Project *asyncProjectRecord `json:"project,omitempty"`
 }
 
-// asyncProjectRecord identifies the project an async scan is published to.
+// asyncProjectRecord identifies the project an async scan is published to,
+// and the run it was recorded as. Recorded is absent when the server does not
+// say, as one that predates project runs does not.
 type asyncProjectRecord struct {
 	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
 	Created   bool   `json:"created"`
 	Trigger   string `json:"trigger"`
+	Recorded  *bool  `json:"recorded,omitempty"`
+	RunID     string `json:"run_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // renderAsyncAccepted reports an accepted --async scan. There are no findings
 // yet, so only JSON output gets a record (the scan ID and project). Other
 // formats write nothing: an empty SARIF upload would close every open
 // code-scanning alert.
-func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published *project.Resolution, decision project.Decision) error {
+func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published *project.Resolution,
+	decision project.Decision, run *model.ProjectRun) error {
 	styles := output.GetStyles()
 	fmt.Fprintf(os.Stderr, "%s\n%s %s\n",
 		styles.MutedText.Render("Scan accepted (--async): not waiting for results, so --fail-on is not evaluated."),
@@ -147,6 +208,12 @@ func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published
 			Name:      published.Project.Name,
 			Created:   published.Created,
 			Trigger:   decision.Trigger,
+		}
+		if run != nil {
+			recorded := run.Recorded
+			record.Project.Recorded = &recorded
+			record.Project.RunID = run.RunID
+			record.Project.Reason = run.Reason
 		}
 	}
 

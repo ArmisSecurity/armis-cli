@@ -168,6 +168,12 @@ func TestParseErrorMessage(t *testing.T) {
 			expectedContext: "scan failed: failed to upload repository: upload failed after 500ms (tar size=2.0MiB, status=404 Not Found)",
 		},
 		{
+			name:            "a 5xx after the scan started, its retry refused",
+			input:           `scan failed: failed to upload repository: failed to trigger scan: /scan returned 500 Internal Server Error after starting the scan (a retry found it already started): {"detail":"Failed to dispatch the scan"}`,
+			expectedReason:  "Failed to dispatch the scan",
+			expectedContext: "scan failed: failed to upload repository: failed to trigger scan: /scan returned 500 Internal Server Error after starting the scan (a retry found it already started)",
+		},
+		{
 			name:            "plain error without JSON",
 			input:           "API token required: use --token flag or ARMIS_API_TOKEN environment variable",
 			expectedReason:  "API token required: use --token flag or ARMIS_API_TOKEN environment variable",

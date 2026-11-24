@@ -30,6 +30,9 @@ type ingestRecorder struct {
 	presignCalls int
 	statusCalls  int
 	resultsCalls int
+	// projectRun is what /scan answers of the run; nil answers as a server
+	// that predates project runs.
+	projectRun *model.ProjectRun
 }
 
 func newIngestRecorderServer(t *testing.T) (*ingestRecorder, string) {
@@ -53,8 +56,11 @@ func newIngestRecorderServer(t *testing.T) (*ingestRecorder, string) {
 			body, _ := io.ReadAll(r.Body)
 			rec.mu.Lock()
 			rec.scanBody = body
+			run := rec.projectRun
 			rec.mu.Unlock()
-			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{ScanID: testScanID, ScanStatus: "INITIATED"})
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+				ScanID: testScanID, ScanStatus: "INITIATED", ProjectRun: run,
+			})
 		case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
 			rec.mu.Lock()
 			rec.statusCalls++
@@ -263,5 +269,92 @@ func TestScan_ProjectResolverErrorStopsBeforeUpload(t *testing.T) {
 	defer rec.mu.Unlock()
 	if rec.presignCalls != 0 || rec.scanBody != nil {
 		t.Errorf("upload requests = %d, scan body = %q; want no upload", rec.presignCalls, rec.scanBody)
+	}
+}
+
+func TestScan_APublishedScanFilesItsRunUnderItsBranch(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	clearCIBranchEnv(t)
+	rec, url := newIngestRecorderServer(t)
+	dir := setupGitRepo(t)
+	if err := runGitCmd(t, dir, "checkout", "-b", "feature/login"); err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+
+	if _, err := newProjectTestScanner(t, url).WithProject("p_42", "cli_ci").Scan(context.Background(), dir); err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var req model.IngestScanStartRequest
+	if err := json.Unmarshal(rec.scanBody, &req); err != nil {
+		t.Fatalf("decode /scan body: %v", err)
+	}
+	if req.Branch != "feature/login" {
+		t.Errorf("branch = %q, want feature/login", req.Branch)
+	}
+}
+
+func TestScan_AScanThatIsNotPublishedSendsNoBranch(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	clearCIBranchEnv(t)
+	t.Setenv("CIRCLE_BRANCH", "main")
+	rec, url := newIngestRecorderServer(t)
+
+	if _, err := newProjectTestScanner(t, url).Scan(context.Background(), setupGitRepo(t)); err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if strings.Contains(string(rec.scanBody), `"branch"`) {
+		t.Errorf("a scan without a project must not send a branch; body: %s", rec.scanBody)
+	}
+}
+
+func TestScan_ReportsWhatTheServerSaidOfTheRun(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		run  *model.ProjectRun
+	}{
+		{"recorded", &model.ProjectRun{Recorded: true, ProjectID: "p_42", RunID: "s_1"}},
+		{"not recorded", &model.ProjectRun{ProjectID: "p_42", Reason: model.ProjectRunDisabled}},
+		{"a server that predates project runs", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+			rec, url := newIngestRecorderServer(t)
+			rec.projectRun = tt.run
+
+			var reports []*model.ProjectRun
+			scanner := newProjectTestScanner(t, url).WithProject("p_42", "cli_ci").
+				WithProjectRunReporter(func(run *model.ProjectRun) { reports = append(reports, run) })
+			if _, err := scanner.Scan(context.Background(), newProjectTestRepo(t)); err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+
+			if len(reports) != 1 {
+				t.Fatalf("reports = %d, want 1", len(reports))
+			}
+			if (reports[0] == nil) != (tt.run == nil) || (tt.run != nil && *reports[0] != *tt.run) {
+				t.Errorf("reported %+v, want %+v", reports[0], tt.run)
+			}
+		})
+	}
+}
+
+func TestScan_AScanThatIsNotPublishedReportsNoRun(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	_, url := newIngestRecorderServer(t)
+
+	reported := false
+	scanner := newProjectTestScanner(t, url).
+		WithProjectRunReporter(func(*model.ProjectRun) { reported = true })
+	if _, err := scanner.Scan(context.Background(), newProjectTestRepo(t)); err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if reported {
+		t.Error("a scan without a project must report no run")
 	}
 }

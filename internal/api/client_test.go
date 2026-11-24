@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -596,6 +597,88 @@ func TestClient_StartIngest(t *testing.T) {
 			if strings.Contains(string(body), key) {
 				t.Errorf("expected %s to be omitted, got body: %s", key, body)
 			}
+		}
+	})
+
+	t.Run("forwards the branch of a published scan", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci", Branch: "feature/login",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got := scanBody(t, state); got["branch"] != "feature/login" {
+			t.Errorf("branch = %v, want feature/login", got["branch"])
+		}
+	})
+
+	t.Run("omits the branch of a scan that names no project", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		_, err := client.StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4, Branch: "main",
+		})
+		if err != nil {
+			t.Fatalf("StartIngest failed: %v", err)
+		}
+		if got, ok := scanBody(t, state)["branch"]; ok {
+			t.Errorf("branch = %v, want it omitted without a project", got)
+		}
+	})
+
+	t.Run("returns what /scan says of the project run", func(t *testing.T) {
+		t.Parallel()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = func(w http.ResponseWriter, _ *http.Request) {
+			testutil.JSONResponse(t, w, http.StatusOK, map[string]any{
+				"scan_id": testScanID, "scan_status": "INITIATED", "artifact_type": "repo",
+				"tenant_id": "tenant-456", "filename": "upload", "message": "ok",
+				"project_run": map[string]any{
+					"recorded": true, "project_id": "p_123", "run_id": "s_456", "reason": nil,
+				},
+			})
+		}
+		client := newIngestFlowClient(t, srv.URL)
+
+		started, err := client.StartIngestScan(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngestScan failed: %v", err)
+		}
+		want := &model.ProjectRun{Recorded: true, ProjectID: "p_123", RunID: "s_456"}
+		if started.ScanID != testScanID || !reflect.DeepEqual(started.ProjectRun, want) {
+			t.Errorf("started = %+v (run %+v), want scan %s and run %+v",
+				started, started.ProjectRun, testScanID, want)
+		}
+	})
+
+	t.Run("a server that predates project runs says nothing of the run", func(t *testing.T) {
+		t.Parallel()
+		srv, _ := newIngestFlowServer(t)
+		client := newIngestFlowClient(t, srv.URL)
+
+		started, err := client.StartIngestScan(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+			ProjectID: "p_123", Trigger: "cli_ci",
+		})
+		if err != nil {
+			t.Fatalf("StartIngestScan failed: %v", err)
+		}
+		if started.ProjectRun != nil {
+			t.Errorf("ProjectRun = %+v, want nil", started.ProjectRun)
 		}
 	})
 
@@ -1325,6 +1408,217 @@ func TestClient_StartIngest_DebugLogsProjectFields(t *testing.T) {
 	if out := ingest("", ""); strings.Contains(out, "project_id=") {
 		t.Errorf("an unpublished scan should log no project fields, got:\n%s", out)
 	}
+}
+
+// newFastRetryIngestClient is newIngestFlowClient with retries that wait
+// milliseconds, not seconds.
+func newFastRetryIngestClient(t *testing.T, baseURL string) *Client {
+	t.Helper()
+	httpClient := httpclient.NewClient(httpclient.Config{
+		Timeout: 5 * time.Second, RetryWaitMin: 5 * time.Millisecond, RetryWaitMax: 20 * time.Millisecond,
+	})
+	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	c, err := NewClient(baseURL, testutil.NewTestAuthProvider("token123"), false, time.Minute,
+		WithHTTPClient(httpClient), WithUploadHTTPClient(uploadClient), WithAllowLocalURLs(true))
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	return c
+}
+
+// scanAnswers serves /ingest/scan the answers given, one a call, and the last
+// one for every call after them.
+func scanAnswers(answers ...http.HandlerFunc) func(http.ResponseWriter, *http.Request) {
+	var mu sync.Mutex
+	calls := 0
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		answer := answers[min(calls, len(answers)-1)]
+		calls++
+		mu.Unlock()
+		answer(w, r)
+	}
+}
+
+func jsonAnswer(status int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// dropConnection answers nothing: the connection closes under the request,
+// as when an answer is lost on the way.
+func dropConnection(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}
+}
+
+const alreadyInitiated = `{"detail":"Scan ` + testScanID + ` is already in status INITIATED; /ingest/scan can only be called on a PENDING_UPLOAD scan."}`
+
+func TestClient_StartIngest_RetryAfterTheScanStarted(t *testing.T) {
+	t.Parallel()
+	ingest := func(t *testing.T, answer func(http.ResponseWriter, *http.Request)) (int, error) {
+		t.Helper()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = answer
+		_, err := newFastRetryIngestClient(t, srv.URL).StartIngest(context.Background(), IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		})
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return state.scanCalls, err
+	}
+
+	t.Run("a 5xx after the scan started is the error, not the retry's 409", func(t *testing.T) {
+		t.Parallel()
+		calls, err := ingest(t, scanAnswers(
+			jsonAnswer(http.StatusInternalServerError, `{"detail":"Failed to dispatch the scan"}`),
+			jsonAnswer(http.StatusConflict, alreadyInitiated),
+		))
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if calls != 2 {
+			t.Errorf("/scan calls = %d, want 2 (the 500, then the refused retry)", calls)
+		}
+		// The server's body comes last, where the error output reads its detail.
+		want := `failed to trigger scan: /scan returned 500 Internal Server Error after starting the scan ` +
+			`(a retry found it already started): {"detail":"Failed to dispatch the scan"}`
+		if !strings.HasSuffix(err.Error(), want) {
+			t.Errorf("error = %q, want it to end with %q", err, want)
+		}
+		if strings.Contains(err.Error(), "409") {
+			t.Errorf("the retry's 409 should not be the error: %v", err)
+		}
+	})
+
+	t.Run("an answer lost after the scan started says it may still run", func(t *testing.T) {
+		t.Parallel()
+		calls, err := ingest(t, scanAnswers(dropConnection(t), jsonAnswer(http.StatusConflict, alreadyInitiated)))
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if calls != 2 {
+			t.Errorf("/scan calls = %d, want 2", calls)
+		}
+		if !strings.Contains(err.Error(), "failed to call /scan: ") ||
+			!strings.HasSuffix(err.Error(), "; a retry found the scan already started, so it may still run") {
+			t.Errorf("error = %v", err)
+		}
+	})
+
+	t.Run("a race lost to the earlier attempt reads the same", func(t *testing.T) {
+		t.Parallel()
+		_, err := ingest(t, scanAnswers(
+			jsonAnswer(http.StatusBadGateway, `{"detail":"upstream"}`),
+			jsonAnswer(http.StatusConflict, `{"detail":"Scan status changed concurrently; please re-check status."}`),
+		))
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 502 Bad Gateway after starting the scan") {
+			t.Errorf("error = %v", err)
+		}
+	})
+
+	t.Run("a 5xx before the scan started is retried as before", func(t *testing.T) {
+		t.Parallel()
+		ok, _ := json.Marshal(model.IngestUploadResponse{ScanID: testScanID, ScanStatus: "INITIATED"})
+		calls, err := ingest(t, scanAnswers(
+			jsonAnswer(http.StatusInternalServerError, `{"detail":"Failed to verify upload in S3."}`),
+			jsonAnswer(http.StatusOK, string(ok)),
+		))
+		if err != nil {
+			t.Fatalf("a retry the server took should succeed: %v", err)
+		}
+		if calls != 2 {
+			t.Errorf("/scan calls = %d, want 2", calls)
+		}
+	})
+
+	t.Run("a 409 for a missing upload stays the error after a 5xx", func(t *testing.T) {
+		t.Parallel()
+		_, err := ingest(t, scanAnswers(
+			jsonAnswer(http.StatusInternalServerError, `{"detail":"Failed to verify upload in S3."}`),
+			jsonAnswer(http.StatusConflict, `{"detail":"Upload not found in S3. Please complete the upload using the presigned URL and retry /ingest/scan."}`),
+		))
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict") ||
+			!strings.Contains(err.Error(), "Upload not found in S3") {
+			t.Errorf("error = %v", err)
+		}
+	})
+
+	t.Run("a first answer of already started is its own 409", func(t *testing.T) {
+		t.Parallel()
+		calls, err := ingest(t, jsonAnswer(http.StatusConflict, alreadyInitiated))
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 409 Conflict: "+alreadyInitiated) {
+			t.Errorf("error = %v", err)
+		}
+		if calls != 1 {
+			t.Errorf("/scan calls = %d, want 1: a 409 is not retried", calls)
+		}
+	})
+}
+
+func TestClient_StartIngest_ProjectScanRefusal(t *testing.T) {
+	t.Parallel()
+	const refusal = `{"detail":{"code":"invalid_project_scan","message":"branch must be a name git check-ref-format --branch accepts"}}`
+	ingest := func(t *testing.T, projectID, body string) error {
+		t.Helper()
+		srv, state := newIngestFlowServer(t)
+		state.overrideScan = jsonAnswer(http.StatusUnprocessableEntity, body)
+		opts := IngestOptions{
+			TenantID: "tenant-456", ArtifactType: "repo", Filename: "test.tar.gz",
+			Data: bytes.NewReader([]byte("test")), Size: 4,
+		}
+		if projectID != "" {
+			opts.ProjectID, opts.Trigger, opts.Branch = projectID, "cli_ci", "feature/x"
+		}
+		_, err := newIngestFlowClient(t, srv.URL).StartIngest(context.Background(), opts)
+		return err
+	}
+
+	t.Run("is read from detail for a published scan", func(t *testing.T) {
+		t.Parallel()
+		err := ingest(t, "p_6512a0000000000000000a01", refusal)
+		want := "failed to trigger scan: the server refused to record the scan as a run of its project: " +
+			"branch must be a name git check-ref-format --branch accepts (invalid_project_scan)"
+		if err == nil || !strings.HasSuffix(err.Error(), want) {
+			t.Errorf("error = %v, want it to end with %q", err, want)
+		}
+	})
+
+	t.Run("strips control characters from the server's message", func(t *testing.T) {
+		t.Parallel()
+		err := ingest(t, "p_6512a0000000000000000a01",
+			`{"detail":{"code":"invalid_project_scan","message":"bad\u001b[31m branch"}}`)
+		if err == nil || strings.Contains(err.Error(), "\x1b") || !strings.Contains(err.Error(), "bad[31m branch") {
+			t.Errorf("error = %q", err)
+		}
+	})
+
+	t.Run("another 422 keeps the raw answer", func(t *testing.T) {
+		t.Parallel()
+		body := `{"detail":{"code":"something_else","message":"no"}}`
+		err := ingest(t, "p_6512a0000000000000000a01", body)
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 422 Unprocessable Entity: "+body) {
+			t.Errorf("error = %v", err)
+		}
+	})
+
+	t.Run("a scan that names no project keeps the raw answer", func(t *testing.T) {
+		t.Parallel()
+		err := ingest(t, "", refusal)
+		if err == nil || !strings.Contains(err.Error(), "/scan returned 422 Unprocessable Entity") {
+			t.Errorf("error = %v", err)
+		}
+	})
 }
 
 func TestClient_DebugModeRedactsPresignedURLs(t *testing.T) {

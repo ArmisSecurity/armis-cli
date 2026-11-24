@@ -3,6 +3,7 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -61,12 +62,32 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// StatusError is a 5xx answer: the error of an attempt that Do retries, and
+// of Do itself when the last attempt gets one. Body is the start of the
+// answer's body, at most maxErrorBodyBytes of it.
+type StatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("server error: %d - %s", e.StatusCode, e.Body)
+}
+
 // Do executes an HTTP request with retry and backoff.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	return c.DoObserved(req, nil)
+}
+
+// DoObserved is Do, and tells failed, when not nil, the error of each attempt
+// that fails (a network error, or a *StatusError), whether or not it is then
+// retried. A caller whose request changes state on the server can tell from it
+// that a later answer is to a retry, after an earlier attempt took effect.
+func (c *Client) DoObserved(req *http.Request, failed func(error)) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
-	operation := func() error {
+	attempt := func() error {
 		// Regenerate request body for retries if GetBody is set.
 		// This is necessary because the body is consumed after each attempt.
 		if req.GetBody != nil {
@@ -96,10 +117,18 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			if readErr != nil {
 				bodyStr = "<body read failed>"
 			}
-			return fmt.Errorf("server error: %d - %s", resp.StatusCode, bodyStr)
+			return &StatusError{StatusCode: resp.StatusCode, Body: bodyStr}
 		}
 
 		return nil
+	}
+	operation := func() error {
+		attemptErr := attempt()
+		var permanent *backoff.PermanentError
+		if attemptErr != nil && failed != nil && !errors.As(attemptErr, &permanent) {
+			failed(attemptErr)
+		}
+		return attemptErr
 	}
 
 	ctx := req.Context()

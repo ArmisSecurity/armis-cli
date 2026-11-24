@@ -66,6 +66,11 @@ type MockAPIConfig struct {
 	// status and ScanBody instead of starting the scan.
 	ScanStatus int
 	ScanBody   string
+	// ProjectRun, when set, answers each POST /api/v1/ingest/scan that names
+	// a project with the project_run it returns, as a server that records CLI
+	// scans as project runs does. Unset, the mock answers as a server that
+	// predates project runs, with no project_run.
+	ProjectRun func(req model.IngestScanStartRequest) *model.ProjectRun
 	// SBOMScan, when set, is merged into the GET /api/v1/ingest/results body
 	// (sbom_scan_status, sbom_skipped_files, ...).
 	SBOMScan map[string]interface{}
@@ -340,18 +345,28 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		// POST /api/v1/ingest/scan — confirms upload and triggers scan.
 		if strings.Contains(r.URL.Path, "/api/v1/ingest/scan") && r.Method == http.MethodPost {
 			AssertHasAuthorization(t, r)
-			if config.OnScanRequest != nil {
+			var scanReq model.IngestScanStartRequest
+			if config.OnScanRequest != nil || config.ProjectRun != nil {
 				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 				if err != nil {
 					t.Errorf("read /scan body: %v", err)
 				}
-				config.OnScanRequest(body)
+				if config.OnScanRequest != nil {
+					config.OnScanRequest(body)
+				}
+				if err := json.Unmarshal(body, &scanReq); err != nil {
+					t.Errorf("decode /scan body: %v", err)
+				}
 			}
 			if config.ScanStatus != 0 {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(config.ScanStatus)
 				_, _ = w.Write([]byte(config.ScanBody))
 				return
+			}
+			var projectRun *model.ProjectRun
+			if config.ProjectRun != nil && scanReq.ProjectID != "" {
+				projectRun = config.ProjectRun(scanReq)
 			}
 			JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
 				ScanID:       config.ScanID,
@@ -360,6 +375,7 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 				TenantID:     mockTenantID,
 				Filename:     "upload",
 				Message:      "Upload confirmed and scan initiated successfully",
+				ProjectRun:   projectRun,
 			})
 			return
 		}

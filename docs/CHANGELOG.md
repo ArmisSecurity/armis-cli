@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis does not record CLI scans as project runs yet; until it does, the scan does not appear under the project, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
+- `scan repo --project <name>` publishes the scan as a run of an Armis AppSec project. The project is created on first use as a CLI project (source `cli`) with no git integration, so any folder works, including a non-git codebase or a monorepo subfolder. Re-runs reuse the same project. Armis records the scan as a run of the project, filed under the checkout's branch, or the branch the CI variables name when the checkout is detached, and the CLI prints the run's id once the scan starts. When Armis records no run, the CLI says why: the tenant does not record CLI scans as runs yet, the project is archived or is not a CLI project, or it was deleted. A paused project still records the runs that name it. An Armis server that predates project runs records none, and the CLI prints a note saying so. CI runs publish automatically. On a developer machine publishing needs `--report`. Without `--project` a scan stays local-only, as before. (PPSC-1589)
 - `--project` names are checked before anything is uploaded: 1-64 characters, letters, digits, `.`, `_`, `-` and `/`, starting and ending with a letter or digit, and not `null`, `nil`, `none` or `undefined`. An invalid name fails with the rule it broke and a valid example. It is never trimmed or renamed. (PPSC-1589)
-- `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project. (PPSC-1589)
+- `--sync` (the default) waits for results and gates on `--fail-on`. `--async` returns once the scan is accepted and exits 0. With `--format json` it writes the scan ID and project, with the run's id, or why no run was recorded. (PPSC-1589)
 - `armis-cli scan <path>` is a shorthand for `armis-cli scan repo <path>` and takes the same flags. (PPSC-1589)
 - The GitHub Action has a `project` input. (PPSC-1589)
 - `scan repo --include-sbom-files N` scans up to N CycloneDX/SPDX files kept in the repository for vulnerabilities, alongside the code, and warns (without changing the exit code) when some SBOM files were skipped (#370)
@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
 - On a server error, the error message quotes at most 1 KiB of the response body instead of up to 1 MB. (PPSC-1589)
 - `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
+- When the server fails after it has started a scan, for example because it could not dispatch the scan, the CLI reports that failure and the server's reason. It used to retry, and reported the retry's refusal instead: `409 Conflict … already in status INITIATED`. When the answer to the start request is lost, the CLI says the scan may still run. (PPSC-1589)
+- When the server refuses to record a published scan as a run of its project (`invalid_project_scan`), the CLI shows the server's reason instead of its raw JSON answer. (PPSC-1589)
 
 ### Security
 

@@ -52,16 +52,18 @@ type Resolution struct {
 }
 
 // StatusWarning explains why a scan published to this project will not be
-// recorded as one of its runs, or returns "" when the project records runs.
+// recorded as one of its runs, or returns "" when the project records runs. A
+// paused project does: its schedules stop, but the runs that name it record.
 func (r *Resolution) StatusWarning() string {
-	switch r.Project.Status {
-	case model.ProjectStatusPaused:
-		return fmt.Sprintf("project %q is paused: this scan still runs and gates, "+
-			"but it is not recorded as a run until the project is resumed", r.Project.Name)
-	case model.ProjectStatusArchived:
+	switch {
+	case r.Project.Status == model.ProjectStatusArchived:
 		return fmt.Sprintf("project %q is archived: this scan still runs and gates, "+
 			"but it is not recorded as a run; resume the project in Armis to record runs again "+
 			"(an archived project keeps its name reserved)", r.Project.Name)
+	case r.Project.ProjectType != "" && r.Project.ProjectType != model.ProjectTypeCICD:
+		return fmt.Sprintf("project %q is not a CLI project (it is a %s project): this scan still "+
+			"runs and gates, but Armis records CLI scans only as runs of a CLI project; "+
+			"name a project of its own for CLI scans", r.Project.Name, r.Project.ProjectType)
 	default:
 		return ""
 	}

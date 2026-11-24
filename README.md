@@ -754,15 +754,25 @@ A CLI project has no git integration behind it. It is listed with source
 `cli`, whether you scanned a git repository, a plain folder or a monorepo
 subfolder. Names are case-sensitive. If the only existing project differs
 from your name by case (`Checkout-Service` vs `checkout-service`), the scan
-stops instead of creating a near-duplicate. A paused or archived project
-still gates the scan, but a warning says the run will not be recorded.
-Finding or creating a project needs credentials with the `admin` or
-`developer` role.
+stops instead of creating a near-duplicate. Finding or creating a project
+needs credentials with the `admin` or `developer` role.
 
-> **Note:** Armis does not record CLI scans as runs of a project yet. Until it
-> does, a published scan still creates or finds the project, and runs and
-> gates as usual, but it does not appear under the project. The CLI prints a
-> note saying so.
+**Runs.** Once the scan starts, the CLI prints the run Armis recorded it as
+(`Recorded as run s_... of project checkout-service`). The run is filed under
+the branch of the checkout, or, when the checkout is detached as CI checkouts
+often are, the branch the CI variables name (`GITHUB_HEAD_REF`,
+`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`, `BUILD_SOURCEBRANCH` and others). A
+paused project still records the runs that name it. When Armis records no
+run, the scan still runs and gates as usual, and the CLI says why:
+
+- the tenant does not record CLI scans as project runs yet;
+- the project is archived (resume it in Armis to record runs again);
+- the project is not a CLI project, such as one bound to a repository by a
+  git integration (name a project of its own for CLI scans);
+- the project was deleted after the scan found it.
+
+An Armis server that predates project runs records none; the CLI prints a
+note saying so.
 
 **Project names** are checked before anything is uploaded. A name that breaks
 a rule fails the command with the rule it broke and a valid example. It is
@@ -789,10 +799,16 @@ downloaded. With `--format json` it writes a record of the accepted scan:
     "project_id": "p_507f1f77bcf86cd799439012",
     "name": "checkout-service",
     "created": false,
-    "trigger": "cli_ci"
+    "trigger": "cli_ci",
+    "recorded": true,
+    "run_id": "s_507f1f77bcf86cd799439013"
   }
 }
 ```
+
+When no run was recorded, `recorded` is `false` and `reason` says why
+(`disabled`, `project_archived`, `project_not_cli`, `project_not_found` or
+`not_recorded`). A server that predates project runs leaves both out.
 
 Other formats write nothing in async mode. An empty SARIF upload would close
 every open code-scanning alert. Follow up on an async scan with
