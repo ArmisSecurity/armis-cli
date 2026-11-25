@@ -356,7 +356,12 @@ func formatScanResult(formatter output.Formatter, result *model.ScanResult, w io
 		cli.PrintWarning(output.HiddenFailingWarning(hidden, minSeverity))
 	}
 
-	return output.CheckExit(result, failOnSeverities, exitCode)
+	if err := output.CheckExit(result, failOnSeverities, exitCode); err != nil {
+		return err
+	}
+	// A recorded run the history truncated passes --fail-on only on levels
+	// its kept findings decide.
+	return output.CheckTruncation(result, failOnSeverities)
 }
 
 // runScanShorthand runs `armis-cli scan <path>` exactly as `armis-cli scan repo

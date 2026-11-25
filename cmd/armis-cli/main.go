@@ -39,6 +39,14 @@ func main() {
 			cmd.PrintUpdateNotification()
 			os.Exit(2)
 		}
+		// Handle truncated results (a recorded run's history kept only its most
+		// severe findings, and the dropped ones could match --fail-on)
+		var truncatedErr *output.ErrResultsTruncated
+		if errors.As(err, &truncatedErr) {
+			cli.PrintWarning(truncatedErr.Error())
+			cmd.PrintUpdateNotification()
+			os.Exit(2)
+		}
 		// Handle missing BOMs (scan succeeded but a --bom download failed)
 		var bomErr *output.ErrBOMIncomplete
 		if errors.As(err, &bomErr) {

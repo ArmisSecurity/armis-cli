@@ -712,19 +712,25 @@ func pluralize(word string, count int) string {
 // suppressionSummaryText builds a human-readable summary splitting counts by source.
 // Example: "3 suppressed by .armisignore, 2 by inline comments"
 func suppressionSummaryText(findings []model.Finding) string {
-	var armisignore, inline int
+	var server, armisignore, inline int
 	for _, f := range findings {
 		if !f.Suppressed {
 			continue
 		}
-		if f.SuppressionInfo != nil && f.SuppressionInfo.Source == suppressionSourceInline {
+		switch {
+		case isServerSuppression(f.SuppressionInfo):
+			server++
+		case f.SuppressionInfo != nil && f.SuppressionInfo.Source == suppressionSourceInline:
 			inline++
-		} else {
+		default:
 			armisignore++
 		}
 	}
 
 	var parts []string
+	if server > 0 {
+		parts = append(parts, fmt.Sprintf("%d suppressed by Armis scan filters", server))
+	}
 	if armisignore > 0 {
 		parts = append(parts, fmt.Sprintf("%d suppressed by .armisignore", armisignore))
 	}
@@ -735,6 +741,71 @@ func suppressionSummaryText(findings []model.Finding) string {
 		return "0 suppressed"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// isServerSuppression reports whether a finding was suppressed by the
+// project's Armis scan filters (a recorded project run's), not locally.
+func isServerSuppression(info *model.SuppressionInfo) bool {
+	return info != nil && (info.Source == suppressionSourceTenant || info.Source == suppressionSourceProject)
+}
+
+// The directives of a project's Armis scan filters (SuppressionInfo.Type).
+const (
+	serverDirectiveThreshold = "severity_threshold"
+	serverDirectiveSeverity  = "severity"
+	serverDirectiveCategory  = "category"
+	serverDirectiveCWE       = "cwe"
+)
+
+// serverSuppressionPhrases describe a group of findings the scan filters
+// suppressed, by directive, with the filter's source and value.
+var serverSuppressionPhrases = map[string]string{
+	serverDirectiveThreshold: "%d below the %s's %s threshold",
+	serverDirectiveSeverity:  "%d by the %s's severities",
+	serverDirectiveCategory:  "%d by the %s's categories",
+	serverDirectiveCWE:       "%d by the %s's CWEs",
+}
+
+// ServerSuppressionLine groups the findings the project's Armis scan filters
+// suppressed by directive and source, or returns "" when they suppressed
+// none. Example: "Armis scan filters suppressed 14 findings (12 below the
+// project's LOW threshold, 2 by the tenant's CWEs)".
+func ServerSuppressionLine(findings []model.Finding) string {
+	type group struct{ directive, source, value string }
+	counts := map[group]int{}
+	var order []group
+	total := 0
+	for _, f := range findings {
+		if !f.Suppressed || !isServerSuppression(f.SuppressionInfo) {
+			continue
+		}
+		g := group{directive: f.SuppressionInfo.Type, source: f.SuppressionInfo.Source}
+		if g.directive == serverDirectiveThreshold {
+			g.value = f.SuppressionInfo.Value
+		}
+		if counts[g] == 0 {
+			order = append(order, g)
+		}
+		counts[g]++
+		total++
+	}
+	if total == 0 {
+		return ""
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	parts := make([]string, 0, len(order))
+	for _, g := range order {
+		phrase, known := serverSuppressionPhrases[g.directive]
+		switch {
+		case !known:
+			parts = append(parts, fmt.Sprintf("%d by the %s's filters", counts[g], g.source))
+		case g.directive == serverDirectiveThreshold:
+			parts = append(parts, fmt.Sprintf(phrase, counts[g], g.source, util.StripControl(g.value)))
+		default:
+			parts = append(parts, fmt.Sprintf(phrase, counts[g], g.source))
+		}
+	}
+	return fmt.Sprintf("Armis scan filters suppressed %d %s (%s)", total, pluralize("finding", total), strings.Join(parts, ", "))
 }
 
 // hiddenBelowMinSeverityText describes findings hidden by --min-severity.
@@ -848,6 +919,9 @@ func renderSummaryDashboard(w io.Writer, result *model.ScanResult) error {
 	if result.Summary.Suppressed > 0 {
 		suppressed := s.MutedText.Render(fmt.Sprintf("(%s)", suppressionSummaryText(result.Findings)))
 		content.WriteString(suppressed + "\n")
+		if line := ServerSuppressionLine(result.Findings); line != "" {
+			content.WriteString(s.MutedText.Render(line) + "\n")
+		}
 	}
 
 	// --min-severity hidden count if any
@@ -957,6 +1031,8 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		label := "[SUPPRESSED]"
 		if finding.SuppressionInfo != nil && finding.SuppressionInfo.Source == suppressionSourceInline {
 			label = "[SUPPRESSED by armis:ignore]"
+		} else if isServerSuppression(finding.SuppressionInfo) {
+			label = "[SUPPRESSED by Armis scan filters]"
 		}
 		suppLabel := s.MutedText.Render(label)
 		var reason string
