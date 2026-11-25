@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,18 +76,29 @@ type ProjectListOptions struct {
 	Statuses []string
 	// Sort is a ProjectSort value; empty means the API default.
 	Sort string
-	// Limit is the page size (1 to MaxProjectListLimit); zero means the API
-	// default (50).
-	Limit int
-	// Cursor is the opaque next_cursor of the previous page.
+	// PageSize is the page size (1 to MaxProjectListLimit); zero means the
+	// API default (50).
+	PageSize int
+	// Page is the 1-based page number; zero means the first page.
+	Page int
+	// Cursor is the next_cursor of the previous page, for a server before
+	// PPSC-2019, which pages by cursor. Such a server ignores page and
+	// page_size; a newer one answers 422 to cursor and limit, which is why
+	// the page size goes as limit only alongside a cursor.
 	Cursor string
 }
 
 // ListProjects fetches one page of the tenant's projects.
 func (c *Client) ListProjects(ctx context.Context, tenantID string, opts ProjectListOptions) (*model.ProjectListResponse, error) {
-	if opts.Limit < 0 || opts.Limit > MaxProjectListLimit {
+	if opts.PageSize < 0 || opts.PageSize > MaxProjectListLimit {
 		return nil, fmt.Errorf("project page size %d is out of range: must be 1 to %d (or 0 for the default)",
-			opts.Limit, MaxProjectListLimit)
+			opts.PageSize, MaxProjectListLimit)
+	}
+	if opts.Page < 0 {
+		return nil, fmt.Errorf("project page %d is out of range: pages start at 1 (or 0 for the first)", opts.Page)
+	}
+	if opts.Page > 0 && opts.Cursor != "" {
+		return nil, errors.New("a project page is asked by number or by cursor, not both")
 	}
 
 	params := url.Values{}
@@ -100,11 +112,18 @@ func (c *Client) ListProjects(ctx context.Context, tenantID string, opts Project
 	if opts.Sort != "" {
 		params.Set("sort", opts.Sort)
 	}
-	if opts.Limit > 0 {
-		params.Set("limit", strconv.Itoa(opts.Limit))
-	}
 	if opts.Cursor != "" {
 		params.Set("cursor", opts.Cursor)
+		if opts.PageSize > 0 {
+			params.Set("limit", strconv.Itoa(opts.PageSize))
+		}
+	} else {
+		if opts.Page > 0 {
+			params.Set("page", strconv.Itoa(opts.Page))
+		}
+		if opts.PageSize > 0 {
+			params.Set("page_size", strconv.Itoa(opts.PageSize))
+		}
 	}
 
 	var resp model.ProjectListResponse

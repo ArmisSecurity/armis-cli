@@ -37,7 +37,7 @@ func newProjectsClient(t *testing.T, baseURL string) *Client {
 func TestClient_ListProjects(t *testing.T) {
 	t.Parallel()
 
-	t.Run("sends every filter and decodes the page", func(t *testing.T) {
+	t.Run("sends every filter, asks a page by number and decodes it", func(t *testing.T) {
 		t.Parallel()
 		var gotQuery url.Values
 		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -48,12 +48,11 @@ func TestClient_ListProjects(t *testing.T) {
 				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 			}
 			gotQuery = r.URL.Query()
-			next := testNextCursor
 			testutil.JSONResponse(t, w, http.StatusOK, model.ProjectListResponse{
 				Data: []model.Project{
 					{ProjectID: "p_1", Name: "svc", ProjectType: model.ProjectTypeCICD, Status: model.ProjectStatusActive},
 				},
-				Pagination: model.ProjectListPagination{NextCursor: &next, Limit: 200},
+				Pagination: model.ProjectListPagination{Page: 2, PageSize: 200, TotalItems: 401, TotalPages: 3},
 			})
 		})
 
@@ -61,20 +60,25 @@ func TestClient_ListProjects(t *testing.T) {
 			Query:    "svc",
 			Statuses: []string{model.ProjectStatusActive, model.ProjectStatusPaused, model.ProjectStatusArchived},
 			Sort:     "name_asc",
-			Limit:    200,
-			Cursor:   "cursor-1",
+			PageSize: 200,
+			Page:     2,
 		})
 		if err != nil {
 			t.Fatalf("ListProjects failed: %v", err)
 		}
 
+		// A server since PPSC-2019 answers 422 to a parameter it doesn't
+		// declare, limit and cursor among them.
 		want := url.Values{
 			"tenant_id": {testProjectsTenant},
 			"q":         {"svc"},
 			"status":    {"active", "paused", "archived"},
 			"sort":      {"name_asc"},
-			"limit":     {"200"},
-			"cursor":    {"cursor-1"},
+			"page":      {"2"},
+			"page_size": {"200"},
+		}
+		if len(gotQuery) != len(want) {
+			t.Errorf("query = %v, want exactly %v", gotQuery, want)
 		}
 		for key, vals := range want {
 			if strings.Join(gotQuery[key], ",") != strings.Join(vals, ",") {
@@ -84,8 +88,39 @@ func TestClient_ListProjects(t *testing.T) {
 		if len(resp.Data) != 1 || resp.Data[0].ProjectID != "p_1" || resp.Data[0].Name != "svc" {
 			t.Errorf("unexpected data: %+v", resp.Data)
 		}
-		if resp.Pagination.NextCursor == nil || *resp.Pagination.NextCursor != testNextCursor {
-			t.Errorf("next_cursor = %v, want cursor-2", resp.Pagination.NextCursor)
+		if resp.Pagination.TotalPages != 3 || resp.Pagination.Page != 2 || resp.Pagination.NextCursor != nil {
+			t.Errorf("pagination = %+v", resp.Pagination)
+		}
+	})
+
+	t.Run("asks an older server's next page by cursor", func(t *testing.T) {
+		t.Parallel()
+		var gotQuery url.Values
+		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			gotQuery = r.URL.Query()
+			next := testNextCursor
+			testutil.JSONResponse(t, w, http.StatusOK, model.ProjectListResponse{
+				Pagination: model.ProjectListPagination{NextCursor: &next, Limit: 200},
+			})
+		})
+
+		resp, err := newProjectsClient(t, srv.URL).ListProjects(context.Background(), testProjectsTenant, ProjectListOptions{
+			Query: "svc", PageSize: 200, Cursor: "cursor-1",
+		})
+		if err != nil {
+			t.Fatalf("ListProjects failed: %v", err)
+		}
+		want := url.Values{"tenant_id": {testProjectsTenant}, "q": {"svc"}, "limit": {"200"}, "cursor": {"cursor-1"}}
+		if len(gotQuery) != len(want) {
+			t.Errorf("query = %v, want exactly %v", gotQuery, want)
+		}
+		for key, vals := range want {
+			if strings.Join(gotQuery[key], ",") != strings.Join(vals, ",") {
+				t.Errorf("query %s = %v, want %v", key, gotQuery[key], vals)
+			}
+		}
+		if resp.Pagination.NextCursor == nil || *resp.Pagination.NextCursor != testNextCursor || resp.Pagination.TotalPages != 0 {
+			t.Errorf("pagination = %+v, want next_cursor %s", resp.Pagination, testNextCursor)
 		}
 	})
 
@@ -110,9 +145,19 @@ func TestClient_ListProjects(t *testing.T) {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		})
 		client := newProjectsClient(t, srv.URL)
-		for _, limit := range []int{-1, MaxProjectListLimit + 1} {
-			if _, err := client.ListProjects(context.Background(), testProjectsTenant, ProjectListOptions{Limit: limit}); err == nil {
-				t.Errorf("Limit %d: expected an error", limit)
+		for _, size := range []int{-1, MaxProjectListLimit + 1} {
+			if _, err := client.ListProjects(context.Background(), testProjectsTenant, ProjectListOptions{PageSize: size}); err == nil {
+				t.Errorf("PageSize %d: expected an error", size)
+			}
+		}
+		for name, opts := range map[string]ProjectListOptions{
+			"a negative page":           {Page: -1},
+			"a page and a cursor":       {Page: 2, Cursor: "cursor-1"},
+			"a cursor and a bad size":   {Cursor: "cursor-1", PageSize: MaxProjectListLimit + 1},
+			"a negative page with size": {Page: -3, PageSize: 10},
+		} {
+			if _, err := client.ListProjects(context.Background(), testProjectsTenant, opts); err == nil {
+				t.Errorf("%s: expected an error", name)
 			}
 		}
 	})

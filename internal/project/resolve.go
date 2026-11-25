@@ -14,11 +14,12 @@ import (
 const (
 	// lookupPageSize is the largest page GET /projects serves.
 	lookupPageSize = api.MaxProjectListLimit
-	// maxLookupPages bounds the name lookup at 10,000 substring matches. Past
-	// that the resolver falls back to creating the project, which the API
+	// maxLookupPages bounds the name lookup at about 10,000 substring matches.
+	// Past that the resolver falls back to creating the project, which the API
 	// answers with the existing project's id when the name is taken.
 	maxLookupPages = 50
-	// lookupSort keeps paging stable; the API pins a cursor to its sort.
+	// lookupSort keeps paging stable: each sort ends on a unique key, and a
+	// server that pages by cursor pins the cursor to its sort.
 	lookupSort = "name_asc"
 )
 
@@ -172,6 +173,11 @@ type lookupResult struct {
 // match (see below). It gives up (complete=false) after maxLookupPages or on a
 // cursor that does not advance.
 //
+// A server since PPSC-2019 pages by number and says how many pages there are;
+// it answers 422 to a cursor or a limit. An older one ignores page and
+// page_size: it serves its default page with a next_cursor, and the lookup
+// then follows the cursor.
+//
 // The API sorts name_asc in byte order (checked on dev, uppercase before
 // lowercase). Every case variant of an ASCII name sorts at or below its
 // all-lowercase form, so once a page ends past that form, no later page can
@@ -184,14 +190,19 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 	cursor := ""
 	last := strings.ToLower(name) // the highest any variant can sort
 	prev, ordered := "", true
-	for page := 0; page < maxLookupPages; page++ {
-		resp, err := client.ListProjects(ctx, tenantID, api.ProjectListOptions{
+	for page := 1; page <= maxLookupPages; page++ {
+		opts := api.ProjectListOptions{
 			Query:    name,
 			Statuses: lookupStatuses,
 			Sort:     lookupSort,
-			Limit:    lookupPageSize,
-			Cursor:   cursor,
-		})
+			PageSize: lookupPageSize,
+		}
+		if cursor != "" {
+			opts.Cursor = cursor
+		} else {
+			opts.Page = page
+		}
+		resp, err := client.ListProjects(ctx, tenantID, opts)
 		if err != nil {
 			return lookupResult{}, err
 		}
@@ -209,8 +220,8 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 			}
 			prev = p.Name
 		}
-		next := resp.Pagination.NextCursor
-		if next == nil || *next == "" {
+		more, next := morePages(resp.Pagination, page)
+		if !more {
 			found.complete = true
 			return found, nil
 		}
@@ -218,12 +229,26 @@ func lookup(ctx context.Context, client API, tenantID, name string) (lookupResul
 			found.complete = true
 			return found, nil
 		}
-		if *next == cursor {
-			return found, nil
+		if next != "" {
+			if next == cursor {
+				return found, nil
+			}
+			cursor = next
 		}
-		cursor = *next
 	}
 	return found, nil
+}
+
+// morePages reports whether page is followed by another, and the cursor to it
+// from a server that pages by cursor ("" from one that pages by number).
+func morePages(p model.ProjectListPagination, page int) (bool, string) {
+	if p.TotalPages > 0 {
+		return page < p.TotalPages, ""
+	}
+	if p.NextCursor == nil || *p.NextCursor == "" {
+		return false, ""
+	}
+	return true, *p.NextCursor
 }
 
 // equalFoldASCII reports whether a and b are equal ignoring ASCII case. Names
