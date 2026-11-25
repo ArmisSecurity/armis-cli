@@ -142,6 +142,10 @@ type RunFindingIdentifiers struct {
 	OWASP []string `json:"owasp"`
 }
 
+// SnippetHiddenSensitive is the RunFindingEvidence.SnippetHiddenReason of a
+// finding that holds a secret.
+const SnippetHiddenSensitive = "sensitive"
+
 // RunFindingEvidence is the evidence of any kind (Kind sast, sca, secret,
 // iac, license or container), with the fields the CLI reads; each kind sets
 // its own.
@@ -149,6 +153,10 @@ type RunFindingEvidence struct {
 	Kind string `json:"kind"`
 	// Snippet is a SAST or IaC finding's code; a secret has none.
 	Snippet *RunFindingSnippet `json:"snippet"`
+	// SnippetHiddenReason is SnippetHiddenSensitive for a secret's evidence,
+	// and for a SAST or IaC finding the history wrote as a secret: one whose
+	// code holds a secret.
+	SnippetHiddenReason string `json:"snippet_hidden_reason"`
 	// Manifest is an SCA finding's manifest line.
 	Manifest *RunFindingManifest `json:"manifest"`
 	// Reachability, Confidence (0-100) and Verification are a SAST

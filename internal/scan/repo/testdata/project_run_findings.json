@@ -26,7 +26,7 @@
         "category": "injection",
         "reachability": {"verdict": "reachable", "exposure": 6},
         "confidence": 90,
-        "snippet": {"start_line": 19, "end_line": 24, "highlight": [21, 22], "code": "const q = `SELECT * FROM orders WHERE id = ${id}`;"},
+        "snippet": {"start_line": 19, "end_line": 24, "highlight": [21, 22], "code": "const q = `SELECT * FROM orders WHERE id = ${id}`;\n"},
         "tainted_functions": ["listOrders"],
         "classification": {"cwes": [{"id": "CWE-89", "name": "SQL Injection"}], "owasp": ["A03:2021"]},
         "verification": {"result": null, "severity_before": null, "explanation": "The route is public."}
@@ -123,6 +123,40 @@
       "remediation": null,
       "references": [],
       "some_future_field": {"ignored": true}
+    }
+  },
+  {
+    "finding_id": "f_5bc6f9274dae8e3f1b6c2d7a4e9f5b18",
+    "title": "Finding of rule 'detected-private-key'",
+    "type": "sast",
+    "severity": "high",
+    "asset": {"asset_id": "a_6", "name": "server.key", "version": null, "type": "source"},
+    "location": {"path": "certs/server.key", "line": 1},
+    "rule": {"value": "CWE-798: Use of Hard-coded Credentials", "kind": "cwe", "more": 0},
+    "suppression": null,
+    "detail": {
+      "description": null,
+      "details_markdown": null,
+      "location": {"path": "certs/server.key", "start_line": 1, "end_line": 2},
+      "identifiers": {"cves": [], "cwes": ["CWE-798: Use of Hard-coded Credentials"], "owasp": [], "rule_id": "detected-private-key", "license": null},
+      "exploitability": null,
+      "evidence": {
+        "kind": "sast",
+        "category": null,
+        "reachability": {"verdict": "unknown", "exposure": null},
+        "attacker_prerequisite": null,
+        "data_flow": null,
+        "exploit": null,
+        "impact": null,
+        "confidence": null,
+        "snippet": null,
+        "snippet_hidden_reason": "sensitive",
+        "tainted_functions": [],
+        "classification": {"cwes": [{"id": "CWE-798: Use of Hard-coded Credentials", "name": null}], "owasp": []},
+        "verification": null
+      },
+      "remediation": {"summary": null, "patch": null, "guideline_url": null, "fix_version": null, "latest_clean_version": null},
+      "references": ["https://cwe.mitre.org/data/definitions/798"]
     }
   }
 ]

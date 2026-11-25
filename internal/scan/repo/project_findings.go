@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
@@ -22,17 +23,19 @@ const (
 )
 
 // recordedRunCategory is the finding category of a recorded run's finding,
-// by its type. The history keeps no category, so a finding gets the value of
-// the CLI's own vocabulary (.armisignore's category: directives) for its
-// type. Its type, SARIF ruleId and category: matches then come out as for
-// the same finding of an unpublished scan.
+// by its type. The history keeps no category, so a finding gets the one
+// /ingest/normalized-results serves for findings of its type. Its type,
+// SARIF ruleId and category: matches then come out as for the same finding
+// of an unpublished scan. (An IaC finding the normalizer filed as a
+// POLICY_VIOLATION is the one exception: it comes out as
+// INFRA_AS_CODE_MISCONFIGURATION.)
 var recordedRunCategory = map[string]string{
 	runTypeSAST:      "CODE_VULNERABILITY",
 	runTypeSCA:       "CODE_PACKAGE_VULNERABILITY",
-	runTypeSecret:    "HARDCODED_SECRET_EXPOSURE",
+	runTypeSecret:    "SECRET_EXPOSURE",
 	runTypeIaC:       "INFRA_AS_CODE_MISCONFIGURATION",
-	runTypeLicense:   "LICENSE_COMPLIANCE_RISK",
-	runTypeContainer: "BASE_IMAGE_VULNERABILITY",
+	runTypeLicense:   "LICENSE_COMPLIANCE",
+	runTypeContainer: "CONTAINER_VULNERABILITY",
 }
 
 // serverSuppressionReason is the reason a finding the project's filters
@@ -73,7 +76,11 @@ func convertProjectRunFindings(rows []model.RunFinding, debug bool, includeNonEx
 // stays empty: columns, fix proposals, OWASP titles and whether the verifier
 // held the finding valid.
 func runFinding(row *model.RunFinding, detail *model.RunFindingDetail) model.Finding {
-	secret := row.Type == runTypeSecret
+	// A secret by its type, or a finding of another type whose code holds
+	// one: the history wrote it as a secret, as the normalized path's
+	// has_secret has it.
+	secret := row.Type == runTypeSecret ||
+		(detail.Evidence != nil && detail.Evidence.SnippetHiddenReason == model.SnippetHiddenSensitive)
 	category := recordedRunCategory[row.Type]
 	finding := model.Finding{
 		ID:                      row.FindingID,
@@ -104,7 +111,9 @@ func runFinding(row *model.RunFinding, detail *model.RunFindingDetail) model.Fin
 	}
 
 	if snippet := evidenceSnippet(detail.Evidence); snippet != nil && !secret {
-		finding.CodeSnippet = snippet.Code
+		// The history keeps the scanner's snippet, which ends its last line;
+		// the normalized path joins the snippet's lines, without that end.
+		finding.CodeSnippet = strings.TrimSuffix(snippet.Code, "\n")
 		finding.SnippetStartLine = derefInt(snippet.StartLine)
 	}
 

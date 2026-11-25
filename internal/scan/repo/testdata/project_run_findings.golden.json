@@ -79,7 +79,7 @@
     "file": "deploy/env.sh",
     "start_line": 7,
     "end_line": 7,
-    "finding_category": "HARDCODED_SECRET_EXPOSURE"
+    "finding_category": "SECRET_EXPOSURE"
   },
   {
     "id": "f_3fa4d7052b8e6c1d9f4a0b5e2c7d3f96",
@@ -115,8 +115,25 @@
     "description": "A restricted license.",
     "file": "package.json",
     "start_line": 12,
-    "finding_category": "LICENSE_COMPLIANCE_RISK",
+    "finding_category": "LICENSE_COMPLIANCE",
     "package": "left-pad",
     "version": "1.3.0"
+  },
+  {
+    "id": "f_5bc6f9274dae8e3f1b6c2d7a4e9f5b18",
+    "type": "SECRET",
+    "severity": "HIGH",
+    "title": "Finding of rule 'detected-private-key'",
+    "description": "",
+    "file": "certs/server.key",
+    "start_line": 1,
+    "end_line": 2,
+    "cwes": [
+      "CWE-798: Use of Hard-coded Credentials"
+    ],
+    "finding_category": "CODE_VULNERABILITY",
+    "urls": [
+      "https://cwe.mitre.org/data/definitions/798"
+    ]
   }
 ]

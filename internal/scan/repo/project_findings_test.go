@@ -81,7 +81,11 @@ func normalizedTwins() []model.NormalizedFinding {
 				ExtraData: model.ExtraData{
 					CodeLocation: model.CodeLocation{
 						FileName: str("src/db/orders.ts"), StartLine: num(21), EndLine: num(22),
-						Snippet: str("const q = `SELECT * FROM orders WHERE id = ${id}`;"), SnippetStartLine: num(19),
+						// The normalized path joins the snippet's lines; the raw
+						// snippet, which the history keeps, ends its last line.
+						Snippet:          str("const q = `SELECT * FROM orders WHERE id = ${id}`;\n"),
+						CodeSnippetLines: []string{"const q = `SELECT * FROM orders WHERE id = ${id}`;"},
+						SnippetStartLine: num(19),
 					},
 					Fix: &model.Fix{Explanation: "Bind the id as a parameter.", Patch: str("-raw\n+bound"), IsValid: true},
 					FindingValidation: &model.FindingValidation{
@@ -112,7 +116,7 @@ func normalizedTwins() []model.NormalizedFinding {
 		{
 			NormalizedRemediation: model.NormalizedRemediation{
 				Description:     "AWS access token found.",
-				FindingCategory: "HARDCODED_SECRET_EXPOSURE",
+				FindingCategory: "SECRET_EXPOSURE",
 				ToolSeverity:    "CRITICAL",
 			},
 			NormalizedTask: model.NormalizedTask{
@@ -143,7 +147,7 @@ func normalizedTwins() []model.NormalizedFinding {
 		{
 			NormalizedRemediation: model.NormalizedRemediation{
 				Description:     "A restricted license.",
-				FindingCategory: "LICENSE_COMPLIANCE_RISK",
+				FindingCategory: "LICENSE_COMPLIANCE",
 				ToolSeverity:    "LOW",
 			},
 			NormalizedTask: model.NormalizedTask{
@@ -153,11 +157,31 @@ func normalizedTwins() []model.NormalizedFinding {
 				}},
 			},
 		},
+		{
+			// A SAST finding whose code holds a secret.
+			NormalizedRemediation: model.NormalizedRemediation{
+				Description:     "Private Key detected.",
+				FindingCategory: "CODE_VULNERABILITY",
+				ToolSeverity:    "HIGH",
+				VulnerabilityTypeMetadata: model.VulnerabilityTypeMetadata{
+					CWEs:                    []string{"CWE-798: Use of Hard-coded Credentials"},
+					LongDescriptionMarkdown: "Code_location - 'certs/server.key'",
+					URLs:                    []string{"https://cwe.mitre.org/data/definitions/798"},
+				},
+			},
+			NormalizedTask: model.NormalizedTask{
+				FindingID: "engine-sast-secret-1",
+				ExtraData: model.ExtraData{CodeLocation: model.CodeLocation{
+					FileName: str("certs/server.key"), StartLine: num(1), EndLine: num(2),
+					Snippet: str("the key (placeholder)"), SnippetStartLine: num(1), HasSecret: true,
+				}},
+			},
+		},
 	}
 }
 
 // keptFields is what of a finding the history keeps, for comparing the two
-// paths: a secret's description and code are left out, as the history drops
+// paths: a secret's text, code and fix are left out, as the history drops
 // them.
 type keptFields struct {
 	Type                    model.FindingType
@@ -184,7 +208,8 @@ func kept(f model.Finding) keptFields {
 		LongDescriptionMarkdown: f.LongDescriptionMarkdown, URLs: f.URLs,
 	}
 	if f.Type == model.FindingTypeSecret {
-		k.Description, k.CodeSnippet, k.SnippetStartLine = "", "", 0
+		k.Description, k.LongDescriptionMarkdown, k.CodeSnippet, k.SnippetStartLine = "", "", "", 0
+		f.Fix = nil
 	}
 	if f.Fix != nil {
 		k.FixExplanation = f.Fix.Explanation
@@ -313,31 +338,60 @@ func TestConvertProjectRunFindings_LeavesOutLowExploitability(t *testing.T) {
 
 func TestConvertProjectRunFindings_MasksASecretsCode(t *testing.T) {
 	// A placeholder in the shape the masker knows (token_ and 20 characters).
+	// armis:ignore cwe:798 reason: a made-up, non-functional test value; the test asserts that it is masked out of the patch
 	const placeholder = "token_NOTAREALTOKENEXAMPLE0000"
 	patch := "-API_TOKEN=" + placeholder + "\n+API_TOKEN=${API_TOKEN}"
-	rows := []model.RunFinding{{
-		FindingID: "f_secret", Type: "secret", Severity: "critical",
-		Detail: &model.RunFindingDetail{
-			Evidence: &model.RunFindingEvidence{
-				Kind:    "secret",
-				Snippet: &model.RunFindingSnippet{Code: "API_TOKEN=" + placeholder},
+	// A secret, and a SAST finding the history wrote as one: its evidence
+	// says its snippet is hidden as sensitive.
+	for _, row := range []struct{ kind, hidden, category string }{
+		{"secret", "", "SECRET_EXPOSURE"},
+		{"sast", model.SnippetHiddenSensitive, "CODE_VULNERABILITY"},
+	} {
+		rows := []model.RunFinding{{
+			FindingID: "f_" + row.kind, Type: row.kind, Severity: "critical",
+			Detail: &model.RunFindingDetail{
+				Evidence: &model.RunFindingEvidence{
+					Kind:                row.kind,
+					Snippet:             &model.RunFindingSnippet{Code: "API_TOKEN=" + placeholder},
+					SnippetHiddenReason: row.hidden,
+				},
+				Remediation: &model.RunFindingRemediation{Patch: &patch},
 			},
-			Remediation: &model.RunFindingRemediation{Patch: &patch},
-		},
+		}}
+		findings, _ := convertProjectRunFindings(rows, false, false)
+		if len(findings) != 1 {
+			t.Fatalf("%s: findings = %+v", row.kind, findings)
+		}
+		f := findings[0]
+		if f.CodeSnippet != "" {
+			t.Errorf("%s: a secret's snippet was kept: %q", row.kind, f.CodeSnippet)
+		}
+		if f.Fix == nil || f.Fix.Patch == nil || strings.Contains(*f.Fix.Patch, placeholder) {
+			t.Errorf("%s: a secret's patch was not masked: %+v", row.kind, f.Fix)
+		}
+		if f.Type != model.FindingTypeSecret || f.FindingCategory != row.category {
+			t.Errorf("%s: type = %s, category = %s", row.kind, f.Type, f.FindingCategory)
+		}
+	}
+}
+
+func TestConvertProjectRunFindings_ASnippetWithoutItsLastLineEnd(t *testing.T) {
+	start := 4
+	rows := []model.RunFinding{{
+		FindingID: "f_iac", Type: "iac", Severity: "medium",
+		Detail: &model.RunFindingDetail{Evidence: &model.RunFindingEvidence{
+			Kind:    "iac",
+			Snippet: &model.RunFindingSnippet{Code: "resource \"a\" \"b\" {\n  acl = \"public\"\n\n", StartLine: &start},
+		}},
 	}}
 	findings, _ := convertProjectRunFindings(rows, false, false)
-	if len(findings) != 1 {
-		t.Fatalf("findings = %+v", findings)
+	// One line end goes, as the normalized path joins the lines: a blank
+	// last line stays.
+	if got := findings[0].CodeSnippet; got != "resource \"a\" \"b\" {\n  acl = \"public\"\n" {
+		t.Errorf("snippet = %q", got)
 	}
-	f := findings[0]
-	if f.CodeSnippet != "" {
-		t.Errorf("a secret's snippet was kept: %q", f.CodeSnippet)
-	}
-	if f.Fix == nil || f.Fix.Patch == nil || strings.Contains(*f.Fix.Patch, placeholder) {
-		t.Errorf("a secret's patch was not masked: %+v", f.Fix)
-	}
-	if f.Type != model.FindingTypeSecret {
-		t.Errorf("type = %s", f.Type)
+	if findings[0].Type != model.FindingTypeMisconfig {
+		t.Errorf("type = %s", findings[0].Type)
 	}
 }
 

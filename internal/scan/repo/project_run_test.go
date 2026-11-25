@@ -202,7 +202,7 @@ func TestScan_ARecordedRunNotFinishedIsReadAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}
-	if appSec, _ := srv.counts(); appSec != 3 || len(result.Findings) != 5 {
+	if appSec, _ := srv.counts(); appSec != 3 || len(result.Findings) != len(runFixture(t)) {
 		t.Errorf("AppSec reads %d, findings %d", appSec, len(result.Findings))
 	}
 }
