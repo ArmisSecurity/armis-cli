@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scan sbom` reports a finished scan as `completed`. Its status line was empty. (PPSC-1589)
 - When the server fails after it has started a scan, for example because it could not dispatch the scan, the CLI reports that failure and the server's reason. It used to retry, and reported the retry's refusal instead: `409 Conflict … already in status INITIATED`. When the answer to the start request is lost, the CLI says the scan may still run. (PPSC-1589)
 - When the server refuses to record a published scan as a run of its project (`invalid_project_scan`), the CLI shows the server's reason instead of its raw JSON answer. (PPSC-1589)
+- Infrastructure-as-code findings (`INFRA_AS_CODE_MISCONFIGURATION`, `POLICY_VIOLATION`) now have type `MISCONFIG`, license findings (`LICENSE_COMPLIANCE`) type `LICENSE`, and `SECRET_EXPOSURE` findings type `SECRET`. They used to come out as `SCA`, because the CLI didn't know the categories Armis serves. The `.armisignore` directives `category:iac`, `category:license` and `category:secrets` now match them, and `category:sca` no longer does. (PPSC-2006)
 
 ### Security
 

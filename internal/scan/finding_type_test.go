@@ -133,6 +133,49 @@ func TestDeriveFindingType(t *testing.T) {
 			findingCategory: "license",
 			want:            model.FindingTypeLicense,
 		},
+		// The categories Armis Cloud serves (moose-common's FindingCategory),
+		// and the finer ones .armisignore's category: directives name.
+		{
+			name:            "INFRA_AS_CODE_MISCONFIGURATION category results in misconfig",
+			findingCategory: "INFRA_AS_CODE_MISCONFIGURATION",
+			want:            model.FindingTypeMisconfig,
+		},
+		{
+			name:            "POLICY_VIOLATION category results in misconfig",
+			findingCategory: "POLICY_VIOLATION",
+			want:            model.FindingTypeMisconfig,
+		},
+		{
+			name:            "CI_CD_SECURITY_MISCONFIGURATION category results in misconfig",
+			findingCategory: "CI_CD_SECURITY_MISCONFIGURATION",
+			want:            model.FindingTypeMisconfig,
+		},
+		{
+			name:            "LICENSE_COMPLIANCE category results in license",
+			findingCategory: "LICENSE_COMPLIANCE",
+			want:            model.FindingTypeLicense,
+		},
+		{
+			name:            "SECRET_EXPOSURE category results in secret",
+			findingCategory: "SECRET_EXPOSURE",
+			want:            model.FindingTypeSecret,
+		},
+		{
+			name:            "HARDCODED_SECRET_EXPOSURE category results in secret",
+			findingCategory: "HARDCODED_SECRET_EXPOSURE",
+			want:            model.FindingTypeSecret,
+		},
+		{
+			name:            "CREDENTIAL_LEAKAGE category results in secret",
+			findingCategory: "CREDENTIAL_LEAKAGE",
+			want:            model.FindingTypeSecret,
+		},
+		{
+			name:            "CVEs override a misconfiguration category",
+			hasCVEs:         true,
+			findingCategory: "INFRA_AS_CODE_MISCONFIGURATION",
+			want:            model.FindingTypeVulnerability,
+		},
 	}
 
 	for _, tt := range tests {

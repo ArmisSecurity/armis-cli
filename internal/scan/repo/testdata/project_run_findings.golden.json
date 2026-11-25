@@ -83,7 +83,7 @@
   },
   {
     "id": "f_3fa4d7052b8e6c1d9f4a0b5e2c7d3f96",
-    "type": "SCA",
+    "type": "MISCONFIG",
     "severity": "MEDIUM",
     "title": "S3 bucket has no server-side encryption.",
     "description": "S3 bucket has no server-side encryption.",
