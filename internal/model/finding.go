@@ -35,12 +35,22 @@ const (
 	FindingTypeMisconfig FindingType = "MISCONFIG"
 )
 
-// SuppressionInfo describes why a finding was suppressed.
+// SuppressionInfo describes why a finding was suppressed: locally, by the
+// root .armisignore or an inline armis:ignore comment, or, on a recorded
+// project run, by the project's Armis scan filters on the server.
 type SuppressionInfo struct {
-	Type   string `json:"type"`             // "severity", "category", "cwe", "rule", "inline"
-	Value  string `json:"value"`            // the directive value that matched
-	Reason string `json:"reason,omitempty"` // user-provided reason
-	Source string `json:"source,omitempty"` // "armisignore" or "inline"
+	// Type is the directive: "severity", "category", "cwe", "rule" or
+	// "inline" locally; "severity_threshold", "severity", "category" or "cwe"
+	// for the scan filters.
+	Type string `json:"type"`
+	// Value is the directive value that matched.
+	Value string `json:"value"`
+	// Reason is the user-provided reason, or "Armis tenant scan filter" /
+	// "Armis project scan filter" for the scan filters.
+	Reason string `json:"reason,omitempty"`
+	// Source is "armisignore" or "inline" locally; any other source, "tenant"
+	// or "project" today, is the scan filters'.
+	Source string `json:"source,omitempty"`
 }
 
 // Finding represents a single security finding from a scan.

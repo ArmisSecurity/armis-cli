@@ -26,9 +26,10 @@ const (
 // by its type. The history keeps no category, so a finding gets the one
 // /ingest/normalized-results serves for findings of its type. Its type,
 // SARIF ruleId and category: matches then come out as for the same finding
-// of an unpublished scan. (An IaC finding the normalizer filed as a
-// POLICY_VIOLATION is the one exception: it comes out as
-// INFRA_AS_CODE_MISCONFIGURATION.)
+// of an unpublished scan, except for a finding the normalizer filed under a
+// category that isn't its type's: an IaC POLICY_VIOLATION, and an UNKNOWN
+// one (a Gitleaks rule or Checkov check the normalizer doesn't classify),
+// which come out under their type's category.
 var recordedRunCategory = map[string]string{
 	runTypeSAST:      "CODE_VULNERABILITY",
 	runTypeSCA:       "CODE_PACKAGE_VULNERABILITY",
