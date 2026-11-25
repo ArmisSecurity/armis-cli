@@ -774,6 +774,38 @@ run, the scan still runs and gates as usual, and the CLI says why:
 An Armis server that predates project runs records none; the CLI prints a
 note saying so.
 
+**A recorded run's findings.** When Armis records the scan as a run, the CLI
+reads the run's findings from AppSec once the scan completes, so its output,
+`--fail-on` and the Armis UI agree. The project's Armis scan filters (its own,
+over the tenant's global filters for CLI projects) apply on the server:
+
+- a finding they suppress is left out of the output and of `--fail-on`;
+- `--show-suppressed` shows it, labeled with the filter that suppressed it,
+  and JSON marks it (`suppressed`, and `suppression_info` with `source`
+  `tenant` or `project`);
+- the summary counts them in one line, such as `Armis scan filters suppressed
+  14 findings (12 below the project's LOW threshold, 2 by the tenant's CWEs)`.
+
+The root `.armisignore`'s directives and inline `armis:ignore` comments still
+apply on top. The CLI never passes `--fail-on` on findings it couldn't read.
+It exits `2` (results incomplete) when:
+
+- Armis recorded the run as failed;
+- the run's findings were not recorded within the scan timeout;
+- the run's findings could not be read after retries;
+- the run's findings are kept in AppSec, but none were recorded for it (the
+  server answers the legacy read with `409 project_run_findings`);
+- Armis kept only the 50,000 most severe of the run's findings, none of them
+  matched `--fail-on`, and a level `--fail-on` names is at or below the least
+  severe finding kept, so the dropped findings could hold it.
+
+A server that keeps no findings history for CLI runs, or a run recorded before
+it did, is read the way an unpublished scan is. A recorded run's findings hold
+what the findings history keeps: no columns, fix proposals, OWASP titles or
+whether the verifier held a fix valid, and text within the history's caps
+(description 16 KiB, details and patch 32 KiB, snippet 8 KiB, 20 URLs).
+`--debug` prints the project's scan filters, written as an `.armisignore`.
+
 **Project names** are checked before anything is uploaded. A name that breaks
 a rule fails the command with the rule it broke and a valid example. It is
 never trimmed, truncated or renamed:

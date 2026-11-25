@@ -324,6 +324,16 @@ a pull request's source branch. Once the scan starts, the CLI prints the run's
 id, or why Armis did not record one; the scan runs and gates either way. See
 [Publish to a Project](../README.md#publish-to-a-project).
 
+A recorded run's findings are read from AppSec, so the job's output and
+`--fail-on` match the run in the Armis UI. The project's Armis scan filters
+apply on the server: a finding they suppress (below the severity threshold, or
+by a severity, category or CWE) is left out of the output and of `--fail-on`,
+and `--show-suppressed` shows it with its filter. The repository's root
+`.armisignore` still applies on top. The step exits `2`, never `0`, on findings
+it couldn't read: a failed run, findings not recorded within `--scan-timeout`,
+a read that fails after retries, or a run whose truncated findings (Armis keeps
+the 50,000 most severe) leave a `--fail-on` level undecided.
+
 ```yaml
 # GitHub Actions: gate on HIGH/CRITICAL and publish to "checkout-service"
 - name: Armis scan
