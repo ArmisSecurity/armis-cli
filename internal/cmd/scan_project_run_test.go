@@ -45,13 +45,25 @@ func runRows() []map[string]any {
 	}
 }
 
-// runPage answers the run's findings route with rows.
+// runPage answers the run's findings route with rows. A truncated run counts
+// 60,000 more findings than it kept, and 1 suppressed; any other counts
+// exactly its rows.
 func runPage(rows []map[string]any, truncated bool) func(*http.Request) (int, any) {
 	return func(*http.Request) (int, any) {
+		suppressed := 0
+		for _, row := range rows {
+			if suppression, _ := row["suppression"].(map[string]any); suppression != nil {
+				suppressed++
+			}
+		}
+		counts := map[string]any{"total": len(rows) - suppressed, "matching": len(rows), "suppressed": suppressed}
+		if truncated {
+			counts = map[string]any{"total": len(rows) + 60_000, "matching": len(rows), "suppressed": 1}
+		}
 		return http.StatusOK, map[string]any{
 			"data":        rows,
 			"pagination":  map[string]any{"page": 1, "page_size": 100, "total_items": len(rows), "total_pages": 1},
-			"counts":      map[string]any{"total": len(rows) + 60_000, "matching": len(rows), "suppressed": 1},
+			"counts":      counts,
 			"truncated":   truncated,
 			"empty_state": nil,
 		}

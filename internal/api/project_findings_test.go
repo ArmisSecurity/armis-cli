@@ -22,8 +22,9 @@ const (
 	testRunPath    = "/api/v1/appsec/projects/" + testRunProject + "/scans/" + testRunID + "/findings"
 )
 
-// runFindingsPage is one page of a run's findings, as the AppSec route answers.
-func runFindingsPage(page, pages int, ids ...string) map[string]any {
+// runFindingsPage is one page of a run's findings, as the AppSec route
+// answers for a run of total findings over pages, one of them suppressed.
+func runFindingsPage(page, pages, total int, ids ...string) map[string]any {
 	rows := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
 		rows = append(rows, map[string]any{
@@ -33,8 +34,8 @@ func runFindingsPage(page, pages int, ids ...string) map[string]any {
 	}
 	return map[string]any{
 		"data":        rows,
-		"pagination":  map[string]any{"page": page, "page_size": 100, "total_items": 250, "total_pages": pages},
-		"counts":      map[string]any{"total": 240, "matching": 250, "suppressed": 10},
+		"pagination":  map[string]any{"page": page, "page_size": 100, "total_items": total, "total_pages": pages},
+		"counts":      map[string]any{"total": total - 1, "matching": total, "suppressed": 1},
 		"truncated":   false,
 		"empty_state": nil,
 		"scan":        map[string]any{"scan_id": testRunID},
@@ -47,7 +48,7 @@ func TestClient_ListProjectRunFindings(t *testing.T) {
 	var gotQuery map[string][]string
 	srv := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth, gotQuery = r.URL.Path, r.Header.Get("Authorization"), r.URL.Query()
-		testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(2, 3, "f_a"))
+		testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(2, 3, 250, "f_a"))
 	})
 
 	page, err := newProjectsClient(t, srv.URL).ListProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID, 2)
@@ -75,7 +76,7 @@ func TestClient_ListProjectRunFindings(t *testing.T) {
 	if len(page.Data) != 1 || page.Data[0].Detail == nil || page.Data[0].Detail.Identifiers.CWEs[0] != "CWE-89" {
 		t.Errorf("page = %+v", page.Data)
 	}
-	if page.Counts == nil || page.Counts.Suppressed != 10 || page.Pagination.TotalPages != 3 {
+	if page.Counts == nil || page.Counts.Suppressed != 1 || page.Pagination.TotalPages != 3 {
 		t.Errorf("counts = %+v, pagination = %+v", page.Counts, page.Pagination)
 	}
 }
@@ -114,7 +115,7 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 			page := r.URL.Query().Get("page")
 			pages = append(pages, page)
 			n, _ := strconv.Atoi(page)
-			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(n, 3, fmt.Sprintf("f_%d", n)))
+			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(n, 3, 3, fmt.Sprintf("f_%d", n)))
 		})
 		read, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
 		if err != nil {
@@ -126,7 +127,7 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 		if len(read.Findings) != 3 || read.Findings[2].FindingID != "f_3" {
 			t.Errorf("findings = %+v", read.Findings)
 		}
-		if read.Counts.Total != 240 || read.EmptyReason != "" || read.Truncated {
+		if read.Counts.Total != 2 || read.EmptyReason != "" || read.Truncated {
 			t.Errorf("read = %+v", read)
 		}
 	})
@@ -155,7 +156,7 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 		var calls atomic.Int32
 		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			calls.Add(1)
-			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, MaxProjectRunFindingsPages+1, "f_1"))
+			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, MaxProjectRunFindingsPages+1, MaxProjectRunFindings+1, "f_1"))
 		})
 		_, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
 		if !errors.Is(err, ErrRunFindingsTooLarge) {
@@ -173,11 +174,91 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 			ids[i] = fmt.Sprintf("f_%d", i)
 		}
 		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, 1, ids...))
+			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, 1, len(ids), ids...))
 		})
 		_, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
 		if !errors.Is(err, ErrRunFindingsTooLarge) {
 			t.Errorf("err = %v, want ErrRunFindingsTooLarge", err)
+		}
+	})
+
+	// AC 28: a read never passes on findings it didn't read. Each case is a
+	// list that doesn't add up, page by page.
+	for _, tt := range []struct {
+		name  string
+		pages func(page int) map[string]any
+	}{
+		{"a page short of what the list holds", func(page int) map[string]any {
+			if page == 1 {
+				return runFindingsPage(1, 2, 3, "f_1", "f_2")
+			}
+			return runFindingsPage(2, 2, 3)
+		}},
+		{"a later page with an empty state", func(page int) map[string]any {
+			if page == 1 {
+				return runFindingsPage(1, 2, 2, "f_1")
+			}
+			answer := runFindingsPage(2, 1, 0)
+			answer["counts"], answer["empty_state"] = nil, map[string]any{"reason": "not_recorded"}
+			return answer
+		}},
+		{"a later page that lists another total", func(page int) map[string]any {
+			if page == 1 {
+				return runFindingsPage(1, 2, 2, "f_1")
+			}
+			return runFindingsPage(2, 3, 3, "f_2")
+		}},
+		{"a finding on two pages", func(page int) map[string]any {
+			return runFindingsPage(page, 2, 2, "f_1")
+		}},
+		{"a run that counts a finding it served no row for", func(int) map[string]any {
+			answer := runFindingsPage(1, 1, 2, "f_1", "f_2")
+			answer["counts"] = map[string]any{"total": 2, "matching": 2, "suppressed": 1}
+			return answer
+		}},
+		{"a run served without its counts", func(int) map[string]any {
+			answer := runFindingsPage(1, 1, 1, "f_1")
+			answer["counts"] = nil
+			return answer
+		}},
+	} {
+		t.Run(tt.name+" is incomplete", func(t *testing.T) {
+			t.Parallel()
+			srv := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				testutil.JSONResponse(t, w, http.StatusOK, tt.pages(page))
+			})
+			read, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
+			if !errors.Is(err, ErrRunFindingsIncomplete) {
+				t.Errorf("read = %+v, err = %v, want ErrRunFindingsIncomplete", read, err)
+			}
+		})
+	}
+
+	t.Run("a truncated run counts more findings than it kept", func(t *testing.T) {
+		t.Parallel()
+		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			answer := runFindingsPage(1, 1, 2, "f_1", "f_2")
+			answer["truncated"] = true
+			answer["counts"] = map[string]any{"total": 60_000, "matching": 2, "suppressed": 5}
+			testutil.JSONResponse(t, w, http.StatusOK, answer)
+		})
+		read, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
+		if err != nil || len(read.Findings) != 2 || !read.Truncated {
+			t.Errorf("read = %+v, err = %v", read, err)
+		}
+	})
+
+	t.Run("a run whose every finding is suppressed adds up", func(t *testing.T) {
+		t.Parallel()
+		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			answer := runFindingsPage(1, 1, 2, "f_1", "f_2")
+			answer["counts"] = map[string]any{"total": 0, "matching": 2, "suppressed": 2}
+			testutil.JSONResponse(t, w, http.StatusOK, answer)
+		})
+		read, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
+		if err != nil || len(read.Findings) != 2 {
+			t.Errorf("read = %+v, err = %v", read, err)
 		}
 	})
 
@@ -202,7 +283,7 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 				w.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, 1, "f_1"))
+			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, 1, 1, "f_1"))
 		})
 		httpClient := httpclient.NewClient(httpclient.Config{
 			Timeout: 5 * time.Second, RetryMax: 2, RetryWaitMin: time.Millisecond, RetryWaitMax: 5 * time.Millisecond,

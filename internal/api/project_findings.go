@@ -84,9 +84,17 @@ type ProjectRunFindings struct {
 // history keeps of a run, so it isn't read whole.
 var ErrRunFindingsTooLarge = errors.New("the run's findings list is larger than the findings history keeps")
 
+// ErrRunFindingsIncomplete means a run's findings, as read, don't add up to
+// what its list says it holds, so a finding the CLI never read could be
+// missing from them.
+var ErrRunFindingsIncomplete = errors.New("the run's findings list is incomplete")
+
 // FetchAllProjectRunFindings reads every page of a recorded run's findings.
-// A run's findings never change once recorded, so pages can't skip or repeat
-// a finding.
+// It returns ErrRunFindingsIncomplete unless the rows read are exactly the
+// ones the list holds: as many as page 1's total_items, each read once, on
+// pages that all count the same total and none of which has an empty state;
+// and, for a run the history didn't truncate, as many as its counts, which
+// include any finding the history counted but kept no row for.
 func (c *Client) FetchAllProjectRunFindings(ctx context.Context, tenantID, projectID, runID string) (*ProjectRunFindings, error) {
 	first, err := c.ListProjectRunFindings(ctx, tenantID, projectID, runID, 1)
 	if err != nil {
@@ -105,10 +113,17 @@ func (c *Client) FetchAllProjectRunFindings(ctx context.Context, tenantID, proje
 	if pages > MaxProjectRunFindingsPages {
 		return nil, fmt.Errorf("%w: %d pages of %d", ErrRunFindingsTooLarge, pages, ProjectRunFindingsPageSize)
 	}
+	listed := first.Pagination.TotalItems
 	for page := 2; page <= pages; page++ {
 		next, err := c.ListProjectRunFindings(ctx, tenantID, projectID, runID, page)
 		if err != nil {
 			return nil, err
+		}
+		if next.EmptyState != nil {
+			return nil, fmt.Errorf("%w: page %d of %d is empty (%s)", ErrRunFindingsIncomplete, page, pages, next.EmptyReason())
+		}
+		if next.Pagination.TotalItems != listed {
+			return nil, fmt.Errorf("%w: page %d lists %d findings, page 1 %d", ErrRunFindingsIncomplete, page, next.Pagination.TotalItems, listed)
 		}
 		result.Findings = append(result.Findings, next.Data...)
 	}
@@ -117,7 +132,37 @@ func (c *Client) FetchAllProjectRunFindings(ctx context.Context, tenantID, proje
 	if len(result.Findings) > MaxProjectRunFindings {
 		return nil, fmt.Errorf("%w: %d findings", ErrRunFindingsTooLarge, len(result.Findings))
 	}
+	if err := checkRunFindingsRead(result, listed); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+// checkRunFindingsRead returns ErrRunFindingsIncomplete unless read holds
+// listed findings, none of them twice, and a run the history didn't truncate
+// holds every finding its counts count.
+func checkRunFindingsRead(read *ProjectRunFindings, listed int) error {
+	seen := make(map[string]struct{}, len(read.Findings))
+	for i := range read.Findings {
+		id := read.Findings[i].FindingID
+		if _, repeated := seen[id]; repeated {
+			return fmt.Errorf("%w: finding %q was read twice", ErrRunFindingsIncomplete, id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(read.Findings) != listed {
+		return fmt.Errorf("%w: read %d of the %d findings it lists", ErrRunFindingsIncomplete, len(read.Findings), listed)
+	}
+	if read.Truncated {
+		return nil
+	}
+	if read.Counts == nil {
+		return fmt.Errorf("%w: it has no counts", ErrRunFindingsIncomplete)
+	}
+	if counted := read.Counts.Total + read.Counts.Suppressed; counted != len(read.Findings) {
+		return fmt.Errorf("%w: read %d of the %d findings the run counts", ErrRunFindingsIncomplete, len(read.Findings), counted)
+	}
+	return nil
 }
 
 // GetProjectScanFilters reads the filters a project's next scan applies,

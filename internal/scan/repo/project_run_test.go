@@ -104,13 +104,24 @@ func newRunServer(t *testing.T, srv *runServer) string {
 }
 
 // appSecPage answers one page: the fixture's rows (or none), with empty
-// state reason when not "".
+// state reason when not "". A truncated run counts 40,000 more findings than
+// it kept, and 2 suppressed; any other counts exactly its rows.
 func appSecPage(t *testing.T, rows []model.RunFinding, reason string, truncated bool) func(http.ResponseWriter) {
 	return func(w http.ResponseWriter) {
+		suppressed := 0
+		for i := range rows {
+			if rows[i].Suppression != nil {
+				suppressed++
+			}
+		}
+		counts := map[string]any{"total": len(rows) - suppressed, "matching": len(rows), "suppressed": suppressed}
+		if truncated {
+			counts = map[string]any{"total": len(rows) + 40_000, "matching": len(rows), "suppressed": 2}
+		}
 		page := map[string]any{
 			"data":        rows,
 			"pagination":  map[string]any{"page": 1, "page_size": 100, "total_items": len(rows), "total_pages": 1},
-			"counts":      map[string]any{"total": len(rows) + 40_000, "matching": len(rows), "suppressed": 2},
+			"counts":      counts,
 			"truncated":   truncated,
 			"empty_state": nil,
 		}
@@ -250,6 +261,47 @@ func TestScan_ARecordedRunsEmptyStates(t *testing.T) {
 			}
 			if _, legacy := srv.counts(); legacy != tt.wantLegacy || len(result.Findings) != tt.wantFindings {
 				t.Errorf("legacy reads %d, findings %d", legacy, len(result.Findings))
+			}
+		})
+	}
+}
+
+// AC 28: a run whose rows don't add up to its list is incomplete, never a
+// pass on the findings that are missing, and never read the legacy way.
+func TestScan_ARecordedRunWhoseRowsDontAddUpIsIncomplete(t *testing.T) {
+	rows := runFixture(t)
+	for _, tt := range []struct {
+		name   string
+		answer func(page map[string]any)
+	}{
+		{"fewer rows than the list holds", func(page map[string]any) {
+			page["pagination"] = map[string]any{"page": 1, "page_size": 100, "total_items": len(rows) + 1, "total_pages": 1}
+		}},
+		{"a finding counted with no row", func(page map[string]any) {
+			page["counts"] = map[string]any{"total": len(rows), "matching": len(rows), "suppressed": 2}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			answer := func(w http.ResponseWriter) {
+				page := map[string]any{
+					"data":        rows,
+					"pagination":  map[string]any{"page": 1, "page_size": 100, "total_items": len(rows), "total_pages": 1},
+					"counts":      map[string]any{"total": len(rows) - 2, "matching": len(rows), "suppressed": 2},
+					"truncated":   false,
+					"empty_state": nil,
+				}
+				tt.answer(page)
+				testutil.JSONResponse(t, w, http.StatusOK, page)
+			}
+			srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){answer}}
+
+			_, err := scanRecorded(t, srv, time.Minute, "")
+			var incomplete *output.ErrResultsIncomplete
+			if !errors.As(err, &incomplete) {
+				t.Errorf("err = %v, want ErrResultsIncomplete", err)
+			}
+			if _, legacy := srv.counts(); legacy != 0 {
+				t.Errorf("legacy reads %d, want none", legacy)
 			}
 		})
 	}
