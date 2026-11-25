@@ -72,9 +72,10 @@ func convertProjectRunFindings(rows []model.RunFinding, debug bool, includeNonEx
 	return findings, filtered
 }
 
-// runFinding maps one row and its detail. Text the history doesn't keep
-// stays empty: columns, fix proposals, OWASP titles and whether the verifier
-// held the finding valid.
+// runFinding maps one row and its detail. What the history doesn't keep
+// stays empty: columns, fix proposals and OWASP titles. Whether the verifier
+// held the finding or its fix valid stays unknown (a nil IsValid), so the
+// output leaves it out rather than say false.
 func runFinding(row *model.RunFinding, detail *model.RunFindingDetail) model.Finding {
 	// A secret by its type, or a finding of another type whose code holds
 	// one: the history wrote it as a secret, as the normalized path's

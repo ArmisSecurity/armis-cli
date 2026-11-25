@@ -87,9 +87,9 @@ func normalizedTwins() []model.NormalizedFinding {
 						CodeSnippetLines: []string{"const q = `SELECT * FROM orders WHERE id = ${id}`;"},
 						SnippetStartLine: num(19),
 					},
-					Fix: &model.Fix{Explanation: "Bind the id as a parameter.", Patch: str("-raw\n+bound"), IsValid: true},
+					Fix: &model.Fix{Explanation: "Bind the id as a parameter.", Patch: str("-raw\n+bound"), IsValid: new(true)},
 					FindingValidation: &model.FindingValidation{
-						IsValid: true, Confidence: 90, TaintPropagation: model.TaintReachable,
+						IsValid: new(true), Confidence: 90, TaintPropagation: model.TaintReachable,
 						Exposure: num(6), Explanation: "The route is public.",
 					},
 				},

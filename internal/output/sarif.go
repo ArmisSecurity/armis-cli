@@ -94,7 +94,8 @@ type sarifResultProperties struct {
 }
 
 type sarifFixProperties struct {
-	IsValid         bool   `json:"isValid"`
+	// IsValid is left out when the fix's validity is unknown.
+	IsValid         *bool  `json:"isValid,omitempty"`
 	Explanation     string `json:"explanation,omitempty"`
 	Recommendations string `json:"recommendations,omitempty"`
 	Patch           string `json:"patch,omitempty"`
@@ -102,7 +103,8 @@ type sarifFixProperties struct {
 }
 
 type sarifValidationProperties struct {
-	IsValid           bool   `json:"isValid"`
+	// IsValid is left out when the finding's validity is unknown.
+	IsValid           *bool  `json:"isValid,omitempty"`
 	Confidence        int    `json:"confidence"`
 	ValidatedSeverity string `json:"validatedSeverity,omitempty"`
 	TaintPropagation  string `json:"taintPropagation,omitempty"`

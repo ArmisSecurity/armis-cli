@@ -1459,11 +1459,15 @@ func formatFixSection(fix *model.Fix) string {
 	s := GetStyles()
 	var sb strings.Builder
 
-	// Display fix status header
+	// Display fix status header: a fix whose validity is unknown is neither
+	// validated nor merely proposed.
 	sb.WriteString("\n")
-	if fix.IsValid {
+	switch {
+	case fix.IsValid == nil:
+		sb.WriteString(s.MutedText.Render("Fix") + "\n")
+	case *fix.IsValid:
 		sb.WriteString(s.SuccessText.Render(fmt.Sprintf("%s Validated Fix", IconSuccess)) + "\n")
-	} else {
+	default:
 		sb.WriteString(s.MutedText.Render("Proposed Fix") + "\n")
 	}
 

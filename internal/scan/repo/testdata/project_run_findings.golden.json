@@ -18,11 +18,9 @@
       "patch": "-raw\n+bound",
       "explanation": "Bind the id as a parameter.",
       "recommendations": "",
-      "is_valid": false,
       "feedback": ""
     },
     "validation": {
-      "is_valid": false,
       "confidence": 90,
       "explanation": "The route is public.",
       "taint_propagation": "REACHABLE",

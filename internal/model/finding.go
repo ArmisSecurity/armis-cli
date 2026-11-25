@@ -1,6 +1,8 @@
 // Package model defines the data structures for security scan findings and results.
 package model
 
+import "encoding/json"
+
 // Severity represents the severity level of a security finding.
 type Severity string
 
@@ -294,7 +296,10 @@ const (
 
 // FindingValidation represents the AI validation result for a finding.
 type FindingValidation struct {
-	IsValid           bool             `json:"is_valid"`
+	// IsValid is whether the verifier held the finding valid: nil when that
+	// is unknown, as for a recorded project run, whose findings history
+	// doesn't keep it.
+	IsValid           *bool            `json:"is_valid,omitempty"`
 	ValidatedSeverity *string          `json:"validated_severity,omitempty"`
 	Confidence        int              `json:"confidence"`
 	Explanation       string           `json:"explanation"`
@@ -310,8 +315,42 @@ type Fix struct {
 	PatchFiles      map[string]string `json:"patch_files,omitempty"`
 	Explanation     string            `json:"explanation"`
 	Recommendations string            `json:"recommendations"`
-	IsValid         bool              `json:"is_valid"`
-	Feedback        string            `json:"feedback"`
+	// IsValid is whether the verifier held the fix valid: nil when that is
+	// unknown, as for a recorded project run, whose findings history doesn't
+	// keep it.
+	IsValid  *bool  `json:"is_valid,omitempty"`
+	Feedback string `json:"feedback"`
+}
+
+// UnmarshalJSON decodes a validation as the API serves it, where a missing or
+// null is_valid is false: only a validation the CLI builds itself has an
+// unknown one.
+func (v *FindingValidation) UnmarshalJSON(data []byte) error {
+	type plain FindingValidation
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.IsValid == nil {
+		decoded.IsValid = new(false)
+	}
+	*v = FindingValidation(decoded)
+	return nil
+}
+
+// UnmarshalJSON decodes a fix as the API serves it, where a missing or null
+// is_valid is false: only a fix the CLI builds itself has an unknown one.
+func (f *Fix) UnmarshalJSON(data []byte) error {
+	type plain Fix
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.IsValid == nil {
+		decoded.IsValid = new(false)
+	}
+	*f = Fix(decoded)
+	return nil
 }
 
 // Label represents a classification label for a finding.

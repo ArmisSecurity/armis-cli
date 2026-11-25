@@ -126,3 +126,54 @@ func TestCheckTruncation(t *testing.T) {
 		})
 	}
 }
+
+// A recorded run's fix has no known validity: its header says neither that
+// the verifier validated it nor that it only proposed it.
+func TestFormatFixSection_SaysWhatIsKnownOfTheFixsValidity(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		isValid *bool
+		want    string
+		notWant []string
+	}{
+		{"validated", new(true), "Validated Fix", nil},
+		{"proposed", new(false), "Proposed Fix", []string{"Validated Fix"}},
+		{"unknown", nil, "Fix", []string{"Validated Fix", "Proposed Fix"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			section := formatFixSection(&model.Fix{Explanation: "Bind the id.", IsValid: tt.isValid})
+			if !strings.Contains(section, tt.want) {
+				t.Errorf("section lacks %q:\n%s", tt.want, section)
+			}
+			for _, unwanted := range tt.notWant {
+				if strings.Contains(section, unwanted) {
+					t.Errorf("section says %q:\n%s", unwanted, section)
+				}
+			}
+		})
+	}
+}
+
+// SARIF leaves out a validity the CLI doesn't know, and keeps a known one.
+func TestSARIF_LeavesAnUnknownValidityOut(t *testing.T) {
+	format := func(isValid *bool) string {
+		t.Helper()
+		result := &model.ScanResult{ScanID: "scan-1", Findings: []model.Finding{{
+			ID: "f_1", Type: model.FindingTypeVulnerability, Severity: model.SeverityHigh, Title: "SQL injection",
+			File: "src/app.ts", StartLine: 3,
+			Fix:        &model.Fix{Explanation: "Bind the id.", IsValid: isValid},
+			Validation: &model.FindingValidation{Confidence: 90, IsValid: isValid},
+		}}}
+		var buf bytes.Buffer
+		if err := (&SARIFFormatter{}).Format(result, &buf); err != nil {
+			t.Fatalf("SARIF: %v", err)
+		}
+		return buf.String()
+	}
+	if out := format(nil); strings.Contains(out, "isValid") {
+		t.Errorf("an unknown validity is in the SARIF:\n%s", out)
+	}
+	if out := format(new(false)); strings.Count(out, `"isValid": false`) != 2 {
+		t.Errorf("a known validity is not in the SARIF:\n%s", out)
+	}
+}

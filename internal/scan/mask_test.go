@@ -35,7 +35,7 @@ func TestMaskFixSecrets_MasksPatch(t *testing.T) {
 	fix := &model.Fix{
 		Patch:       &secretPatch,
 		Explanation: "Replace hardcoded secret with env var",
-		IsValid:     true,
+		IsValid:     new(true),
 	}
 
 	result := scan.MaskFixSecrets(fix)
@@ -142,7 +142,7 @@ func TestMaskFixSecrets_DoesNotMaskTextFields(t *testing.T) {
 		Explanation:     "Replace hardcoded secret with environment variable",
 		Recommendations: "Use environment variables for sensitive data",
 		Feedback:        "The fix correctly removes the secret",
-		IsValid:         true,
+		IsValid:         new(true),
 	}
 
 	result := scan.MaskFixSecrets(fix)
@@ -157,8 +157,8 @@ func TestMaskFixSecrets_DoesNotMaskTextFields(t *testing.T) {
 	if result.Feedback != fix.Feedback {
 		t.Errorf("Feedback was modified: got %q, want %q", result.Feedback, fix.Feedback)
 	}
-	if result.IsValid != fix.IsValid {
-		t.Errorf("IsValid was modified: got %v, want %v", result.IsValid, fix.IsValid)
+	if result.IsValid == nil || *result.IsValid != *fix.IsValid {
+		t.Errorf("IsValid was modified: got %v, want %v", result.IsValid, *fix.IsValid)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestMaskFixSecrets_AllFieldsPopulated(t *testing.T) {
 		Explanation:     "Fix explanation",
 		Recommendations: "Recommendations text",
 		Feedback:        "Feedback text",
-		IsValid:         true,
+		IsValid:         new(true),
 	}
 
 	result := scan.MaskFixSecrets(fix)
