@@ -39,11 +39,14 @@ var recordedRunCategory = map[string]string{
 }
 
 // serverSuppressionReason is the reason a finding the project's filters
-// suppressed shows, by the filter's source.
+// suppressed shows, by the filter's source; a source a newer server adds
+// shows serverSuppressionReasonOther.
 var serverSuppressionReason = map[string]string{
 	"tenant":  "Armis tenant scan filter",
 	"project": "Armis project scan filter",
 }
+
+const serverSuppressionReasonOther = "Armis scan filter"
 
 // convertProjectRunFindings maps a recorded run's findings, as the AppSec
 // findings route serves them with their detail, to the CLI's findings. A
@@ -149,11 +152,15 @@ func runFinding(row *model.RunFinding, detail *model.RunFindingDetail) model.Fin
 	}
 
 	if s := row.Suppression; s != nil {
+		reason, known := serverSuppressionReason[s.Source]
+		if !known {
+			reason = serverSuppressionReasonOther
+		}
 		finding.Suppressed = true
 		finding.SuppressionInfo = &model.SuppressionInfo{
 			Type:   s.Directive,
 			Value:  s.Value,
-			Reason: serverSuppressionReason[s.Source],
+			Reason: reason,
 			Source: s.Source,
 		}
 	}

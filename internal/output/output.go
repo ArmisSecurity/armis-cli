@@ -9,13 +9,11 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
-const suppressionSourceInline = "inline"
-
-// The sources of a suppression by a project's Armis scan filters: the
-// tenant's global filters, or the project's own.
+// The sources of the CLI's own suppressions: the root .armisignore, and
+// inline armis:ignore comments. Any other source is the Armis scan filters'.
 const (
-	suppressionSourceTenant  = "tenant"
-	suppressionSourceProject = "project"
+	suppressionSourceArmisignore = "armisignore"
+	suppressionSourceInline      = "inline"
 )
 
 // Package-level variables for testability

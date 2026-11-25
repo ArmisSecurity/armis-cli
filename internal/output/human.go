@@ -744,9 +744,20 @@ func suppressionSummaryText(findings []model.Finding) string {
 }
 
 // isServerSuppression reports whether a finding was suppressed by the
-// project's Armis scan filters (a recorded project run's), not locally.
+// project's Armis scan filters (a recorded project run's), not locally: by
+// any source but the CLI's own, so a source a newer server adds counts as
+// the server's too.
 func isServerSuppression(info *model.SuppressionInfo) bool {
-	return info != nil && (info.Source == suppressionSourceTenant || info.Source == suppressionSourceProject)
+	return info != nil && info.Source != suppressionSourceArmisignore && info.Source != suppressionSourceInline
+}
+
+// serverSourceName names a scan filter's source in the summary: "tenant",
+// "project", or whatever a newer server sends; "server" for none.
+func serverSourceName(source string) string {
+	if name := util.StripControl(source); name != "" {
+		return name
+	}
+	return "server"
 }
 
 // The directives of a project's Armis scan filters (SuppressionInfo.Type).
@@ -779,7 +790,7 @@ func ServerSuppressionLine(findings []model.Finding) string {
 		if !f.Suppressed || !isServerSuppression(f.SuppressionInfo) {
 			continue
 		}
-		g := group{directive: f.SuppressionInfo.Type, source: f.SuppressionInfo.Source}
+		g := group{directive: f.SuppressionInfo.Type, source: serverSourceName(f.SuppressionInfo.Source)}
 		if g.directive == serverDirectiveThreshold {
 			g.value = f.SuppressionInfo.Value
 		}

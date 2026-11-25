@@ -14,6 +14,7 @@ import (
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 )
@@ -460,6 +461,21 @@ func TestScan_AnAsyncRecordedRunReadsNoFindings(t *testing.T) {
 	}
 	if appSec, legacy := srv.counts(); appSec != 0 || legacy != 0 {
 		t.Errorf("AppSec reads %d, legacy reads %d", appSec, legacy)
+	}
+}
+
+// A BOM-only scan reads no findings, even when Armis records it as a run.
+func TestScan_ABOMOnlyRecordedRunReadsNoFindings(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	srv := &runServer{run: recordedRun()}
+	scanner := newProjectTestScanner(t, newRunServer(t, srv)).WithProject(testRecordedProject, "cli_ci").
+		WithSBOMVEXOptions(&scan.SBOMVEXOptions{BOM: &scan.BOMOptions{
+			Types: []string{scan.BOMTypeAll}, Format: scan.BOMFormatCycloneDX17, Output: t.TempDir(), Only: true,
+		}})
+
+	_ = testutil.CaptureStderr(t, func() { _, _ = scanner.Scan(context.Background(), newProjectTestRepo(t)) })
+	if appSec, legacy := srv.counts(); appSec != 0 || legacy != 0 {
+		t.Errorf("AppSec reads %d, legacy reads %d, want none", appSec, legacy)
 	}
 }
 

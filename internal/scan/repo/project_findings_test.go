@@ -434,3 +434,17 @@ func TestApplySuppression_LeavesTheServersSuppressions(t *testing.T) {
 		}
 	}
 }
+
+// A suppression from a source a newer server adds is still the server's: it
+// keeps the source and reads as an Armis scan filter's.
+func TestConvertProjectRunFindings_KeepsAnUnknownSuppressionSource(t *testing.T) {
+	rows := []model.RunFinding{{
+		FindingID: "f_1", Type: "sast", Severity: "low", Detail: &model.RunFindingDetail{},
+		Suppression: &model.RunFindingSuppression{Source: "org", Directive: "severity_threshold", Value: "MEDIUM"},
+	}}
+	findings, _ := convertProjectRunFindings(rows, false, false)
+	want := model.SuppressionInfo{Type: "severity_threshold", Value: "MEDIUM", Reason: "Armis scan filter", Source: "org"}
+	if len(findings) != 1 || !findings[0].Suppressed || findings[0].SuppressionInfo == nil || *findings[0].SuppressionInfo != want {
+		t.Errorf("findings = %+v, want one suppressed with %+v", findings, want)
+	}
+}

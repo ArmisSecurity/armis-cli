@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ArmisSecurity/armis-cli/internal/model"
@@ -236,4 +237,58 @@ func TestProjectScan_DebugPrintsTheScanFilters(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The commands that read no findings don't start to: `bom repo` (which names
+// no project, so it's never a run) and `scan status`, even against a server
+// that records project scans as runs and serves their findings.
+func TestProjectScan_BOMAndStatusReadNoFindings(t *testing.T) {
+	failingRead := func(r *http.Request) (int, any) {
+		t.Errorf("a run's findings were read: %s", r.URL.Path)
+		return http.StatusInternalServerError, map[string]any{}
+	}
+
+	t.Run("bom repo", func(t *testing.T) {
+		var rec scanRecorder
+		setupBOMRunEnv(t, testutil.GetMockServerURLWithConfig(t, rec.hook(testutil.MockAPIConfig{
+			ProjectRun:  recordedAsRun,
+			RunFindings: failingRead,
+			BOMContent:  map[string]string{"bom_results": `{"bomFormat":"CycloneDX","components":[{"name":"a"}]}`},
+		})))
+		t.Setenv("CI", "true")
+		bomOnlyOutput = t.TempDir()
+
+		if _, _, err := runBOM(t, bomRepoCmd, createTestRepo(t)); err != nil {
+			t.Fatalf("bom repo: %v", err)
+		}
+		if rec.called("/findings") || rec.called("/normalized-results") {
+			t.Error("bom repo read findings")
+		}
+	})
+
+	t.Run("scan status", func(t *testing.T) {
+		var mu sync.Mutex
+		var paths []string
+		server := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+				Data: []model.IngestStatusData{{ScanID: r.URL.Query().Get("scan_id"), ScanStatus: "COMPLETED"}},
+			})
+		})
+		cleanup := setupStatusEnv(t, server.URL)
+		defer cleanup()
+
+		if _, err := runStatus(t, []string{"scan-123"}); err != nil {
+			t.Fatalf("scan status: %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, path := range paths {
+			if !strings.Contains(path, "/api/v1/ingest/status") {
+				t.Errorf("scan status called %s", path)
+			}
+		}
+	})
 }

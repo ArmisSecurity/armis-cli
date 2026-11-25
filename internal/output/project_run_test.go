@@ -53,6 +53,31 @@ func TestSuppressionSummaryText_CountsTheServersFilters(t *testing.T) {
 	}
 }
 
+// A suppression from any source but the CLI's own is the scan filters':
+// a source a newer server adds, or none, counts and reads as the server's.
+func TestServerSuppression_IsAnySourceButTheCLIsOwn(t *testing.T) {
+	findings := []model.Finding{
+		serverSuppressed("severity_threshold", "LOW", "org"),
+		serverSuppressed("cwe", "79", ""),
+		{Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Type: "severity", Value: "LOW", Source: suppressionSourceArmisignore}},
+		{Suppressed: true, SuppressionInfo: &model.SuppressionInfo{Type: "inline", Source: suppressionSourceInline}},
+	}
+	if got, want := suppressionSummaryText(findings), "2 suppressed by Armis scan filters, 1 suppressed by .armisignore, 1 suppressed by inline comments"; got != want {
+		t.Errorf("text = %q\nwant   %q", got, want)
+	}
+	if got, want := ServerSuppressionLine(findings), "Armis scan filters suppressed 2 findings (1 below the org's LOW threshold, 1 by the server's CWEs)"; got != want {
+		t.Errorf("line = %q\nwant   %q", got, want)
+	}
+
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+	var buf bytes.Buffer
+	renderFinding(&buf, findings[0], FormatOptions{ShowSuppressed: true})
+	if !strings.Contains(buf.String(), "[SUPPRESSED by Armis scan filters]") {
+		t.Errorf("output lacks the server's label:\n%s", buf.String())
+	}
+}
+
 func TestRenderFinding_LabelsTheServersSuppression(t *testing.T) {
 	cli.InitColors(cli.ColorModeNever)
 	SyncColors()
