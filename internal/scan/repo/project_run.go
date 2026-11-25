@@ -21,10 +21,16 @@ import (
 // maxFetchRetries bounds the reads of a scan's results that fail transiently.
 const maxFetchRetries = 5
 
-// errRunFindingsUnsupported means the server can't serve a recorded run's
-// findings from AppSec: it predates the route, or ignores expand=detail. The
-// run's findings are then read the legacy way.
-var errRunFindingsUnsupported = errors.New("the server does not serve this run's findings from AppSec")
+// unsupportedReadError means the server can't serve a recorded run's findings
+// from AppSec: it predates the route, or ignores expand=detail. The run's
+// findings are then read the legacy way. Reason is the answer that said so.
+type unsupportedReadError struct {
+	reason string
+}
+
+func (e *unsupportedReadError) Error() string {
+	return "the server does not serve this run's findings from AppSec: " + e.reason
+}
 
 // errRunNotRecordedInTime means the run's findings history was still being
 // written when the scan timeout ran out.
@@ -47,19 +53,25 @@ func recordedProjectRun(run *model.ProjectRun) *model.ProjectRun {
 // returns a result for findings it couldn't read:
 //
 //   - not_finished is read again every poll interval until deadline;
-//   - run_failed, a read that fails after its retries, and a run still not
-//     recorded at deadline are ErrResultsIncomplete;
+//   - run_failed, and a read that fails after its retries or doesn't add up
+//     to the run's list, are ErrResultsIncomplete;
 //   - not_recorded (a server that keeps no history for the run, or a run
-//     recorded before it did) reads the legacy way, once, where the 409 of a
-//     run whose findings Armis keeps in AppSec is ErrResultsIncomplete.
+//     recorded before it did), a route that can't serve the run, and a run
+//     still not recorded at deadline read the legacy way, once, where the 409
+//     of a run whose findings Armis keeps in AppSec is ErrResultsIncomplete;
+//   - a cancelled scan returns ctx's error, so it exits as cancelled.
 //
 // The second result reports a legacy read that found no result entry.
 func (s *Scanner) recordedRunResult(ctx context.Context, scanID string, run model.ProjectRun, deadline time.Time, spinner *progress.Spinner) (*model.ScanResult, bool, error) {
 	read, err := s.readRunFindings(ctx, run, deadline, spinner)
-	if errors.Is(err, errRunFindingsUnsupported) {
-		return s.fallBackToNormalizedResult(ctx, scanID, run, spinner)
-	}
-	if err != nil {
+	var unsupported *unsupportedReadError
+	switch {
+	case errors.Is(err, context.Canceled):
+		spinner.Stop()
+		return nil, false, err
+	case errors.As(err, &unsupported), errors.Is(err, errRunNotRecordedInTime):
+		return s.fallBackToNormalizedResult(ctx, scanID, run, err, spinner)
+	case err != nil:
 		spinner.Stop()
 		cli.PrintWarningf("Failed to read the findings of run %s of project %s: %v", run.RunID, run.ProjectID, err)
 		cli.PrintWarningf("Scan completed. Its findings are in AppSec, run %s of project %s", run.RunID, run.ProjectID)
@@ -72,7 +84,7 @@ func (s *Scanner) recordedRunResult(ctx context.Context, scanID string, run mode
 		cli.PrintWarningf("Armis recorded run %s of project %s as failed: it has no findings to read", run.RunID, run.ProjectID)
 		return nil, false, &output.ErrResultsIncomplete{ScanID: scanID}
 	case model.RunFindingsNotRecorded:
-		return s.fallBackToNormalizedResult(ctx, scanID, run, spinner)
+		return s.fallBackToNormalizedResult(ctx, scanID, run, nil, spinner)
 	}
 
 	debug := s.client.IsDebug()
@@ -121,8 +133,8 @@ func (s *Scanner) readRunFindings(ctx context.Context, run model.ProjectRun, dea
 
 // fetchRunFindings reads a run's findings once, retrying a read that fails
 // transiently. A server that doesn't know the route or its parameters (404,
-// 405, 422), or that returns rows without the detail asked for, is
-// errRunFindingsUnsupported.
+// 405, 422), or that returns rows without the detail asked for, is an
+// unsupportedReadError.
 func (s *Scanner) fetchRunFindings(ctx context.Context, run model.ProjectRun, spinner *progress.Spinner) (*api.ProjectRunFindings, error) {
 	var read *api.ProjectRunFindings
 	var err error
@@ -142,7 +154,7 @@ func (s *Scanner) fetchRunFindings(ctx context.Context, run model.ProjectRun, sp
 			switch appSecErr.StatusCode {
 			case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUnprocessableEntity:
 				s.debugf("AppSec findings read unsupported: %v", err)
-				return nil, errRunFindingsUnsupported
+				return nil, &unsupportedReadError{reason: err.Error()}
 			}
 		}
 		return nil, err
@@ -150,7 +162,7 @@ func (s *Scanner) fetchRunFindings(ctx context.Context, run model.ProjectRun, sp
 	for i := range read.Findings {
 		if read.Findings[i].Detail == nil {
 			s.debugf("AppSec findings read returned rows without their detail")
-			return nil, errRunFindingsUnsupported
+			return nil, &unsupportedReadError{reason: "it served rows without their detail"}
 		}
 	}
 	return read, nil
@@ -158,11 +170,16 @@ func (s *Scanner) fetchRunFindings(ctx context.Context, run model.ProjectRun, sp
 
 // fallBackToNormalizedResult reads a recorded run's findings the legacy way.
 // That serves a server whose AppSec findings route predates CLI runs, and a
-// run recorded before Armis kept CLI runs' findings in AppSec. A 409 there
-// means Armis keeps them in AppSec, which has none recorded: the results are
-// incomplete.
-func (s *Scanner) fallBackToNormalizedResult(ctx context.Context, scanID string, run model.ProjectRun, spinner *progress.Spinner) (*model.ScanResult, bool, error) {
+// run recorded before Armis kept CLI runs' findings in AppSec. cause is why
+// AppSec didn't serve them, nil for a run it has no record of. A 409 there
+// means Armis keeps them in AppSec: the results are incomplete, and the
+// warning says why AppSec didn't serve them.
+func (s *Scanner) fallBackToNormalizedResult(ctx context.Context, scanID string, run model.ProjectRun, cause error, spinner *progress.Spinner) (*model.ScanResult, bool, error) {
 	findings, err := s.fetchNormalizedFindings(ctx, scanID, spinner)
+	if errors.Is(err, context.Canceled) {
+		spinner.Stop()
+		return nil, false, err
+	}
 	if refusal, ok := api.ProjectRunFindingsRefusal(err); ok {
 		spinner.Stop()
 		projectID, runID := refusal.ContextString("project_id"), refusal.ContextString("run_id")
@@ -172,11 +189,27 @@ func (s *Scanner) fallBackToNormalizedResult(ctx context.Context, scanID string,
 		if runID == "" {
 			runID = run.RunID
 		}
-		cli.PrintWarningf("Armis keeps the findings of run %s of project %s in AppSec, which has none recorded for it",
-			util.StripControl(runID), util.StripControl(projectID))
+		cli.PrintWarningf("Armis keeps the findings of run %s of project %s in AppSec, %s",
+			util.StripControl(runID), util.StripControl(projectID), notServedBecause(cause))
 		return nil, false, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 	return s.normalizedResultOf(scanID, findings, err, spinner)
+}
+
+// notServedBecause says why AppSec didn't serve a run's findings, for the
+// warning of a legacy read that refused them.
+func notServedBecause(cause error) string {
+	var unsupported *unsupportedReadError
+	switch {
+	case cause == nil:
+		return "which has none recorded for it"
+	case errors.Is(cause, errRunNotRecordedInTime):
+		return "which had not recorded them when the scan timeout ran out"
+	case errors.As(cause, &unsupported):
+		return "which could not serve them: " + util.StripControl(unsupported.reason)
+	default:
+		return "which could not serve them: " + util.StripControl(cause.Error())
+	}
 }
 
 // runTruncation is what the history kept of a run with more findings than it

@@ -218,13 +218,101 @@ func TestScan_ARecordedRunNotFinishedIsReadAgain(t *testing.T) {
 	}
 }
 
-func TestScan_ARunStillNotRecordedAtTheTimeoutIsIncomplete(t *testing.T) {
-	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_finished", false)}}
+// A run still not recorded at the timeout reads the legacy way once: a
+// server that keeps the run's findings in AppSec refuses that read (exit 2),
+// one that serves CLI runs' findings but keeps none of their history serves
+// them.
+func TestScan_ARunStillNotRecordedAtTheTimeoutReadsTheLegacyWayOnce(t *testing.T) {
+	t.Run("a server that keeps them in AppSec refuses it", func(t *testing.T) {
+		srv := &runServer{
+			run:    recordedRun(),
+			appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_finished", false)},
+			legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
+		}
+		var err error
+		stderr := testutil.CaptureStderr(t, func() {
+			_, err = scanRecorded(t, srv, 60*time.Millisecond, "")
+		})
+		var incomplete *output.ErrResultsIncomplete
+		if !errors.As(err, &incomplete) {
+			t.Errorf("err = %v, want ErrResultsIncomplete", err)
+		}
+		if _, legacy := srv.counts(); legacy != 1 {
+			t.Errorf("legacy reads %d, want 1", legacy)
+		}
+		if !strings.Contains(stderr, "which had not recorded them when the scan timeout ran out") {
+			t.Errorf("the warning doesn't say the timeout ran out:\n%s", stderr)
+		}
+	})
 
-	_, err := scanRecorded(t, srv, 60*time.Millisecond, "")
+	t.Run("a server that keeps no history of them serves it", func(t *testing.T) {
+		srv := &runServer{
+			run:    recordedRun(),
+			appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_finished", false)},
+			legacy: legacyFindings(t),
+		}
+		result, err := scanRecorded(t, srv, 60*time.Millisecond, "")
+		if err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		if _, legacy := srv.counts(); legacy != 1 || len(result.Findings) != 1 {
+			t.Errorf("legacy reads %d, findings %d", legacy, len(result.Findings))
+		}
+	})
+}
+
+// projectRunRefusal is the legacy read's 409 for the recorded run.
+func projectRunRefusal() string {
+	return `{"detail":{"code":"project_run_findings","message":"This scan is a run of an AppSec project",` +
+		`"context":{"project_id":"` + testRecordedProject + `","run_id":"` + testRecordedRun + `"}}}`
+}
+
+// A fallback the AppSec read's failure took says so when the legacy read is
+// refused, instead of saying AppSec recorded nothing.
+func TestScan_TheRefusedFallbackOfAFailedAppSecReadSaysWhy(t *testing.T) {
+	srv := &runServer{
+		run:    recordedRun(),
+		appSec: []func(http.ResponseWriter){appSecStatus(http.StatusNotFound, `{"detail":"No such scan run in this project.","error":"scan_not_found","context":{}}`)},
+		legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
+	}
+	var err error
+	stderr := testutil.CaptureStderr(t, func() {
+		_, err = scanRecorded(t, srv, time.Minute, "")
+	})
 	var incomplete *output.ErrResultsIncomplete
 	if !errors.As(err, &incomplete) {
 		t.Errorf("err = %v, want ErrResultsIncomplete", err)
+	}
+	if !strings.Contains(stderr, "which could not serve them: AppSec API returned 404 (scan_not_found): No such scan run in this project.") {
+		t.Errorf("the warning doesn't carry the AppSec error:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "none recorded") {
+		t.Errorf("the warning says AppSec recorded nothing:\n%s", stderr)
+	}
+}
+
+// Ctrl+C while the CLI waits for the run's findings to be recorded is a
+// cancel (exit 130), not incomplete results (exit 2).
+func TestScan_ACancelDuringTheWaitForTheRunsFindingsIsACancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notFinished := appSecPage(t, nil, "not_finished", false)
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){func(w http.ResponseWriter) {
+		notFinished(w)
+		cancel()
+	}}}
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	scanner := newProjectTestScanner(t, newRunServer(t, srv)).WithProject(testRecordedProject, "cli_ci").
+		WithFetchRetryInterval(time.Millisecond)
+	scanner.timeout = time.Minute
+
+	_, err := scanner.Scan(ctx, newProjectTestRepo(t))
+	var incomplete *output.ErrResultsIncomplete
+	if !errors.Is(err, context.Canceled) || errors.As(err, &incomplete) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if _, legacy := srv.counts(); legacy != 0 {
+		t.Errorf("legacy reads %d, want none", legacy)
 	}
 }
 
@@ -308,12 +396,10 @@ func TestScan_ARecordedRunWhoseRowsDontAddUpIsIncomplete(t *testing.T) {
 }
 
 func TestScan_TheLegacyReadsRefusalIsIncomplete(t *testing.T) {
-	refusal := `{"detail":{"code":"project_run_findings","message":"This scan is a run of an AppSec project",` +
-		`"context":{"project_id":"` + testRecordedProject + `","run_id":"` + testRecordedRun + `"}}}`
 	srv := &runServer{
 		run:    recordedRun(),
 		appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_recorded", false)},
-		legacy: appSecStatus(http.StatusConflict, refusal),
+		legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
 	}
 
 	_, err := scanRecorded(t, srv, time.Minute, "")
