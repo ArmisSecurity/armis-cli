@@ -355,6 +355,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return &model.ScanResult{ScanID: scanID, Status: StatusAccepted}, nil
 	}
 
+	// The scan timeout bounds the wait for the scan and, for a recorded run,
+	// for its findings history.
+	waitStarted := time.Now()
 	waitMessage := s.sbomVEXOpts.WaitMessage()
 	analysisSpinner := progress.NewSpinnerWithContext(ctx, waitMessage, s.noProgress)
 	analysisSpinner.Start()
@@ -383,29 +386,17 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	fetchSpinner.Start()
 	defer fetchSpinner.Stop()
 
-	var findings []model.NormalizedFinding
-	const maxFetchRetries = 5
-	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
-		findings, err = s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
-		if err == nil {
-			break
-		}
-		if !isRetryableError(err) {
-			break
-		}
-		if attempt < maxFetchRetries {
-			fetchSpinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
-			time.Sleep(s.fetchRetryInterval)
-		}
+	// A run Armis recorded is read from AppSec; any other scan the legacy way.
+	var result *model.ScanResult
+	var noResults bool
+	if run := recordedProjectRun(started.ProjectRun); run != nil {
+		result, noResults, err = s.recordedRunResult(ctx, scanID, *run, waitStarted.Add(s.timeout), fetchSpinner)
+	} else {
+		findings, fetchErr := s.fetchNormalizedFindings(ctx, scanID, fetchSpinner)
+		result, noResults, err = s.normalizedResultOf(scanID, findings, fetchErr, fetchSpinner)
 	}
-	// No result entry at all is decided once the skip reason is known: a
-	// skipped scanner explains it, anything else means the results are gone.
-	noResults := errors.Is(err, api.ErrNoScanResults)
-	if err != nil && !noResults {
-		fetchSpinner.Stop()
-		cli.PrintWarningf("Failed to retrieve results: %v", err)
-		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
-		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
+	if err != nil {
+		return nil, err
 	}
 
 	fetchSpinner.Stop()
@@ -423,20 +414,15 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, &output.ErrResultsIncomplete{ScanID: scanID}
 	}
 
-	result := buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable)
-
+	// Local suppressions on top of the server's: the root .armisignore's
+	// directives, then inline armis:ignore comments, each on the findings not
+	// yet suppressed.
 	if suppressionConfig != nil && !suppressionConfig.IsEmpty() {
-		suppCount := ApplySuppression(result.Findings, suppressionConfig)
-		if suppCount > 0 {
-			result.Summary = recomputeSummary(result.Findings, suppCount, result.Summary.FilteredNonExploitable)
-		}
+		ApplySuppression(result.Findings, suppressionConfig)
 	}
-
-	// Inline armis:ignore comment suppression (runs on non-suppressed findings only)
-	inlineSuppCount := ApplyInlineSuppression(result.Findings, absPath)
-	if inlineSuppCount > 0 {
-		totalSuppressed := countSuppressed(result.Findings)
-		result.Summary = recomputeSummary(result.Findings, totalSuppressed, result.Summary.FilteredNonExploitable)
+	ApplyInlineSuppression(result.Findings, absPath)
+	if suppressed := countSuppressed(result.Findings); suppressed > 0 {
+		result.Summary = recomputeSummary(result.Findings, suppressed, result.Summary.FilteredNonExploitable)
 	}
 
 	result.Summary.ScannerSkipReason = skipReason
@@ -782,6 +768,39 @@ func isTestFile(name string) bool {
 	return false
 }
 
+// fetchNormalizedFindings reads a scan's findings the legacy way, from
+// /ingest/normalized-results, retrying a read that fails transiently.
+func (s *Scanner) fetchNormalizedFindings(ctx context.Context, scanID string, spinner *progress.Spinner) ([]model.NormalizedFinding, error) {
+	var findings []model.NormalizedFinding
+	var err error
+	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
+		findings, err = s.client.FetchAllNormalizedResults(ctx, s.tenantID, scanID, s.pageLimit)
+		if err == nil || !isRetryableError(err) {
+			break
+		}
+		if attempt < maxFetchRetries {
+			spinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
+			time.Sleep(s.fetchRetryInterval)
+		}
+	}
+	return findings, err
+}
+
+// normalizedResultOf is the result of a legacy read. No result entry at all
+// is decided once the skip reason is known (the second result): a skipped
+// scanner explains it, anything else means the results are gone. Any other
+// failed read is ErrResultsIncomplete.
+func (s *Scanner) normalizedResultOf(scanID string, findings []model.NormalizedFinding, err error, spinner *progress.Spinner) (*model.ScanResult, bool, error) {
+	noResults := errors.Is(err, api.ErrNoScanResults)
+	if err != nil && !noResults {
+		spinner.Stop()
+		cli.PrintWarningf("Failed to retrieve results: %v", err)
+		cli.PrintWarningf("Scan completed successfully. Results are available with scan ID: %s", scanID)
+		return nil, false, &output.ErrResultsIncomplete{ScanID: scanID}
+	}
+	return buildScanResult(scanID, findings, s.client.IsDebug(), s.includeNonExploitable), noResults, nil
+}
+
 // isRetryableError returns true for transient errors (timeouts, network errors,
 // 5xx server errors) and false for permanent errors (4xx, decode failures).
 func isRetryableError(err error) bool {
@@ -792,6 +811,10 @@ func isRetryableError(err error) bool {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode >= 500
+	}
+	var appSecErr *api.AppSecError
+	if errors.As(err, &appSecErr) {
+		return appSecErr.StatusCode >= 500
 	}
 	// Timeout and network errors are retryable
 	return errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)

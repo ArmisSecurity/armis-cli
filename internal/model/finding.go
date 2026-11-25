@@ -82,6 +82,9 @@ type ScanResult struct {
 	// could not be downloaded; a non-empty list makes the scan exit 2. Kept
 	// out of the JSON report.
 	BOMFailures []string `json:"-"`
+	// Truncated is set for a recorded project run whose findings the history
+	// kept only the most severe of (spec 18 task 4's 4.3).
+	Truncated *ResultsTruncation `json:"-"`
 	// BOMWritten lists the BOM types written to a file or stdout. A BOM-only
 	// scan that wrote none exits 2. Kept out of the JSON report.
 	BOMWritten []string `json:"-"`
@@ -122,6 +125,32 @@ func SummarizeFindings(findings []Finding) Summary {
 		}
 	}
 	return summary
+}
+
+// ResultsTruncation is what the findings history kept of a run with more
+// findings than it keeps: the Kept most severe of Total. Every finding it
+// dropped is at most as severe as LeastSevereKept.
+type ResultsTruncation struct {
+	Kept            int
+	Total           int
+	LeastSevereKept Severity
+}
+
+// SeverityRank orders severities, the most severe highest: CRITICAL 4, HIGH
+// 3, MEDIUM 2, LOW 1, and INFO (or anything else) 0.
+func SeverityRank(s Severity) int {
+	switch s {
+	case SeverityCritical:
+		return 4
+	case SeverityHigh:
+		return 3
+	case SeverityMedium:
+		return 2
+	case SeverityLow:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // IngestUploadResponse represents the response from uploading a scan artifact

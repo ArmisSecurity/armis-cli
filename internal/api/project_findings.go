@@ -21,9 +21,13 @@ const AppSecCodeProjectRunFindings = "project_run_findings"
 // expand=detail caps it at 100.
 const ProjectRunFindingsPageSize = 100
 
-// MaxProjectRunFindingsPages bounds a run's read: the history keeps at most
-// 50,000 findings a run, 500 pages of ProjectRunFindingsPageSize.
-const MaxProjectRunFindingsPages = 500
+// MaxProjectRunFindings is the most findings the history keeps of a run: a
+// read past it is refused rather than kept in memory.
+const MaxProjectRunFindings = 50_000
+
+// MaxProjectRunFindingsPages bounds a run's read: MaxProjectRunFindings in
+// pages of ProjectRunFindingsPageSize.
+const MaxProjectRunFindingsPages = MaxProjectRunFindings / ProjectRunFindingsPageSize
 
 // runIDPattern matches a project run's id: "s_" and the run's 24 hex digits.
 var runIDPattern = regexp.MustCompile(`^s_[0-9a-f]{24}$`)
@@ -57,6 +61,9 @@ func (c *Client) ListProjectRunFindings(ctx context.Context, tenantID, projectID
 	if err := c.doAppSec(ctx, http.MethodGet, path, params, nil, http.StatusOK, &out); err != nil {
 		return nil, err
 	}
+	if len(out.Data) > ProjectRunFindingsPageSize {
+		return nil, fmt.Errorf("%w: a page of %d findings", ErrRunFindingsTooLarge, len(out.Data))
+	}
 	return &out, nil
 }
 
@@ -73,8 +80,8 @@ type ProjectRunFindings struct {
 	EmptyReason string
 }
 
-// ErrRunFindingsTooLarge means a run's findings list has more pages than the
-// history can hold, so it can't be read whole.
+// ErrRunFindingsTooLarge means a run's findings list holds more than the
+// history keeps of a run, so it isn't read whole.
 var ErrRunFindingsTooLarge = errors.New("the run's findings list is larger than the findings history keeps")
 
 // FetchAllProjectRunFindings reads every page of a recorded run's findings.
@@ -104,6 +111,11 @@ func (c *Client) FetchAllProjectRunFindings(ctx context.Context, tenantID, proje
 			return nil, err
 		}
 		result.Findings = append(result.Findings, next.Data...)
+	}
+	// Pages hold at most ProjectRunFindingsPageSize each, and there are at
+	// most MaxProjectRunFindingsPages, so this is the history's own bound.
+	if len(result.Findings) > MaxProjectRunFindings {
+		return nil, fmt.Errorf("%w: %d findings", ErrRunFindingsTooLarge, len(result.Findings))
 	}
 	return result, nil
 }

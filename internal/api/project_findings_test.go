@@ -166,6 +166,21 @@ func TestClient_FetchAllProjectRunFindings(t *testing.T) {
 		}
 	})
 
+	t.Run("a page larger than its page size is refused", func(t *testing.T) {
+		t.Parallel()
+		ids := make([]string, ProjectRunFindingsPageSize+1)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("f_%d", i)
+		}
+		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			testutil.JSONResponse(t, w, http.StatusOK, runFindingsPage(1, 1, ids...))
+		})
+		_, err := newProjectsClient(t, srv.URL).FetchAllProjectRunFindings(context.Background(), testProjectsTenant, testRunProject, testRunID)
+		if !errors.Is(err, ErrRunFindingsTooLarge) {
+			t.Errorf("err = %v, want ErrRunFindingsTooLarge", err)
+		}
+	})
+
 	t.Run("a 4xx is an AppSecError", func(t *testing.T) {
 		t.Parallel()
 		srv := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
