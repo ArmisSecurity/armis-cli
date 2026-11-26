@@ -55,18 +55,24 @@ func TestParseDirectiveLine(t *testing.T) {
 			wantIsDir: true,
 		},
 		{
+			name:      "cwe:CWE-79, as the AppSec UI writes it",
+			line:      "cwe:CWE-79 -- templates escape output",
+			wantDir:   &SuppressionDirective{Type: DirectiveCWE, Value: "79", Reason: "templates escape output"},
+			wantIsDir: true,
+		},
+		{
 			name:        "cwe:abc invalid",
 			line:        "cwe:abc",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "abc" ignored (must be a non-negative integer)`,
+			wantWarning: `invalid cwe value "abc" ignored (must be a non-negative integer, such as 79 or CWE-79)`,
 		},
 		{
 			name:        "cwe:-1 negative",
 			line:        "cwe:-1",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "-1" ignored (must be a non-negative integer)`,
+			wantWarning: `invalid cwe value "-1" ignored (must be a non-negative integer, such as 79 or CWE-79)`,
 		},
 		{
 			name:        "cwe:0 zero",
@@ -260,7 +266,7 @@ func TestParseDirectiveLine(t *testing.T) {
 			line:        "cwe:798-- not a reason",
 			wantDir:     nil,
 			wantIsDir:   false,
-			wantWarning: `invalid cwe value "798-- not a reason" ignored (must be a non-negative integer)`,
+			wantWarning: `invalid cwe value "798-- not a reason" ignored (must be a non-negative integer, such as 79 or CWE-79)`,
 		},
 	}
 
@@ -383,10 +389,17 @@ func TestValidateCWE(t *testing.T) {
 		{"1", "1", true, ""},
 		{"0079", "79", true, ""},
 		{"0", "0", true, "cwe:0 will never match any findings"},
-		{"-1", "", false, `invalid cwe value "-1" ignored (must be a non-negative integer)`},
-		{"abc", "", false, `invalid cwe value "abc" ignored (must be a non-negative integer)`},
+		{"-1", "", false, `invalid cwe value "-1" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
+		{"abc", "", false, `invalid cwe value "abc" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
 		{"", "", false, "empty cwe directive ignored"},
-		{"12.5", "", false, `invalid cwe value "12.5" ignored (must be a non-negative integer)`},
+		{"12.5", "", false, `invalid cwe value "12.5" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
+		// The AppSec UI's generated .armisignore writes cwe:CWE-79.
+		{"CWE-79", "79", true, ""},
+		{"cwe-0079", "79", true, ""},
+		{"CWE-0", "0", true, "cwe:0 will never match any findings"},
+		{"CWE-", "", false, `invalid cwe value "CWE-" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
+		{"CWE79", "", false, `invalid cwe value "CWE79" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
+		{"CWE--1", "", false, `invalid cwe value "CWE--1" ignored (must be a non-negative integer, such as 79 or CWE-79)`},
 	}
 
 	for _, tt := range tests {

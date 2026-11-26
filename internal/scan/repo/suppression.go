@@ -51,6 +51,9 @@ var validCategories = map[string][]string{
 	"license": {"LICENSE_COMPLIANCE", "LICENSE_COMPLIANCE_RISK"},
 }
 
+// cwePrefix is the optional prefix of a cwe: directive's value ("CWE-79").
+const cwePrefix = "CWE-"
+
 // directivePrefixes defines recognized directive prefixes for quick lookup.
 var directivePrefixes = []string{"rule:", "category:", "severity:", "cwe:"}
 
@@ -180,20 +183,23 @@ func hasDirectivePrefix(line string) bool {
 	return false
 }
 
-// validateCWE checks whether a CWE value string is a valid non-negative integer.
-// Returns (normalized, valid, warning). The normalized value is the canonical integer
-// string (e.g. "0079" becomes "79"). When valid is false the directive should be rejected.
+// validateCWE checks whether a CWE value string is a valid non-negative integer, bare
+// or with a "CWE-" prefix (any case), as the AppSec API's CWE ids and the UI's generated
+// .armisignore write it. Returns (normalized, valid, warning). The normalized value is
+// the canonical integer string (e.g. "0079" and "CWE-79" become "79"). When valid is
+// false the directive should be rejected.
 // When valid is true but warning is non-empty, the directive is accepted with a warning.
 func validateCWE(value string) (string, bool, string) {
 	if value == "" {
 		return "", false, "empty cwe directive ignored"
 	}
-	n, err := strconv.Atoi(value)
-	if err != nil {
-		return "", false, fmt.Sprintf("invalid cwe value %q ignored (must be a non-negative integer)", value)
+	digits := value
+	if len(digits) > len(cwePrefix) && strings.EqualFold(digits[:len(cwePrefix)], cwePrefix) {
+		digits = digits[len(cwePrefix):]
 	}
-	if n < 0 {
-		return "", false, fmt.Sprintf("invalid cwe value %q ignored (must be a non-negative integer)", value)
+	n, err := strconv.Atoi(digits)
+	if err != nil || n < 0 {
+		return "", false, fmt.Sprintf("invalid cwe value %q ignored (must be a non-negative integer, such as 79 or CWE-79)", value)
 	}
 	normalized := strconv.Itoa(n)
 	if n == 0 {
