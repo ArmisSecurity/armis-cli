@@ -757,6 +757,39 @@ from your name by case (`Checkout-Service` vs `checkout-service`), the scan
 stops instead of creating a near-duplicate. Finding or creating a project
 needs credentials with the `admin` or `developer` role.
 
+**Setting up a new project.** When the project doesn't exist yet and the scan
+runs in a terminal (a `--report` run on your machine, not CI), the CLI asks
+first: *Set up now*, *Use defaults* or *Cancel*.
+
+*Set up now* asks, one question at a time, what the AppSec UI asks when it
+creates a CLI project:
+
+- the minimum severity (Medium unless you pick another); findings below it are
+  still scanned, but hidden from reports and `--fail-on`;
+- path excludes, in gitignore syntax (`!` re-includes);
+- findings to suppress, by severity, by scanner category and by CWE;
+- the project's labels.
+
+A summary shows the labels and the exact lines it will write; then *Create the
+project*, *Edit* or *Cancel*. The filters go to the scanned folder's
+`.armisignore`: a new file, or a block appended to yours, whose lines are kept.
+The project is created with its labels, and this scan already applies the
+filters. Commit `.armisignore` so CI scans apply them too. No filter is sent to
+Armis: the `.armisignore` is where a CLI project's filters live.
+
+Questions your `.armisignore` already answers are skipped. A `severity:` line
+answers both severity questions, any path pattern answers the path excludes,
+and a `category:` or `cwe:` line answers its own question.
+
+*Use defaults* creates the project as is. *Cancel* (or Ctrl+C in a question)
+creates and uploads nothing, and exits `130`.
+
+In CI, without a terminal, or with `--no-input` (or `ARMIS_NO_INPUT=1`), the
+CLI asks nothing. `--project-label <label>` labels a project the run creates.
+Repeat it or separate labels with commas; at most 20 of 64 characters each.
+An existing project keeps its labels: when the ones you pass differ, the CLI
+warns and changes nothing.
+
 **Runs.** Once the scan starts, the CLI prints the run Armis recorded it as
 (`Recorded as run s_... of project checkout-service`). The run is filed under
 the branch of the checkout, or, when the checkout is detached as CI checkouts
@@ -855,8 +888,8 @@ Notes:
 - `--changed` and `--include-files` cannot be published. A run covering a few
   files would under-report the project's findings. They still work for local
   gating without `--project`.
-- `--project`, `--report`, `--sync` and `--async` are available on `scan repo`
-  and on the `scan <path>` shorthand.
+- `--project`, `--report`, `--sync`, `--async`, `--project-label` and
+  `--no-input` are available on `scan repo` and on the `scan <path>` shorthand.
 
 ### Scan Container Image
 
@@ -1189,7 +1222,7 @@ Format: `<type>:<value> -- <optional reason>`
 | `rule:` | Any rule ID (free-form string) | `rule:G304 -- path validated upstream` |
 | `category:` | `sast`, `secrets`, `iac`, `sca`, `license` | `category:license` |
 | `severity:` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` | `severity:LOW` |
-| `cwe:` | Any non-negative integer | `cwe:73 -- intentional, sanitized` |
+| `cwe:` | Any non-negative integer, bare or as `CWE-73` | `cwe:73 -- intentional, sanitized` |
 
 Example `.armisignore`:
 
@@ -1647,7 +1680,7 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 - `--exit-code` value (default `1`) - Scan found findings at a `--fail-on` severity
 - `1` - Error: invalid flags (such as an invalid `--project` name), authentication, upload, timeout, or a failed scan
 - `2` - Scan completed, but its results or a requested BOM could not be downloaded, or `bom` wrote no BOM
-- `130` - Scan cancelled with Ctrl+C
+- `130` - Scan cancelled with Ctrl+C, or a new project's setup cancelled (nothing was created or uploaded)
 
 With the default `--exit-code 1`, findings and errors share exit code `1`; set
 `--exit-code` to another value to tell them apart.

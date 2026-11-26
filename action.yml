@@ -64,6 +64,10 @@ inputs:
     description: 'Publish the scan to this Armis AppSec project, created on first use (repo scans only). Empty keeps the scan local-only.'
     required: false
     default: ''
+  project-labels:
+    description: 'Comma-separated labels for a project this run creates (needs project; at most 20). An existing project keeps its labels.'
+    required: false
+    default: ''
   build-from-source:
     description: 'Build CLI from source instead of downloading release (for testing)'
     required: false
@@ -181,6 +185,7 @@ runs:
         OUTPUT_FILE: ${{ inputs.output-file }}
         INCLUDE_FILES: ${{ inputs.include-files }}
         PROJECT: ${{ inputs.project }}
+        PROJECT_LABELS: ${{ inputs.project-labels }}
       run: |
         set +e
 
@@ -255,6 +260,16 @@ runs:
             exit 1
           fi
           SCAN_ARGS+=("--project" "$PROJECT")
+        fi
+
+        # Labels for a project this run creates; the CLI validates them.
+        # armis:ignore cwe:20 reason:passed as one quoted array element and run without eval, so nothing is interpreted; armis-cli validates the labels (at most 20 of 64 characters, no control characters) before any I/O, as it validates the project input's name
+        if [ -n "$PROJECT_LABELS" ]; then
+          if [ -z "$PROJECT" ]; then
+            echo "Error: 'project-labels' needs 'project'."
+            exit 1
+          fi
+          SCAN_ARGS+=("--project-label" "$PROJECT_LABELS")
         fi
 
         # Execute command safely without eval

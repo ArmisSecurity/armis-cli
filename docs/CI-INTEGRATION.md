@@ -367,16 +367,26 @@ than an unpublished scan's:
     ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
-With the GitHub Action, set the `project` input:
+With the GitHub Action, set the `project` input, and optionally
+`project-labels` for a project the run creates:
 
 ```yaml
 - uses: ArmisSecurity/armis-cli@v1
   with:
     scan-type: repo
     project: checkout-service
+    project-labels: team-payments,pci
     client-id: ${{ secrets.ARMIS_CLIENT_ID }}
     client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
+
+A pipeline never asks questions. When its run creates the project, the project
+gets `--project-label`'s labels (the Action's `project-labels`), and its filters
+come from the repository's committed `.armisignore`. To set the filters up once,
+run the first scan from a terminal (`armis-cli scan . --project checkout-service
+--report`). It asks the questions the AppSec UI asks, writes the answers to
+`.armisignore`, and creates the project; commit the file. An existing project
+keeps its labels whatever the pipeline passes.
 
 To publish without blocking the pipeline, use `--async`. The command returns
 once the scan is accepted and exits `0` without evaluating `--fail-on`. Pair it
