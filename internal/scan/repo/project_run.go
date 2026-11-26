@@ -145,7 +145,9 @@ func (s *Scanner) fetchRunFindings(ctx context.Context, run model.ProjectRun, sp
 		}
 		if attempt < maxFetchRetries {
 			spinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
-			time.Sleep(s.fetchRetryInterval)
+			if werr := waitToRetry(ctx, s.fetchRetryInterval); werr != nil {
+				return nil, werr
+			}
 		}
 	}
 	if err != nil {

@@ -317,6 +317,69 @@ func TestScan_ACancelDuringTheWaitForTheRunsFindingsIsACancel(t *testing.T) {
 	}
 }
 
+// A Ctrl+C while a read waits to be retried cancels at once: the legacy read
+// of results that haven't landed yet, and a recorded run's AppSec read that
+// timed out (the reads a scan retries itself; the HTTP client retries 5xx).
+func TestScan_ACancelWhileAReadWaitsToBeRetriedIsACancel(t *testing.T) {
+	const apiTimeout = 300 * time.Millisecond
+	for _, tt := range []struct {
+		name      string
+		published bool
+		// fail fails the read retryably, then ends ctx while the read waits
+		// an hour to be retried.
+		fail func(t *testing.T, w http.ResponseWriter, cancel context.CancelFunc)
+	}{
+		{"an unpublished scan's legacy read, its results not there yet", false,
+			func(t *testing.T, w http.ResponseWriter, cancel context.CancelFunc) {
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{})
+				time.AfterFunc(100*time.Millisecond, cancel)
+			}},
+		{"a recorded run's AppSec read that timed out", true,
+			func(_ *testing.T, w http.ResponseWriter, cancel context.CancelFunc) {
+				time.AfterFunc(2*apiTimeout, cancel)
+				time.Sleep(3 * apiTimeout)
+				w.WriteHeader(http.StatusGatewayTimeout)
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			answer := func(w http.ResponseWriter) { tt.fail(t, w, cancel) }
+			srv := &runServer{}
+			if tt.published {
+				srv.run, srv.appSec = recordedRun(), []func(http.ResponseWriter){answer}
+			} else {
+				srv.legacy = answer
+			}
+			t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+			scanner := newProjectTestScannerTimingOut(t, newRunServer(t, srv), apiTimeout).WithFetchRetryInterval(time.Hour)
+			if tt.published {
+				scanner = scanner.WithProject(testRecordedProject, "cli_ci")
+			}
+			scanner.timeout = time.Minute
+			repo := newProjectTestRepo(t)
+
+			errc := make(chan error, 1)
+			go func() {
+				_, err := scanner.Scan(ctx, repo)
+				errc <- err
+			}()
+			select {
+			case err := <-errc:
+				var incomplete *output.ErrResultsIncomplete
+				if !errors.Is(err, context.Canceled) || errors.As(err, &incomplete) {
+					t.Errorf("err = %v, want context.Canceled", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the scan still waits to retry its read after the cancel")
+			}
+			if appSec, legacy := srv.counts(); appSec+legacy != 1 {
+				t.Errorf("reads: %d from AppSec, %d legacy; want the one that failed", appSec, legacy)
+			}
+		})
+	}
+}
+
 func TestScan_ARecordedRunsEmptyStates(t *testing.T) {
 	for _, tt := range []struct {
 		name         string

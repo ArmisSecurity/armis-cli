@@ -393,6 +393,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		result, noResults, err = s.recordedRunResult(ctx, scanID, *run, waitStarted.Add(s.timeout), fetchSpinner)
 	} else {
 		findings, fetchErr := s.fetchNormalizedFindings(ctx, scanID, fetchSpinner)
+		if errors.Is(fetchErr, context.Canceled) {
+			// A cancel, not results that failed to arrive (exit 130).
+			fetchSpinner.Stop()
+			return nil, fetchErr
+		}
 		result, noResults, err = s.normalizedResultOf(scanID, findings, fetchErr, fetchSpinner)
 	}
 	if err != nil {
@@ -780,10 +785,25 @@ func (s *Scanner) fetchNormalizedFindings(ctx context.Context, scanID string, sp
 		}
 		if attempt < maxFetchRetries {
 			spinner.Update(fmt.Sprintf("Retrieving results (retry %d/%d)...", attempt, maxFetchRetries-1))
-			time.Sleep(s.fetchRetryInterval)
+			if werr := waitToRetry(ctx, s.fetchRetryInterval); werr != nil {
+				return nil, werr
+			}
 		}
 	}
 	return findings, err
+}
+
+// waitToRetry waits d before a read is retried, or until ctx ends: it then
+// returns ctx's error, so a Ctrl+C during the wait cancels at once.
+func waitToRetry(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // normalizedResultOf is the result of a legacy read. No result entry at all
