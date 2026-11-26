@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -565,5 +566,32 @@ func TestScan_TheRootArmisignoreStillAppliesToARecordedRun(t *testing.T) {
 	wantJSON, _ := json.Marshal(want)
 	if string(got) != string(wantJSON) || result.Summary.Suppressed != 3 {
 		t.Errorf("suppressed by %s (total %d), want %s", got, result.Summary.Suppressed, wantJSON)
+	}
+}
+
+// --debug shows a project's scan filters as an .armisignore: at most the
+// lines the CLI reads of one, without control characters.
+func TestPrintScanFilters_ShowsAtMostAnArmisignoresLines(t *testing.T) {
+	text := "cwe:79\x1b[2J\n" + strings.Repeat("dist/\n", maxIgnoreFileLines+500)
+	ts := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/appsec/projects/"+testRecordedProject+"/scan-filters" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		testutil.JSONResponse(t, w, http.StatusOK, model.ProjectScanFilters{Armisignore: text})
+	})
+	scanner := newProjectTestScanner(t, ts.URL)
+
+	out := testutil.CaptureStderr(t, func() { scanner.printScanFilters(context.Background(), testRecordedProject) })
+	if strings.Contains(out, "\x1b") {
+		t.Error("a control character reached the output")
+	}
+	// The first line, then dist/ until the limit, then the marker.
+	if got := strings.Count(out, "dist/"); got != maxIgnoreFileLines-1 {
+		t.Errorf("shown %d dist/ lines, want %d", got, maxIgnoreFileLines-1)
+	}
+	if !strings.Contains(out, "cwe:79[2J\n") || !strings.Contains(out, fmt.Sprintf("… (more than %d lines", maxIgnoreFileLines)) {
+		t.Errorf("output starts:\n%.300s", out)
 	}
 }

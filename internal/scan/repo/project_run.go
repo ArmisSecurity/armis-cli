@@ -242,7 +242,12 @@ func (s *Scanner) printScanFilters(ctx context.Context, projectID string) {
 		s.debugf("no scan filters to show: %v", err)
 		return
 	}
-	lines := strings.Split(filters.Armisignore, "\n")
+	// At most the lines the CLI reads of an .armisignore: SplitN keeps a long
+	// answer (up to MaxAPIResponseSize) from becoming as many strings.
+	lines := strings.SplitN(filters.Armisignore, "\n", maxIgnoreFileLines+1)
+	if len(lines) > maxIgnoreFileLines {
+		lines = append(lines[:maxIgnoreFileLines], fmt.Sprintf("… (more than %d lines; the rest not shown)", maxIgnoreFileLines))
+	}
 	for i, line := range lines {
 		lines[i] = util.StripControl(line)
 	}
@@ -252,6 +257,7 @@ func (s *Scanner) printScanFilters(ctx context.Context, projectID string) {
 
 func (s *Scanner) debugf(format string, args ...any) {
 	if s.client.IsDebug() {
+		// armis:ignore cwe:134 reason:a printf wrapper; every caller passes a constant format, and server text only as an argument (%v)
 		fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", args...)
 	}
 }
