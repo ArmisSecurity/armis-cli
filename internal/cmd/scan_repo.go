@@ -299,13 +299,13 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	var publishedRun *model.ProjectRun
 	var resolveErr error
 	if decision.Publish {
-		scanner = scanner.WithProjectResolver(func(ctx context.Context) (string, string, error) {
+		scanner = scanner.WithProjectResolver(func(ctx context.Context, _ repo.IgnoreSummary) (string, string, bool, error) {
 			published, resolveErr = project.Resolve(ctx, client, tid, projectName, project.ResolveOptions{})
 			if resolveErr != nil {
-				return "", "", resolveErr
+				return "", "", false, resolveErr
 			}
 			announceProject(published, decision)
-			return published.Project.ProjectID, decision.Trigger, nil
+			return published.Project.ProjectID, decision.Trigger, false, nil
 		}).WithProjectRunReporter(func(run *model.ProjectRun) {
 			publishedRun = run
 			reportProjectRun(published, run)

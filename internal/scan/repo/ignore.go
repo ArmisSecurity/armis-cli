@@ -76,6 +76,11 @@ func LoadSuppressionConfig(repoRoot string) (*SuppressionConfig, error) {
 // Suppression directives are only collected from the root .armisignore file.
 // Warnings for invalid directives are emitted to stderr via cli.PrintWarningf.
 func LoadArmisIgnore(repoRoot string) (*IgnoreMatcher, *SuppressionConfig, error) {
+	return loadArmisIgnore(repoRoot, true)
+}
+
+// loadArmisIgnore is LoadArmisIgnore; warn prints the files' warnings.
+func loadArmisIgnore(repoRoot string, warn bool) (*IgnoreMatcher, *SuppressionConfig, error) {
 	var allPatterns []gitignore.Pattern
 	config := NewSuppressionConfig()
 	// armis:ignore cwe:73 reason:filepath.Join with hardcoded ".armisignore" filename; repoRoot is from validated CLI arg
@@ -109,8 +114,10 @@ func LoadArmisIgnore(repoRoot string) (*IgnoreMatcher, *SuppressionConfig, error
 				}
 			}
 
-			for _, w := range warnings {
-				cli.PrintWarningf(".armisignore: %s", w)
+			if warn {
+				for _, w := range warnings {
+					cli.PrintWarningf(".armisignore: %s", w)
+				}
 			}
 		}
 
