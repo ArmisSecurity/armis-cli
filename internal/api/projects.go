@@ -44,6 +44,29 @@ type AppSecError struct {
 	Code       string
 	Detail     string
 	Context    map[string]any
+	// Invalid are the fields a FastAPI 422 validation error names.
+	Invalid []InvalidField
+}
+
+// InvalidField is one field a 422 validation error names, with the error's
+// type ("extra_forbidden" for a field the API doesn't declare).
+type InvalidField struct {
+	Field string
+	Type  string
+}
+
+// RefusesField reports whether the error is a 422 that refuses field as one
+// the API doesn't declare, as a server that predates the field answers.
+func (e *AppSecError) RefusesField(field string) bool {
+	if e == nil || e.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	for _, f := range e.Invalid {
+		if f.Field == field && f.Type == "extra_forbidden" {
+			return true
+		}
+	}
+	return false
 }
 
 // Error renders the status, code and detail.
@@ -176,7 +199,7 @@ func (c *Client) doAppSec(ctx context.Context, method, path string, params url.V
 
 	var reqBody io.Reader
 	if body != nil {
-		// armis:ignore cwe:770 reason:the only body is CreateProject's request, a name ValidateName caps at 64 characters and the constant project type; the GET calls send none
+		// armis:ignore cwe:770 reason:the only body is CreateProject's request: a name ValidateName caps at 64 characters, the constant project type, and at most 20 labels of 64 characters that Resolve normalizes; the GET calls send none
 		bodyBytes, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request: %w", err)
@@ -294,6 +317,7 @@ func parseAppSecError(status int, body []byte) *AppSecError {
 	apiErr.Context = envelope.Context
 
 	var detail string
+	// armis:ignore cwe:770 reason:body is the AppSec response doAppSec, the only caller, read through io.LimitReader(MaxAPIResponseSize), so decoding it is bounded at 50 MB
 	if err := json.Unmarshal(envelope.Detail, &detail); err == nil {
 		apiErr.Detail = detail
 		return apiErr
@@ -312,14 +336,18 @@ func parseAppSecError(status int, body []byte) *AppSecError {
 		return apiErr
 	}
 	var items []struct {
-		Loc []any  `json:"loc"`
-		Msg string `json:"msg"`
+		Loc  []any  `json:"loc"`
+		Msg  string `json:"msg"`
+		Type string `json:"type"`
 	}
+	// armis:ignore cwe:770 reason:body is the AppSec response doAppSec, the only caller, read through io.LimitReader(MaxAPIResponseSize), so decoding it is bounded at 50 MB
 	if err := json.Unmarshal(envelope.Detail, &items); err == nil && len(items) > 0 {
 		msgs := make([]string, 0, len(items))
 		for _, it := range items {
-			if field := validationField(it.Loc); field != "" {
+			field := validationField(it.Loc)
+			if field != "" {
 				msgs = append(msgs, field+": "+it.Msg)
+				apiErr.Invalid = append(apiErr.Invalid, InvalidField{Field: field, Type: it.Type})
 			} else {
 				msgs = append(msgs, it.Msg)
 			}

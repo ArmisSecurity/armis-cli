@@ -300,7 +300,7 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	var resolveErr error
 	if decision.Publish {
 		scanner = scanner.WithProjectResolver(func(ctx context.Context) (string, string, error) {
-			published, resolveErr = project.Resolve(ctx, client, tid, projectName)
+			published, resolveErr = project.Resolve(ctx, client, tid, projectName, project.ResolveOptions{})
 			if resolveErr != nil {
 				return "", "", resolveErr
 			}
