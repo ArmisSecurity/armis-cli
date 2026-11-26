@@ -93,6 +93,27 @@ func TestRenderFinding_LabelsTheServersSuppression(t *testing.T) {
 	}
 }
 
+// A recorded run's suppression is server text: its terminal escapes and line
+// breaks never reach the terminal.
+func TestRenderFinding_StripsControlCharactersFromTheSuppression(t *testing.T) {
+	cli.InitColors(cli.ColorModeNever)
+	SyncColors()
+	finding := serverSuppressed("cwe\x1b[2J", "79\x07", "project")
+	finding.Title = "A finding"
+	finding.SuppressionInfo.Reason = "set by\n\x1b]0;owned\x07the org"
+
+	var buf bytes.Buffer
+	renderFinding(&buf, finding, FormatOptions{ShowSuppressed: true})
+
+	out := buf.String()
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("control characters reached the output: %q", out)
+	}
+	if !strings.Contains(out, "cwe[2J:79 -- set by ]0;ownedthe org") {
+		t.Errorf("output lacks the stripped suppression: %q", out)
+	}
+}
+
 func TestHumanSummary_PrintsTheServersSuppressionLine(t *testing.T) {
 	cli.InitColors(cli.ColorModeNever)
 	SyncColors()

@@ -1047,10 +1047,13 @@ func renderFinding(w io.Writer, finding model.Finding, opts FormatOptions) {
 		}
 		suppLabel := s.MutedText.Render(label)
 		var reason string
-		if finding.SuppressionInfo != nil {
-			reason = fmt.Sprintf("%s:%s", finding.SuppressionInfo.Type, finding.SuppressionInfo.Value)
-			if finding.SuppressionInfo.Reason != "" {
-				reason += " -- " + finding.SuppressionInfo.Reason
+		if info := finding.SuppressionInfo; info != nil {
+			// A recorded run's suppressions are server text, and an
+			// armis:ignore reason comes from the repository: strip their
+			// control characters, as ServerSuppressionLine does.
+			reason = fmt.Sprintf("%s:%s", util.StripControl(info.Type), util.StripControl(info.Value))
+			if r := util.StripControl(info.Reason); r != "" {
+				reason += " -- " + r
 			}
 		}
 		if reason != "" {
