@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/spf13/cobra"
@@ -61,6 +63,10 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	keep(t, &failOn)
 	keep(t, &includeFiles)
 	keep(t, &exitCode)
+	keep(t, &projectLabels)
+	keep(t, &noInput)
+	keep(t, &isInteractive)
+	keep(t, &runSetupForm)
 	t.Cleanup(func() {
 		cli.InitColors(cli.ColorModeAuto)
 		output.SyncColors()
@@ -81,6 +87,14 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	reportScan, syncScan, asyncScan, debug, generateSBOM, generateVEX = false, false, false, false, false, false
 	pollInterval = 5 * time.Millisecond
 	failOn, includeFiles, exitCode = []string{"CRITICAL"}, nil, 1
+	projectLabels, noInput = nil, false
+	// No test asks questions unless it says so.
+	isInteractive = func() bool { return false }
+	runSetupForm = func(context.Context, string, repo.IgnoreSummary, []string) (*project.Setup, error) {
+		t.Fatal("the project setup must not run here")
+		return nil, nil
+	}
+	t.Setenv("ARMIS_NO_INPUT", "")
 	cli.InitColors(cli.ColorModeNever)
 	output.SyncColors()
 

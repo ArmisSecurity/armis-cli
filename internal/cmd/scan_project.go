@@ -40,6 +40,16 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 			"(for example: --project my-service --report)")
 	}
 
+	if len(projectLabels) > 0 && projectName == "" {
+		return project.Decision{}, fmt.Errorf("--project-label labels the project a scan creates, so it needs --project " +
+			"(for example: --project my-service --project-label team-payments)")
+	}
+	labels, err := project.NormalizeLabels(projectLabels)
+	if err != nil {
+		return project.Decision{}, fmt.Errorf("invalid --project-label: %w", err)
+	}
+	projectLabels = labels
+
 	ci, ciVar := progress.DetectCI()
 	decision := project.Decide(projectName, reportScan, ci, ciVar)
 
@@ -85,9 +95,16 @@ func announceProject(res *project.Resolution, decision project.Decision) {
 	case warning != "":
 		verb = "Found project"
 	}
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render(verb), name, detail)
+	withLabels := ""
+	if len(res.Labels) > 0 {
+		withLabels = " " + styles.MutedText.Render("with labels "+strings.Join(res.Labels, ", "))
+	}
+	fmt.Fprintf(os.Stderr, "%s %s %s%s\n", styles.MutedText.Render(verb), name, detail, withLabels)
 	if warning != "" {
 		cli.PrintWarning(warning)
+	}
+	if skipped := labelsSkippedWarning(res); skipped != "" {
+		cli.PrintWarning(skipped)
 	}
 }
 
@@ -174,10 +191,12 @@ type asyncProjectRecord struct {
 	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
 	Created   bool   `json:"created"`
-	Trigger   string `json:"trigger"`
-	Recorded  *bool  `json:"recorded,omitempty"`
-	RunID     string `json:"run_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	// Labels are the labels a project this run created got.
+	Labels   []string `json:"labels,omitempty"`
+	Trigger  string   `json:"trigger"`
+	Recorded *bool    `json:"recorded,omitempty"`
+	RunID    string   `json:"run_id,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
 }
 
 // renderAsyncAccepted reports an accepted --async scan. There are no findings
@@ -207,6 +226,7 @@ func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published
 			ProjectID: published.Project.ProjectID,
 			Name:      published.Project.Name,
 			Created:   published.Created,
+			Labels:    published.Labels,
 			Trigger:   decision.Trigger,
 		}
 		if run != nil {
