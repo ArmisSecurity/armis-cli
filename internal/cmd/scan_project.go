@@ -194,24 +194,31 @@ func warnOnAsyncIgnoredFlags(cmd *cobra.Command) {
 
 // asyncScanRecord is the JSON written for an accepted --async scan.
 type asyncScanRecord struct {
-	ScanID  string              `json:"scan_id"`
-	Status  string              `json:"status"`
-	Project *asyncProjectRecord `json:"project,omitempty"`
+	ScanID  string                  `json:"scan_id"`
+	Status  string                  `json:"status"`
+	Project *model.PublishedProject `json:"project,omitempty"`
 }
 
-// asyncProjectRecord identifies the project an async scan is published to,
-// and the run it was recorded as. Recorded is absent when the server does not
-// say, as one that predates project runs does not.
-type asyncProjectRecord struct {
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	Created   bool   `json:"created"`
-	// Labels are the labels a project this run created got.
-	Labels   []string `json:"labels,omitempty"`
-	Trigger  string   `json:"trigger"`
-	Recorded *bool    `json:"recorded,omitempty"`
-	RunID    string   `json:"run_id,omitempty"`
-	Reason   string   `json:"reason,omitempty"`
+// publishedProject identifies the project a published scan named, and the run
+// it was recorded as, for the scan's JSON: the --async record's project, and
+// the results' (nil for a scan that isn't published). Recorded is absent when
+// the server does not say, as one that predates project runs does not.
+func publishedProject(published *project.Resolution, decision project.Decision, run *model.ProjectRun) *model.PublishedProject {
+	if published == nil {
+		return nil
+	}
+	p := &model.PublishedProject{
+		ProjectID: published.Project.ProjectID,
+		Name:      published.Project.Name,
+		Created:   published.Created,
+		Labels:    published.Labels,
+		Trigger:   decision.Trigger,
+	}
+	if run != nil {
+		recorded := run.Recorded
+		p.Recorded, p.RunID, p.Reason = &recorded, run.RunID, run.Reason
+	}
+	return p
 }
 
 // renderAsyncAccepted reports an accepted --async scan. There are no findings
@@ -235,22 +242,8 @@ func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published
 		return nil
 	}
 
-	record := asyncScanRecord{ScanID: result.ScanID, Status: result.Status}
-	if published != nil {
-		record.Project = &asyncProjectRecord{
-			ProjectID: published.Project.ProjectID,
-			Name:      published.Project.Name,
-			Created:   published.Created,
-			Labels:    published.Labels,
-			Trigger:   decision.Trigger,
-		}
-		if run != nil {
-			recorded := run.Recorded
-			record.Project.Recorded = &recorded
-			record.Project.RunID = run.RunID
-			record.Project.Reason = run.Reason
-		}
-	}
+	record := asyncScanRecord{ScanID: result.ScanID, Status: result.Status,
+		Project: publishedProject(published, decision, run)}
 
 	outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, statusFormatJSON, colorFlag)
 	if err != nil {

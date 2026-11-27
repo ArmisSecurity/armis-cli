@@ -34,6 +34,21 @@ const (
 	ProjectRunInvalidBranch = "invalid_branch"
 )
 
+// PublishedProject is the project a published scan named, and what Armis
+// recorded of it: the "project" of the scan's JSON results, and of the
+// --async record of an accepted scan.
+type PublishedProject struct {
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Created   bool   `json:"created"`
+	// Labels are the labels a project this run created got.
+	Labels   []string `json:"labels,omitempty"`
+	Trigger  string   `json:"trigger"`
+	Recorded *bool    `json:"recorded,omitempty"`
+	RunID    string   `json:"run_id,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+}
+
 // ProjectRun is what /ingest/scan answers for a scan that names its project:
 // whether the scan was recorded as a run of it, as which run, or why not.
 type ProjectRun struct {

@@ -649,6 +649,37 @@ func TestProjectScan_SyncGatesOnFailOn(t *testing.T) {
 	}
 }
 
+// A published scan's JSON results name its project and the run it was
+// recorded as, as the --async record does, so a pipeline can link the run.
+// An unpublished scan's JSON is unchanged.
+func TestProjectScan_JSONResultsNameTheProjectAndRun(t *testing.T) {
+	setupProjectScan(t, testutil.MockAPIConfig{ProjectRun: recordedRun})
+	t.Setenv("CI", "true")
+	projectName = testProjectName
+	stdout, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	var got struct {
+		ScanID  string                  `json:"scan_id"`
+		Project *model.PublishedProject `json:"project"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not the JSON results: %v\n%s", err, stdout)
+	}
+	p := got.Project
+	if p == nil || p.ProjectID != firstMockProjectID || p.Name != testProjectName || !p.Created ||
+		p.Trigger != "cli_ci" || p.Recorded == nil || !*p.Recorded || p.RunID != "s_run1" {
+		t.Errorf("project = %+v", p)
+	}
+
+	setupProjectScan(t, testutil.MockAPIConfig{ProjectRun: recordedRun})
+	stdout, _, err = runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil || strings.Contains(stdout, `"project"`) {
+		t.Errorf("an unpublished scan's JSON names a project (err %v):\n%s", err, stdout)
+	}
+}
+
 // --branch files a published run under the branch it names, over the one
 // detected. It needs --project, and is checked before anything else, since
 // the server refuses a run's branch git wouldn't accept.

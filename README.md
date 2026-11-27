@@ -879,8 +879,11 @@ downloaded. With `--format json` it writes a record of the accepted scan:
 ```
 
 When no run was recorded, `recorded` is `false` and `reason` says why
-(`disabled`, `project_archived`, `project_not_cli`, `project_not_found` or
-`not_recorded`). A server that predates project runs leaves both out.
+(`disabled`, `project_archived`, `project_not_cli`, `project_not_found`,
+`invalid_branch` or `not_recorded`). A server that predates project runs leaves
+both out. A `--sync` scan's `--format json` results carry the same `project`
+object next to its findings, so a pipeline can link the run; an unpublished
+scan's results have none.
 
 Other formats write nothing in async mode. An empty SARIF upload would close
 every open code-scanning alert. Follow up on an async scan with

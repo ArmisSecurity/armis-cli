@@ -373,6 +373,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	if asyncScan {
 		return renderAsyncAccepted(cmd, result, published, decision, publishedRun)
 	}
+	// The JSON results name the project and run, as the --async record does,
+	// so a pipeline can link the run.
+	result.Project = publishedProject(published, decision, publishedRun)
 
 	// Resolve output destination and format (handles file creation, format auto-detection, colors)
 	outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)
