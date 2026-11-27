@@ -951,6 +951,16 @@ func (c *Client) WaitForIngest(ctx context.Context, tenantID, scanID string, pol
 				}
 				return nil, fmt.Errorf("scan failed with no error message (scan_id: %s)", scanID)
 			}
+
+			// STOPPED is terminal too: polling it on would wait out the whole
+			// scan timeout for results that never come.
+			if statusUpper == "STOPPED" {
+				if status.LastError != nil && *status.LastError != "" {
+					return nil, fmt.Errorf("scan was stopped before it completed: %s (scan_id: %s)",
+						util.StripControl(*status.LastError), scanID)
+				}
+				return nil, fmt.Errorf("scan was stopped before it completed (scan_id: %s)", scanID)
+			}
 		}
 	}
 }

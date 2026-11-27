@@ -2290,6 +2290,37 @@ func TestClient_WaitForIngest(t *testing.T) {
 		}
 	})
 
+	// A stopped scan never completes: the wait ends at once instead of polling
+	// until the scan timeout.
+	t.Run("ends the wait on STOPPED", func(t *testing.T) {
+		reason := "Cancelled by an administrator\x1b[2J"
+		for _, lastError := range []*string{nil, &reason} {
+			server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{Data: []model.IngestStatusData{
+					{ScanID: "scan-123", ScanStatus: "STOPPED", TenantID: "tenant-456", LastError: lastError},
+				}})
+			})
+			httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second})
+			// armis:ignore cwe:798 reason:test fixture literal for the local test server, not a real credential; the same placeholder token as every test in this file
+			client, err := NewClient(server.URL, testutil.NewTestAuthProvider("token123"), false, 0, WithHTTPClient(httpClient))
+			if err != nil {
+				t.Fatalf("NewClient failed: %v", err)
+			}
+
+			started := time.Now()
+			_, err = client.WaitForIngest(context.Background(), "tenant-456", "scan-123", 10*time.Millisecond, 3*time.Second, nil)
+			if err == nil || !strings.Contains(err.Error(), "scan was stopped before it completed") {
+				t.Fatalf("err = %v, want the scan stopped", err)
+			}
+			if time.Since(started) > 2*time.Second {
+				t.Errorf("the wait took %v: a STOPPED scan must end it at once", time.Since(started))
+			}
+			if lastError != nil && (!strings.Contains(err.Error(), "Cancelled by an administrator") || strings.Contains(err.Error(), "\x1b")) {
+				t.Errorf("err = %q, want the server's reason, without control characters", err)
+			}
+		}
+	})
+
 	t.Run("timeout after deadline", func(t *testing.T) {
 		server := testutil.NewTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 			response := model.IngestStatusResponse{

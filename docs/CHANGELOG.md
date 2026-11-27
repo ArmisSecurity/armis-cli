@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `.armisignore` reads a CWE directive written as `cwe:CWE-79`, as the AppSec UI's generated `.armisignore` writes it, as well as `cwe:79`. It used to ignore such a line with a warning. (PPSC-2006)
+- A scan Armis stops (`STOPPED`) ends the command at once, with an error that says so and the server's reason. It used to be polled until `--scan-timeout` (60 minutes by default), which held a CI job for that long. (PPSC-2006)
 - The GitHub Action's `fail-on: ''` never fails, as documented. The Action used to leave an empty `fail-on` out, so the CLI gated on its default, CRITICAL. The input's default is now `CRITICAL`, so a workflow that doesn't set it gates as before. (PPSC-2006)
 - A completed scan whose results come back with no entry for it is no longer reported as clean. It exits 2 (results incomplete) with an explanation. The API does this when another scan of the same folder and files finishes at about the same time, as two CI jobs on one commit can, and `--fail-on` used to pass on zero findings. (PPSC-1589)
 - A slow or failed status poll no longer fails a scan that the server completes. Up to 5 transient failures in a row are tolerated. (PPSC-1589)
