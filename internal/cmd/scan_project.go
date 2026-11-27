@@ -12,6 +12,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 )
@@ -38,6 +39,27 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 	if reportScan && projectName == "" {
 		return project.Decision{}, fmt.Errorf("--report publishes the scan to a project, so it needs --project " +
 			"(for example: --project my-service --report)")
+	}
+
+	if len(projectLabels) > 0 && projectName == "" {
+		return project.Decision{}, fmt.Errorf("--project-label labels the project a scan creates, so it needs --project " +
+			"(for example: --project my-service --project-label team-payments)")
+	}
+	labels, err := project.NormalizeLabels(projectLabels)
+	if err != nil {
+		return project.Decision{}, fmt.Errorf("invalid --project-label: %w", err)
+	}
+	projectLabels = labels
+
+	// Like --project, a --branch that was passed but is empty still fails.
+	if runBranch != "" || cmd.Flags().Changed("branch") {
+		if projectName == "" {
+			return project.Decision{}, fmt.Errorf("--branch names the branch a published run is filed under, so it " +
+				"needs --project (for example: --project my-service --branch main)")
+		}
+		if err := repo.ValidateBranch(runBranch); err != nil {
+			return project.Decision{}, fmt.Errorf("invalid --branch: %w", err)
+		}
 	}
 
 	ci, ciVar := progress.DetectCI()
@@ -85,9 +107,16 @@ func announceProject(res *project.Resolution, decision project.Decision) {
 	case warning != "":
 		verb = "Found project"
 	}
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", styles.MutedText.Render(verb), name, detail)
+	withLabels := ""
+	if len(res.Labels) > 0 {
+		withLabels = " " + styles.MutedText.Render("with labels "+strings.Join(res.Labels, ", "))
+	}
+	fmt.Fprintf(os.Stderr, "%s %s %s%s\n", styles.MutedText.Render(verb), name, detail, withLabels)
 	if warning != "" {
 		cli.PrintWarning(warning)
+	}
+	if skipped := labelsSkippedWarning(res); skipped != "" {
+		cli.PrintWarning(skipped)
 	}
 }
 
@@ -140,6 +169,9 @@ func projectRunWarning(name, reason string) string {
 	case model.ProjectRunProjectNotFound:
 		return fmt.Sprintf("project %q was not found when the scan started (was it deleted?), "+
 			"so this scan is not recorded as a run of it. %s", name, still)
+	case model.ProjectRunInvalidBranch:
+		return fmt.Sprintf("Armis refused the branch name this scan sent, so it is not recorded as a run of project %q. "+
+			"%s Name the branch with --branch.", name, still)
 	default:
 		return fmt.Sprintf("Armis could not record this scan as a run of project %q (%s). %s",
 			name, util.StripControl(reason), still)
@@ -162,22 +194,31 @@ func warnOnAsyncIgnoredFlags(cmd *cobra.Command) {
 
 // asyncScanRecord is the JSON written for an accepted --async scan.
 type asyncScanRecord struct {
-	ScanID  string              `json:"scan_id"`
-	Status  string              `json:"status"`
-	Project *asyncProjectRecord `json:"project,omitempty"`
+	ScanID  string                  `json:"scan_id"`
+	Status  string                  `json:"status"`
+	Project *model.PublishedProject `json:"project,omitempty"`
 }
 
-// asyncProjectRecord identifies the project an async scan is published to,
-// and the run it was recorded as. Recorded is absent when the server does not
-// say, as one that predates project runs does not.
-type asyncProjectRecord struct {
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	Created   bool   `json:"created"`
-	Trigger   string `json:"trigger"`
-	Recorded  *bool  `json:"recorded,omitempty"`
-	RunID     string `json:"run_id,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+// publishedProject identifies the project a published scan named, and the run
+// it was recorded as, for the scan's JSON: the --async record's project, and
+// the results' (nil for a scan that isn't published). Recorded is absent when
+// the server does not say, as one that predates project runs does not.
+func publishedProject(published *project.Resolution, decision project.Decision, run *model.ProjectRun) *model.PublishedProject {
+	if published == nil {
+		return nil
+	}
+	p := &model.PublishedProject{
+		ProjectID: published.Project.ProjectID,
+		Name:      published.Project.Name,
+		Created:   published.Created,
+		Labels:    published.Labels,
+		Trigger:   decision.Trigger,
+	}
+	if run != nil {
+		recorded := run.Recorded
+		p.Recorded, p.RunID, p.Reason = &recorded, run.RunID, run.Reason
+	}
+	return p
 }
 
 // renderAsyncAccepted reports an accepted --async scan. There are no findings
@@ -201,21 +242,8 @@ func renderAsyncAccepted(cmd *cobra.Command, result *model.ScanResult, published
 		return nil
 	}
 
-	record := asyncScanRecord{ScanID: result.ScanID, Status: result.Status}
-	if published != nil {
-		record.Project = &asyncProjectRecord{
-			ProjectID: published.Project.ProjectID,
-			Name:      published.Project.Name,
-			Created:   published.Created,
-			Trigger:   decision.Trigger,
-		}
-		if run != nil {
-			recorded := run.Recorded
-			record.Project.Recorded = &recorded
-			record.Project.RunID = run.RunID
-			record.Project.Reason = run.Reason
-		}
-	}
+	record := asyncScanRecord{ScanID: result.ScanID, Status: result.Status,
+		Project: publishedProject(published, decision, run)}
 
 	outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, statusFormatJSON, colorFlag)
 	if err != nil {

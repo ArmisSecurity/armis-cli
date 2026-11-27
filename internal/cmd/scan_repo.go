@@ -45,6 +45,15 @@ var (
 	syncScan bool
 	// asyncScan is --async: return once the scan is accepted.
 	asyncScan bool
+	// projectLabels is --project-label: the labels of a project this run
+	// creates, normalized by validatePublishFlags.
+	projectLabels []string
+	// noInput is --no-input: never ask the first-time project setup's
+	// questions (also ARMIS_NO_INPUT).
+	noInput bool
+	// runBranch is --branch: the branch a published run is filed under,
+	// instead of the detected one. Checked by validatePublishFlags.
+	runBranch string
 )
 
 var scanRepoCmd = &cobra.Command{
@@ -113,6 +122,15 @@ func addRepoScanFlags(cmd *cobra.Command) {
 		"Return as soon as the scan is accepted, without waiting for results: exits 0 once accepted "+
 			"and does not evaluate --fail-on (follow up with 'armis-cli scan status')")
 	cmd.MarkFlagsMutuallyExclusive("sync", "async")
+	cmd.Flags().StringSliceVar(&projectLabels, "project-label", nil,
+		"Label a project this run creates (repeatable, or comma-separated; at most 20). "+
+			"An existing project's labels are left as they are")
+	cmd.Flags().BoolVar(&noInput, "no-input", false,
+		"Never ask questions: a project this run creates gets the defaults, and --project-label's labels "+
+			"(also ARMIS_NO_INPUT=1)")
+	cmd.Flags().StringVar(&runBranch, "branch", "",
+		"Branch a published run is filed under, instead of the one detected from the checkout or the CI "+
+			"variables (needs --project; a name git accepts as a branch)")
 }
 
 // scanTargetError is a scan target that could not be looked up. Its message is
@@ -230,6 +248,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	if wantGitHints(cmd) {
 		scanner = scanner.WithGitHints()
 	}
+	if runBranch != "" {
+		scanner = scanner.WithBranch(runBranch)
+	}
 
 	// Handle --include-files flag for targeted file scanning
 	if len(includeFiles) > 0 {
@@ -299,13 +320,24 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	var publishedRun *model.ProjectRun
 	var resolveErr error
 	if decision.Publish {
-		scanner = scanner.WithProjectResolver(func(ctx context.Context) (string, string, error) {
-			published, resolveErr = project.Resolve(ctx, client, tid, projectName)
+		scanner = scanner.WithProjectResolver(func(ctx context.Context, ignore repo.IgnoreSummary) (string, string, bool, error) {
+			// A project this run creates gets --project-label's labels. On a
+			// developer's terminal it first gets a setup: its filters go to
+			// the folder's .armisignore, which this scan then applies.
+			opts := project.ResolveOptions{Labels: projectLabels}
+			if setupAllowed(decision) {
+				opts.Configure = func(ctx context.Context, name string) (*project.Setup, error) {
+					// armis:ignore cwe:20 reason:projectLabels were normalized by validatePublishFlags (project.NormalizeLabels: trimmed, lower-cased, at most 20 of 64 characters, no control characters) and only pre-fill the labels question; labels go to the create request's tags, never to .armisignore, whose lines come from the form's own validated answers
+					return runSetupForm(ctx, name, ignore, projectLabels)
+				}
+			}
+			published, resolveErr = project.Resolve(ctx, client, tid, projectName, opts)
 			if resolveErr != nil {
-				return "", "", resolveErr
+				return "", "", false, resolveErr
 			}
 			announceProject(published, decision)
-			return published.Project.ProjectID, decision.Trigger, nil
+			changed := writeSetupFilters(published, ignore, time.Now())
+			return published.Project.ProjectID, decision.Trigger, changed, nil
 		}).WithProjectRunReporter(func(run *model.ProjectRun) {
 			publishedRun = run
 			reportProjectRun(published, run)
@@ -326,6 +358,13 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 		// A project lookup or create failure keeps its own message, not
 		// handleScanError's "scan failed:" prefix.
 		if resolveErr != nil {
+			if errors.Is(resolveErr, project.ErrSetupCancelled) {
+				if ctx.Err() != nil {
+					fmt.Fprintln(os.Stderr) // end the line the terminal echoed ^C on
+				}
+				fmt.Fprintln(os.Stderr, "Project setup cancelled: nothing was created or uploaded.")
+				return ErrScanCancelled
+			}
 			return resolveErr
 		}
 		return handleScanError(ctx, err)
@@ -334,6 +373,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 	if asyncScan {
 		return renderAsyncAccepted(cmd, result, published, decision, publishedRun)
 	}
+	// The JSON results name the project and run, as the --async record does,
+	// so a pipeline can link the run.
+	result.Project = publishedProject(published, decision, publishedRun)
 
 	// Resolve output destination and format (handles file creation, format auto-detection, colors)
 	outputCfg, err := cmdutil.ResolveOutput(cmd, outputFile, format, colorFlag)

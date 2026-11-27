@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
 	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
 	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/spf13/cobra"
@@ -61,6 +63,11 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	keep(t, &failOn)
 	keep(t, &includeFiles)
 	keep(t, &exitCode)
+	keep(t, &projectLabels)
+	keep(t, &noInput)
+	keep(t, &runBranch)
+	keep(t, &isInteractive)
+	keep(t, &runSetupForm)
 	t.Cleanup(func() {
 		cli.InitColors(cli.ColorModeAuto)
 		output.SyncColors()
@@ -81,6 +88,14 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	reportScan, syncScan, asyncScan, debug, generateSBOM, generateVEX = false, false, false, false, false, false
 	pollInterval = 5 * time.Millisecond
 	failOn, includeFiles, exitCode = []string{"CRITICAL"}, nil, 1
+	projectLabels, noInput, runBranch = nil, false, ""
+	// No test asks questions unless it says so.
+	isInteractive = func() bool { return false }
+	runSetupForm = func(context.Context, string, repo.IgnoreSummary, []string) (*project.Setup, error) {
+		t.Fatal("the project setup must not run here")
+		return nil, nil
+	}
+	t.Setenv("ARMIS_NO_INPUT", "")
 	cli.InitColors(cli.ColorModeNever)
 	output.SyncColors()
 
@@ -406,6 +421,14 @@ func TestProjectScan_SaysWhatTheServerRecorded(t *testing.T) {
 			notWant: []string{"Recorded as run"},
 		},
 		{
+			name:   "a branch the server refused",
+			status: model.ProjectStatusActive,
+			run:    skippedRun(model.ProjectRunInvalidBranch),
+			want: []string{"Armis refused the branch name this scan sent", "It still runs and gates as usual",
+				"Name the branch with --branch"},
+			notWant: []string{"Recorded as run", "(invalid_branch)"},
+		},
+		{
 			name:    "a recording failure",
 			status:  model.ProjectStatusActive,
 			run:     skippedRun(model.ProjectRunNotRecorded),
@@ -623,6 +646,124 @@ func TestProjectScan_SyncGatesOnFailOn(t *testing.T) {
 	}
 	if len(env.rec.Matching(http.MethodGet, "/ingest/status")) == 0 {
 		t.Error("--sync must wait for the scan")
+	}
+}
+
+// A published scan's JSON results name its project and the run it was
+// recorded as, as the --async record does, so a pipeline can link the run.
+// An unpublished scan's JSON is unchanged.
+func TestProjectScan_JSONResultsNameTheProjectAndRun(t *testing.T) {
+	setupProjectScan(t, testutil.MockAPIConfig{ProjectRun: recordedRun})
+	t.Setenv("CI", "true")
+	projectName = testProjectName
+	stdout, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	var got struct {
+		ScanID  string                  `json:"scan_id"`
+		Project *model.PublishedProject `json:"project"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not the JSON results: %v\n%s", err, stdout)
+	}
+	p := got.Project
+	if p == nil || p.ProjectID != firstMockProjectID || p.Name != testProjectName || !p.Created ||
+		p.Trigger != "cli_ci" || p.Recorded == nil || !*p.Recorded || p.RunID != "s_run1" {
+		t.Errorf("project = %+v", p)
+	}
+
+	setupProjectScan(t, testutil.MockAPIConfig{ProjectRun: recordedRun})
+	stdout, _, err = runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+	if err != nil || strings.Contains(stdout, `"project"`) {
+		t.Errorf("an unpublished scan's JSON names a project (err %v):\n%s", err, stdout)
+	}
+}
+
+// --branch files a published run under the branch it names, over the one
+// detected. It needs --project, and is checked before anything else, since
+// the server refuses a run's branch git wouldn't accept.
+func TestProjectScan_BranchFlag(t *testing.T) {
+	t.Run("files the run under it", func(t *testing.T) {
+		env := setupProjectScan(t, testutil.MockAPIConfig{})
+		t.Setenv("CI", "true")
+		// The CI variables name main, which --branch overrides.
+		t.Setenv("GITHUB_REF_TYPE", "branch")
+		t.Setenv("GITHUB_REF_NAME", "main")
+		projectName, runBranch = testProjectName, "release/2026.11"
+		if _, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) }); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		if body, _ := env.scanBody(t); body.Branch != "release/2026.11" {
+			t.Errorf("/ingest/scan branch = %q, want release/2026.11", body.Branch)
+		}
+	})
+
+	for _, tt := range []struct {
+		name, project, branch, want string
+		passedEmpty                 bool
+	}{
+		{name: "without --project", branch: "main", want: "--branch names the branch a published run is filed under, so it needs --project"},
+		{name: "a name git refuses", project: testProjectName, branch: "feature branch", want: "invalid --branch"},
+		{name: "a flag-like name", project: testProjectName, branch: "-main", want: "invalid --branch"},
+		{name: "passed but empty", project: testProjectName, passedEmpty: true, want: "invalid --branch"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupProjectScan(t, testutil.MockAPIConfig{})
+			t.Setenv("CI", "true")
+			projectName, runBranch = tt.project, tt.branch
+			if tt.passedEmpty {
+				markFlag(t, scanRepoCmd, "branch", "")
+			}
+			_, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+			if n := len(env.rec.Requests()); n != 0 {
+				t.Errorf("requests before the flags were checked: %d", n)
+			}
+		})
+	}
+}
+
+// --fail-on is a threshold: the AppSec UI's `--fail-on high` must fail a scan
+// whose only finding is CRITICAL, and `--fail-on ""` fails on nothing.
+func TestScan_FailOnIsAThreshold(t *testing.T) {
+	critical := testutil.MockAPIConfig{Findings: []model.NormalizedFinding{
+		testhelpers.CreateNormalizedFinding("f1", "CRITICAL", "sql_injection", nil, []string{"CWE-89"}),
+	}}
+	for _, tt := range []struct {
+		failOn []string
+		fails  bool
+	}{
+		{[]string{"high"}, true},
+		{[]string{"LOW"}, true},
+		{[]string{"CRITICAL"}, true},
+		{[]string{}, false},
+	} {
+		setupProjectScan(t, critical)
+		failOn = tt.failOn
+		_, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+		var exceeded *output.ErrFindingsExceeded
+		if got := errors.As(err, &exceeded); got != tt.fails {
+			t.Errorf("--fail-on %q on a CRITICAL finding: err = %v, want failing %v", tt.failOn, err, tt.fails)
+		}
+	}
+
+	// The GitHub Action passes an empty fail-on as `--fail-on ""`: the flag
+	// parses it as no level, which never fails.
+	// A fresh flag set, registered as scan's is: a StringSlice that was Set
+	// before appends to its value, so the shared flag would depend on test order.
+	fs := pflag.NewFlagSet("scan", pflag.ContinueOnError)
+	var parsed []string
+	fs.StringSliceVar(&parsed, "fail-on", defaultFailOn(), failOnUsage)
+	if err := fs.Parse([]string{"--fail-on="}); err != nil || len(parsed) != 0 {
+		t.Fatalf(`--fail-on "": parsed %q, err %v; want no level`, parsed, err)
+	}
+	setupProjectScan(t, critical)
+	failOn = parsed
+	if _, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) }); err != nil {
+		t.Errorf(`--fail-on "" on a CRITICAL finding: err = %v, want none`, err)
 	}
 }
 

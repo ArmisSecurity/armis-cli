@@ -10,10 +10,13 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ArmisSecurity/armis-cli/internal/auth"
+	"github.com/ArmisSecurity/armis-cli/internal/progress"
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +61,10 @@ func setupAuthTest(t *testing.T, serverURL string) {
 	loginClientID = auth.DefaultDeviceClientID
 
 	t.Setenv("ARMIS_API_URL", serverURL)
+	// auth login refuses a browser sign-in in CI, and CI runs these tests.
+	for _, k := range progress.CIEnvVars() {
+		t.Setenv(k, "")
+	}
 }
 
 func newCmdWithCtx() *cobra.Command {
@@ -124,6 +131,88 @@ func TestAuthLoginStoresTokens(t *testing.T) {
 	if stored.Subject != "alice@example.com" {
 		t.Errorf("subject = %q", stored.Subject)
 	}
+}
+
+// In CI, auth login fails at once rather than start a browser sign-in that
+// nobody would complete, and says what to set instead.
+func TestAuthLoginInCIRefusesTheBrowserSignIn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s: CI must not start a sign-in", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	setupAuthTest(t, srv.URL)
+	tenantID = tenant7
+	t.Setenv("GITHUB_ACTIONS", "true")
+
+	err := runAuthLogin(newCmdWithCtx(), nil)
+	if err == nil || !strings.Contains(err.Error(), "set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET") ||
+		!strings.Contains(err.Error(), "GITHUB_ACTIONS") {
+		t.Fatalf("err = %v, want the CI guidance", err)
+	}
+}
+
+// Client credentials need no login: auth login checks them, as auth whoami
+// does, given on its flags or found in a CI job's environment.
+func TestAuthLoginChecksClientCredentials(t *testing.T) {
+	mockJWT := createMockJWT("customer-123", time.Now().Add(time.Hour).Unix())
+	var tokenCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/auth/token" {
+			t.Errorf("unexpected request %s: client credentials start no browser sign-in", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		tokenCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": mockJWT})
+	}))
+	defer srv.Close()
+	const testClientSecret = "test-client-secret" // armis:ignore cwe:798 reason:a made-up value for the local test server, not a credential
+
+	t.Run("on the command line", func(t *testing.T) {
+		setupAuthTest(t, srv.URL)
+		cmd := newCmdWithCtx()
+		cmd.Flags().StringVar(&loginClientID, "client-id", auth.DefaultDeviceClientID, "")
+		cmd.Flags().StringVar(&clientSecret, "client-secret", "", "")
+		if err := cmd.Flags().Set("client-id", "ci-client"); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Flags().Set("client-secret", testClientSecret); err != nil {
+			t.Fatal(err)
+		}
+		before := tokenCalls.Load()
+		var err error
+		stderr := testutil.CaptureStderr(t, func() { err = runAuthLogin(cmd, nil) })
+		if err != nil || tokenCalls.Load() == before {
+			t.Fatalf("err = %v, token calls %d: want the credentials checked", err, tokenCalls.Load()-before)
+		}
+		if !strings.Contains(stderr, "Client credentials are valid") || !strings.Contains(stderr, "customer-123") {
+			t.Errorf("stderr:\n%s", stderr)
+		}
+	})
+
+	t.Run("in a CI job's environment", func(t *testing.T) {
+		setupAuthTest(t, srv.URL)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		// As the root command reads them from ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET.
+		clientID, clientSecret = "ci-client", testClientSecret
+		before := tokenCalls.Load()
+		var err error
+		testutil.CaptureStderr(t, func() { err = runAuthLogin(newCmdWithCtx(), nil) })
+		if err != nil || tokenCalls.Load() == before {
+			t.Fatalf("err = %v: want the credentials checked, not a browser sign-in", err)
+		}
+	})
+
+	t.Run("a secret without an ID", func(t *testing.T) {
+		setupAuthTest(t, srv.URL)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		clientSecret = testClientSecret
+		if err := runAuthLogin(newCmdWithCtx(), nil); err == nil || !strings.Contains(err.Error(), "both a client ID and a secret") {
+			t.Errorf("err = %v", err)
+		}
+	})
 }
 
 func TestAuthLoginRequiresTenant(t *testing.T) {

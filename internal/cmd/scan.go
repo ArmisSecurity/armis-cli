@@ -62,6 +62,11 @@ var validSBOMFormats = []string{scan.SBOMFormatCycloneDX, scan.SBOMFormatSPDX}
 // in place, which would otherwise leak between the two flag instances.
 func defaultFailOn() []string { return []string{"CRITICAL"} }
 
+// failOnUsage describes --fail-on, which scan and supply-chain check share:
+// a threshold, which a list sets at its lowest level (cmdutil.GetFailOn).
+const failOnUsage = "Exit with error on findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL " +
+	"(HIGH fails on HIGH and CRITICAL; a list counts from its lowest level; \"\" never fails)"
+
 var scanCmd = &cobra.Command{
 	Use:   "scan [path]",
 	Short: "Scan artifacts for security vulnerabilities",
@@ -439,7 +444,7 @@ func init() {
 	// locally (see supply_chain_check.go), since it is a sibling of scan.
 	scanCmd.PersistentFlags().StringVarP(&format, "format", "f", getEnvOrDefault("ARMIS_FORMAT", "human"), "Output format: human, json, sarif, junit")
 	addUploadFlags(scanCmd)
-	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
+	scanCmd.PersistentFlags().StringSliceVar(&failOn, "fail-on", defaultFailOn(), failOnUsage)
 	scanCmd.PersistentFlags().IntVar(&exitCode, "exit-code", 1, "Exit code when --fail-on triggers")
 	scanCmd.PersistentFlags().StringVar(&minSeverity, "min-severity", "", "Only display findings at or above this severity: INFO, LOW, MEDIUM, HIGH, CRITICAL (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)")
 	// armis:ignore cwe:770 cwe:401 reason:--page-limit is bounded to 1-1000 by validatePageLimit (root.go); every consumer (scan_repo.go, scan_image.go) reads it via getPageLimit() which validates before the value reaches any pagination sink. This is the flag declaration, not a sink.

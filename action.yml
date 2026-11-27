@@ -35,9 +35,9 @@ inputs:
     required: false
     default: 'sarif'
   fail-on:
-    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
+    description: 'Severity to fail on, with every level above it (e.g., HIGH fails on HIGH and CRITICAL; a list counts from its lowest level). Empty string for informational mode (never fail).'
     required: false
-    default: ''
+    default: 'CRITICAL'
   exit-code:
     description: 'Exit code to return when build fails'
     required: false
@@ -62,6 +62,10 @@ inputs:
     default: ''
   project:
     description: 'Publish the scan to this Armis AppSec project, created on first use (repo scans only). Empty keeps the scan local-only.'
+    required: false
+    default: ''
+  project-labels:
+    description: 'Comma-separated labels for a project this run creates (needs project; at most 20). An existing project keeps its labels.'
     required: false
     default: ''
   build-from-source:
@@ -181,6 +185,7 @@ runs:
         OUTPUT_FILE: ${{ inputs.output-file }}
         INCLUDE_FILES: ${{ inputs.include-files }}
         PROJECT: ${{ inputs.project }}
+        PROJECT_LABELS: ${{ inputs.project-labels }}
       run: |
         set +e
 
@@ -229,9 +234,10 @@ runs:
         fi
         SCAN_ARGS+=("--format" "$OUTPUT_FORMAT")
 
-        if [ -n "$FAIL_ON" ]; then
-          SCAN_ARGS+=("--fail-on" "$FAIL_ON")
-        fi
+        # Always passed: an empty fail-on (set explicitly; the default is
+        # CRITICAL) is the CLI's --fail-on "", which never fails. Left out, the
+        # CLI would gate on its own default, CRITICAL.
+        SCAN_ARGS+=("--fail-on" "$FAIL_ON")
 
         SCAN_ARGS+=("--exit-code" "$EXIT_CODE_VAL")
         SCAN_ARGS+=("--scan-timeout" "$SCAN_TIMEOUT")
@@ -255,6 +261,16 @@ runs:
             exit 1
           fi
           SCAN_ARGS+=("--project" "$PROJECT")
+        fi
+
+        # Labels for a project this run creates; the CLI validates them.
+        # armis:ignore cwe:20 reason:passed as one quoted array element and run without eval, so nothing is interpreted; armis-cli validates the labels (at most 20 of 64 characters, no control characters) before any I/O, as it validates the project input's name
+        if [ -n "$PROJECT_LABELS" ]; then
+          if [ -z "$PROJECT" ]; then
+            echo "Error: 'project-labels' needs 'project'."
+            exit 1
+          fi
+          SCAN_ARGS+=("--project-label" "$PROJECT_LABELS")
         fi
 
         # Execute command safely without eval

@@ -90,6 +90,9 @@ type ScanResult struct {
 	Summary   Summary   `json:"summary"`
 	StartedAt string    `json:"started_at"`
 	EndedAt   string    `json:"ended_at"`
+	// Project is the AppSec project a published scan named, and the run
+	// Armis recorded it as; left out for a scan that isn't published.
+	Project *PublishedProject `json:"project,omitempty"`
 	// BOMFailures lists the --bom types that were offered or requested but
 	// could not be downloaded; a non-empty list makes the scan exit 2. Kept
 	// out of the JSON report.

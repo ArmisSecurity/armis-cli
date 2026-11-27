@@ -30,7 +30,24 @@ const (
 	ProjectRunProjectNotCLI = "project_not_cli"
 	// ProjectRunNotRecorded: recording failed; the scan was dispatched anyway.
 	ProjectRunNotRecorded = "not_recorded"
+	// ProjectRunInvalidBranch: the server refused the branch the scan sent.
+	ProjectRunInvalidBranch = "invalid_branch"
 )
+
+// PublishedProject is the project a published scan named, and what Armis
+// recorded of it: the "project" of the scan's JSON results, and of the
+// --async record of an accepted scan.
+type PublishedProject struct {
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Created   bool   `json:"created"`
+	// Labels are the labels a project this run created got.
+	Labels   []string `json:"labels,omitempty"`
+	Trigger  string   `json:"trigger"`
+	Recorded *bool    `json:"recorded,omitempty"`
+	RunID    string   `json:"run_id,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+}
 
 // ProjectRun is what /ingest/scan answers for a scan that names its project:
 // whether the scan was recorded as a run of it, as which run, or why not.
@@ -55,6 +72,8 @@ type Project struct {
 	// for projects that predate the field.
 	Source    *string `json:"source"`
 	CreatedAt *string `json:"created_at"`
+	// Tags are the project's labels (the UI's Project Labels).
+	Tags []string `json:"tags"`
 }
 
 // ProjectCreateRequest is the body of POST /api/v1/appsec/projects. The API
@@ -62,6 +81,9 @@ type Project struct {
 type ProjectCreateRequest struct {
 	Name        string `json:"name"`
 	ProjectType string `json:"project_type"`
+	// Tags are the project's labels (the UI's Project Labels); omitted when
+	// there are none.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // ProjectListPagination is the pagination block of GET /api/v1/appsec/projects.

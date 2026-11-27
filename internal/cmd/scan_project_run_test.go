@@ -152,18 +152,25 @@ func TestProjectScan_ShowSuppressedShowsTheServersFilter(t *testing.T) {
 // level could be among the findings the history dropped.
 func TestProjectScan_ATruncatedRunExits2OnlyWhenFailOnIsOpen(t *testing.T) {
 	high := []map[string]any{runRow("f_high", "sast", "high", nil)}
+	// A kept finding the project's filters suppressed fails nothing, so only
+	// the findings Armis dropped could still match --fail-on.
+	suppressedHigh := []map[string]any{runRow("f_high", "sast", "high",
+		map[string]any{"source": "project", "directive": "severity", "value": "HIGH"})}
 	for _, tt := range []struct {
+		rows      []map[string]any
 		failOn    []string
 		truncated bool
 		want      string
 	}{
-		{[]string{"CRITICAL"}, true, ""},
-		{[]string{"CRITICAL", "LOW"}, true, "truncated"},
-		{[]string{"HIGH"}, true, "exceeded"},
-		{[]string{"LOW"}, false, ""},
+		{high, []string{"CRITICAL"}, true, ""}, // above the least severe kept: decided
+		{suppressedHigh, []string{"LOW"}, true, "truncated"},
+		{suppressedHigh, []string{"CRITICAL", "LOW"}, true, "truncated"}, // a list counts from its lowest level
+		{high, []string{"HIGH"}, true, "exceeded"},
+		{high, []string{"LOW"}, false, "exceeded"}, // LOW and up: the HIGH finding fails it
+		{high, []string{"CRITICAL"}, false, ""},
 	} {
 		t.Run(strings.Join(tt.failOn, ",")+map[bool]string{true: " truncated", false: ""}[tt.truncated], func(t *testing.T) {
-			publishRecordedScan(t, runPage(high, tt.truncated), testutil.MockAPIConfig{})
+			publishRecordedScan(t, runPage(tt.rows, tt.truncated), testutil.MockAPIConfig{})
 			failOn = tt.failOn
 
 			_, stderr, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
@@ -175,8 +182,10 @@ func TestProjectScan_ATruncatedRunExits2OnlyWhenFailOnIsOpen(t *testing.T) {
 					t.Errorf("err = %v, want none", err)
 				}
 			case "truncated":
-				if !errors.As(err, &truncated) || strings.Join(truncated.Levels, ",") != "LOW" {
-					t.Errorf("err = %v, want ErrResultsTruncated for LOW", err)
+				// The open levels: those --fail-on gates on, up to the least
+				// severe finding kept (HIGH).
+				if !errors.As(err, &truncated) || strings.Join(truncated.Levels, ",") != "LOW,MEDIUM,HIGH" {
+					t.Errorf("err = %v, want ErrResultsTruncated for LOW,MEDIUM,HIGH", err)
 				}
 			case "exceeded":
 				if !errors.As(err, &exceeded) {

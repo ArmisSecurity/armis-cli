@@ -134,7 +134,7 @@ func TestResolve_ExistingProjectIsReused(t *testing.T) {
 		// Substring matches around the exact one must be skipped.
 		"": page("", proj("p_1", "svc-legacy", "active"), proj("p_2", testName, "active"), proj("p_3", "my-svc", "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestResolve_FollowsAnOlderServersCursor(t *testing.T) {
 		"c1": page("c2", proj("p_2", "my-svc", "active")),
 		"c2": page("", proj("p_3", testName, "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestResolve_PagesByNumber(t *testing.T) {
 		[]model.Project{proj("p_2", "my-svc", "active")},
 		[]model.Project{proj("p_3", testName, "active")},
 	)}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestResolve_NumberedLookupEndsOnTheLastPage(t *testing.T) {
 		[]model.Project{proj("p_1", "a-svc", "active")},
 		[]model.Project{proj("p_2", "my-svc", "active")},
 	)}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestResolve_NumberedLookupStopsOncePastTheName(t *testing.T) {
 		[]model.Project{proj("p_3", "t-svc", "active")},
 		[]model.Project{proj("p_4", "svC", "active")}, // never reached: past "svc"
 	)}
-	_, err := Resolve(context.Background(), f, testTenant, testName)
+	_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	var mismatch *CaseMismatchError
 	if !errors.As(err, &mismatch) || strings.Join(mismatch.Existing, ",") != "SVC" {
 		t.Fatalf("err = %v, want a case mismatch naming SVC", err)
@@ -255,7 +255,7 @@ func TestResolve_NumberedLookupIsBounded(t *testing.T) {
 		pages[i] = []model.Project{proj("p_"+strconv.Itoa(i), fmt.Sprintf("a-svc-%03d", i), "active")}
 	}
 	f := &fakeAPI{numbered: numberedPages(pages...)}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestResolve_StatusWarnings(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("", tt.project)}}
-			res, err := Resolve(context.Background(), f, testTenant, testName)
+			res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 			if err != nil {
 				t.Fatalf("Resolve failed: %v", err)
 			}
@@ -299,7 +299,7 @@ func TestResolve_APausedProjectRecordsTheRun(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
 		"": page("", proj("p_1", testName, model.ProjectStatusPaused)),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestResolve_CreatesAMissingProject(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
 		"": page("", proj("p_1", "svc-legacy", "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestResolve_RefusesCaseOnlyMatch(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
 		"": page("", proj("p_1", "Svc", "active"), proj("p_2", "SVC", "archived")),
 	}}
-	_, err := Resolve(context.Background(), f, testTenant, testName)
+	_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	var caseErr *CaseMismatchError
 	if !errors.As(err, &caseErr) {
 		t.Fatalf("err = %v, want *CaseMismatchError", err)
@@ -357,7 +357,7 @@ func TestResolve_ExactMatchWinsOverCaseVariant(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
 		"": page("", proj("p_1", "SVC", "active"), proj("p_2", testName, "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestResolve_CreateRace(t *testing.T) {
 				return &p, nil
 			},
 		}
-		res, err := Resolve(context.Background(), f, testTenant, testName)
+		res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -399,7 +399,7 @@ func TestResolve_CreateRace(t *testing.T) {
 			createFn: func(model.ProjectCreateRequest) (*model.Project, error) { return nil, conflict(winnerID) },
 			getFn:    func(string) (*model.Project, error) { return nil, errReset },
 		}
-		res, err := Resolve(context.Background(), f, testTenant, testName)
+		res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 		if !errors.Is(err, errReset) || !strings.Contains(err.Error(), "could not check the project") {
 			t.Fatalf("Resolve = %+v, %v; want a check error wrapping %v", res, err, errReset)
 		}
@@ -411,7 +411,7 @@ func TestResolve_CreateRace(t *testing.T) {
 				pages:    map[string]model.ProjectListResponse{"": page("")},
 				createFn: func(model.ProjectCreateRequest) (*model.Project, error) { return nil, conflict(id) },
 			}
-			if _, err := Resolve(context.Background(), f, testTenant, testName); err == nil ||
+			if _, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{}); err == nil ||
 				!strings.Contains(err.Error(), "could not create the project") {
 				t.Fatalf("id %q: err = %v, want a create error", id, err)
 			}
@@ -437,7 +437,7 @@ func TestResolve_IncompleteLookupFallsBackToCreate(t *testing.T) {
 				return &p, nil
 			},
 		}
-		res, err := Resolve(context.Background(), f, testTenant, testName)
+		res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -462,7 +462,7 @@ func TestResolve_IncompleteLookupFallsBackToCreate(t *testing.T) {
 			pages[cursor] = page("c"+strconv.Itoa(i+1), proj("p_"+strconv.Itoa(i), fmt.Sprintf("a-svc-%03d", i), "active"))
 		}
 		f := &fakeAPI{pages: pages}
-		res, err := Resolve(context.Background(), f, testTenant, testName)
+		res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -480,7 +480,7 @@ func TestResolve_IncompleteLookupFallsBackToCreate(t *testing.T) {
 func TestResolve_ValidatesTheName(t *testing.T) {
 	for _, name := range []string{"", "my project", "--sync", "null", strings.Repeat("a", 65)} {
 		f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
-		_, err := Resolve(context.Background(), f, testTenant, name)
+		_, err := Resolve(context.Background(), f, testTenant, name, ResolveOptions{})
 		if !errors.Is(err, ErrInvalidName) {
 			t.Errorf("Resolve(%q) err = %v, want ErrInvalidName", name, err)
 		}
@@ -540,7 +540,7 @@ func TestResolve_ExplainsAPIFailures(t *testing.T) {
 			if tt.createErr != nil {
 				f.createFn = func(model.ProjectCreateRequest) (*model.Project, error) { return nil, tt.createErr }
 			}
-			_, err := Resolve(context.Background(), f, testTenant, testName)
+			_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -569,7 +569,7 @@ func TestResolve_LookupStopsOncePastTheName(t *testing.T) {
 		"c1": page("c2", proj("p_3", "svc-legacy", "active"), proj("p_4", "t-svc", "active")),
 		"c2": page("", proj("p_5", "zz-svc", "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestResolve_LookupStopStillFindsCaseVariants(t *testing.T) {
 		"c1": page("c2", proj("p_3", "t-svc", "active")),
 		"c2": page("", proj("p_4", "svC", "active")), // never reached: past "svc"
 	}}
-	_, err := Resolve(context.Background(), f, testTenant, testName)
+	_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	var mismatch *CaseMismatchError
 	if !errors.As(err, &mismatch) || strings.Join(mismatch.Existing, ",") != "SVC" {
 		t.Fatalf("err = %v, want a case mismatch naming SVC", err)
@@ -606,7 +606,7 @@ func TestResolve_LookupReadsOnWhenNamesAreNotInByteOrder(t *testing.T) {
 		"":   page("c1", proj("p_1", "t-svc", "active"), proj("p_2", "a-svc", "active")),
 		"c1": page("", proj("p_3", testName, "active")),
 	}}
-	res, err := Resolve(context.Background(), f, testTenant, testName)
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestResolve_CreateMustReturnAValidProjectID(t *testing.T) {
 				return &model.Project{ProjectID: id, Name: req.Name}, nil
 			},
 		}
-		_, err := Resolve(context.Background(), f, testTenant, testName)
+		_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 		if err == nil || !strings.Contains(err.Error(), "without a valid project id") {
 			t.Errorf("id %q: err = %v, want a missing-id error (an empty project_id would publish nothing)", id, err)
 		}
@@ -652,7 +652,7 @@ func TestResolve_ConflictAdoptsOnlyTheSameName(t *testing.T) {
 					return &p, nil
 				},
 			}
-			res, err := Resolve(context.Background(), f, testTenant, testName)
+			res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{})
 			if tt.wantErr == "" {
 				if err != nil || res.Project.ProjectID != winnerID {
 					t.Fatalf("Resolve = %+v, %v; want project %s", res, err, winnerID)
@@ -684,5 +684,147 @@ func TestEqualFoldASCII(t *testing.T) {
 		if got := equalFoldASCII(tt.a, tt.b); got != tt.want {
 			t.Errorf("equalFoldASCII(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 		}
+	}
+}
+
+func TestResolve_ConfigureRunsOnlyWhenCreating(t *testing.T) {
+	ctx := context.Background()
+	called := false
+	configure := func(context.Context, string) (*Setup, error) {
+		called = true
+		return &Setup{}, nil
+	}
+
+	// An existing project is used as it is: no setup.
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("", proj("p_1", testName, "active"))}}
+	res, err := Resolve(ctx, f, testTenant, testName, ResolveOptions{Configure: configure})
+	if err != nil || res.Project.ProjectID != "p_1" || called || len(f.createCalls) != 0 {
+		t.Fatalf("existing project: res %+v, err %v, setup called %v, creates %d", res, err, called, len(f.createCalls))
+	}
+
+	// A missing one runs the setup once, and is created with its labels.
+	f = &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	setup := &Setup{Labels: []string{"team-a"}, Filters: Filters{CWEs: []int{79}}}
+	var gotName string
+	res, err = Resolve(ctx, f, testTenant, testName, ResolveOptions{
+		Labels: []string{"from-flag"},
+		Configure: func(_ context.Context, name string) (*Setup, error) {
+			gotName = name
+			return setup, nil
+		},
+	})
+	if err != nil || !res.Created || res.Setup != setup || gotName != testName {
+		t.Fatalf("missing project: res %+v, err %v, setup asked for %q", res, err, gotName)
+	}
+	if len(f.createCalls) != 1 || strings.Join(f.createCalls[0].Tags, ",") != "team-a" ||
+		strings.Join(res.Labels, ",") != "team-a" || res.LabelsSkipped != "" {
+		t.Errorf("created with %+v; resolution labels %q, skipped %q", f.createCalls, res.Labels, res.LabelsSkipped)
+	}
+}
+
+func TestResolve_ANilSetupIsTheDefaults(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{
+		Labels:    []string{"from-flag"},
+		Configure: func(context.Context, string) (*Setup, error) { return nil, nil },
+	})
+	if err != nil || !res.Created || res.Setup != nil || strings.Join(f.createCalls[0].Tags, ",") != "from-flag" {
+		t.Errorf("res %+v, err %v, creates %+v; want a create with the flag's labels and no setup", res, err, f.createCalls)
+	}
+}
+
+func TestResolve_ACancelledSetupCreatesNothing(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	_, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{
+		Configure: func(context.Context, string) (*Setup, error) { return nil, ErrSetupCancelled },
+	})
+	if !errors.Is(err, ErrSetupCancelled) || len(f.createCalls) != 0 {
+		t.Errorf("err = %v after %d creates; want ErrSetupCancelled and none", err, len(f.createCalls))
+	}
+}
+
+func TestResolve_SendsTheLabelsWithoutASetup(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{Labels: []string{"pci"}})
+	if err != nil || strings.Join(f.createCalls[0].Tags, ",") != "pci" || strings.Join(res.Labels, ",") != "pci" {
+		t.Fatalf("res %+v, err %v, creates %+v", res, err, f.createCalls)
+	}
+
+	// No labels: the create body carries none (tags is omitted).
+	f = &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	if _, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{}); err != nil || f.createCalls[0].Tags != nil {
+		t.Errorf("err %v, tags %q", err, f.createCalls[0].Tags)
+	}
+}
+
+func TestResolve_LeavesAnExistingProjectsLabels(t *testing.T) {
+	existing := proj("p_1", testName, "active")
+	existing.Tags = []string{"team", "pci"}
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("", existing)}}
+
+	// The same labels, in another order and case: nothing to say.
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{Labels: []string{"PCI", "team"}})
+	if err != nil || res.LabelsSkipped != "" {
+		t.Errorf("same labels: skipped %q, err %v", res.LabelsSkipped, err)
+	}
+	// Others are not applied, and say so.
+	res, err = Resolve(context.Background(), f, testTenant, testName, ResolveOptions{Labels: []string{"other"}})
+	if err != nil || res.LabelsSkipped != LabelsSkippedExists || strings.Join(res.RequestedLabels, ",") != "other" {
+		t.Errorf("other labels: res %+v, err %v", res, err)
+	}
+	if len(f.createCalls) != 0 {
+		t.Errorf("an existing project must never be re-created: %+v", f.createCalls)
+	}
+}
+
+func TestResolve_ARaceKeepsTheSetupButNotTheLabels(t *testing.T) {
+	f := &fakeAPI{
+		pages:    map[string]model.ProjectListResponse{"": page("")},
+		createFn: func(model.ProjectCreateRequest) (*model.Project, error) { return nil, conflict(winnerID) },
+		getFn: func(id string) (*model.Project, error) {
+			p := proj(id, testName, model.ProjectStatusActive)
+			return &p, nil
+		},
+	}
+	setup := &Setup{Labels: []string{"pci"}, Filters: Filters{CWEs: []int{79}}}
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{
+		Configure: func(context.Context, string) (*Setup, error) { return setup, nil },
+	})
+	if err != nil || res.Project.ProjectID != winnerID || res.Created {
+		t.Fatalf("res %+v, err %v; want the winner, adopted", res, err)
+	}
+	// The filters belong to the repository, so they are still written; the
+	// labels were not applied.
+	if res.Setup != setup || res.LabelsSkipped != LabelsSkippedRace || strings.Join(res.RequestedLabels, ",") != "pci" {
+		t.Errorf("res %+v", res)
+	}
+}
+
+func TestResolve_AServerWithoutLabelsGetsTheProjectWithoutThem(t *testing.T) {
+	f := &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	f.createFn = func(req model.ProjectCreateRequest) (*model.Project, error) {
+		if len(req.Tags) > 0 {
+			return nil, &api.AppSecError{StatusCode: http.StatusUnprocessableEntity,
+				Invalid: []api.InvalidField{{Field: "tags", Type: "extra_forbidden"}}}
+		}
+		p := proj("p_created", req.Name, model.ProjectStatusActive)
+		return &p, nil
+	}
+	res, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{Labels: []string{"pci"}})
+	if err != nil || !res.Created || len(f.createCalls) != 2 || f.createCalls[1].Tags != nil {
+		t.Fatalf("res %+v, err %v, creates %+v", res, err, f.createCalls)
+	}
+	if res.LabelsSkipped != LabelsSkippedUnsupported || res.Labels != nil {
+		t.Errorf("labels %q, skipped %q", res.Labels, res.LabelsSkipped)
+	}
+
+	// Any other 422 is the create's own failure, never retried.
+	f = &fakeAPI{pages: map[string]model.ProjectListResponse{"": page("")}}
+	f.createFn = func(model.ProjectCreateRequest) (*model.Project, error) {
+		return nil, &api.AppSecError{StatusCode: http.StatusUnprocessableEntity,
+			Invalid: []api.InvalidField{{Field: "tags", Type: "string_too_long"}}}
+	}
+	if _, err := Resolve(context.Background(), f, testTenant, testName, ResolveOptions{Labels: []string{"pci"}}); err == nil || len(f.createCalls) != 1 {
+		t.Errorf("err %v after %d creates; want the 422, once", err, len(f.createCalls))
 	}
 }

@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -127,6 +128,18 @@ func branchOfRef(value string) string {
 		return ""
 	}
 	return ref
+}
+
+// ValidateBranch checks a branch given by hand (--branch) against the rule
+// the server holds a run's branch to, so a name it would refuse fails before
+// anything is uploaded instead of costing the run.
+func ValidateBranch(name string) error {
+	if !validBranch(name) {
+		return fmt.Errorf("%q is not a branch name git accepts (git check-ref-format --branch): use at most %d "+
+			"printable ASCII characters, with no spaces, no ~ ^ : ? * [ \\, no \"..\" or \"@{\", and no part that "+
+			"starts with \".\" or \"-\" or ends with \".lock\"", name, maxBranchLength)
+	}
+	return nil
 }
 
 // validBranch reports whether name is a branch name `git check-ref-format

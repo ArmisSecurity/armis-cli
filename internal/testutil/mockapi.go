@@ -22,6 +22,15 @@ const mockTenantID = "test-tenant"
 // detailKey is the `detail` field of an API error body.
 const detailKey = "detail"
 
+// validationDetail is one entry of a FastAPI 422 body's detail list.
+func validationDetail(errType string, loc []string, msg string) map[string]any {
+	d := map[string]any{"loc": loc, "msg": msg}
+	if errType != "" {
+		d["type"] = errType
+	}
+	return d
+}
+
 // MockAPIConfig configures the mock API server behavior.
 type MockAPIConfig struct {
 	// Findings to return in normalized-results endpoint
@@ -187,6 +196,7 @@ func (m *mockProjects) create(req model.ProjectCreateRequest) (model.Project, *m
 		ProjectType: req.ProjectType,
 		Status:      model.ProjectStatusActive,
 		Source:      &source,
+		Tags:        req.Tags,
 	}
 	m.projects = append(m.projects, p)
 	return p, nil
@@ -227,7 +237,7 @@ func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store 
 	}
 	if r.URL.Query().Get("tenant_id") == "" {
 		JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]any{
-			detailKey: []map[string]any{{"loc": []string{"query", "tenant_id"}, "msg": "Field required"}},
+			detailKey: []map[string]any{validationDetail("", []string{"query", "tenant_id"}, "Field required")},
 		})
 		return
 	}
@@ -243,9 +253,7 @@ func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store 
 			switch name {
 			case "tenant_id", "q", "status", "sort", "page", "page_size":
 			default:
-				unknown = append(unknown, map[string]any{
-					"type": "extra_forbidden", "loc": []string{"query", name}, "msg": "Extra inputs are not permitted",
-				})
+				unknown = append(unknown, validationDetail("extra_forbidden", []string{"query", name}, "Extra inputs are not permitted"))
 			}
 		}
 		if len(unknown) > 0 {
@@ -258,9 +266,14 @@ func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store 
 			Pagination: model.ProjectListPagination{Page: 1, PageSize: 200, TotalItems: len(data), TotalPages: 1},
 		})
 	case id == "" && r.Method == http.MethodPost:
+		// As the API: a field the create doesn't declare is a 422.
 		var req model.ProjectCreateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]string{detailKey: err.Error()})
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]any{
+				detailKey: []map[string]any{validationDetail("extra_forbidden", []string{"body"}, err.Error())},
+			})
 			return
 		}
 		created, existing := store.create(req)

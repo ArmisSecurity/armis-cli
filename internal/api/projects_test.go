@@ -448,3 +448,23 @@ func TestClient_ProjectsDecodeError(t *testing.T) {
 		t.Errorf("decode error should wrap the JSON error, got %T", err)
 	}
 }
+
+func TestParseAppSecError_KeepsTheFieldsA422Names(t *testing.T) {
+	t.Parallel()
+	body := `{"detail":[{"type":"extra_forbidden","loc":["body","tags"],"msg":"Extra inputs are not permitted"},` +
+		`{"type":"string_too_long","loc":["body","name"],"msg":"String should have at most 64 characters"}]}`
+	got := parseAppSecError(http.StatusUnprocessableEntity, []byte(body))
+	if len(got.Invalid) != 2 || got.Invalid[0] != (InvalidField{Field: "tags", Type: "extra_forbidden"}) {
+		t.Fatalf("invalid = %+v", got.Invalid)
+	}
+	if !got.RefusesField("tags") || got.RefusesField("name") || got.RefusesField("schedule") {
+		t.Errorf("RefusesField is wrong for %+v", got.Invalid)
+	}
+	if !strings.Contains(got.Detail, "tags: Extra inputs are not permitted") {
+		t.Errorf("detail = %q", got.Detail)
+	}
+	conflict := &AppSecError{StatusCode: http.StatusConflict, Invalid: got.Invalid}
+	if conflict.RefusesField("tags") || (*AppSecError)(nil).RefusesField("tags") {
+		t.Error("only a 422 refuses a field")
+	}
+}

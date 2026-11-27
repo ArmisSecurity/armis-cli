@@ -85,6 +85,12 @@ Obtain client credentials from the VIPR external API screen in the Armis platfor
 
 The tenant ID is automatically extracted from the JWT token — no need to set it separately.
 
+A pipeline needs no `armis-cli auth login` step: every command signs in with
+the client credentials. `auth login` is the browser sign-in for a developer
+machine. In a CI job it checks the client credentials when they are set and
+exits, and fails at once when they are not. To see the identity the
+credentials resolve to, run `armis-cli auth whoami`.
+
 **Example:**
 
 ```bash
@@ -144,7 +150,7 @@ jobs:
 |-------|------|---------|-------------|
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
-| `fail-on` | string | `CRITICAL` | Comma-separated severity levels to fail on (e.g., `HIGH,CRITICAL`). Set to empty string to never fail. |
+| `fail-on` | string | `CRITICAL` | Severity to fail on, with every level above it (e.g., `HIGH` fails on HIGH and CRITICAL; a list counts from its lowest level). Set to empty string to never fail. |
 | `pr-comment` | boolean | `true` | Post scan results as PR comment |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
@@ -245,7 +251,7 @@ jobs:
 | `api-token` | No* | | Armis API token (legacy) |
 | `tenant-id` | No* | | Tenant identifier (legacy, not needed with JWT) |
 | `format` | No | `sarif` | Output format: `human`, `json`, `sarif`, `junit` |
-| `fail-on` | No | `CRITICAL` | Severity levels to fail on |
+| `fail-on` | No | `CRITICAL` | Severity to fail on, with every level above it; empty never fails |
 | `exit-code` | No | `1` | Exit code when failing |
 | `no-progress` | No | `true` | Disable progress indicators |
 | `image-tarball` | No | | Path to image tarball (image scans) |
@@ -320,7 +326,9 @@ with source `cli`.
 
 Each run is filed under the branch the pipeline builds: the checkout's own
 branch, or, for a detached checkout, the branch the CI variables name, such as
-a pull request's source branch. Once the scan starts, the CLI prints the run's
+a pull request's source branch. `--branch <name>` names it instead, when the
+pipeline builds an exported tree or the CLI doesn't know its CI's variables.
+Once the scan starts, the CLI prints the run's
 id, or why Armis did not record one; the scan runs and gates either way. See
 [Publish to a Project](../README.md#publish-to-a-project).
 
@@ -367,16 +375,26 @@ than an unpublished scan's:
     ARMIS_CLIENT_SECRET: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
 
-With the GitHub Action, set the `project` input:
+With the GitHub Action, set the `project` input, and optionally
+`project-labels` for a project the run creates:
 
 ```yaml
 - uses: ArmisSecurity/armis-cli@v1
   with:
     scan-type: repo
     project: checkout-service
+    project-labels: team-payments,pci
     client-id: ${{ secrets.ARMIS_CLIENT_ID }}
     client-secret: ${{ secrets.ARMIS_CLIENT_SECRET }}
 ```
+
+A pipeline never asks questions. When its run creates the project, the project
+gets `--project-label`'s labels (the Action's `project-labels`), and its filters
+come from the repository's committed `.armisignore`. To set the filters up once,
+run the first scan from a terminal (`armis-cli scan . --project checkout-service
+--report`). It asks the questions the AppSec UI asks, writes the answers to
+`.armisignore`, and creates the project; commit the file. An existing project
+keeps its labels whatever the pipeline passes.
 
 To publish without blocking the pipeline, use `--async`. The command returns
 once the scan is accepted and exits `0` without evaluating `--fail-on`. Pair it
@@ -684,6 +702,11 @@ For images built in a previous job or CI step:
 
 ## Other CI Platforms
 
+Each example publishes its scan as a run of the AppSec project `my-service`,
+which the first run creates, and gates on HIGH and CRITICAL findings. In CI no
+other flag is needed to publish. Drop `--project` to gate without publishing;
+see [Publish Scans to a Project](#publish-scans-to-a-project).
+
 ### GitLab CI
 
 ```yaml
@@ -700,7 +723,7 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
   variables:
     ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
     ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
@@ -727,6 +750,7 @@ pipeline {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
                     armis-cli scan repo . \
+                        --project my-service \
                         --format junit \
                         --fail-on HIGH,CRITICAL \
                         > scan-results.xml
@@ -763,6 +787,7 @@ pipeline {
                 powershell '''
                     irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
                     armis-cli scan repo . `
+                        --project my-service `
                         --format junit `
                         --fail-on HIGH,CRITICAL `
                         > scan-results.xml
@@ -801,6 +826,7 @@ steps:
 
   - script: |
       armis-cli scan repo . \
+        --project my-service \
         --format junit \
         --fail-on HIGH,CRITICAL \
         > $(Build.ArtifactStagingDirectory)/scan-results.xml
@@ -835,6 +861,7 @@ steps:
       irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 
       armis-cli scan repo . `
+        --project my-service `
         --format junit `
         --fail-on HIGH,CRITICAL `
         > $(Build.ArtifactStagingDirectory)\scan-results.xml
@@ -871,6 +898,7 @@ jobs:
           name: Run Security Scan
           command: |
             armis-cli scan repo . \
+              --project my-service \
               --format json \
               --fail-on HIGH,CRITICAL
 
@@ -898,7 +926,7 @@ pipelines:
           script:
             - apk add --no-cache curl bash
             - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-            - armis-cli scan repo . --format json --fail-on CRITICAL
+            - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 
   branches:
     main:
@@ -908,7 +936,7 @@ pipelines:
           script:
             - apk add --no-cache curl bash
             - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-            - armis-cli scan repo . --format json --fail-on CRITICAL
+            - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 ```
 
 Configure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as [secured repository variables](https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/).

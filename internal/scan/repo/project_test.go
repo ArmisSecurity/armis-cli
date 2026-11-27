@@ -191,9 +191,9 @@ func TestScan_ProjectResolverStampsTheScanRequest(t *testing.T) {
 	rec, url := newIngestRecorderServer(t)
 
 	calls := 0
-	resolve := func(context.Context) (string, string, error) {
+	resolve := func(context.Context, IgnoreSummary) (string, string, bool, error) {
 		calls++
-		return resolvedProjectID, "cli_dev", nil
+		return resolvedProjectID, "cli_dev", false, nil
 	}
 	if _, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), newProjectTestRepo(t)); err != nil {
 		t.Fatalf("Scan failed: %v", err)
@@ -236,9 +236,9 @@ func TestScan_ProjectResolverRunsOnlyAfterLocalChecks(t *testing.T) {
 			}
 			rec, url := newIngestRecorderServer(t)
 			called := false
-			resolve := func(context.Context) (string, string, error) {
+			resolve := func(context.Context, IgnoreSummary) (string, string, bool, error) {
 				called = true
-				return resolvedProjectID, "cli_ci", nil
+				return resolvedProjectID, "cli_ci", false, nil
 			}
 			if _, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), tt.path); err == nil {
 				t.Fatal("expected the local check to fail")
@@ -268,7 +268,7 @@ func unreadableSkipReason() string {
 func TestScan_ProjectResolverErrorStopsBeforeUpload(t *testing.T) {
 	rec, url := newIngestRecorderServer(t)
 	errLookup := errors.New("could not look up the project")
-	resolve := func(context.Context) (string, string, error) { return "", "", errLookup }
+	resolve := func(context.Context, IgnoreSummary) (string, string, bool, error) { return "", "", false, errLookup }
 
 	_, err := newProjectTestScanner(t, url).WithProjectResolver(resolve).Scan(context.Background(), newProjectTestRepo(t))
 	if err != errLookup { //nolint:errorlint // the resolver's error must come back unwrapped

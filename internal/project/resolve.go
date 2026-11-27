@@ -50,6 +50,40 @@ type Resolution struct {
 	Project model.Project
 	// Created is true when Resolve created the project.
 	Created bool
+	// Labels are the labels the project was created with.
+	Labels []string
+	// Setup is what the first-time setup decided, when Resolve ran it (also
+	// when another run then created the project first: its filters still
+	// belong to the repository).
+	Setup *Setup
+	// LabelsSkipped says why the labels asked for were not applied (one of
+	// the LabelsSkipped* reasons), and RequestedLabels holds them.
+	LabelsSkipped   string
+	RequestedLabels []string
+}
+
+// Why the labels asked for were not applied (Resolution.LabelsSkipped).
+const (
+	// LabelsSkippedExists: the project exists, with other labels, which a
+	// run never changes.
+	LabelsSkippedExists = "exists"
+	// LabelsSkippedRace: another run created the project first.
+	LabelsSkippedRace = "race"
+	// LabelsSkippedUnsupported: the server takes no labels on create.
+	LabelsSkippedUnsupported = "unsupported"
+)
+
+// ResolveOptions say how Resolve creates a missing project.
+type ResolveOptions struct {
+	// Labels are the labels (normalized) a created project gets, unless
+	// Configure returns others.
+	Labels []string
+	// Configure, when set, runs the first-time setup once Resolve knows it
+	// is about to create the project, and returns its labels and filters (a
+	// nil Setup is the defaults: Labels, and no filters). It is never called
+	// for an existing project. ErrSetupCancelled stops the resolution before
+	// anything is created.
+	Configure func(ctx context.Context, name string) (*Setup, error)
 }
 
 // StatusWarning explains why a scan published to this project will not be
@@ -97,7 +131,7 @@ func (e *CaseMismatchError) Error() string {
 //
 // The name is validated with ValidateName first, whatever the caller already
 // checked, so nothing invalid is ever looked up or created.
-func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolution, error) {
+func Resolve(ctx context.Context, client API, tenantID, name string, opts ResolveOptions) (*Resolution, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -107,7 +141,12 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 		return nil, explain(err, tenantID, "look up")
 	}
 	if found.exact != nil {
-		return &Resolution{Project: *found.exact}, nil
+		res := &Resolution{Project: *found.exact}
+		// An existing project's labels are its own: a run never changes them.
+		if len(opts.Labels) > 0 && !SameLabels(opts.Labels, found.exact.Tags) {
+			res.LabelsSkipped, res.RequestedLabels = LabelsSkippedExists, opts.Labels
+		}
+		return res, nil
 	}
 	// Only a complete lookup proves the variants are all there is; a partial
 	// one still falls through to create, whose 409 finds an existing project.
@@ -115,10 +154,23 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 		return nil, &CaseMismatchError{Name: name, Existing: found.variants}
 	}
 
-	created, err := client.CreateProject(ctx, tenantID, model.ProjectCreateRequest{
-		Name:        name,
-		ProjectType: model.ProjectTypeCICD,
-	})
+	labels := opts.Labels
+	var setup *Setup
+	if opts.Configure != nil {
+		if setup, err = opts.Configure(ctx, name); err != nil {
+			return nil, err
+		}
+		if setup != nil {
+			labels = setup.Labels
+		}
+	}
+	// Normalized here too, so a create never carries labels past the API's
+	// limits, whoever built them.
+	if labels, err = NormalizeLabels(labels); err != nil {
+		return nil, fmt.Errorf("invalid project labels: %w", err)
+	}
+
+	created, skipped, err := create(ctx, client, tenantID, name, labels)
 	if err == nil {
 		// Without a valid id the scan would go out unpublished (an empty
 		// project_id is omitted) while the CLI reported the project.
@@ -126,7 +178,13 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 			return nil, fmt.Errorf("could not create the project: the API answered without a valid project id (got %q)",
 				created.ProjectID)
 		}
-		return &Resolution{Project: *created, Created: true}, nil
+		res := &Resolution{Project: *created, Created: true, Setup: setup}
+		if skipped {
+			res.LabelsSkipped, res.RequestedLabels = LabelsSkippedUnsupported, labels
+		} else {
+			res.Labels = labels
+		}
+		return res, nil
 	}
 
 	// Another run (say a parallel CI job) created the project between the
@@ -144,7 +202,11 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 			}
 			switch {
 			case p.Name == name:
-				return &Resolution{Project: *p}, nil
+				res := &Resolution{Project: *p, Setup: setup}
+				if len(labels) > 0 {
+					res.LabelsSkipped, res.RequestedLabels = LabelsSkippedRace, labels
+				}
+				return res, nil
 			case equalFoldASCII(p.Name, name):
 				return nil, &CaseMismatchError{Name: name, Existing: []string{p.Name}}
 			default:
@@ -154,6 +216,21 @@ func Resolve(ctx context.Context, client API, tenantID, name string) (*Resolutio
 		}
 	}
 	return nil, explain(err, tenantID, "create")
+}
+
+// create creates the project as a ci_cd project with labels. A server that
+// takes no labels on create (a 422 refusing tags) gets the project without
+// them: skipped is then true.
+func create(ctx context.Context, client API, tenantID, name string, labels []string) (*model.Project, bool, error) {
+	req := model.ProjectCreateRequest{Name: name, ProjectType: model.ProjectTypeCICD, Tags: labels}
+	created, err := client.CreateProject(ctx, tenantID, req)
+	var apiErr *api.AppSecError
+	if err != nil && len(labels) > 0 && errors.As(err, &apiErr) && apiErr.RefusesField("tags") {
+		req.Tags = nil
+		created, err = client.CreateProject(ctx, tenantID, req)
+		return created, err == nil, err
+	}
+	return created, false, err
 }
 
 // lookupResult is what a name lookup found.

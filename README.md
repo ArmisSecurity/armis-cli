@@ -506,7 +506,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 ```text
 --format string         Output format: human, json, sarif, junit (default: human)
 --no-progress           Disable progress indicators
---fail-on strings       Fail build on severity levels (default: [CRITICAL])
+--fail-on strings       Fail build on findings at or above this severity: HIGH fails on HIGH and CRITICAL, a list counts from its lowest level, "" never fails (default: CRITICAL)
 --min-severity string   Only display findings at or above this severity (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)
 --exit-code int         Exit code to use when failing (default: 1)
 --page-limit int        Results page size for pagination (default: 500, range: 1-1000)
@@ -757,12 +757,48 @@ from your name by case (`Checkout-Service` vs `checkout-service`), the scan
 stops instead of creating a near-duplicate. Finding or creating a project
 needs credentials with the `admin` or `developer` role.
 
+**Setting up a new project.** When the project doesn't exist yet and the scan
+runs in a terminal (a `--report` run on your machine, not CI), the CLI asks
+first: *Set up now*, *Use defaults* or *Cancel*.
+
+*Set up now* asks, one question at a time, what the AppSec UI asks when it
+creates a CLI project:
+
+- the minimum severity (Medium unless you pick another); findings below it are
+  still scanned, but hidden from reports and `--fail-on`;
+- path excludes, in gitignore syntax (`!` re-includes);
+- findings to suppress, by severity, by scanner category and by CWE;
+- the project's labels.
+
+A summary shows the labels and the exact lines it will write; then *Create the
+project*, *Edit* or *Cancel*. The filters go to the scanned folder's
+`.armisignore`: a new file, or a block appended to yours, whose lines are kept.
+The project is created with its labels, and this scan already applies the
+filters. Commit `.armisignore` so CI scans apply them too. No filter is sent to
+Armis: the `.armisignore` is where a CLI project's filters live.
+
+Questions your `.armisignore` already answers are skipped. A `severity:` line
+answers both severity questions, any path pattern answers the path excludes,
+and a `category:` or `cwe:` line answers its own question.
+
+*Use defaults* creates the project as is. *Cancel* (or Ctrl+C in a question)
+creates and uploads nothing, and exits `130`.
+
+In CI, without a terminal, or with `--no-input` (or `ARMIS_NO_INPUT=1`), the
+CLI asks nothing. `--project-label <label>` labels a project the run creates.
+Repeat it or separate labels with commas; at most 20 of 64 characters each.
+An existing project keeps its labels: when the ones you pass differ, the CLI
+warns and changes nothing.
+
 **Runs.** Once the scan starts, the CLI prints the run Armis recorded it as
 (`Recorded as run s_... of project checkout-service`). The run is filed under
 the branch of the checkout, or, when the checkout is detached as CI checkouts
 often are, the branch the CI variables name (`GITHUB_HEAD_REF`,
-`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`, `BUILD_SOURCEBRANCH` and others). A
-paused project still records the runs that name it. When Armis records no
+`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`, `BUILD_SOURCEBRANCH` and others).
+`--branch <name>` files it under that branch instead, for an exported tree, a
+folder that isn't a git checkout, or a CI the CLI doesn't know; a name git
+would refuse as a branch fails before anything is uploaded. A paused project
+still records the runs that name it. When Armis records no
 run, the scan still runs and gates as usual, and the CLI says why:
 
 - the tenant does not record CLI scans as project runs yet;
@@ -843,8 +879,11 @@ downloaded. With `--format json` it writes a record of the accepted scan:
 ```
 
 When no run was recorded, `recorded` is `false` and `reason` says why
-(`disabled`, `project_archived`, `project_not_cli`, `project_not_found` or
-`not_recorded`). A server that predates project runs leaves both out.
+(`disabled`, `project_archived`, `project_not_cli`, `project_not_found`,
+`invalid_branch` or `not_recorded`). A server that predates project runs leaves
+both out. A `--sync` scan's `--format json` results carry the same `project`
+object next to its findings, so a pipeline can link the run; an unpublished
+scan's results have none.
 
 Other formats write nothing in async mode. An empty SARIF upload would close
 every open code-scanning alert. Follow up on an async scan with
@@ -855,8 +894,9 @@ Notes:
 - `--changed` and `--include-files` cannot be published. A run covering a few
   files would under-report the project's findings. They still work for local
   gating without `--project`.
-- `--project`, `--report`, `--sync` and `--async` are available on `scan repo`
-  and on the `scan <path>` shorthand.
+- `--project`, `--report`, `--sync`, `--async`, `--project-label`, `--branch`
+  and `--no-input` are available on `scan repo` and on the `scan <path>`
+  shorthand.
 
 ### Scan Container Image
 
@@ -1189,7 +1229,7 @@ Format: `<type>:<value> -- <optional reason>`
 | `rule:` | Any rule ID (free-form string) | `rule:G304 -- path validated upstream` |
 | `category:` | `sast`, `secrets`, `iac`, `sca`, `license` | `category:license` |
 | `severity:` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` | `severity:LOW` |
-| `cwe:` | Any non-negative integer | `cwe:73 -- intentional, sanitized` |
+| `cwe:` | Any non-negative integer, bare or as `CWE-73` | `cwe:73 -- intentional, sanitized` |
 
 Example `.armisignore`:
 
@@ -1240,7 +1280,7 @@ armis-cli supply-chain check -o supply-chain.sarif --fail-on high
 
 By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
 
-> **Fail the build:** `check` reports findings as MEDIUM/HIGH severity. To gate CI, pass `--fail-on medium` (or `high`) — the default `--fail-on` is CRITICAL, which supply-chain findings never reach.
+> **Fail the build:** `check` reports findings as MEDIUM/HIGH severity. To gate CI, pass `--fail-on medium` (MEDIUM and above), or `high` — the default `--fail-on` is CRITICAL, which supply-chain findings never reach.
 
 ### Enforce locally during installs
 
@@ -1369,7 +1409,7 @@ jobs:
 |-------|------|---------|-------------|
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
-| `fail-on` | string | `CRITICAL` | Severity levels to fail on (e.g., `HIGH,CRITICAL`) |
+| `fail-on` | string | `CRITICAL` | Severity to fail on, with every level above it (e.g., `HIGH` fails on HIGH and CRITICAL). An empty string never fails |
 | `pr-comment` | boolean | `true` | Post scan results as PR comment |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
@@ -1452,6 +1492,11 @@ jobs:
           sarif_file: results.sarif
 ```
 
+The examples below publish each scan as a run of the AppSec project
+`my-service`, which the first run creates, and gate on HIGH and CRITICAL
+findings. Drop `--project` to gate without publishing (see
+[Publish to a Project](#publish-to-a-project)).
+
 ### GitLab CI
 
 ```yaml
@@ -1462,7 +1507,7 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
   variables:
     ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
     ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
@@ -1482,7 +1527,7 @@ pipeline {
             steps {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-                    armis-cli scan repo . --format junit > scan-results.xml
+                    armis-cli scan repo . --project my-service --format junit --fail-on HIGH,CRITICAL > scan-results.xml
                 '''
                 junit 'scan-results.xml'
             }
@@ -1503,7 +1548,7 @@ steps:
     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   displayName: 'Install Armis CLI'
 - script: |
-    armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --project my-service --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
   env:
     ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
     ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
@@ -1531,7 +1576,7 @@ jobs:
       - run:
           name: Run Security Scan
           command: |
-            armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
+            armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 workflows:
   version: 2
   scan:
@@ -1551,7 +1596,7 @@ pipelines:
         script:
           - apk add --no-cache curl bash
           - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-          - armis-cli scan repo . --format json --fail-on CRITICAL
+          - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 ```
 
 ---
@@ -1572,6 +1617,8 @@ Pick the authentication method that matches the environment:
 | `ARMIS_REGION` | Armis cloud region (equivalent to `--region` flag) |
 
 When using client credentials, the tenant ID is automatically extracted from the token.
+
+Client credentials need no login step: every command signs in with them. In CI, set the two variables and run the scan. `armis-cli auth login --client-id … --client-secret …`, or `auth login` in a CI job with the variables set, checks them and exits; `auth whoami` shows the identity they resolve to. In CI without them, `auth login` fails at once instead of waiting for a browser sign-in nobody can complete.
 
 **SSO (recommended for interactive use):**
 
@@ -1644,10 +1691,10 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 ## Exit Codes
 
 - `0` - Scan completed with no blocking findings, or an `--async` scan was accepted
-- `--exit-code` value (default `1`) - Scan found findings at a `--fail-on` severity
+- `--exit-code` value (default `1`) - Scan found findings at or above the `--fail-on` severity
 - `1` - Error: invalid flags (such as an invalid `--project` name), authentication, upload, timeout, or a failed scan
 - `2` - Scan completed, but its results or a requested BOM could not be downloaded, or `bom` wrote no BOM
-- `130` - Scan cancelled with Ctrl+C
+- `130` - Scan cancelled with Ctrl+C, or a new project's setup cancelled (nothing was created or uploaded)
 
 With the default `--exit-code 1`, findings and errors share exit code `1`; set
 `--exit-code` to another value to tell them apart.

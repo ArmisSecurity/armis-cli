@@ -48,6 +48,7 @@ type Scanner struct {
 	sbomFilesLimit        int
 	projectID             string
 	trigger               string
+	branch                string
 	projectResolver       ProjectResolver
 	projectRunReporter    ProjectRunReporter
 	async                 bool
@@ -117,9 +118,19 @@ func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
 	return s
 }
 
+// WithBranch files a published scan's run under branch, instead of the branch
+// DetectBranch finds. The caller checks it with ValidateBranch.
+func (s *Scanner) WithBranch(branch string) *Scanner {
+	s.branch = branch
+	return s
+}
+
 // ProjectResolver finds or creates the project a published scan is recorded
-// on, and returns its id and the run's trigger.
-type ProjectResolver func(ctx context.Context) (projectID, trigger string, err error)
+// on, and returns its id and the run's trigger. It gets what the scan's
+// .armisignore files hold, for a first-time project setup, and reports
+// whether it changed the root .armisignore: the scan then reloads it, so the
+// setup's filters already apply to this scan.
+type ProjectResolver func(ctx context.Context, ignore IgnoreSummary) (projectID, trigger string, ignoreChanged bool, err error)
 
 // WithProjectResolver publishes the scan to the project resolve returns. Scan
 // calls it once its local checks have passed (path, .armisignore, size) and
@@ -172,67 +183,26 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	var rawSize int64
-	var tarFunc func(io.Writer) error
-	var suppressionConfig *SuppressionConfig
-
-	if s.includeFiles != nil {
-		// Targeted file scanning mode — only load suppression directives from root
-		// .armisignore (no tree walk needed since IgnoreMatcher isn't used for tar).
-		var suppErr error
-		suppressionConfig, suppErr = LoadSuppressionConfig(absPath)
-		if suppErr != nil {
-			return nil, fmt.Errorf("failed to load suppression config: %w", suppErr)
-		}
-
-		existing, warnings := s.includeFiles.ValidateExistence()
-		for _, w := range warnings {
-			cli.PrintWarning(w)
-		}
-
-		if len(existing) == 0 {
-			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
-		}
-
-		var sizeErr error
-		rawSize, sizeErr = calculateFilesSize(absPath, existing)
-		if sizeErr != nil {
-			return nil, fmt.Errorf("failed to calculate files size: %w", sizeErr)
-		}
-
-		tarFunc = func(w io.Writer) error {
-			return s.tarGzFiles(absPath, existing, w)
-		}
-	} else {
-		// Full directory scanning mode — walk tree for both ignore patterns and directives.
-		ignoreMatcher, suppCfg, loadErr := LoadArmisIgnore(absPath)
-		if loadErr != nil {
-			return nil, fmt.Errorf("failed to load .armisignore: %w", loadErr)
-		}
-		suppressionConfig = suppCfg
-
-		var sizeErr error
-		rawSize, sizeErr = calculateDirSize(absPath, s.includeTests, ignoreMatcher)
-		if sizeErr != nil {
-			return nil, fmt.Errorf("failed to calculate directory size: %w", sizeErr)
-		}
-
-		tarFunc = func(w io.Writer) error {
-			return s.tarGzDirectory(absPath, w, ignoreMatcher)
-		}
-	}
-
-	if rawSize > MaxRepoSize {
-		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", rawSize, MaxRepoSize)
+	plan, err := s.planUpload(absPath, true)
+	if err != nil {
+		return nil, err
 	}
 
 	if s.projectResolver != nil {
-		projectID, trigger, err := s.projectResolver(ctx)
+		projectID, trigger, ignoreChanged, err := s.projectResolver(ctx, plan.ignore)
 		if err != nil {
 			return nil, err
 		}
 		s.projectID, s.trigger = projectID, trigger
+		// A first-time project setup wrote the root .armisignore: this scan
+		// applies it, without repeating the file's warnings.
+		if ignoreChanged {
+			if plan, err = s.planUpload(absPath, false); err != nil {
+				return nil, err
+			}
+		}
 	}
+	tarFunc, suppressionConfig := plan.tarFunc, plan.suppressionConfig
 
 	spinner := progress.NewSpinnerWithContext(ctx, "Preparing repository for upload...", s.noProgress)
 	spinner.Start()
@@ -319,7 +289,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	ingestOpts.ProjectID = s.projectID
 	ingestOpts.Trigger = s.trigger
 	if s.projectID != "" {
-		ingestOpts.Branch = DetectBranch(absPath)
+		ingestOpts.Branch = s.branch
+		if ingestOpts.Branch == "" {
+			ingestOpts.Branch = DetectBranch(absPath)
+		}
 	}
 
 	started, err := s.client.StartIngestScan(ctx, ingestOpts)
@@ -434,6 +407,75 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	result.BOMFailures = bomFailures
 
 	return result, nil
+}
+
+// uploadPlan is what a scan uploads: the archive and its size, with the
+// suppression directives and the .armisignore summary that come with it.
+type uploadPlan struct {
+	rawSize           int64
+	tarFunc           func(io.Writer) error
+	suppressionConfig *SuppressionConfig
+	ignore            IgnoreSummary
+}
+
+// planUpload reads the .armisignore files and measures what the scan
+// uploads. warn prints the files' warnings: a reload after a first-time
+// project setup doesn't repeat them.
+func (s *Scanner) planUpload(absPath string, warn bool) (*uploadPlan, error) {
+	plan := &uploadPlan{ignore: IgnoreSummary{Root: absPath}}
+
+	if s.includeFiles != nil {
+		// Targeted file scanning mode — only load suppression directives from root
+		// .armisignore (no tree walk needed since IgnoreMatcher isn't used for tar).
+		// It is never published, so it never runs a project setup.
+		suppressionConfig, suppErr := LoadSuppressionConfig(absPath)
+		if suppErr != nil {
+			return nil, fmt.Errorf("failed to load suppression config: %w", suppErr)
+		}
+		plan.suppressionConfig = suppressionConfig
+
+		existing, warnings := s.includeFiles.ValidateExistence()
+		for _, w := range warnings {
+			cli.PrintWarning(w)
+		}
+
+		if len(existing) == 0 {
+			return nil, fmt.Errorf("no files to scan: all specified files are missing or are directories")
+		}
+
+		rawSize, sizeErr := calculateFilesSize(absPath, existing)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate files size: %w", sizeErr)
+		}
+		plan.rawSize = rawSize
+
+		plan.tarFunc = func(w io.Writer) error {
+			return s.tarGzFiles(absPath, existing, w)
+		}
+	} else {
+		// Full directory scanning mode — walk tree for both ignore patterns and directives.
+		ignoreMatcher, suppCfg, loadErr := loadArmisIgnore(absPath, warn)
+		if loadErr != nil {
+			return nil, fmt.Errorf("failed to load .armisignore: %w", loadErr)
+		}
+		plan.suppressionConfig = suppCfg
+		plan.ignore = summarizeIgnore(absPath, ignoreMatcher, suppCfg)
+
+		rawSize, sizeErr := calculateDirSize(absPath, s.includeTests, ignoreMatcher)
+		if sizeErr != nil {
+			return nil, fmt.Errorf("failed to calculate directory size: %w", sizeErr)
+		}
+		plan.rawSize = rawSize
+
+		plan.tarFunc = func(w io.Writer) error {
+			return s.tarGzDirectory(absPath, w, ignoreMatcher)
+		}
+	}
+
+	if plan.rawSize > MaxRepoSize {
+		return nil, fmt.Errorf("directory size (%d bytes) exceeds maximum allowed size (%d bytes)", plan.rawSize, MaxRepoSize)
+	}
+	return plan, nil
 }
 
 func (s *Scanner) tarGzDirectory(sourcePath string, writer io.Writer, ignoreMatcher *IgnoreMatcher) (err error) {
