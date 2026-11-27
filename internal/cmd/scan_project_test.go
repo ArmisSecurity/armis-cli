@@ -666,10 +666,16 @@ func TestScan_FailOnIsAThreshold(t *testing.T) {
 
 	// The GitHub Action passes an empty fail-on as `--fail-on ""`: the flag
 	// parses it as no level, which never fails.
-	setupProjectScan(t, critical)
-	if err := scanCmd.PersistentFlags().Set("fail-on", ""); err != nil || len(failOn) != 0 {
-		t.Fatalf(`--fail-on "": failOn = %q, err %v; want no level`, failOn, err)
+	// A fresh flag set, registered as scan's is: a StringSlice that was Set
+	// before appends to its value, so the shared flag would depend on test order.
+	fs := pflag.NewFlagSet("scan", pflag.ContinueOnError)
+	var parsed []string
+	fs.StringSliceVar(&parsed, "fail-on", defaultFailOn(), failOnUsage)
+	if err := fs.Parse([]string{"--fail-on="}); err != nil || len(parsed) != 0 {
+		t.Fatalf(`--fail-on "": parsed %q, err %v; want no level`, parsed, err)
 	}
+	setupProjectScan(t, critical)
+	failOn = parsed
 	if _, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) }); err != nil {
 		t.Errorf(`--fail-on "" on a CRITICAL finding: err = %v, want none`, err)
 	}
