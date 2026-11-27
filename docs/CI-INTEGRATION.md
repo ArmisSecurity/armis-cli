@@ -85,6 +85,12 @@ Obtain client credentials from the VIPR external API screen in the Armis platfor
 
 The tenant ID is automatically extracted from the JWT token — no need to set it separately.
 
+A pipeline needs no `armis-cli auth login` step: every command signs in with
+the client credentials. `auth login` is the browser sign-in for a developer
+machine. In a CI job it checks the client credentials when they are set and
+exits, and fails at once when they are not. To see the identity the
+credentials resolve to, run `armis-cli auth whoami`.
+
 **Example:**
 
 ```bash

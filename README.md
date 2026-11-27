@@ -1606,6 +1606,8 @@ Pick the authentication method that matches the environment:
 
 When using client credentials, the tenant ID is automatically extracted from the token.
 
+Client credentials need no login step: every command signs in with them. In CI, set the two variables and run the scan. `armis-cli auth login --client-id … --client-secret …`, or `auth login` in a CI job with the variables set, checks them and exits; `auth whoami` shows the identity they resolve to. In CI without them, `auth login` fails at once instead of waiting for a browser sign-in nobody can complete.
+
 **SSO (recommended for interactive use):**
 
 | Variable | Description |

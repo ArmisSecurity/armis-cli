@@ -28,21 +28,77 @@ and shared with the Armis MCP plugins.
 A tenant is required: pass --tenant-id or set ARMIS_TENANT_ID.
 
 If the browser cannot be opened automatically (for example over SSH), the CLI
-prints a URL and a code to enter manually.`,
+prints a URL and a code to enter manually.
+
+Client credentials need no login: every command signs in with them. Given
+here (--client-id and --client-secret), or in a CI job's environment
+(ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET), auth login checks them and exits,
+as auth whoami does. In CI without them it fails at once, since nobody can
+complete a browser sign-in there.`,
 	Example: `  # Sign in interactively
-  armis-cli auth login --tenant-id my-tenant`,
+  armis-cli auth login --tenant-id my-tenant
+
+  # Check client credentials (a CI job needs no login step)
+  armis-cli auth login --client-id "$ARMIS_CLIENT_ID" --client-secret "$ARMIS_CLIENT_SECRET"`,
 	Args: cobra.NoArgs,
 	RunE: runAuthLogin,
 }
 
 func init() {
-	authLoginCmd.Flags().StringVar(&loginClientID, "client-id", auth.DefaultDeviceClientID, "OAuth2 client ID to authenticate as")
+	authLoginCmd.Flags().StringVar(&loginClientID, "client-id", auth.DefaultDeviceClientID,
+		"OAuth2 client ID to authenticate as; with --client-secret, the client credentials' ID")
 	authCmd.AddCommand(authLoginCmd)
 }
 
 func runAuthLogin(cmd *cobra.Command, _ []string) error {
+	// Client credentials need no login. Given on the command line, or found in
+	// a CI job's environment, they are checked instead of starting a browser
+	// sign-in that nobody would complete. A developer machine with them in
+	// its environment still signs in, for a session the MCP plugins share.
+	ci, ciVar := progress.DetectCI()
+	if cmd.Flags().Changed("client-secret") || (ci && clientSecret != "") {
+		return checkClientCredentials(cmd)
+	}
+	if ci {
+		return fmt.Errorf("auth login opens a browser sign-in, which a CI job cannot complete (CI detected from %s). "+
+			"In CI, set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET instead: every command signs in with them, with no "+
+			"login step. To check them, run: armis-cli auth whoami", ciVar)
+	}
 	_, err := performDeviceLogin(cmd.Context(), loginClientID)
 	return err
+}
+
+// checkClientCredentials signs in with auth login's client credentials, as
+// auth whoami does, and says there is nothing to store. The client ID is
+// --client-id's when given (auth login's own flag, which otherwise names the
+// browser sign-in's OAuth client), and ARMIS_CLIENT_ID's otherwise.
+func checkClientCredentials(cmd *cobra.Command) error {
+	id := clientID
+	if cmd.Flags().Changed("client-id") {
+		id = loginClientID
+	}
+	if id == "" || clientSecret == "" {
+		return fmt.Errorf("client credentials need both a client ID and a secret: pass --client-id and " +
+			"--client-secret, or set ARMIS_CLIENT_ID and ARMIS_CLIENT_SECRET")
+	}
+	// These credentials, over any stored session.
+	clientID, credFlagsExplicit = id, true
+	provider, err := getAuthProvider(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+	tenant, err := provider.GetTenantID(ctx)
+	if err != nil {
+		return fmt.Errorf("the client credentials could not sign in: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "%s Client credentials are valid.\n", output.IconSuccess)
+	if tenant != "" {
+		fmt.Fprintf(os.Stderr, "  Tenant:   %s\n", tenant)
+	}
+	fmt.Fprintln(os.Stderr, "Every command signs in with them, so there is no session to store and no login step to run.")
+	return nil
 }
 
 // performDeviceLogin runs the OAuth2 device-authorization flow end to end:
