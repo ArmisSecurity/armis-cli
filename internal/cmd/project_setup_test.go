@@ -71,6 +71,10 @@ func TestSetupAnswers_ToSetup(t *testing.T) {
 	}
 }
 
+// repoArmisignore is the .armisignore of the tests' made-up folder /repo as
+// the summary names it, with this OS's path separator.
+var repoArmisignore = filepath.Join("/repo", ".armisignore")
+
 func TestPrintSetupSummary(t *testing.T) {
 	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
 	setup := &project.Setup{Labels: []string{"pci"}, Filters: project.Filters{PathExcludes: []string{"dist/"}}}
@@ -78,7 +82,7 @@ func TestPrintSetupSummary(t *testing.T) {
 	var buf bytes.Buffer
 	printSetupSummary(&buf, "payments-api", setup, repo.IgnoreSummary{Root: "/repo"}, now)
 	out := buf.String()
-	for _, want := range []string{"payments-api, a CLI / CI-CD project", "Labels   pci", "Creates /repo/.armisignore:",
+	for _, want := range []string{"payments-api, a CLI / CI-CD project", "Labels   pci", "Creates " + repoArmisignore + ":",
 		"# armis-cli project setup: payments-api, 2026-11-26", "dist/"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary missing %q:\n%s", want, out)
@@ -87,7 +91,7 @@ func TestPrintSetupSummary(t *testing.T) {
 
 	buf.Reset()
 	printSetupSummary(&buf, "p", setup, repo.IgnoreSummary{Root: "/repo", RootFile: true}, now)
-	if !strings.Contains(buf.String(), "Adds to /repo/.armisignore (appended; your lines are kept):") {
+	if !strings.Contains(buf.String(), "Adds to "+repoArmisignore+" (appended; your lines are kept):") {
 		t.Errorf("an existing file: %s", buf.String())
 	}
 
@@ -447,7 +451,7 @@ func TestAskProjectSetup_TheQuestionsOneByOne(t *testing.T) {
 	}
 	for _, q := range []string{`Project "checkout-service" doesn't exist in this tenant yet. Set it up now?`, "Minimum severity",
 		"Path excludes (optional)", "starts with #", "Suppress by severity (optional)", "Suppress by scanner category (optional)",
-		"Suppress by CWE ID (optional)", "Project labels (optional)", "Creates /repo/.armisignore:", "Create the project?"} {
+		"Suppress by CWE ID (optional)", "Project labels (optional)", "Creates " + repoArmisignore + ":", "Create the project?"} {
 		if !strings.Contains(out, q) {
 			t.Errorf("the form never showed %q:\n%s", q, out)
 		}
@@ -492,7 +496,7 @@ func TestAskProjectSetup_SkipsWhatTheArmisignoreAnswers(t *testing.T) {
 	}
 	if !strings.Contains(out, "Using .armisignore for: minimum severity and severity, path excludes") ||
 		strings.Contains(out, "Minimum severity") || strings.Contains(out, "Path excludes (optional)") ||
-		!strings.Contains(out, "Adds to /repo/.armisignore (appended; your lines are kept):") {
+		!strings.Contains(out, "Adds to "+repoArmisignore+" (appended; your lines are kept):") {
 		t.Errorf("out:\n%s", out)
 	}
 }
