@@ -12,7 +12,7 @@ on:
         type: string
         default: '.'
       fail-on:
-        description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
+        description: 'Severity to fail on, with every level above it (e.g., HIGH fails on HIGH and CRITICAL). Empty string for informational mode (never fail).'
         type: string
         default: ''
       pr-comment:

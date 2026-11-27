@@ -35,9 +35,9 @@ inputs:
     required: false
     default: 'sarif'
   fail-on:
-    description: 'Comma-separated severity levels to fail on (e.g., HIGH,CRITICAL). Empty string for informational mode (never fail).'
+    description: 'Severity to fail on, with every level above it (e.g., HIGH fails on HIGH and CRITICAL; a list counts from its lowest level). Empty string for informational mode (never fail).'
     required: false
-    default: ''
+    default: 'CRITICAL'
   exit-code:
     description: 'Exit code to return when build fails'
     required: false
@@ -234,9 +234,10 @@ runs:
         fi
         SCAN_ARGS+=("--format" "$OUTPUT_FORMAT")
 
-        if [ -n "$FAIL_ON" ]; then
-          SCAN_ARGS+=("--fail-on" "$FAIL_ON")
-        fi
+        # Always passed: an empty fail-on (set explicitly; the default is
+        # CRITICAL) is the CLI's --fail-on "", which never fails. Left out, the
+        # CLI would gate on its own default, CRITICAL.
+        SCAN_ARGS+=("--fail-on" "$FAIL_ON")
 
         SCAN_ARGS+=("--exit-code" "$EXIT_CODE_VAL")
         SCAN_ARGS+=("--scan-timeout" "$SCAN_TIMEOUT")

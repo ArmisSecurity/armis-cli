@@ -98,7 +98,7 @@ func init() {
 	// write the global at init() time, where the resting default would silently
 	// depend on init() ordering. runSupplyChainCheck reads scFailOn explicitly.
 	// Registered before the completion func below, which keys off the flag pointer.
-	scCheckCmd.Flags().StringSliceVar(&scFailOn, "fail-on", []string{"medium"}, "Exit with error on findings at these severity levels: INFO, LOW, MEDIUM, HIGH, CRITICAL")
+	scCheckCmd.Flags().StringSliceVar(&scFailOn, "fail-on", []string{"medium"}, failOnUsage)
 	// These are distinct flag instances from scanCmd's, so the completion funcs
 	// must be registered here too (Cobra keys completions by flag pointer).
 	_ = scCheckCmd.RegisterFlagCompletionFunc("format", formatCompletions())

@@ -1,6 +1,9 @@
 package cmdutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateFailOn(t *testing.T) {
 	tests := []struct {
@@ -58,8 +61,8 @@ func TestValidateFailOn(t *testing.T) {
 func TestGetFailOn(t *testing.T) {
 	t.Run("returns normalized severities", func(t *testing.T) {
 		// GetFailOn is pure: it validates and uppercase-normalizes the slice it is
-		// given. A lowercase entry must come back uppercased so ShouldFail (exact
-		// match) can trip the CI gate.
+		// given. A lowercase entry must come back uppercased so ShouldFail (which
+		// matches the levels it returns exactly) can trip the CI gate.
 		result, err := GetFailOn([]string{"high", "CRITICAL"})
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
@@ -72,6 +75,30 @@ func TestGetFailOn(t *testing.T) {
 	t.Run("returns error for invalid severity", func(t *testing.T) {
 		if _, err := GetFailOn([]string{"invalid"}); err == nil {
 			t.Error("Expected error for invalid severity")
+		}
+	})
+
+	// A level gates on itself and every level above it, as `--fail-on HIGH`
+	// in the AppSec UI's pipeline snippets means; a list counts from its
+	// lowest level, and no level gates on nothing.
+	t.Run("is a threshold", func(t *testing.T) {
+		for _, tt := range []struct {
+			in   []string
+			want string
+		}{
+			{[]string{"high"}, "HIGH,CRITICAL"},
+			{[]string{"CRITICAL"}, "CRITICAL"},
+			{[]string{"medium"}, "MEDIUM,HIGH,CRITICAL"},
+			{[]string{"INFO"}, "INFO,LOW,MEDIUM,HIGH,CRITICAL"},
+			{[]string{"CRITICAL", "LOW"}, "LOW,MEDIUM,HIGH,CRITICAL"},
+			{[]string{"HIGH", "CRITICAL", "HIGH"}, "HIGH,CRITICAL"},
+			{[]string{}, ""},
+			{nil, ""},
+		} {
+			got, err := GetFailOn(tt.in)
+			if err != nil || strings.Join(got, ",") != tt.want {
+				t.Errorf("GetFailOn(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+			}
 		}
 	})
 }

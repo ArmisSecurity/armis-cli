@@ -109,9 +109,10 @@ Edit `.github/workflows/cli-self-scan.yml`:
 ```yaml
 - name: Run security scan (SARIF)
   run: |
+    # --fail-on MEDIUM fails on MEDIUM, HIGH and CRITICAL findings.
     armis-cli scan repo . \
       --format sarif \
-      --fail-on CRITICAL,HIGH,MEDIUM \  # Add MEDIUM here
+      --fail-on MEDIUM \
       --output armis-results.sarif
 ```
 

@@ -506,7 +506,7 @@ Invoke-WebRequest -Uri "https://github.com/ArmisSecurity/armis-cli/releases/late
 ```text
 --format string         Output format: human, json, sarif, junit (default: human)
 --no-progress           Disable progress indicators
---fail-on strings       Fail build on severity levels (default: [CRITICAL])
+--fail-on strings       Fail build on findings at or above this severity: HIGH fails on HIGH and CRITICAL, a list counts from its lowest level, "" never fails (default: CRITICAL)
 --min-severity string   Only display findings at or above this severity (display only: --fail-on still evaluates all findings, and SARIF output always includes them all)
 --exit-code int         Exit code to use when failing (default: 1)
 --page-limit int        Results page size for pagination (default: 500, range: 1-1000)
@@ -1273,7 +1273,7 @@ armis-cli supply-chain check -o supply-chain.sarif --fail-on high
 
 By default `check` only reports packages that are **new** versus the base branch lockfile (auto-detected from `origin/main`). Use `--all` to audit every package, and `--fail-open` to pass when the registry is unreachable.
 
-> **Fail the build:** `check` reports findings as MEDIUM/HIGH severity. To gate CI, pass `--fail-on medium` (or `high`) — the default `--fail-on` is CRITICAL, which supply-chain findings never reach.
+> **Fail the build:** `check` reports findings as MEDIUM/HIGH severity. To gate CI, pass `--fail-on medium` (MEDIUM and above), or `high` — the default `--fail-on` is CRITICAL, which supply-chain findings never reach.
 
 ### Enforce locally during installs
 
@@ -1402,7 +1402,7 @@ jobs:
 |-------|------|---------|-------------|
 | `scan-type` | string | `repo` | Type of scan: `repo` or `image` |
 | `scan-target` | string | `.` | Path for repo scan, image name for image scan |
-| `fail-on` | string | `CRITICAL` | Severity levels to fail on (e.g., `HIGH,CRITICAL`) |
+| `fail-on` | string | `CRITICAL` | Severity to fail on, with every level above it (e.g., `HIGH` fails on HIGH and CRITICAL). An empty string never fails |
 | `pr-comment` | boolean | `true` | Post scan results as PR comment |
 | `upload-artifact` | boolean | `true` | Upload SARIF results as artifact |
 | `artifact-retention-days` | number | `30` | Days to retain artifacts |
@@ -1677,7 +1677,7 @@ Before users can sign in with SSO, an IT admin registers the tenant's identity p
 ## Exit Codes
 
 - `0` - Scan completed with no blocking findings, or an `--async` scan was accepted
-- `--exit-code` value (default `1`) - Scan found findings at a `--fail-on` severity
+- `--exit-code` value (default `1`) - Scan found findings at or above the `--fail-on` severity
 - `1` - Error: invalid flags (such as an invalid `--project` name), authentication, upload, timeout, or a failed scan
 - `2` - Scan completed, but its results or a requested BOM could not be downloaded, or `bom` wrote no BOM
 - `130` - Scan cancelled with Ctrl+C, or a new project's setup cancelled (nothing was created or uploaded)

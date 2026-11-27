@@ -640,6 +640,41 @@ func TestProjectScan_SyncGatesOnFailOn(t *testing.T) {
 	}
 }
 
+// --fail-on is a threshold: the AppSec UI's `--fail-on high` must fail a scan
+// whose only finding is CRITICAL, and `--fail-on ""` fails on nothing.
+func TestScan_FailOnIsAThreshold(t *testing.T) {
+	critical := testutil.MockAPIConfig{Findings: []model.NormalizedFinding{
+		testhelpers.CreateNormalizedFinding("f1", "CRITICAL", "sql_injection", nil, []string{"CWE-89"}),
+	}}
+	for _, tt := range []struct {
+		failOn []string
+		fails  bool
+	}{
+		{[]string{"high"}, true},
+		{[]string{"LOW"}, true},
+		{[]string{"CRITICAL"}, true},
+		{[]string{}, false},
+	} {
+		setupProjectScan(t, critical)
+		failOn = tt.failOn
+		_, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+		var exceeded *output.ErrFindingsExceeded
+		if got := errors.As(err, &exceeded); got != tt.fails {
+			t.Errorf("--fail-on %q on a CRITICAL finding: err = %v, want failing %v", tt.failOn, err, tt.fails)
+		}
+	}
+
+	// The GitHub Action passes an empty fail-on as `--fail-on ""`: the flag
+	// parses it as no level, which never fails.
+	setupProjectScan(t, critical)
+	if err := scanCmd.PersistentFlags().Set("fail-on", ""); err != nil || len(failOn) != 0 {
+		t.Fatalf(`--fail-on "": failOn = %q, err %v; want no level`, failOn, err)
+	}
+	if _, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) }); err != nil {
+		t.Errorf(`--fail-on "" on a CRITICAL finding: err = %v, want none`, err)
+	}
+}
+
 // AC: --async exits 0 once the scan is accepted, even when the findings would
 // cross --fail-on, and writes a JSON record of the accepted scan.
 func TestProjectScan_AsyncExitsZeroOnceAccepted(t *testing.T) {
