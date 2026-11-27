@@ -30,6 +30,8 @@ const (
 	ProjectRunProjectNotCLI = "project_not_cli"
 	// ProjectRunNotRecorded: recording failed; the scan was dispatched anyway.
 	ProjectRunNotRecorded = "not_recorded"
+	// ProjectRunInvalidBranch: the server refused the branch the scan sent.
+	ProjectRunInvalidBranch = "invalid_branch"
 )
 
 // ProjectRun is what /ingest/scan answers for a scan that names its project:

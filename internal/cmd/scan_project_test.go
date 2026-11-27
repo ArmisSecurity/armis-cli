@@ -421,6 +421,14 @@ func TestProjectScan_SaysWhatTheServerRecorded(t *testing.T) {
 			notWant: []string{"Recorded as run"},
 		},
 		{
+			name:   "a branch the server refused",
+			status: model.ProjectStatusActive,
+			run:    skippedRun(model.ProjectRunInvalidBranch),
+			want: []string{"Armis refused the branch name this scan sent", "It still runs and gates as usual",
+				"Name the branch with --branch"},
+			notWant: []string{"Recorded as run", "(invalid_branch)"},
+		},
+		{
 			name:    "a recording failure",
 			status:  model.ProjectStatusActive,
 			run:     skippedRun(model.ProjectRunNotRecorded),

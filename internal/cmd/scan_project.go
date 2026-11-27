@@ -169,6 +169,9 @@ func projectRunWarning(name, reason string) string {
 	case model.ProjectRunProjectNotFound:
 		return fmt.Sprintf("project %q was not found when the scan started (was it deleted?), "+
 			"so this scan is not recorded as a run of it. %s", name, still)
+	case model.ProjectRunInvalidBranch:
+		return fmt.Sprintf("Armis refused the branch name this scan sent, so it is not recorded as a run of project %q. "+
+			"%s Name the branch with --branch.", name, still)
 	default:
 		return fmt.Sprintf("Armis could not record this scan as a run of project %q (%s). %s",
 			name, util.StripControl(reason), still)
