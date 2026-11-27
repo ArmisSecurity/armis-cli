@@ -37,6 +37,18 @@ func TestValidBranch(t *testing.T) {
 	}
 }
 
+// ValidateBranch holds --branch to validBranch's rule, and says why.
+func TestValidateBranch(t *testing.T) {
+	if err := ValidateBranch("release/2026.11"); err != nil {
+		t.Errorf("a valid branch: %v", err)
+	}
+	for _, name := range []string{"", "feature branch", "-main", "a..b", "café"} {
+		if err := ValidateBranch(name); err == nil || !strings.Contains(err.Error(), "not a branch name git accepts") {
+			t.Errorf("ValidateBranch(%q) = %v, want the rule", name, err)
+		}
+	}
+}
+
 func TestCIBranch(t *testing.T) {
 	for _, tt := range []struct {
 		name string

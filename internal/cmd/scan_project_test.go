@@ -65,6 +65,7 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	keep(t, &exitCode)
 	keep(t, &projectLabels)
 	keep(t, &noInput)
+	keep(t, &runBranch)
 	keep(t, &isInteractive)
 	keep(t, &runSetupForm)
 	t.Cleanup(func() {
@@ -87,7 +88,7 @@ func setupProjectScan(t *testing.T, cfg testutil.MockAPIConfig) *projectScanEnv 
 	reportScan, syncScan, asyncScan, debug, generateSBOM, generateVEX = false, false, false, false, false, false
 	pollInterval = 5 * time.Millisecond
 	failOn, includeFiles, exitCode = []string{"CRITICAL"}, nil, 1
-	projectLabels, noInput = nil, false
+	projectLabels, noInput, runBranch = nil, false, ""
 	// No test asks questions unless it says so.
 	isInteractive = func() bool { return false }
 	runSetupForm = func(context.Context, string, repo.IgnoreSummary, []string) (*project.Setup, error) {
@@ -637,6 +638,52 @@ func TestProjectScan_SyncGatesOnFailOn(t *testing.T) {
 	}
 	if len(env.rec.Matching(http.MethodGet, "/ingest/status")) == 0 {
 		t.Error("--sync must wait for the scan")
+	}
+}
+
+// --branch files a published run under the branch it names, over the one
+// detected. It needs --project, and is checked before anything else, since
+// the server refuses a run's branch git wouldn't accept.
+func TestProjectScan_BranchFlag(t *testing.T) {
+	t.Run("files the run under it", func(t *testing.T) {
+		env := setupProjectScan(t, testutil.MockAPIConfig{})
+		t.Setenv("CI", "true")
+		// The CI variables name main, which --branch overrides.
+		t.Setenv("GITHUB_REF_TYPE", "branch")
+		t.Setenv("GITHUB_REF_NAME", "main")
+		projectName, runBranch = testProjectName, "release/2026.11"
+		if _, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) }); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		if body, _ := env.scanBody(t); body.Branch != "release/2026.11" {
+			t.Errorf("/ingest/scan branch = %q, want release/2026.11", body.Branch)
+		}
+	})
+
+	for _, tt := range []struct {
+		name, project, branch, want string
+		passedEmpty                 bool
+	}{
+		{name: "without --project", branch: "main", want: "--branch names the branch a published run is filed under, so it needs --project"},
+		{name: "a name git refuses", project: testProjectName, branch: "feature branch", want: "invalid --branch"},
+		{name: "a flag-like name", project: testProjectName, branch: "-main", want: "invalid --branch"},
+		{name: "passed but empty", project: testProjectName, passedEmpty: true, want: "invalid --branch"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupProjectScan(t, testutil.MockAPIConfig{})
+			t.Setenv("CI", "true")
+			projectName, runBranch = tt.project, tt.branch
+			if tt.passedEmpty {
+				markFlag(t, scanRepoCmd, "branch", "")
+			}
+			_, _, err := runScan(t, func() error { return scanRepoCmd.RunE(scanRepoCmd, []string{newScanDir(t)}) })
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+			if n := len(env.rec.Requests()); n != 0 {
+				t.Errorf("requests before the flags were checked: %d", n)
+			}
+		})
 	}
 }
 

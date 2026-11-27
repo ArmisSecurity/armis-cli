@@ -48,6 +48,7 @@ type Scanner struct {
 	sbomFilesLimit        int
 	projectID             string
 	trigger               string
+	branch                string
 	projectResolver       ProjectResolver
 	projectRunReporter    ProjectRunReporter
 	async                 bool
@@ -114,6 +115,13 @@ func (s *Scanner) WithGitHints() *Scanner {
 func (s *Scanner) WithProject(projectID, trigger string) *Scanner {
 	s.projectID = projectID
 	s.trigger = trigger
+	return s
+}
+
+// WithBranch files a published scan's run under branch, instead of the branch
+// DetectBranch finds. The caller checks it with ValidateBranch.
+func (s *Scanner) WithBranch(branch string) *Scanner {
+	s.branch = branch
 	return s
 }
 
@@ -281,7 +289,10 @@ func (s *Scanner) Scan(ctx context.Context, path string) (*model.ScanResult, err
 	ingestOpts.ProjectID = s.projectID
 	ingestOpts.Trigger = s.trigger
 	if s.projectID != "" {
-		ingestOpts.Branch = DetectBranch(absPath)
+		ingestOpts.Branch = s.branch
+		if ingestOpts.Branch == "" {
+			ingestOpts.Branch = DetectBranch(absPath)
+		}
 	}
 
 	started, err := s.client.StartIngestScan(ctx, ingestOpts)

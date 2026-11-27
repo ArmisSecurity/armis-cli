@@ -51,6 +51,9 @@ var (
 	// noInput is --no-input: never ask the first-time project setup's
 	// questions (also ARMIS_NO_INPUT).
 	noInput bool
+	// runBranch is --branch: the branch a published run is filed under,
+	// instead of the detected one. Checked by validatePublishFlags.
+	runBranch string
 )
 
 var scanRepoCmd = &cobra.Command{
@@ -125,6 +128,9 @@ func addRepoScanFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&noInput, "no-input", false,
 		"Never ask questions: a project this run creates gets the defaults, and --project-label's labels "+
 			"(also ARMIS_NO_INPUT=1)")
+	cmd.Flags().StringVar(&runBranch, "branch", "",
+		"Branch a published run is filed under, instead of the one detected from the checkout or the CI "+
+			"variables (needs --project; a name git accepts as a branch)")
 }
 
 // scanTargetError is a scan target that could not be looked up. Its message is
@@ -241,6 +247,9 @@ func runRepoScan(cmd *cobra.Command, args []string) error {
 
 	if wantGitHints(cmd) {
 		scanner = scanner.WithGitHints()
+	}
+	if runBranch != "" {
+		scanner = scanner.WithBranch(runBranch)
 	}
 
 	// Handle --include-files flag for targeted file scanning

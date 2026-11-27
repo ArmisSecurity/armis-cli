@@ -794,8 +794,11 @@ warns and changes nothing.
 (`Recorded as run s_... of project checkout-service`). The run is filed under
 the branch of the checkout, or, when the checkout is detached as CI checkouts
 often are, the branch the CI variables name (`GITHUB_HEAD_REF`,
-`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`, `BUILD_SOURCEBRANCH` and others). A
-paused project still records the runs that name it. When Armis records no
+`GITHUB_REF_NAME`, `CI_COMMIT_BRANCH`, `BUILD_SOURCEBRANCH` and others).
+`--branch <name>` files it under that branch instead, for an exported tree, a
+folder that isn't a git checkout, or a CI the CLI doesn't know; a name git
+would refuse as a branch fails before anything is uploaded. A paused project
+still records the runs that name it. When Armis records no
 run, the scan still runs and gates as usual, and the CLI says why:
 
 - the tenant does not record CLI scans as project runs yet;
@@ -888,8 +891,9 @@ Notes:
 - `--changed` and `--include-files` cannot be published. A run covering a few
   files would under-report the project's findings. They still work for local
   gating without `--project`.
-- `--project`, `--report`, `--sync`, `--async`, `--project-label` and
-  `--no-input` are available on `scan repo` and on the `scan <path>` shorthand.
+- `--project`, `--report`, `--sync`, `--async`, `--project-label`, `--branch`
+  and `--no-input` are available on `scan repo` and on the `scan <path>`
+  shorthand.
 
 ### Scan Container Image
 

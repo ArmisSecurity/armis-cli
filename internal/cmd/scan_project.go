@@ -12,6 +12,7 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/output"
 	"github.com/ArmisSecurity/armis-cli/internal/progress"
 	"github.com/ArmisSecurity/armis-cli/internal/project"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/repo"
 	"github.com/ArmisSecurity/armis-cli/internal/util"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +50,17 @@ func validatePublishFlags(cmd *cobra.Command) (project.Decision, error) {
 		return project.Decision{}, fmt.Errorf("invalid --project-label: %w", err)
 	}
 	projectLabels = labels
+
+	// Like --project, a --branch that was passed but is empty still fails.
+	if runBranch != "" || cmd.Flags().Changed("branch") {
+		if projectName == "" {
+			return project.Decision{}, fmt.Errorf("--branch names the branch a published run is filed under, so it " +
+				"needs --project (for example: --project my-service --branch main)")
+		}
+		if err := repo.ValidateBranch(runBranch); err != nil {
+			return project.Decision{}, fmt.Errorf("invalid --branch: %w", err)
+		}
+	}
 
 	ci, ciVar := progress.DetectCI()
 	decision := project.Decide(projectName, reportScan, ci, ciVar)
