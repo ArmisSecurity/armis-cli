@@ -235,9 +235,27 @@ func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store 
 	id := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v1/appsec/projects"), "/")
 	switch {
 	case id == "" && r.Method == http.MethodGet:
+		// As the API since PPSC-2019: one page, numbered, and a 422 for a
+		// parameter the route doesn't declare, the older limit and cursor
+		// among them.
+		var unknown []map[string]any
+		for name := range r.URL.Query() {
+			switch name {
+			case "tenant_id", "q", "status", "sort", "page", "page_size":
+			default:
+				unknown = append(unknown, map[string]any{
+					"type": "extra_forbidden", "loc": []string{"query", name}, "msg": "Extra inputs are not permitted",
+				})
+			}
+		}
+		if len(unknown) > 0 {
+			JSONResponse(t, w, http.StatusUnprocessableEntity, map[string]any{detailKey: unknown})
+			return
+		}
+		data := store.list(r.URL.Query().Get("q"), r.URL.Query()["status"])
 		JSONResponse(t, w, http.StatusOK, model.ProjectListResponse{
-			Data:       store.list(r.URL.Query().Get("q"), r.URL.Query()["status"]),
-			Pagination: model.ProjectListPagination{Limit: 200},
+			Data:       data,
+			Pagination: model.ProjectListPagination{Page: 1, PageSize: 200, TotalItems: len(data), TotalPages: 1},
 		})
 	case id == "" && r.Method == http.MethodPost:
 		var req model.ProjectCreateRequest

@@ -65,7 +65,17 @@ type ProjectCreateRequest struct {
 }
 
 // ProjectListPagination is the pagination block of GET /api/v1/appsec/projects.
+// A server since PPSC-2019 pages by number (Page, PageSize, TotalItems,
+// TotalPages); an older one by cursor (NextCursor, null on the last page, and
+// Limit).
 type ProjectListPagination struct {
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	TotalItems int `json:"total_items"`
+	// TotalPages is at least 1 from a server that pages by number, and 0
+	// (absent) from one that pages by cursor.
+	TotalPages int `json:"total_pages"`
+
 	NextCursor *string `json:"next_cursor"`
 	Limit      int     `json:"limit"`
 }

@@ -23,8 +23,13 @@ const winnerID = "p_winner"
 
 // fakeAPI serves scripted project pages and records every call.
 type fakeAPI struct {
-	// pages maps a cursor ("" for the first page) to the page served for it.
+	// pages maps a cursor ("" for the first page) to the page served for
+	// it, as a server before PPSC-2019 pages: by cursor, ignoring page.
 	pages map[string]model.ProjectListResponse
+	// numbered, when set, are the pages a server since PPSC-2019 serves by
+	// number, from 1. It refuses a cursor, and a page past the last is
+	// empty.
+	numbered []model.ProjectListResponse
 	// listErr, when set, fails every ListProjects call.
 	listErr error
 	// createFn handles CreateProject; nil means "create succeeds".
@@ -44,6 +49,19 @@ func (f *fakeAPI) ListProjects(_ context.Context, tenantID string, opts api.Proj
 	f.listCalls = append(f.listCalls, opts)
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+	if f.numbered != nil {
+		if opts.Cursor != "" {
+			return nil, &api.AppSecError{StatusCode: http.StatusUnprocessableEntity,
+				Detail: "query.cursor: Extra inputs are not permitted"}
+		}
+		n := max(opts.Page, 1)
+		if n > len(f.numbered) {
+			return &model.ProjectListResponse{Pagination: model.ProjectListPagination{
+				Page: n, PageSize: lookupPageSize, TotalPages: len(f.numbered)}}, nil
+		}
+		resp := f.numbered[n-1]
+		return &resp, nil
 	}
 	page, ok := f.pages[opts.Cursor]
 	if !ok {
@@ -84,6 +102,20 @@ func page(next string, projects ...model.Project) model.ProjectListResponse {
 	return resp
 }
 
+// numberedPages are a server's pages by number, each with the page count.
+func numberedPages(pages ...[]model.Project) []model.ProjectListResponse {
+	total := 0
+	for _, projects := range pages {
+		total += len(projects)
+	}
+	out := make([]model.ProjectListResponse, len(pages))
+	for i, projects := range pages {
+		out[i] = model.ProjectListResponse{Data: projects, Pagination: model.ProjectListPagination{
+			Page: i + 1, PageSize: lookupPageSize, TotalItems: total, TotalPages: len(pages)}}
+	}
+	return out
+}
+
 func proj(id, name, status string) model.Project {
 	return model.Project{ProjectID: id, Name: name, Status: status, ProjectType: model.ProjectTypeCICD}
 }
@@ -122,13 +154,14 @@ func TestResolve_ExistingProjectIsReused(t *testing.T) {
 		t.Fatalf("list calls = %d, want 1", len(f.listCalls))
 	}
 	got := f.listCalls[0]
-	if got.Query != testName || got.Sort != "name_asc" || got.Limit != 200 ||
+	if got.Query != testName || got.Sort != "name_asc" || got.PageSize != 200 || got.Page != 1 || got.Cursor != "" ||
 		strings.Join(got.Statuses, ",") != "active,paused,archived" {
 		t.Errorf("lookup options = %+v", got)
 	}
 }
 
-func TestResolve_FollowsPagination(t *testing.T) {
+// A server before PPSC-2019 ignores page and page_size, and pages by cursor.
+func TestResolve_FollowsAnOlderServersCursor(t *testing.T) {
 	f := &fakeAPI{pages: map[string]model.ProjectListResponse{
 		// Sorted as the API sorts (byte order): matches before "svc" first.
 		"":   page("c1", proj("p_1", "a-svc", "active")),
@@ -143,11 +176,92 @@ func TestResolve_FollowsPagination(t *testing.T) {
 		t.Errorf("got %+v, want the existing p_3 from the last page", res)
 	}
 	cursors := make([]string, 0, len(f.listCalls))
-	for _, c := range f.listCalls {
+	for i, c := range f.listCalls {
 		cursors = append(cursors, c.Cursor)
+		// Page 1 is asked by number, as a newer server wants; the cursor's
+		// pages by cursor alone.
+		wantPage := 0
+		if i == 0 {
+			wantPage = 1
+		}
+		if c.Page != wantPage || c.PageSize != 200 {
+			t.Errorf("call %d: page %d, page size %d", i, c.Page, c.PageSize)
+		}
 	}
 	if strings.Join(cursors, "|") != "|c1|c2" {
 		t.Errorf("cursors = %q, want \"|c1|c2\"", cursors)
+	}
+}
+
+// A server since PPSC-2019 pages by number, says how many pages there are,
+// and refuses a cursor.
+func TestResolve_PagesByNumber(t *testing.T) {
+	f := &fakeAPI{numbered: numberedPages(
+		[]model.Project{proj("p_1", "a-svc", "active")},
+		[]model.Project{proj("p_2", "my-svc", "active")},
+		[]model.Project{proj("p_3", testName, "active")},
+	)}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if res.Project.ProjectID != "p_3" || res.Created {
+		t.Errorf("got %+v, want the existing p_3 from the last page", res)
+	}
+	for i, c := range f.listCalls {
+		if c.Page != i+1 || c.Cursor != "" || c.PageSize != 200 {
+			t.Errorf("call %d = %+v, want page %d by number", i, c, i+1)
+		}
+	}
+	if len(f.listCalls) != 3 {
+		t.Errorf("list calls = %d, want 3", len(f.listCalls))
+	}
+}
+
+func TestResolve_NumberedLookupEndsOnTheLastPage(t *testing.T) {
+	f := &fakeAPI{numbered: numberedPages(
+		[]model.Project{proj("p_1", "a-svc", "active")},
+		[]model.Project{proj("p_2", "my-svc", "active")},
+	)}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !res.Created || len(f.listCalls) != 2 {
+		t.Errorf("created = %v after %d list calls; want a create after reading both pages", res.Created, len(f.listCalls))
+	}
+}
+
+func TestResolve_NumberedLookupStopsOncePastTheName(t *testing.T) {
+	f := &fakeAPI{numbered: numberedPages(
+		[]model.Project{proj("p_1", "SVC", "active"), proj("p_2", "a-svc", "active")},
+		[]model.Project{proj("p_3", "t-svc", "active")},
+		[]model.Project{proj("p_4", "svC", "active")}, // never reached: past "svc"
+	)}
+	_, err := Resolve(context.Background(), f, testTenant, testName)
+	var mismatch *CaseMismatchError
+	if !errors.As(err, &mismatch) || strings.Join(mismatch.Existing, ",") != "SVC" {
+		t.Fatalf("err = %v, want a case mismatch naming SVC", err)
+	}
+	if len(f.listCalls) != 2 {
+		t.Errorf("list calls = %d, want 2 (the second page ends past %q)", len(f.listCalls), testName)
+	}
+}
+
+func TestResolve_NumberedLookupIsBounded(t *testing.T) {
+	pages := make([][]model.Project, maxLookupPages+5)
+	for i := range pages {
+		// Zero-padded so the pages stay in byte order, all before "svc".
+		pages[i] = []model.Project{proj("p_"+strconv.Itoa(i), fmt.Sprintf("a-svc-%03d", i), "active")}
+	}
+	f := &fakeAPI{numbered: numberedPages(pages...)}
+	res, err := Resolve(context.Background(), f, testTenant, testName)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(f.listCalls) != maxLookupPages || !res.Created {
+		t.Errorf("list calls = %d, created = %v; want the bound %d, then the fallback create",
+			len(f.listCalls), res.Created, maxLookupPages)
 	}
 }
 
