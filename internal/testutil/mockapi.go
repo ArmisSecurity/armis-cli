@@ -83,6 +83,14 @@ type MockAPIConfig struct {
 	// ProjectsDisabled makes every /api/v1/appsec/projects call return the bare
 	// 404 the API sends when the AppSec UI is not enabled for the tenant.
 	ProjectsDisabled bool
+	// RunFindings, when set, answers GET /api/v1/appsec/projects/{project_id}/
+	// scans/{run_id}/findings with the status and JSON body it returns, as a
+	// server that keeps CLI runs' findings in AppSec does. Unset, the route
+	// answers 404, as on a server that predates it.
+	RunFindings func(r *http.Request) (int, any)
+	// ScanFilters, when set, answers GET /api/v1/appsec/projects/{project_id}/
+	// scan-filters likewise; unset, it answers 404.
+	ScanFilters func(r *http.Request) (int, any)
 	// Recorder, when set, records every request the mock receives.
 	Recorder *RequestRecorder
 }
@@ -195,6 +203,20 @@ func (m *mockProjects) get(id string) (model.Project, bool) {
 	return model.Project{}, false
 }
 
+// projectSubroute is the handler config sets for a project's subroute, or nil.
+func projectSubroute(path string, config MockAPIConfig) func(r *http.Request) (int, any) {
+	if !strings.HasPrefix(path, "/api/v1/appsec/projects/") {
+		return nil
+	}
+	switch {
+	case strings.Contains(path, "/scans/") && strings.HasSuffix(path, "/findings"):
+		return config.RunFindings
+	case strings.HasSuffix(path, "/scan-filters"):
+		return config.ScanFilters
+	}
+	return nil
+}
+
 // handleProjects serves /api/v1/appsec/projects[/{id}] from store.
 func handleProjects(t *testing.T, w http.ResponseWriter, r *http.Request, store *mockProjects, disabled bool) {
 	t.Helper()
@@ -298,6 +320,14 @@ func createMockHandler(t *testing.T, config MockAPIConfig) http.HandlerFunc {
 		}
 		if config.Recorder != nil {
 			config.Recorder.record(r)
+		}
+
+		// A project run's findings, and a project's scan filters.
+		if answer := projectSubroute(r.URL.Path, config); answer != nil {
+			AssertHasAuthorization(t, r)
+			status, body := answer(r)
+			JSONResponse(t, w, status, body)
+			return
 		}
 
 		// AppSec projects: GET/POST /api/v1/appsec/projects, GET .../{id}.

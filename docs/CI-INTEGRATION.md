@@ -324,6 +324,40 @@ a pull request's source branch. Once the scan starts, the CLI prints the run's
 id, or why Armis did not record one; the scan runs and gates either way. See
 [Publish to a Project](../README.md#publish-to-a-project).
 
+A recorded run's findings are read from AppSec, so the job's output and
+`--fail-on` match the run in the Armis UI. The project's Armis scan filters
+apply on the server: a finding they suppress (below the severity threshold, or
+by a severity, category or CWE) is left out of the output and of `--fail-on`,
+and `--show-suppressed` shows it with its filter. The repository's root
+`.armisignore` still applies on top.
+
+The step exits `2`, never `0`, on findings it couldn't read:
+
+- Armis recorded the run as failed;
+- the read failed after its retries, or the findings it read don't add up to
+  the run's list and counts;
+- the findings are kept in AppSec, but the legacy read the CLI falls back to
+  answers `409 project_run_findings`: AppSec recorded none for the run, had not
+  recorded them within `--scan-timeout`, or could not serve them (the warning
+  says which);
+- Armis kept only the 50,000 most severe of the run's findings, and a
+  `--fail-on` level is left undecided by the ones it kept.
+
+A recorded run's findings hold what the findings history keeps, which is less
+than an unpublished scan's:
+
+- no columns, fix proposals (`proposed_fixes`, `vulnerable_code`,
+  `patch_files`) or OWASP titles;
+- no `is_valid`: whether the verifier held a finding or its fix valid is left
+  out of the JSON and SARIF, and the fix reads `Fix` rather than `Validated
+  Fix` or `Proposed Fix`;
+- text within the history's caps: description 16 KiB, details and patch 32 KiB,
+  snippet 8 KiB, 20 URLs;
+- each finding's category is its type's, so a finding the normalizer filed under
+  `POLICY_VIOLATION` or `UNKNOWN` (some Gitleaks rules, Checkov checks it doesn't
+  classify) gets another SARIF `ruleId` and can match `category:` directives
+  differently than on an unpublished scan.
+
 ```yaml
 # GitHub Actions: gate on HIGH/CRITICAL and publish to "checkout-service"
 - name: Armis scan

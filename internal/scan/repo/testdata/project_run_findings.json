@@ -1,0 +1,162 @@
+[
+  {
+    "finding_id": "f_0c71a4d29e5b3f8a6c1d7e2b9f4a0c63",
+    "title": "User input reaches a raw SQL query.",
+    "type": "sast",
+    "severity": "high",
+    "asset": {"asset_id": "a_1", "name": "orders.ts", "version": null, "type": "source"},
+    "location": {"path": "src/db/orders.ts", "line": 21},
+    "rule": {"value": "CWE-89", "kind": "cwe", "more": 0},
+    "triage_state": "in_triage",
+    "triage": null,
+    "branches": ["main"],
+    "suppression": null,
+    "detail": {
+      "finding_id": "f_0c71a4d29e5b3f8a6c1d7e2b9f4a0c63",
+      "title": "User input reaches a raw SQL query.",
+      "description": "User input reaches a raw SQL query. Use parameters.",
+      "details_markdown": "## Why\nThe id reaches the query.",
+      "type": "sast",
+      "severity": "high",
+      "location": {"path": "src/db/orders.ts", "start_line": 21, "end_line": 22},
+      "identifiers": {"cves": [], "cwes": ["CWE-89"], "owasp": ["A03:2021"], "rule_id": "sql-injection", "license": null},
+      "exploitability": "high",
+      "evidence": {
+        "kind": "sast",
+        "category": "injection",
+        "reachability": {"verdict": "reachable", "exposure": 6},
+        "confidence": 90,
+        "snippet": {"start_line": 19, "end_line": 24, "highlight": [21, 22], "code": "const q = `SELECT * FROM orders WHERE id = ${id}`;\n"},
+        "tainted_functions": ["listOrders"],
+        "classification": {"cwes": [{"id": "CWE-89", "name": "SQL Injection"}], "owasp": ["A03:2021"]},
+        "verification": {"result": null, "severity_before": null, "explanation": "The route is public."}
+      },
+      "vulnerabilities": [],
+      "vulnerabilities_total": 0,
+      "remediation": {"summary": "Bind the id as a parameter.", "patch": "-raw\n+bound", "guideline_url": null, "fix_version": null, "latest_clean_version": null},
+      "references": ["https://cwe.mitre.org/data/definitions/89.html"],
+      "suppression": null
+    }
+  },
+  {
+    "finding_id": "f_1d82b5e30f6c4a9b7d2e8f3c0a5b1d74",
+    "title": "3 vulnerabilities in xml2js@0.4.19",
+    "type": "sca",
+    "severity": "critical",
+    "asset": {"asset_id": "a_2", "name": "xml2js", "version": "0.4.19", "type": "package"},
+    "location": {"path": "package-lock.json", "line": 18},
+    "rule": {"value": "CVE-2023-0842", "kind": "cve", "more": 2},
+    "suppression": {"source": "project", "directive": "severity_threshold", "value": "HIGH"},
+    "detail": {
+      "description": "Prototype pollution in xml2js.",
+      "details_markdown": null,
+      "location": {"path": "package-lock.json", "start_line": 18, "end_line": 18},
+      "identifiers": {"cves": ["CVE-2023-0842", "CVE-2023-0843", "CVE-2023-0844"], "cwes": [], "owasp": [], "rule_id": null, "license": null},
+      "exploitability": null,
+      "evidence": {
+        "kind": "sca",
+        "direct_dependency": {"name": "xml2js", "version": "0.4.19"},
+        "dependency": {"direct": true, "paths": [], "paths_total": 0},
+        "manifest": {"path": "package-lock.json", "line": 18, "snippet": {"start_line": 18, "end_line": 18, "highlight": [18], "code": "\"xml2js\": \"0.4.19\""}}
+      },
+      "remediation": {"summary": null, "patch": null, "guideline_url": null, "fix_version": "0.5.0", "latest_clean_version": "0.6.2"},
+      "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-0842"]
+    }
+  },
+  {
+    "finding_id": "f_2e93c6f41a7d5b0c8e3f9a4d1b6c2e85",
+    "title": "AWS access token",
+    "type": "secret",
+    "severity": "critical",
+    "asset": {"asset_id": "a_3", "name": "env.sh", "version": null, "type": "source"},
+    "location": {"path": "deploy/env.sh", "line": 7},
+    "rule": {"value": "aws-access-token", "kind": "rule", "more": 0},
+    "suppression": null,
+    "detail": {
+      "description": null,
+      "details_markdown": null,
+      "location": {"path": "deploy/env.sh", "start_line": 7, "end_line": 7},
+      "identifiers": {"cves": [], "cwes": [], "owasp": [], "rule_id": "aws-access-token", "license": null},
+      "exploitability": null,
+      "evidence": {"kind": "secret", "rule_id": "aws-access-token", "secret_kind": "aws-access-token", "snippet": null, "snippet_hidden_reason": "sensitive"},
+      "remediation": {"summary": null, "patch": null, "guideline_url": null, "fix_version": null, "latest_clean_version": null},
+      "references": []
+    }
+  },
+  {
+    "finding_id": "f_3fa4d7052b8e6c1d9f4a0b5e2c7d3f96",
+    "title": "S3 bucket has no server-side encryption.",
+    "type": "iac",
+    "severity": "medium",
+    "asset": {"asset_id": "a_4", "name": "main.tf", "version": null, "type": "iac"},
+    "location": {"path": "infra/main.tf", "line": 4},
+    "rule": {"value": "CKV_AWS_19", "kind": "rule", "more": 0},
+    "suppression": {"source": "tenant", "directive": "cwe", "value": "311"},
+    "detail": {
+      "description": "S3 bucket has no server-side encryption.",
+      "details_markdown": null,
+      "location": {"path": "infra/main.tf", "start_line": 4, "end_line": 9},
+      "identifiers": {"cves": [], "cwes": ["CWE-311"], "owasp": [], "rule_id": "CKV_AWS_19", "license": null},
+      "exploitability": null,
+      "evidence": {"kind": "iac", "check_id": "CKV_AWS_19", "check_name": "Ensure S3 encryption", "framework": "terraform", "resource": "aws_s3_bucket.assets",
+        "snippet": {"start_line": 4, "end_line": 9, "highlight": [4], "code": "resource \"aws_s3_bucket\" \"assets\" {"}},
+      "remediation": {"summary": null, "patch": null, "guideline_url": "https://docs.example/ckv_aws_19", "fix_version": null, "latest_clean_version": null},
+      "references": ["https://docs.example/ckv_aws_19"]
+    }
+  },
+  {
+    "finding_id": "f_4ab5e8163c9f7d2e0a5b1c6f3d8e4a07",
+    "title": "GPL-3.0-only license in left-pad@1.3.0",
+    "type": "license",
+    "severity": "low",
+    "asset": {"asset_id": "a_5", "name": "left-pad", "version": "1.3.0", "type": "package"},
+    "location": {"path": "package.json", "line": 12},
+    "rule": {"value": "GPL-3.0-only", "kind": "license", "more": 0},
+    "suppression": null,
+    "detail": {
+      "description": "A restricted license.",
+      "details_markdown": null,
+      "location": {"path": "package.json", "start_line": 12, "end_line": null},
+      "identifiers": {"cves": [], "cwes": [], "owasp": [], "rule_id": null, "license": "GPL-3.0-only"},
+      "exploitability": null,
+      "evidence": {"kind": "license", "license": {"id": "GPL-3.0-only", "raw": "GPL-3.0", "class": "restricted"}, "package": {"name": "left-pad", "version": "1.3.0"}, "dependency": {"direct": true, "paths": [], "paths_total": 0}},
+      "remediation": null,
+      "references": [],
+      "some_future_field": {"ignored": true}
+    }
+  },
+  {
+    "finding_id": "f_5bc6f9274dae8e3f1b6c2d7a4e9f5b18",
+    "title": "Finding of rule 'detected-private-key'",
+    "type": "sast",
+    "severity": "high",
+    "asset": {"asset_id": "a_6", "name": "server.key", "version": null, "type": "source"},
+    "location": {"path": "certs/server.key", "line": 1},
+    "rule": {"value": "CWE-798: Use of Hard-coded Credentials", "kind": "cwe", "more": 0},
+    "suppression": null,
+    "detail": {
+      "description": null,
+      "details_markdown": null,
+      "location": {"path": "certs/server.key", "start_line": 1, "end_line": 2},
+      "identifiers": {"cves": [], "cwes": ["CWE-798: Use of Hard-coded Credentials"], "owasp": [], "rule_id": "detected-private-key", "license": null},
+      "exploitability": null,
+      "evidence": {
+        "kind": "sast",
+        "category": null,
+        "reachability": {"verdict": "unknown", "exposure": null},
+        "attacker_prerequisite": null,
+        "data_flow": null,
+        "exploit": null,
+        "impact": null,
+        "confidence": null,
+        "snippet": null,
+        "snippet_hidden_reason": "sensitive",
+        "tainted_functions": [],
+        "classification": {"cwes": [{"id": "CWE-798: Use of Hard-coded Credentials", "name": null}], "owasp": []},
+        "verification": null
+      },
+      "remediation": {"summary": null, "patch": null, "guideline_url": null, "fix_version": null, "latest_clean_version": null},
+      "references": ["https://cwe.mitre.org/data/definitions/798"]
+    }
+  }
+]

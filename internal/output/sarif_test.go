@@ -313,14 +313,14 @@ func TestSARIFFormatter_WithFixAndValidation(t *testing.T) {
 				StartLine:   42,
 				CWEs:        []string{"CWE-89"},
 				Fix: &model.Fix{
-					IsValid:         true,
+					IsValid:         new(true),
 					Explanation:     "Use parameterized queries to prevent SQL injection",
 					Recommendations: "Replace string concatenation with prepared statements",
 					Patch:           &patch,
 					Feedback:        "Fix verified as correct",
 				},
 				Validation: &model.FindingValidation{
-					IsValid:           true,
+					IsValid:           new(true),
 					ValidatedSeverity: ptr("CRITICAL"),
 					Confidence:        92,
 					Explanation:       "User input flows directly to SQL query",
@@ -366,7 +366,7 @@ func TestSARIFFormatter_WithFixAndValidation(t *testing.T) {
 	if result1.Properties.Fix == nil {
 		t.Fatal("Expected fix properties to be set for finding with fix")
 	}
-	if !result1.Properties.Fix.IsValid {
+	if isValid := result1.Properties.Fix.IsValid; isValid == nil || !*isValid {
 		t.Error("Expected fix.isValid to be true")
 	}
 	if result1.Properties.Fix.Explanation != "Use parameterized queries to prevent SQL injection" {
@@ -386,7 +386,7 @@ func TestSARIFFormatter_WithFixAndValidation(t *testing.T) {
 	if result1.Properties.Validation == nil {
 		t.Fatal("Expected validation properties to be set for finding with validation")
 	}
-	if !result1.Properties.Validation.IsValid {
+	if isValid := result1.Properties.Validation.IsValid; isValid == nil || !*isValid {
 		t.Error("Expected validation.isValid to be true")
 	}
 	if result1.Properties.Validation.Confidence != 92 {
@@ -432,7 +432,7 @@ func TestSARIFFormatter_StandardFixesArray(t *testing.T) {
 				StartLine:   42,
 				EndLine:     44,
 				Fix: &model.Fix{
-					IsValid:     true,
+					IsValid:     new(true),
 					Explanation: "Use parameterized queries to prevent SQL injection",
 					VulnerableCode: &model.CodeSnippetFix{
 						FilePath:  "main.go",
@@ -536,7 +536,7 @@ func TestSARIFFormatter_FixesArrayWithPatchFiles(t *testing.T) {
 				StartLine:   10,
 				EndLine:     12,
 				Fix: &model.Fix{
-					IsValid:     true,
+					IsValid:     new(true),
 					Explanation: "Escape HTML output",
 					PatchFiles: map[string]string{
 						"template.html": "<div>{{ .UserInput | html }}</div>",
@@ -1134,7 +1134,7 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 					EndLine:     27,
 					CWEs:        []string{"CWE-78"},
 					Fix: &model.Fix{
-						IsValid:         true,
+						IsValid:         new(true),
 						Explanation:     "Use exec.Command with separate arguments instead of shell execution",
 						Recommendations: "Replace os/exec shell call with argument array",
 						PatchFiles: map[string]string{
@@ -1142,7 +1142,7 @@ func TestSARIF_SchemaValidation(t *testing.T) {
 						},
 					},
 					Validation: &model.FindingValidation{
-						IsValid:           true,
+						IsValid:           new(true),
 						Confidence:        95,
 						ValidatedSeverity: ptr("CRITICAL"),
 						TaintPropagation:  model.TaintReachable,

@@ -334,7 +334,7 @@ func TestFinding_WithValidation(t *testing.T) {
 		Severity: SeverityHigh,
 		Title:    "Validated Finding",
 		Validation: &FindingValidation{
-			IsValid:           true,
+			IsValid:           new(true),
 			ValidatedSeverity: &validatedSeverity,
 			Confidence:        85,
 			Explanation:       "This is a valid finding",
@@ -356,7 +356,7 @@ func TestFinding_WithValidation(t *testing.T) {
 	if unmarshaled.Validation == nil {
 		t.Fatal("Expected validation to be present")
 	}
-	if unmarshaled.Validation.IsValid != true {
+	if unmarshaled.Validation.IsValid == nil || !*unmarshaled.Validation.IsValid {
 		t.Error("IsValid mismatch")
 	}
 	if unmarshaled.Validation.Confidence != 85 {
@@ -404,7 +404,7 @@ func TestFinding_WithFix(t *testing.T) {
 			},
 			Explanation:     "Replace vulnerable code with fixed code",
 			Recommendations: "Update to latest version",
-			IsValid:         true,
+			IsValid:         new(true),
 			Feedback:        "Fix verified",
 		},
 	}
@@ -455,4 +455,45 @@ func TestSummarizeFindings(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("SummarizeFindings() = %+v, want %+v", got, want)
 	}
+}
+
+// An API validation or fix always says whether the verifier held it valid, so
+// one decoded without is_valid reads false and still prints it: only one the
+// CLI builds itself (a recorded project run's) leaves it unknown, and out.
+func TestFindingValidity_DecodesAsTheAPIServesIt(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+	}{
+		{"is_valid true", `{"is_valid":true}`, `"is_valid":true`},
+		{"is_valid false", `{"is_valid":false}`, `"is_valid":false`},
+		{"no is_valid", `{}`, `"is_valid":false`},
+		{"a null is_valid", `{"is_valid":null}`, `"is_valid":false`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var extra ExtraData
+			body := `{"finding_validation":` + tt.body + `,"fix":` + tt.body + `}`
+			if err := json.Unmarshal([]byte(body), &extra); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			for name, value := range map[string]any{"validation": extra.FindingValidation, "fix": extra.Fix} {
+				out, err := json.Marshal(value)
+				if err != nil {
+					t.Fatalf("encode %s: %v", name, err)
+				}
+				if !strings.Contains(string(out), tt.want) {
+					t.Errorf("%s = %s, want it to hold %s", name, out, tt.want)
+				}
+			}
+		})
+	}
+
+	t.Run("an unknown validity is left out", func(t *testing.T) {
+		out, err := json.Marshal(Finding{Validation: &FindingValidation{Confidence: 90}, Fix: &Fix{Explanation: "e"}})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		if strings.Contains(string(out), "is_valid") {
+			t.Errorf("finding = %s, want no is_valid", out)
+		}
+	})
 }

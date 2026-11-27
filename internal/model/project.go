@@ -75,3 +75,10 @@ type ProjectListResponse struct {
 	Data       []Project             `json:"data"`
 	Pagination ProjectListPagination `json:"pagination"`
 }
+
+// ProjectScanFilters is GET /api/v1/appsec/projects/{project_id}/scan-filters,
+// trimmed to what --debug prints: the filters the project's next scan applies,
+// written as an .armisignore.
+type ProjectScanFilters struct {
+	Armisignore string `json:"armisignore"`
+}

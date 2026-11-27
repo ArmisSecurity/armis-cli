@@ -1,0 +1,597 @@
+package repo
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ArmisSecurity/armis-cli/internal/model"
+	"github.com/ArmisSecurity/armis-cli/internal/output"
+	"github.com/ArmisSecurity/armis-cli/internal/scan"
+	"github.com/ArmisSecurity/armis-cli/internal/scan/testhelpers"
+	"github.com/ArmisSecurity/armis-cli/internal/testutil"
+)
+
+const (
+	testRecordedProject = "p_66f2a1b2c3d4e5f6a7b8c9d0"
+	testRecordedRun     = "s_6730a1b2c3d4e5f6a7b8c9d0"
+)
+
+// recordedRun is what /ingest/scan answers for a scan it recorded.
+func recordedRun() *model.ProjectRun {
+	return &model.ProjectRun{Recorded: true, ProjectID: testRecordedProject, RunID: testRecordedRun}
+}
+
+// runServer is a mock API for a published scan: /ingest/scan answers run,
+// the AppSec findings route answers appSec in order (the last one repeats),
+// and the legacy route answers legacy.
+type runServer struct {
+	mu          sync.Mutex
+	run         *model.ProjectRun
+	appSec      []func(http.ResponseWriter)
+	legacy      func(http.ResponseWriter)
+	appSecCalls int
+	legacyCalls int
+}
+
+func (s *runServer) counts() (appSec, legacy int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appSecCalls, s.legacyCalls
+}
+
+func newRunServer(t *testing.T, srv *runServer) string {
+	t.Helper()
+	ts := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/presigned-url"):
+			testutil.JSONResponse(t, w, http.StatusOK, model.PresignedUploadResponse{
+				ScanID:       testScanID,
+				PresignedURL: testhelpers.SchemeFromRequest(r) + "://" + r.Host + "/_s3/upload",
+				Fields:       map[string]string{"key": "k", "policy": "p", "x-amz-signature": "s"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/_s3/"):
+			testutil.AssertValidS3Upload(t, r)
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/scan"):
+			srv.mu.Lock()
+			run := srv.run
+			srv.mu.Unlock()
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestUploadResponse{
+				ScanID: testScanID, ScanStatus: "INITIATED", ProjectRun: run,
+			})
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/status"):
+			testutil.JSONResponse(t, w, http.StatusOK, model.IngestStatusResponse{
+				Data: []model.IngestStatusData{{ScanID: testScanID, ScanStatus: "COMPLETED"}},
+			})
+		case r.URL.Path == "/api/v1/appsec/projects/"+testRecordedProject+"/scans/"+testRecordedRun+"/findings":
+			srv.mu.Lock()
+			i := srv.appSecCalls
+			if i >= len(srv.appSec) {
+				i = len(srv.appSec) - 1
+			}
+			srv.appSecCalls++
+			answer := srv.appSec[i]
+			srv.mu.Unlock()
+			answer(w)
+		case r.URL.Path == "/api/v1/appsec/projects/"+testRecordedProject+"/scan-filters":
+			w.WriteHeader(http.StatusNotFound)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/normalized-results"):
+			srv.mu.Lock()
+			srv.legacyCalls++
+			legacy := srv.legacy
+			srv.mu.Unlock()
+			if legacy == nil {
+				t.Errorf("unexpected legacy read")
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			legacy(w)
+		case strings.Contains(r.URL.Path, "/api/v1/ingest/results"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	return ts.URL
+}
+
+// appSecPage answers one page: the fixture's rows (or none), with empty
+// state reason when not "". A truncated run counts 40,000 more findings than
+// it kept, and 2 suppressed; any other counts exactly its rows.
+func appSecPage(t *testing.T, rows []model.RunFinding, reason string, truncated bool) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		suppressed := 0
+		for i := range rows {
+			if rows[i].Suppression != nil {
+				suppressed++
+			}
+		}
+		counts := map[string]any{"total": len(rows) - suppressed, "matching": len(rows), "suppressed": suppressed}
+		if truncated {
+			counts = map[string]any{"total": len(rows) + 40_000, "matching": len(rows), "suppressed": 2}
+		}
+		page := map[string]any{
+			"data":        rows,
+			"pagination":  map[string]any{"page": 1, "page_size": 100, "total_items": len(rows), "total_pages": 1},
+			"counts":      counts,
+			"truncated":   truncated,
+			"empty_state": nil,
+		}
+		if reason != "" {
+			page["empty_state"] = map[string]any{"reason": reason}
+			page["counts"] = nil
+		}
+		testutil.JSONResponse(t, w, http.StatusOK, page)
+	}
+}
+
+func appSecStatus(status int, body string) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// legacyFindings answers the legacy read with one SAST finding.
+func legacyFindings(t *testing.T) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		file, line := "legacy.go", 3
+		testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{
+			Data: model.NormalizedResultsData{ScanResults: []model.ScanResultData{{
+				ScanID: testScanID,
+				Findings: []model.NormalizedFinding{{
+					NormalizedRemediation: model.NormalizedRemediation{
+						Description: "A legacy finding.", ToolSeverity: "HIGH", FindingCategory: "CODE_VULNERABILITY",
+					},
+					NormalizedTask: model.NormalizedTask{FindingID: "legacy-1", ExtraData: model.ExtraData{
+						CodeLocation: model.CodeLocation{FileName: &file, StartLine: &line},
+					}},
+				}},
+			}}},
+		})
+	}
+}
+
+// scanRecorded runs a published scan of a fresh repository against srv.
+func scanRecorded(t *testing.T, srv *runServer, timeout time.Duration, repo string) (*model.ScanResult, error) {
+	t.Helper()
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	url := newRunServer(t, srv)
+	scanner := newProjectTestScanner(t, url).WithProject(testRecordedProject, "cli_ci").
+		WithFetchRetryInterval(time.Millisecond)
+	scanner.timeout = timeout
+	if repo == "" {
+		repo = newProjectTestRepo(t)
+	}
+	return scanner.Scan(context.Background(), repo)
+}
+
+func TestScan_ARecordedRunIsReadFromAppSec(t *testing.T) {
+	rows := runFixture(t)
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){appSecPage(t, rows, "", false)}}
+
+	result, err := scanRecorded(t, srv, time.Minute, "")
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if appSec, legacy := srv.counts(); appSec != 1 || legacy != 0 {
+		t.Errorf("AppSec reads %d, legacy reads %d", appSec, legacy)
+	}
+	if len(result.Findings) != len(rows) {
+		t.Fatalf("findings = %d, want %d", len(result.Findings), len(rows))
+	}
+	// Two of the fixture's rows are suppressed by the project's filters: out of
+	// the totals and --fail-on.
+	if result.Summary.Suppressed != 2 || result.Summary.Total != len(rows)-2 {
+		t.Errorf("summary = %+v", result.Summary)
+	}
+	if result.Truncated != nil {
+		t.Errorf("truncated = %+v", result.Truncated)
+	}
+	if output.FailingCount(result, []string{"CRITICAL"}) != 1 {
+		t.Errorf("failing CRITICAL = %d, want 1: the secret, not the suppressed SCA finding",
+			output.FailingCount(result, []string{"CRITICAL"}))
+	}
+}
+
+func TestScan_ARecordedRunNotFinishedIsReadAgain(t *testing.T) {
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){
+		appSecPage(t, nil, "not_finished", false),
+		appSecPage(t, nil, "not_finished", false),
+		appSecPage(t, runFixture(t), "", false),
+	}}
+
+	result, err := scanRecorded(t, srv, time.Minute, "")
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if appSec, _ := srv.counts(); appSec != 3 || len(result.Findings) != len(runFixture(t)) {
+		t.Errorf("AppSec reads %d, findings %d", appSec, len(result.Findings))
+	}
+}
+
+// A run still not recorded at the timeout reads the legacy way once: a
+// server that keeps the run's findings in AppSec refuses that read (exit 2),
+// one that serves CLI runs' findings but keeps none of their history serves
+// them.
+func TestScan_ARunStillNotRecordedAtTheTimeoutReadsTheLegacyWayOnce(t *testing.T) {
+	t.Run("a server that keeps them in AppSec refuses it", func(t *testing.T) {
+		srv := &runServer{
+			run:    recordedRun(),
+			appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_finished", false)},
+			legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
+		}
+		var err error
+		stderr := testutil.CaptureStderr(t, func() {
+			_, err = scanRecorded(t, srv, 60*time.Millisecond, "")
+		})
+		var incomplete *output.ErrResultsIncomplete
+		if !errors.As(err, &incomplete) {
+			t.Errorf("err = %v, want ErrResultsIncomplete", err)
+		}
+		if _, legacy := srv.counts(); legacy != 1 {
+			t.Errorf("legacy reads %d, want 1", legacy)
+		}
+		if !strings.Contains(stderr, "which had not recorded them when the scan timeout ran out") {
+			t.Errorf("the warning doesn't say the timeout ran out:\n%s", stderr)
+		}
+	})
+
+	t.Run("a server that keeps no history of them serves it", func(t *testing.T) {
+		srv := &runServer{
+			run:    recordedRun(),
+			appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_finished", false)},
+			legacy: legacyFindings(t),
+		}
+		result, err := scanRecorded(t, srv, 60*time.Millisecond, "")
+		if err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		if _, legacy := srv.counts(); legacy != 1 || len(result.Findings) != 1 {
+			t.Errorf("legacy reads %d, findings %d", legacy, len(result.Findings))
+		}
+	})
+}
+
+// projectRunRefusal is the legacy read's 409 for the recorded run.
+func projectRunRefusal() string {
+	return `{"detail":{"code":"project_run_findings","message":"This scan is a run of an AppSec project",` +
+		`"context":{"project_id":"` + testRecordedProject + `","run_id":"` + testRecordedRun + `"}}}`
+}
+
+// A fallback the AppSec read's failure took says so when the legacy read is
+// refused, instead of saying AppSec recorded nothing.
+func TestScan_TheRefusedFallbackOfAFailedAppSecReadSaysWhy(t *testing.T) {
+	srv := &runServer{
+		run:    recordedRun(),
+		appSec: []func(http.ResponseWriter){appSecStatus(http.StatusNotFound, `{"detail":"No such scan run in this project.","error":"scan_not_found","context":{}}`)},
+		legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
+	}
+	var err error
+	stderr := testutil.CaptureStderr(t, func() {
+		_, err = scanRecorded(t, srv, time.Minute, "")
+	})
+	var incomplete *output.ErrResultsIncomplete
+	if !errors.As(err, &incomplete) {
+		t.Errorf("err = %v, want ErrResultsIncomplete", err)
+	}
+	if !strings.Contains(stderr, "which could not serve them: AppSec API returned 404 (scan_not_found): No such scan run in this project.") {
+		t.Errorf("the warning doesn't carry the AppSec error:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "none recorded") {
+		t.Errorf("the warning says AppSec recorded nothing:\n%s", stderr)
+	}
+}
+
+// Ctrl+C while the CLI waits for the run's findings to be recorded is a
+// cancel (exit 130), not incomplete results (exit 2).
+func TestScan_ACancelDuringTheWaitForTheRunsFindingsIsACancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notFinished := appSecPage(t, nil, "not_finished", false)
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){func(w http.ResponseWriter) {
+		notFinished(w)
+		cancel()
+	}}}
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	scanner := newProjectTestScanner(t, newRunServer(t, srv)).WithProject(testRecordedProject, "cli_ci").
+		WithFetchRetryInterval(time.Millisecond)
+	scanner.timeout = time.Minute
+
+	_, err := scanner.Scan(ctx, newProjectTestRepo(t))
+	var incomplete *output.ErrResultsIncomplete
+	if !errors.Is(err, context.Canceled) || errors.As(err, &incomplete) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if _, legacy := srv.counts(); legacy != 0 {
+		t.Errorf("legacy reads %d, want none", legacy)
+	}
+}
+
+// A Ctrl+C while a read waits to be retried cancels at once: the legacy read
+// of results that haven't landed yet, and a recorded run's AppSec read that
+// timed out (the reads a scan retries itself; the HTTP client retries 5xx).
+func TestScan_ACancelWhileAReadWaitsToBeRetriedIsACancel(t *testing.T) {
+	const apiTimeout = 300 * time.Millisecond
+	for _, tt := range []struct {
+		name      string
+		published bool
+		// fail fails the read retryably, then ends ctx while the read waits
+		// an hour to be retried.
+		fail func(t *testing.T, w http.ResponseWriter, cancel context.CancelFunc)
+	}{
+		{"an unpublished scan's legacy read, its results not there yet", false,
+			func(t *testing.T, w http.ResponseWriter, cancel context.CancelFunc) {
+				testutil.JSONResponse(t, w, http.StatusOK, model.NormalizedResultsResponse{})
+				time.AfterFunc(100*time.Millisecond, cancel)
+			}},
+		{"a recorded run's AppSec read that timed out", true,
+			func(_ *testing.T, w http.ResponseWriter, cancel context.CancelFunc) {
+				time.AfterFunc(2*apiTimeout, cancel)
+				time.Sleep(3 * apiTimeout)
+				w.WriteHeader(http.StatusGatewayTimeout)
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			answer := func(w http.ResponseWriter) { tt.fail(t, w, cancel) }
+			srv := &runServer{}
+			if tt.published {
+				srv.run, srv.appSec = recordedRun(), []func(http.ResponseWriter){answer}
+			} else {
+				srv.legacy = answer
+			}
+			t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+			scanner := newProjectTestScannerTimingOut(t, newRunServer(t, srv), apiTimeout).WithFetchRetryInterval(time.Hour)
+			if tt.published {
+				scanner = scanner.WithProject(testRecordedProject, "cli_ci")
+			}
+			scanner.timeout = time.Minute
+			repo := newProjectTestRepo(t)
+
+			errc := make(chan error, 1)
+			go func() {
+				_, err := scanner.Scan(ctx, repo)
+				errc <- err
+			}()
+			select {
+			case err := <-errc:
+				var incomplete *output.ErrResultsIncomplete
+				if !errors.Is(err, context.Canceled) || errors.As(err, &incomplete) {
+					t.Errorf("err = %v, want context.Canceled", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the scan still waits to retry its read after the cancel")
+			}
+			if appSec, legacy := srv.counts(); appSec+legacy != 1 {
+				t.Errorf("reads: %d from AppSec, %d legacy; want the one that failed", appSec, legacy)
+			}
+		})
+	}
+}
+
+func TestScan_ARecordedRunsEmptyStates(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		appSec       func(http.ResponseWriter)
+		wantFindings int
+		wantLegacy   int
+		wantErr      bool
+	}{
+		{name: "no_findings is a clean run", appSec: appSecPage(t, nil, "no_findings", false)},
+		{name: "run_failed is incomplete", appSec: appSecPage(t, nil, "run_failed", false), wantErr: true},
+		{name: "not_recorded reads the legacy way", appSec: appSecPage(t, nil, "not_recorded", false), wantFindings: 1, wantLegacy: 1},
+		{name: "a reason the CLI doesn't know reads the legacy way", appSec: appSecPage(t, nil, "kept_elsewhere", false), wantFindings: 1, wantLegacy: 1},
+		{name: "a server without the route reads the legacy way", appSec: appSecStatus(http.StatusNotFound, `{"detail":"Not Found"}`), wantFindings: 1, wantLegacy: 1},
+		{name: "a server refusing the parameters reads the legacy way", appSec: appSecStatus(http.StatusUnprocessableEntity, `{"detail":[{"loc":["query","expand"],"msg":"bad"}]}`), wantFindings: 1, wantLegacy: 1},
+		{name: "rows without their detail read the legacy way", appSec: appSecPage(t, []model.RunFinding{{FindingID: "f_1", Type: "sast", Severity: "high"}}, "", false), wantFindings: 1, wantLegacy: 1},
+		{name: "a read failing after its retries is incomplete", appSec: appSecStatus(http.StatusBadGateway, `{"detail":"bad gateway"}`), wantErr: true},
+		{name: "a 403 is incomplete, not a legacy read", appSec: appSecStatus(http.StatusForbidden, `{"detail":"no","error":"insufficient_role","context":{}}`), wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){tt.appSec}, legacy: legacyFindings(t)}
+			result, err := scanRecorded(t, srv, time.Minute, "")
+			if tt.wantErr {
+				var incomplete *output.ErrResultsIncomplete
+				if !errors.As(err, &incomplete) {
+					t.Errorf("err = %v, want ErrResultsIncomplete", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			if _, legacy := srv.counts(); legacy != tt.wantLegacy || len(result.Findings) != tt.wantFindings {
+				t.Errorf("legacy reads %d, findings %d", legacy, len(result.Findings))
+			}
+		})
+	}
+}
+
+// AC 28: a run whose rows don't add up to its list is incomplete, never a
+// pass on the findings that are missing, and never read the legacy way.
+func TestScan_ARecordedRunWhoseRowsDontAddUpIsIncomplete(t *testing.T) {
+	rows := runFixture(t)
+	for _, tt := range []struct {
+		name   string
+		answer func(page map[string]any)
+	}{
+		{"fewer rows than the list holds", func(page map[string]any) {
+			page["pagination"] = map[string]any{"page": 1, "page_size": 100, "total_items": len(rows) + 1, "total_pages": 1}
+		}},
+		{"a finding counted with no row", func(page map[string]any) {
+			page["counts"] = map[string]any{"total": len(rows), "matching": len(rows), "suppressed": 2}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			answer := func(w http.ResponseWriter) {
+				page := map[string]any{
+					"data":        rows,
+					"pagination":  map[string]any{"page": 1, "page_size": 100, "total_items": len(rows), "total_pages": 1},
+					"counts":      map[string]any{"total": len(rows) - 2, "matching": len(rows), "suppressed": 2},
+					"truncated":   false,
+					"empty_state": nil,
+				}
+				tt.answer(page)
+				testutil.JSONResponse(t, w, http.StatusOK, page)
+			}
+			srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){answer}}
+
+			_, err := scanRecorded(t, srv, time.Minute, "")
+			var incomplete *output.ErrResultsIncomplete
+			if !errors.As(err, &incomplete) {
+				t.Errorf("err = %v, want ErrResultsIncomplete", err)
+			}
+			if _, legacy := srv.counts(); legacy != 0 {
+				t.Errorf("legacy reads %d, want none", legacy)
+			}
+		})
+	}
+}
+
+func TestScan_TheLegacyReadsRefusalIsIncomplete(t *testing.T) {
+	srv := &runServer{
+		run:    recordedRun(),
+		appSec: []func(http.ResponseWriter){appSecPage(t, nil, "not_recorded", false)},
+		legacy: appSecStatus(http.StatusConflict, projectRunRefusal()),
+	}
+
+	_, err := scanRecorded(t, srv, time.Minute, "")
+	var incomplete *output.ErrResultsIncomplete
+	if !errors.As(err, &incomplete) {
+		t.Errorf("err = %v, want ErrResultsIncomplete", err)
+	}
+	if _, legacy := srv.counts(); legacy != 1 {
+		t.Errorf("legacy reads %d, want one: a 409 is not retried", legacy)
+	}
+}
+
+func TestScan_ATruncatedRunSaysWhatItKept(t *testing.T) {
+	rows := runFixture(t)
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){appSecPage(t, rows, "", true)}}
+
+	result, err := scanRecorded(t, srv, time.Minute, "")
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	want := model.ResultsTruncation{Kept: len(rows), Total: len(rows) + 40_000 + 2, LeastSevereKept: model.SeverityLow}
+	if result.Truncated == nil || *result.Truncated != want {
+		t.Errorf("truncated = %+v, want %+v", result.Truncated, want)
+	}
+}
+
+func TestScan_RunsThatAreNotRecordedReadTheLegacyWay(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		run  *model.ProjectRun
+	}{
+		{"not recorded", &model.ProjectRun{ProjectID: testRecordedProject, Reason: model.ProjectRunDisabled}},
+		{"a server that predates project runs", nil},
+		{"a run id of another shape", &model.ProjectRun{Recorded: true, ProjectID: testRecordedProject, RunID: "s_1"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &runServer{run: tt.run, legacy: legacyFindings(t)}
+			result, err := scanRecorded(t, srv, time.Minute, "")
+			if err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			if appSec, legacy := srv.counts(); appSec != 0 || legacy != 1 || len(result.Findings) != 1 {
+				t.Errorf("AppSec reads %d, legacy reads %d, findings %d", appSec, legacy, len(result.Findings))
+			}
+		})
+	}
+}
+
+func TestScan_AnAsyncRecordedRunReadsNoFindings(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	srv := &runServer{run: recordedRun()}
+	url := newRunServer(t, srv)
+	scanner := newProjectTestScanner(t, url).WithProject(testRecordedProject, "cli_ci").WithAsync()
+
+	result, err := scanner.Scan(context.Background(), newProjectTestRepo(t))
+	if err != nil || result.Status != StatusAccepted {
+		t.Fatalf("Scan = %+v, %v", result, err)
+	}
+	if appSec, legacy := srv.counts(); appSec != 0 || legacy != 0 {
+		t.Errorf("AppSec reads %d, legacy reads %d", appSec, legacy)
+	}
+}
+
+// A BOM-only scan reads no findings, even when Armis records it as a run.
+func TestScan_ABOMOnlyRecordedRunReadsNoFindings(t *testing.T) {
+	t.Setenv("ARMIS_HISTORY_DIR", t.TempDir())
+	srv := &runServer{run: recordedRun()}
+	scanner := newProjectTestScanner(t, newRunServer(t, srv)).WithProject(testRecordedProject, "cli_ci").
+		WithSBOMVEXOptions(&scan.SBOMVEXOptions{BOM: &scan.BOMOptions{
+			Types: []string{scan.BOMTypeAll}, Format: scan.BOMFormatCycloneDX17, Output: t.TempDir(), Only: true,
+		}})
+
+	_ = testutil.CaptureStderr(t, func() { _, _ = scanner.Scan(context.Background(), newProjectTestRepo(t)) })
+	if appSec, legacy := srv.counts(); appSec != 0 || legacy != 0 {
+		t.Errorf("AppSec reads %d, legacy reads %d, want none", appSec, legacy)
+	}
+}
+
+func TestScan_TheRootArmisignoreStillAppliesToARecordedRun(t *testing.T) {
+	repo := newProjectTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".armisignore"), []byte("severity:LOW\n"), 0o600); err != nil {
+		t.Fatalf("write .armisignore: %v", err)
+	}
+	srv := &runServer{run: recordedRun(), appSec: []func(http.ResponseWriter){appSecPage(t, runFixture(t), "", false)}}
+
+	result, err := scanRecorded(t, srv, time.Minute, repo)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	sources := map[string]int{}
+	for _, f := range result.Findings {
+		if f.Suppressed {
+			sources[f.SuppressionInfo.Source]++
+		}
+	}
+	// The license finding is LOW: the root .armisignore suppresses it.
+	want := map[string]int{"project": 1, "tenant": 1, "armisignore": 1}
+	got, _ := json.Marshal(sources)
+	wantJSON, _ := json.Marshal(want)
+	if string(got) != string(wantJSON) || result.Summary.Suppressed != 3 {
+		t.Errorf("suppressed by %s (total %d), want %s", got, result.Summary.Suppressed, wantJSON)
+	}
+}
+
+// --debug shows a project's scan filters as an .armisignore: at most the
+// lines the CLI reads of one, without control characters.
+func TestPrintScanFilters_ShowsAtMostAnArmisignoresLines(t *testing.T) {
+	text := "cwe:79\x1b[2J\n" + strings.Repeat("dist/\n", maxIgnoreFileLines+500)
+	ts := testutil.NewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/appsec/projects/"+testRecordedProject+"/scan-filters" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		testutil.JSONResponse(t, w, http.StatusOK, model.ProjectScanFilters{Armisignore: text})
+	})
+	scanner := newProjectTestScanner(t, ts.URL)
+
+	out := testutil.CaptureStderr(t, func() { scanner.printScanFilters(context.Background(), testRecordedProject) })
+	if strings.Contains(out, "\x1b") {
+		t.Error("a control character reached the output")
+	}
+	// The first line, then dist/ until the limit, then the marker.
+	if got := strings.Count(out, "dist/"); got != maxIgnoreFileLines-1 {
+		t.Errorf("shown %d dist/ lines, want %d", got, maxIgnoreFileLines-1)
+	}
+	if !strings.Contains(out, "cwe:79[2J\n") || !strings.Contains(out, fmt.Sprintf("… (more than %d lines", maxIgnoreFileLines)) {
+		t.Errorf("output starts:\n%.300s", out)
+	}
+}

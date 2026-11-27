@@ -9,7 +9,12 @@ import (
 	"github.com/ArmisSecurity/armis-cli/internal/model"
 )
 
-const suppressionSourceInline = "inline"
+// The sources of the CLI's own suppressions: the root .armisignore, and
+// inline armis:ignore comments. Any other source is the Armis scan filters'.
+const (
+	suppressionSourceArmisignore = "armisignore"
+	suppressionSourceInline      = "inline"
+)
 
 // Package-level variables for testability
 var (
@@ -37,6 +42,46 @@ type ErrResultsIncomplete struct {
 
 func (e *ErrResultsIncomplete) Error() string {
 	return fmt.Sprintf("scan completed but results could not be retrieved (scan ID: %s)", e.ScanID)
+}
+
+// ErrResultsTruncated means a recorded project run's findings history kept
+// only its most severe findings, none of which matched --fail-on, while the
+// findings it dropped could match a level --fail-on names: those at most as
+// severe as the least severe it kept. Like ErrResultsIncomplete it exits 2,
+// so CI never passes on findings the CLI couldn't read.
+type ErrResultsTruncated struct {
+	ScanID string
+	Kept   int
+	Total  int
+	// Levels are the --fail-on levels the dropped findings could hold.
+	Levels []string
+}
+
+func (e *ErrResultsTruncated) Error() string {
+	return fmt.Sprintf("Armis kept the %d most severe of the scan's %d findings, and the findings it dropped could match --fail-on %s (scan ID: %s)",
+		e.Kept, e.Total, strings.Join(e.Levels, ","), e.ScanID)
+}
+
+// CheckTruncation returns ErrResultsTruncated for a truncated result whose
+// kept findings don't fail --fail-on, when a level it names is at most as
+// severe as the least severe finding kept: the dropped findings could hold
+// it. A level above that is decided, since the history kept every finding of
+// it.
+func CheckTruncation(result *model.ScanResult, failOnSeverities []string) error {
+	truncation := result.Truncated
+	if truncation == nil || ShouldFail(result, failOnSeverities) {
+		return nil
+	}
+	var open []string
+	for _, level := range failOnSeverities {
+		if model.SeverityRank(model.Severity(level)) <= model.SeverityRank(truncation.LeastSevereKept) {
+			open = append(open, level)
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	return &ErrResultsTruncated{ScanID: result.ScanID, Kept: truncation.Kept, Total: truncation.Total, Levels: open}
 }
 
 // ErrBOMIncomplete indicates the scan completed but one or more BOMs requested

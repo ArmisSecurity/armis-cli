@@ -82,6 +82,10 @@ func ApplySuppression(findings []model.Finding, config *SuppressionConfig) int {
 
 	suppressed := 0
 	for i := range findings {
+		// A finding the server's filters suppressed keeps their reason.
+		if findings[i].Suppressed {
+			continue
+		}
 		result := MatchFinding(findings[i], config)
 		if result.Matched {
 			findings[i].Suppressed = true

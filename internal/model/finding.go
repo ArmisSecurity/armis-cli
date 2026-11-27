@@ -1,6 +1,8 @@
 // Package model defines the data structures for security scan findings and results.
 package model
 
+import "encoding/json"
+
 // Severity represents the severity level of a security finding.
 type Severity string
 
@@ -33,12 +35,22 @@ const (
 	FindingTypeMisconfig FindingType = "MISCONFIG"
 )
 
-// SuppressionInfo describes why a finding was suppressed.
+// SuppressionInfo describes why a finding was suppressed: locally, by the
+// root .armisignore or an inline armis:ignore comment, or, on a recorded
+// project run, by the project's Armis scan filters on the server.
 type SuppressionInfo struct {
-	Type   string `json:"type"`             // "severity", "category", "cwe", "rule", "inline"
-	Value  string `json:"value"`            // the directive value that matched
-	Reason string `json:"reason,omitempty"` // user-provided reason
-	Source string `json:"source,omitempty"` // "armisignore" or "inline"
+	// Type is the directive: "severity", "category", "cwe", "rule" or
+	// "inline" locally; "severity_threshold", "severity", "category" or "cwe"
+	// for the scan filters.
+	Type string `json:"type"`
+	// Value is the directive value that matched.
+	Value string `json:"value"`
+	// Reason is the user-provided reason, or "Armis tenant scan filter" /
+	// "Armis project scan filter" for the scan filters.
+	Reason string `json:"reason,omitempty"`
+	// Source is "armisignore" or "inline" locally; any other source, "tenant"
+	// or "project" today, is the scan filters'.
+	Source string `json:"source,omitempty"`
 }
 
 // Finding represents a single security finding from a scan.
@@ -82,6 +94,9 @@ type ScanResult struct {
 	// could not be downloaded; a non-empty list makes the scan exit 2. Kept
 	// out of the JSON report.
 	BOMFailures []string `json:"-"`
+	// Truncated is set for a recorded project run whose findings the history
+	// kept only the most severe of (spec 18 task 4's 4.3).
+	Truncated *ResultsTruncation `json:"-"`
 	// BOMWritten lists the BOM types written to a file or stdout. A BOM-only
 	// scan that wrote none exits 2. Kept out of the JSON report.
 	BOMWritten []string `json:"-"`
@@ -122,6 +137,32 @@ func SummarizeFindings(findings []Finding) Summary {
 		}
 	}
 	return summary
+}
+
+// ResultsTruncation is what the findings history kept of a run with more
+// findings than it keeps: the Kept most severe of Total. Every finding it
+// dropped is at most as severe as LeastSevereKept.
+type ResultsTruncation struct {
+	Kept            int
+	Total           int
+	LeastSevereKept Severity
+}
+
+// SeverityRank orders severities, the most severe highest: CRITICAL 4, HIGH
+// 3, MEDIUM 2, LOW 1, and INFO (or anything else) 0.
+func SeverityRank(s Severity) int {
+	switch s {
+	case SeverityCritical:
+		return 4
+	case SeverityHigh:
+		return 3
+	case SeverityMedium:
+		return 2
+	case SeverityLow:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // IngestUploadResponse represents the response from uploading a scan artifact
@@ -265,7 +306,10 @@ const (
 
 // FindingValidation represents the AI validation result for a finding.
 type FindingValidation struct {
-	IsValid           bool             `json:"is_valid"`
+	// IsValid is whether the verifier held the finding valid: nil when that
+	// is unknown, as for a recorded project run, whose findings history
+	// doesn't keep it.
+	IsValid           *bool            `json:"is_valid,omitempty"`
 	ValidatedSeverity *string          `json:"validated_severity,omitempty"`
 	Confidence        int              `json:"confidence"`
 	Explanation       string           `json:"explanation"`
@@ -281,8 +325,42 @@ type Fix struct {
 	PatchFiles      map[string]string `json:"patch_files,omitempty"`
 	Explanation     string            `json:"explanation"`
 	Recommendations string            `json:"recommendations"`
-	IsValid         bool              `json:"is_valid"`
-	Feedback        string            `json:"feedback"`
+	// IsValid is whether the verifier held the fix valid: nil when that is
+	// unknown, as for a recorded project run, whose findings history doesn't
+	// keep it.
+	IsValid  *bool  `json:"is_valid,omitempty"`
+	Feedback string `json:"feedback"`
+}
+
+// UnmarshalJSON decodes a validation as the API serves it, where a missing or
+// null is_valid is false: only a validation the CLI builds itself has an
+// unknown one.
+func (v *FindingValidation) UnmarshalJSON(data []byte) error {
+	type plain FindingValidation
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.IsValid == nil {
+		decoded.IsValid = new(false)
+	}
+	*v = FindingValidation(decoded)
+	return nil
+}
+
+// UnmarshalJSON decodes a fix as the API serves it, where a missing or null
+// is_valid is false: only a fix the CLI builds itself has an unknown one.
+func (f *Fix) UnmarshalJSON(data []byte) error {
+	type plain Fix
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.IsValid == nil {
+		decoded.IsValid = new(false)
+	}
+	*f = Fix(decoded)
+	return nil
 }
 
 // Label represents a classification label for a finding.

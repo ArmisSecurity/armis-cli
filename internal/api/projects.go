@@ -209,8 +209,10 @@ func (c *Client) doAppSec(ctx context.Context, method, path string, params url.V
 var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // appSecPathPattern is the allowlist of AppSec routes the CLI calls: the
-// projects collection, or one project by id.
-var appSecPathPattern = regexp.MustCompile(`^` + regexp.QuoteMeta(projectsPath) + `(/[A-Za-z0-9_-]{1,128})?$`)
+// projects collection; one project by id; a project's effective scan
+// filters; and one of its runs' findings, by the run's id.
+var appSecPathPattern = regexp.MustCompile(`^` + regexp.QuoteMeta(projectsPath) +
+	`(/[A-Za-z0-9_-]{1,128}(/scan-filters|/scans/s_[0-9a-f]{24}/findings)?)?$`)
 
 // IsValidProjectID reports whether id has the shape of an AppSec project id.
 func IsValidProjectID(id string) bool {
@@ -247,9 +249,12 @@ func (c *Client) appSecURL(path string, params url.Values) (string, error) {
 }
 
 // parseAppSecError builds an *AppSecError from an error body. The API answers
-// in one of three shapes:
+// in one of four shapes:
 //
 //   - the AppSec envelope {"detail": "...", "error": "code", "context": {...}};
+//   - the ingest routes' {"detail": {"code": "...", "message": "...",
+//     "context": {...}}}, as /ingest/normalized-results' 409
+//     project_run_findings;
 //   - FastAPI's validation body {"detail": [{"loc": [...], "msg": "..."}]};
 //   - a bare {"detail": "..."} (or, from a proxy, anything else).
 func parseAppSecError(status int, body []byte) *AppSecError {
@@ -272,6 +277,19 @@ func parseAppSecError(status int, body []byte) *AppSecError {
 	var detail string
 	if err := json.Unmarshal(envelope.Detail, &detail); err == nil {
 		apiErr.Detail = detail
+		return apiErr
+	}
+	var nested struct {
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Context map[string]any `json:"context"`
+	}
+	if err := json.Unmarshal(envelope.Detail, &nested); err == nil && nested.Code != "" {
+		apiErr.Code = nested.Code
+		apiErr.Detail = nested.Message
+		if nested.Context != nil {
+			apiErr.Context = nested.Context
+		}
 		return apiErr
 	}
 	var items []struct {

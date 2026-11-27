@@ -88,13 +88,22 @@ func newIngestRecorderServer(t *testing.T) (*ingestRecorder, string) {
 
 func newProjectTestScanner(t *testing.T, baseURL string) *Scanner {
 	t.Helper()
-	httpClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	return newProjectTestScannerTimingOut(t, baseURL, 5*time.Second)
+}
+
+// newProjectTestScannerTimingOut is newProjectTestScanner, whose API calls
+// (not the upload) time out after apiTimeout.
+func newProjectTestScannerTimingOut(t *testing.T, baseURL string, apiTimeout time.Duration) *Scanner {
+	t.Helper()
+	httpClient := httpclient.NewClient(httpclient.Config{Timeout: apiTimeout, DisableRetry: true})
 	uploadClient := httpclient.NewClient(httpclient.Config{Timeout: 5 * time.Second, DisableRetry: true})
+	// armis:ignore cwe:798 reason:test fixture literal for the local mock API, not a real credential; the same placeholder token as every other test in this package
 	client, err := api.NewClient(baseURL, testutil.NewTestAuthProvider("token123"), false, time.Minute,
 		api.WithHTTPClient(httpClient), api.WithUploadHTTPClient(uploadClient), api.WithAllowLocalURLs(true))
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
+	// armis:ignore cwe:798 reason:a made-up tenant id for the local mock API, not a credential; the same fixture as every other test in this package
 	return NewScanner(client, true, "tenant-456", 100, false, time.Minute, false).
 		WithPollInterval(5 * time.Millisecond)
 }
