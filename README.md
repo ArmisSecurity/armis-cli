@@ -1492,6 +1492,11 @@ jobs:
           sarif_file: results.sarif
 ```
 
+The examples below publish each scan as a run of the AppSec project
+`my-service`, which the first run creates, and gate on HIGH and CRITICAL
+findings. Drop `--project` to gate without publishing (see
+[Publish to a Project](#publish-to-a-project)).
+
 ### GitLab CI
 
 ```yaml
@@ -1502,7 +1507,7 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
   variables:
     ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
     ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
@@ -1522,7 +1527,7 @@ pipeline {
             steps {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-                    armis-cli scan repo . --format junit > scan-results.xml
+                    armis-cli scan repo . --project my-service --format junit --fail-on HIGH,CRITICAL > scan-results.xml
                 '''
                 junit 'scan-results.xml'
             }
@@ -1543,7 +1548,7 @@ steps:
     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   displayName: 'Install Armis CLI'
 - script: |
-    armis-cli scan repo . --format junit > $(Build.ArtifactStagingDirectory)/scan-results.xml
+    armis-cli scan repo . --project my-service --format junit --fail-on HIGH,CRITICAL > $(Build.ArtifactStagingDirectory)/scan-results.xml
   env:
     ARMIS_CLIENT_ID: $(ARMIS_CLIENT_ID)
     ARMIS_CLIENT_SECRET: $(ARMIS_CLIENT_SECRET)
@@ -1571,7 +1576,7 @@ jobs:
       - run:
           name: Run Security Scan
           command: |
-            armis-cli scan repo . --format json --fail-on HIGH,CRITICAL
+            armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 workflows:
   version: 2
   scan:
@@ -1591,7 +1596,7 @@ pipelines:
         script:
           - apk add --no-cache curl bash
           - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-          - armis-cli scan repo . --format json --fail-on CRITICAL
+          - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 ```
 
 ---

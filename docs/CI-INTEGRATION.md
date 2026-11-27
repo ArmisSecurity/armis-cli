@@ -702,6 +702,11 @@ For images built in a previous job or CI step:
 
 ## Other CI Platforms
 
+Each example publishes its scan as a run of the AppSec project `my-service`,
+which the first run creates, and gates on HIGH and CRITICAL findings. In CI no
+other flag is needed to publish. Drop `--project` to gate without publishing;
+see [Publish Scans to a Project](#publish-scans-to-a-project).
+
 ### GitLab CI
 
 ```yaml
@@ -718,7 +723,7 @@ security-scan:
     - apk add --no-cache curl bash
     - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
   script:
-    - armis-cli scan repo . --format json --fail-on CRITICAL
+    - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
   variables:
     ARMIS_CLIENT_ID: $ARMIS_CLIENT_ID
     ARMIS_CLIENT_SECRET: $ARMIS_CLIENT_SECRET
@@ -745,6 +750,7 @@ pipeline {
                 sh '''
                     curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
                     armis-cli scan repo . \
+                        --project my-service \
                         --format junit \
                         --fail-on HIGH,CRITICAL \
                         > scan-results.xml
@@ -781,6 +787,7 @@ pipeline {
                 powershell '''
                     irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
                     armis-cli scan repo . `
+                        --project my-service `
                         --format junit `
                         --fail-on HIGH,CRITICAL `
                         > scan-results.xml
@@ -819,6 +826,7 @@ steps:
 
   - script: |
       armis-cli scan repo . \
+        --project my-service \
         --format junit \
         --fail-on HIGH,CRITICAL \
         > $(Build.ArtifactStagingDirectory)/scan-results.xml
@@ -853,6 +861,7 @@ steps:
       irm https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.ps1 | iex
 
       armis-cli scan repo . `
+        --project my-service `
         --format junit `
         --fail-on HIGH,CRITICAL `
         > $(Build.ArtifactStagingDirectory)\scan-results.xml
@@ -889,6 +898,7 @@ jobs:
           name: Run Security Scan
           command: |
             armis-cli scan repo . \
+              --project my-service \
               --format json \
               --fail-on HIGH,CRITICAL
 
@@ -916,7 +926,7 @@ pipelines:
           script:
             - apk add --no-cache curl bash
             - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-            - armis-cli scan repo . --format json --fail-on CRITICAL
+            - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 
   branches:
     main:
@@ -926,7 +936,7 @@ pipelines:
           script:
             - apk add --no-cache curl bash
             - curl -sSL https://raw.githubusercontent.com/ArmisSecurity/armis-cli/main/scripts/install.sh | bash
-            - armis-cli scan repo . --format json --fail-on CRITICAL
+            - armis-cli scan repo . --project my-service --format json --fail-on HIGH,CRITICAL
 ```
 
 Configure `ARMIS_CLIENT_ID` and `ARMIS_CLIENT_SECRET` as [secured repository variables](https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/).
